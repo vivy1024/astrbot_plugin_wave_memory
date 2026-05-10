@@ -6,7 +6,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![AstrBot Plugin](https://img.shields.io/badge/AstrBot-Plugin-green.svg)](https://github.com/AstrBotDevs/AstrBot)
 
-**查询路径零 LLM 调用 · 本地计算 < 2ms · 19000+ 条记忆规模向量检索 0.2ms**
+**查询路径零 LLM 调用 · 本地计算 < 2ms · 万级记忆规模向量检索 < 1ms**
 
 </div>
 
@@ -145,7 +145,7 @@ tags.hnsw             HNSW 向量索引 (Tag 检索)
 
 | 指标 | 数值 |
 |------|------|
-| 向量检索 (19000+ memories) | 0.2ms |
+| 向量检索 (万级 memories) | < 1ms |
 | 脉冲传播 (1700+ nodes) | 0.1ms |
 | 残差金字塔 (缓存命中) | 0.3ms |
 | EPA 分析 | 0.2ms |
