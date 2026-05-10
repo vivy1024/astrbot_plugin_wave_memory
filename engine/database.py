@@ -229,6 +229,14 @@ class WaveMemoryDB:
                 updated_at REAL
             )
         """)
+        # Migration: 旧表可能缺少 updated_at 列
+        try:
+            self.conn.execute("SELECT updated_at FROM tag_extraction_status LIMIT 1")
+        except Exception:
+            try:
+                self.conn.execute("ALTER TABLE tag_extraction_status ADD COLUMN updated_at REAL")
+            except Exception:
+                pass
 
         # 创建 tag_intrinsic_residuals 表（Phase 3 预建）
         self.conn.execute("""

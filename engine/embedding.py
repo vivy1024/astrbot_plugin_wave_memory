@@ -55,6 +55,10 @@ class EmbeddingService:
 
         return None
 
+    async def is_available(self) -> bool:
+        """检查 embedding provider 是否可用。"""
+        return self._get_provider() is not None
+
     async def get_embedding(self, text: str) -> Optional[np.ndarray]:
         """获取单条文本的 embedding 向量。"""
         result = await self.get_embeddings([text])

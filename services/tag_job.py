@@ -45,6 +45,15 @@ class TagBackfillJob:
     async def _run(self):
         """主循环。"""
         self._running = True
+
+        # 等待 embedding 服务就绪（最多 60 秒）
+        for _ in range(12):
+            if self.embedding_service and await self.embedding_service.is_available():
+                break
+            await asyncio.sleep(5)
+        else:
+            logger.warning("[WaveMemory] Tag backfill: embedding not available after 60s, starting anyway")
+
         logger.info("[WaveMemory] Tag backfill job started")
 
         processed = 0

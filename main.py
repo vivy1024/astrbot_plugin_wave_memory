@@ -47,7 +47,7 @@ class WaveMemoryPlugin(Star):
 
         # 解析配置（顶层字段 + 嵌套 object）
         query_cfg = self.config.get("Query_Settings", {})
-        tag_cfg = self.config.get("Tag_Settings", {})
+        self.tag_cfg = tag_cfg = self.config.get("Tag_Settings", {})
         storage_cfg = self.config.get("Storage_Settings", {})
         webui_cfg = self.config.get("WebUI_Settings", {})
         filter_cfg = self.config.get("Message_Filter", {})
@@ -256,7 +256,7 @@ class WaveMemoryPlugin(Star):
             tag_extractor=self.tag_extractor,
             embedding_service=self.embedding_service,
             tag_index=self.tag_index,
-            config=tag_cfg,
+            config=self.tag_cfg,
         )
         tag_coverage = self.tag_job.get_coverage()
         if tag_coverage < 0.90:
