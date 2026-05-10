@@ -304,7 +304,7 @@ class SourceDiscovery:
                         table = adapter["table"]
                         where = adapter.get("filter", "1=1")
                         remaining_rows = conn_check.execute(
-                            f"SELECT COUNT(*) FROM {table} WHERE {where} AND rowid > ?", (last_rowid,)
+                            f"SELECT COUNT(*) FROM {table} WHERE ({where}) AND rowid > ?", (last_rowid,)
                         ).fetchone()[0]
                     else:
                         analysis = source.get("analysis", {})
@@ -324,8 +324,8 @@ class SourceDiscovery:
                         # 有新记录，返回估算的剩余量
                         pct = max(0, (total_count - remaining_rows) / total_count * 100) if total_count > 0 else 0
                         return {"sampled": 0, "existing": 0, "estimated_pct": round(pct, 1), "estimated_remaining": remaining_rows}
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[WaveMemory] estimate_imported cursor check failed for {source.get('id')}: {e}")
 
             conn = sqlite3.connect(db_path)
 
@@ -613,7 +613,7 @@ class UniversalImporter:
             pass
 
         conn = sqlite3.connect(db_path)
-        query = f"SELECT rowid, {', '.join(select_fields)} FROM {table} WHERE {where} AND rowid > ? ORDER BY rowid ASC"
+        query = f"SELECT rowid, {', '.join(select_fields)} FROM {table} WHERE ({where}) AND rowid > ? ORDER BY rowid ASC"
         rows = conn.execute(query, (last_rowid,)).fetchall()
         conn.close()
 
