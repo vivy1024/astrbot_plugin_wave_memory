@@ -6,7 +6,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![AstrBot Plugin](https://img.shields.io/badge/AstrBot-Plugin-green.svg)](https://github.com/AstrBotDevs/AstrBot)
 
-**查询路径零 LLM 调用 · 本地计算 < 2ms · 12000+ 条记忆规模向量检索 0.2ms**
+**查询路径零 LLM 调用 · 本地计算 < 2ms · 19000+ 条记忆规模向量检索 0.2ms**
 
 </div>
 
@@ -20,7 +20,7 @@
 - **结构化 Tag 体系**：8 种语义类型（person/topic/entity/event/emotion/fact/location/time），支持 LLM 批量提取
 - **脉冲传播 + 虫洞路由**：模拟神经网络的联想激活，发现跨域关联
 - **做梦系统 (AgentDream)**：模拟人脑睡眠记忆巩固，三层时间线涟漪浪潮
-- **WebUI 管理面板**：记忆浏览、查询测试台、数据导入、暗色/亮色主题
+- **WebUI 管理面板**：记忆浏览、查询测试台、数据导入（实时进度条 + 互斥锁）、LLM Tag 批量提取、暗色/亮色主题
 
 ---
 
@@ -105,7 +105,9 @@ Wave Memory 的导入系统不硬编码特定插件，而是：
 1. **自动扫描** `plugin_data/` 下所有 `.db` 文件
 2. **已知适配器**：LivingMemory、Angel Memory、Self Learning 等免配置直接导入
 3. **未知插件**：启发式分析表结构，或调用 LLM 分析字段映射后导入
-4. **自动去重**：基于内容哈希，不会重复导入
+4. **增量导入（rowid 游标）**：每次只处理上次游标之后的新记录，万级数据秒级完成
+5. **自动去重**：基于内容精确匹配，不会重复导入
+6. **安全游标**：失败批次不推进游标（下次重试）；数据库清空时自动重置游标
 
 支持的已知数据源：
 
@@ -131,7 +133,7 @@ wave_memory.db
 ├── bot_mood          Bot 情绪状态
 ├── expression_patterns 表达模式库
 ├── facts             结构化事实三元组
-└── kv_store          EPA 缓存 + 导入去重哈希
+└── kv_store          EPA 缓存 + 导入游标 (import_cursor:*)
 
 memory.hnsw           HNSW 向量索引 (记忆检索)
 tags.hnsw             HNSW 向量索引 (Tag 检索)
@@ -143,7 +145,7 @@ tags.hnsw             HNSW 向量索引 (Tag 检索)
 
 | 指标 | 数值 |
 |------|------|
-| 向量检索 (12000+ memories) | 0.2ms |
+| 向量检索 (19000+ memories) | 0.2ms |
 | 脉冲传播 (1700+ nodes) | 0.1ms |
 | 残差金字塔 (缓存命中) | 0.3ms |
 | EPA 分析 | 0.2ms |
