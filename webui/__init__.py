@@ -638,22 +638,24 @@ class WaveMemoryWebUI:
             try:
                 providers = []
                 seen_ids = set()
+                embed_id = self.plugin_config.get("embedding_provider_id", "")
                 all_provs = self.embedding_service.context.get_all_providers()
                 for prov in all_provs:
                     try:
                         meta = prov.meta()
                         if meta.id not in seen_ids:
+                            # 如果是当前配置的 embedding provider，标记为 embedding 类型
+                            ptype = "embedding" if meta.id == embed_id else (meta.type or "unknown")
                             providers.append({
                                 "id": meta.id,
                                 "model": meta.model or "",
-                                "type": meta.type or "unknown",
+                                "type": ptype,
                             })
                             seen_ids.add(meta.id)
                     except Exception:
                         pass
 
                 # 确保当前配置的 embedding provider 也在列表中
-                embed_id = self.plugin_config.get("embedding_provider_id", "")
                 if embed_id and embed_id not in seen_ids:
                     providers.insert(0, {
                         "id": embed_id,

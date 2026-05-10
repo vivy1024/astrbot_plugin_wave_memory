@@ -471,7 +471,7 @@
                         <label class="text-xs block mb-1" style="color:var(--muted-fg)">Embedding Provider ID</label>
                         <select x-model="pluginConfig.embedding_provider_id" class="input text-xs w-full">
                             <option value="">未配置</option>
-                            <template x-for="p in providers" :key="p.id">
+                            <template x-for="p in embeddingProviders" :key="p.id">
                                 <option :value="p.id" x-text="p.id + ' (' + p.model + ')'"></option>
                             </template>
                         </select>
@@ -484,7 +484,7 @@
                         <label class="text-xs block mb-1" style="color:var(--muted-fg)">Tag 提取 LLM Provider</label>
                         <select x-model="pluginConfig.tag_llm_provider_id" class="input text-xs w-full">
                             <option value="">禁用 Tag 提取</option>
-                            <template x-for="p in providers" :key="p.id">
+                            <template x-for="p in llmProviders" :key="p.id">
                                 <option :value="p.id" x-text="p.id + ' (' + p.model + ')'"></option>
                             </template>
                         </select>
@@ -633,6 +633,12 @@ function dashboard() {
         // 配置
         pluginConfig: {},
         providers: [],
+        get embeddingProviders() {
+            return this.providers.filter(p => p.type === 'embedding' || p.model.toLowerCase().includes('embed'));
+        },
+        get llmProviders() {
+            return this.providers.filter(p => p.type !== 'embedding' && !p.model.toLowerCase().includes('embed'));
+        },
         configSaving: false,
         configMsg: '',
         configMsgOk: true,
