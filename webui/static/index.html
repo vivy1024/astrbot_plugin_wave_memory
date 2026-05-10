@@ -675,13 +675,7 @@ function dashboard() {
             } catch(e) { console.error(e); }
         },
 
-        async loadProviders() {
-            try {
-                const r = await fetch('/api/providers');
-                const data = await r.json();
-                this.providers = data.providers || [];
-            } catch(e) { console.error(e); }
-        },
+        // loadProviders 定义在下方 import 区域（含 loadSources）
 
         async saveConfig() {
             this.configSaving = true;
@@ -861,7 +855,11 @@ function dashboard() {
         },
 
         async loadProviders() {
-            // Provider 固定在配置中，不再前端选择
+            try {
+                const r = await fetch('/api/providers');
+                const data = await r.json();
+                this.providers = data.providers || [];
+            } catch(e) { console.error(e); }
             await this.loadSources();
         },
 
