@@ -634,20 +634,43 @@ class WaveMemoryWebUI:
 
         @app.get("/api/providers")
         async def list_providers():
-            """列出可用的 LLM Provider（用于智能导入选择）。"""
+            """列出可用的 LLM/Embedding Provider（用于配置选择）。"""
             try:
                 providers = []
+                seen_ids = set()
                 all_provs = self.embedding_service.context.get_all_providers()
                 for prov in all_provs:
                     try:
                         meta = prov.meta()
-                        providers.append({
-                            "id": meta.id,
-                            "model": meta.model or "",
-                            "type": meta.type or "unknown",
-                        })
+                        if meta.id not in seen_ids:
+                            providers.append({
+                                "id": meta.id,
+                                "model": meta.model or "",
+                                "type": meta.type or "unknown",
+                            })
+                            seen_ids.add(meta.id)
                     except Exception:
                         pass
+
+                # 确保当前配置的 embedding provider 也在列表中
+                embed_id = self.plugin_config.get("embedding_provider_id", "")
+                if embed_id and embed_id not in seen_ids:
+                    providers.insert(0, {
+                        "id": embed_id,
+                        "model": embed_id.split("/")[-1] if "/" in embed_id else embed_id,
+                        "type": "embedding",
+                    })
+                    seen_ids.add(embed_id)
+
+                # 确保当前配置的 tag LLM provider 也在列表中
+                tag_id = self.plugin_config.get("tag_llm_provider_id", "")
+                if tag_id and tag_id not in seen_ids:
+                    providers.append({
+                        "id": tag_id,
+                        "model": tag_id.split("/")[-1] if "/" in tag_id else tag_id,
+                        "type": "llm",
+                    })
+
                 return {"providers": providers}
             except Exception as e:
                 return {"providers": [], "error": str(e)}

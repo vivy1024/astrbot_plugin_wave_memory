@@ -644,8 +644,8 @@ function dashboard() {
             else { this.isDark = true; document.documentElement.classList.add('dark'); }
             await this.loadSystem();
             this.loadSenders();
-            this.loadConfig();
-            this.loadProviders();
+            await this.loadProviders();
+            await this.loadConfig();
         },
 
         toggleTheme() {
