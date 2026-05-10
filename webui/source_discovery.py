@@ -279,16 +279,55 @@ class SourceDiscovery:
     def estimate_imported(self, source: dict, wave_db) -> dict:
         """采样估算某个数据源中已有多少内容存在于 wave_memory。
 
-        采样最多 200 条（均匀分布），用比例推算整体。
-        比全表扫描快 10-50 倍。
+        如果游标已到末尾（全部处理过），直接返回 100%。
+        否则采样最多 200 条，用比例推算整体。
         """
         try:
             db_path = source.get("db_path")
             if not db_path:
                 return {"sampled": 0, "existing": 0, "estimated_pct": 0, "estimated_remaining": source.get("count", 0)}
 
-            conn = sqlite3.connect(db_path)
             total_count = source.get("count", 0)
+
+            # 检查游标：如果已处理到末尾，直接返回 100%
+            cursor_key = f"import_cursor:{source['id']}"
+            try:
+                cursor_row = wave_db.conn.execute(
+                    "SELECT value FROM kv_store WHERE key = ?", (cursor_key,)
+                ).fetchone()
+                if cursor_row:
+                    last_rowid = int(cursor_row[0])
+                    # 检查源表是否还有 rowid > last_rowid 的记录
+                    conn_check = sqlite3.connect(db_path)
+                    if source["type"] == "known":
+                        adapter = source["adapter"]
+                        table = adapter["table"]
+                        where = adapter.get("filter", "1=1")
+                        remaining_rows = conn_check.execute(
+                            f"SELECT COUNT(*) FROM {table} WHERE {where} AND rowid > ?", (last_rowid,)
+                        ).fetchone()[0]
+                    else:
+                        analysis = source.get("analysis", {})
+                        importable = analysis.get("importable_tables", [])
+                        if importable:
+                            table = importable[0]["name"]
+                            remaining_rows = conn_check.execute(
+                                f"SELECT COUNT(*) FROM {table} WHERE rowid > ?", (last_rowid,)
+                            ).fetchone()[0]
+                        else:
+                            remaining_rows = 0
+                    conn_check.close()
+
+                    if remaining_rows == 0:
+                        return {"sampled": 0, "existing": 0, "estimated_pct": 100.0, "estimated_remaining": 0}
+                    else:
+                        # 有新记录，返回估算的剩余量
+                        pct = max(0, (total_count - remaining_rows) / total_count * 100) if total_count > 0 else 0
+                        return {"sampled": 0, "existing": 0, "estimated_pct": round(pct, 1), "estimated_remaining": remaining_rows}
+            except Exception:
+                pass
+
+            conn = sqlite3.connect(db_path)
 
             if source["type"] == "known":
                 adapter = source["adapter"]
