@@ -89,11 +89,16 @@ class TagExtractor:
     4. 质量过滤：基于 confidence 和规则过滤低质量 Tag
     """
 
-    def __init__(self, context, provider_id: str, max_tags: int = 10, batch_size: int = 5):
+    def __init__(self, context, provider_id: str, max_tags: int = 10, batch_size: int = 5, blacklist: str = ""):
         self.context = context
         self.provider_id = provider_id
         self.max_tags = max_tags
         self.batch_size = batch_size
+
+        # Tag 黑名单
+        self._blacklist: set = {
+            w.strip() for w in blacklist.split(",") if w.strip()
+        }
 
         # 核心标签缓存（高频 Tag 名称集合）
         self._core_tags: set = set()
@@ -315,6 +320,9 @@ class TagExtractor:
         if not name or len(name) < 2 or len(name) > 20:
             return False
         if confidence < 0.4:
+            return False
+        # 黑名单过滤
+        if name in self._blacklist:
             return False
         # 过滤纯数字、纯标点、纯空白
         if re.match(r'^[\d\s\W]+$', name):

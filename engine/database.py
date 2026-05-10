@@ -215,6 +215,31 @@ class WaveMemoryDB:
             )
         """)
 
+        # tags 表添加 is_core 列
+        if "is_core" not in existing_cols:
+            self.conn.execute("ALTER TABLE tags ADD COLUMN is_core BOOLEAN DEFAULT 0")
+
+        # 创建 tag_extraction_status 表
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS tag_extraction_status (
+                memory_id INTEGER PRIMARY KEY,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER DEFAULT 0,
+                last_error TEXT,
+                updated_at REAL
+            )
+        """)
+
+        # 创建 tag_intrinsic_residuals 表（Phase 3 预建）
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS tag_intrinsic_residuals (
+                tag_id INTEGER PRIMARY KEY,
+                residual_energy REAL NOT NULL,
+                computed_at REAL NOT NULL,
+                FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+            )
+        """)
+
         # 创建新表（如果不存在）
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS user_profiles (
@@ -266,6 +291,49 @@ class WaveMemoryDB:
                 FOREIGN KEY (source_memory_id) REFERENCES memories(id) ON DELETE SET NULL
             );
         """)
+
+        # FTS5 全文搜索虚拟表（Phase 6: DeepMemo）
+        self.conn.executescript("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS fts_memories USING fts5(
+                content, sender_name, group_id,
+                content='memories',
+                content_rowid='id',
+                tokenize='unicode61'
+            );
+
+            -- 插入触发器
+            CREATE TRIGGER IF NOT EXISTS fts_memories_ai AFTER INSERT ON memories BEGIN
+                INSERT INTO fts_memories(rowid, content, sender_name, group_id)
+                VALUES (new.id, new.content, new.sender_name, new.group_id);
+            END;
+
+            -- 删除触发器
+            CREATE TRIGGER IF NOT EXISTS fts_memories_ad AFTER DELETE ON memories BEGIN
+                INSERT INTO fts_memories(fts_memories, rowid, content, sender_name, group_id)
+                VALUES ('delete', old.id, old.content, old.sender_name, old.group_id);
+            END;
+
+            -- 更新触发器
+            CREATE TRIGGER IF NOT EXISTS fts_memories_au AFTER UPDATE ON memories BEGIN
+                INSERT INTO fts_memories(fts_memories, rowid, content, sender_name, group_id)
+                VALUES ('delete', old.id, old.content, old.sender_name, old.group_id);
+                INSERT INTO fts_memories(rowid, content, sender_name, group_id)
+                VALUES (new.id, new.content, new.sender_name, new.group_id);
+            END;
+        """)
+
+        # FTS5 初始填充（如果为空）
+        fts_count = self.conn.execute("SELECT COUNT(*) FROM fts_memories").fetchone()[0]
+        if fts_count == 0:
+            mem_count = self.conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+            if mem_count > 0:
+                self.conn.execute("""
+                    INSERT INTO fts_memories(rowid, content, sender_name, group_id)
+                    SELECT id, content, sender_name, group_id FROM memories
+                    WHERE content IS NOT NULL
+                """)
+                logger.info(f"[WaveMemory] FTS5 initial fill: {mem_count} memories indexed")
+
         self.conn.commit()
 
     # ─── Tag 扩展操作 ───
@@ -815,6 +883,35 @@ class WaveMemoryDB:
             (limit,),
         ).fetchall()
         return [r[0] for r in rows]
+
+    def get_memory_vectors(self, memory_ids: list[int]) -> dict:
+        """批量获取记忆向量。返回 {memory_id: np.ndarray}。
+
+        从 VectorIndex 获取（如果可用），否则返回空 dict。
+        注意：此方法需要外部传入 memory_index 或从 kv_store 读取。
+        这里从 memories 表的 embedding 列读取（如果存在）。
+        """
+        if not memory_ids:
+            return {}
+
+        # 检查是否有 embedding 列
+        try:
+            placeholders = ",".join("?" * len(memory_ids))
+            rows = self.conn.execute(
+                f"SELECT id, embedding FROM memories WHERE id IN ({placeholders}) AND embedding IS NOT NULL",
+                memory_ids,
+            ).fetchall()
+            result = {}
+            for row in rows:
+                try:
+                    vec = np.frombuffer(row[1], dtype=np.float32)
+                    if len(vec) > 0:
+                        result[row[0]] = vec
+                except Exception:
+                    continue
+            return result
+        except Exception:
+            return {}
 
     def close(self):
         self.conn.close()

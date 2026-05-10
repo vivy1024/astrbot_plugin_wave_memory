@@ -361,8 +361,45 @@ class WaveMemoryWebUI:
 
         @app.get("/api/tags/graph")
         async def get_tag_graph():
-            nodes, edges = self.db.get_tag_graph_data()
-            return {"nodes": nodes, "edges": edges}
+            """返回有向共现图数据（兼容 vis-network）。"""
+            # 优先从 DirectedCooccurrence 获取有向边
+            if hasattr(self, 'cooccurrence') and self.cooccurrence and hasattr(self.cooccurrence, 'forward'):
+                cooc = self.cooccurrence
+                edges = []
+                tag_ids_in_edges = set()
+                for src_id, neighbors in cooc.forward.items():
+                    for tgt_id, weight in sorted(neighbors.items(), key=lambda x: x[1], reverse=True)[:10]:
+                        edges.append({
+                            "from": src_id,
+                            "to": tgt_id,
+                            "value": round(weight, 3),
+                            "direction": "forward",
+                        })
+                        tag_ids_in_edges.add(src_id)
+                        tag_ids_in_edges.add(tgt_id)
+                        if len(edges) >= 500:
+                            break
+                    if len(edges) >= 500:
+                        break
+
+                # 获取节点信息
+                nodes = []
+                if tag_ids_in_edges:
+                    limited_ids = list(tag_ids_in_edges)[:200]
+                    placeholders = ",".join("?" * len(limited_ids))
+                    tag_rows = self.db.conn.execute(
+                        f"""SELECT t.id, t.name,
+                                  (SELECT COUNT(*) FROM memory_tags mt WHERE mt.tag_id = t.id) as mem_count
+                           FROM tags t WHERE t.id IN ({placeholders})""",
+                        limited_ids,
+                    ).fetchall()
+                    nodes = [{"id": r[0], "label": r[1], "value": r[2]} for r in tag_rows]
+
+                return {"nodes": nodes, "edges": edges, "directed": True}
+            else:
+                # 退化：使用旧的无向图
+                nodes, edges = self.db.get_tag_graph_data()
+                return {"nodes": nodes, "edges": edges, "directed": False}
 
         @app.get("/api/tags/{tag_id}/memories")
         async def get_tag_memories(tag_id: int, size: int = Query(10, ge=1, le=50)):
@@ -380,6 +417,151 @@ class WaveMemoryWebUI:
                 {"id": r[0], "content": r[1][:100] if r[1] else "", "sender_name": r[2], "group_id": r[3], "timestamp": r[4]}
                 for r in rows
             ]
+
+        @app.post("/api/tags/merge")
+        async def merge_tags(body: dict):
+            """合并多个 Tag 到目标 Tag。"""
+            source_ids = body.get("source_ids", [])
+            target_id = body.get("target_id")
+            if not source_ids or not target_id:
+                return {"error": "source_ids and target_id required"}
+            if target_id in source_ids:
+                return {"error": "target_id cannot be in source_ids"}
+
+            # 获取目标 Tag 信息
+            target = self.db.conn.execute(
+                "SELECT id, name, aliases FROM tags WHERE id = ?", (target_id,)
+            ).fetchone()
+            if not target:
+                return {"error": f"target tag {target_id} not found"}
+
+            merged_names = []
+            for src_id in source_ids:
+                src = self.db.conn.execute(
+                    "SELECT id, name FROM tags WHERE id = ?", (src_id,)
+                ).fetchone()
+                if not src:
+                    continue
+                merged_names.append(src[1])
+                # 将 memory_tags 指向目标
+                self.db.conn.execute(
+                    "UPDATE OR IGNORE memory_tags SET tag_id = ? WHERE tag_id = ?",
+                    (target_id, src_id),
+                )
+                # 删除冲突的重复关联
+                self.db.conn.execute(
+                    "DELETE FROM memory_tags WHERE tag_id = ?", (src_id,)
+                )
+                # 删除源 Tag
+                self.db.conn.execute("DELETE FROM tags WHERE id = ?", (src_id,))
+
+            # 更新目标 Tag 的 aliases
+            existing_aliases = target[2] or ""
+            all_aliases = [a for a in existing_aliases.split(",") if a] + merged_names
+            self.db.conn.execute(
+                "UPDATE tags SET aliases = ? WHERE id = ?",
+                (",".join(all_aliases), target_id),
+            )
+            self.db.conn.commit()
+            return {"merged": len(merged_names), "target_id": target_id, "aliases": all_aliases}
+
+        @app.put("/api/tags/{tag_id}/core")
+        async def set_tag_core(tag_id: int, body: dict = None):
+            """标记/取消标记核心 Tag。"""
+            body = body or {}
+            is_core = body.get("is_core", True)
+            self.db.conn.execute(
+                "UPDATE tags SET is_core = ? WHERE id = ?", (1 if is_core else 0, tag_id)
+            )
+            self.db.conn.commit()
+            return {"tag_id": tag_id, "is_core": is_core}
+
+        @app.post("/api/tags/cleanup")
+        async def cleanup_low_quality_tags():
+            """清理低质 Tag（frequency=1 且 confidence<0.5）。"""
+            # 找出低质 Tag
+            low_quality = self.db.conn.execute("""
+                SELECT id, name FROM tags
+                WHERE frequency <= 1 AND confidence < 0.5
+            """).fetchall()
+
+            if not low_quality:
+                return {"removed": 0}
+
+            ids_to_remove = [r[0] for r in low_quality]
+            placeholders = ",".join("?" * len(ids_to_remove))
+
+            # 删除关联
+            self.db.conn.execute(
+                f"DELETE FROM memory_tags WHERE tag_id IN ({placeholders})", ids_to_remove
+            )
+            # 删除 Tag
+            self.db.conn.execute(
+                f"DELETE FROM tags WHERE id IN ({placeholders})", ids_to_remove
+            )
+            self.db.conn.commit()
+
+            return {"removed": len(ids_to_remove), "names": [r[1] for r in low_quality[:20]]}
+
+        @app.get("/api/tags/quality")
+        async def tag_quality_stats():
+            """Tag 质量统计。"""
+            total_memories = self.db.conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE LENGTH(content) >= 10"
+            ).fetchone()[0]
+            with_tags = self.db.conn.execute(
+                "SELECT COUNT(DISTINCT memory_id) FROM memory_tags"
+            ).fetchone()[0]
+            total_tags = self.db.conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0]
+            avg_tags = self.db.conn.execute(
+                "SELECT AVG(cnt) FROM (SELECT COUNT(*) as cnt FROM memory_tags GROUP BY memory_id)"
+            ).fetchone()[0] or 0
+
+            # 类型分布
+            type_dist = self.db.conn.execute(
+                "SELECT tag_type, COUNT(*) FROM tags GROUP BY tag_type"
+            ).fetchall()
+
+            # 低质 Tag 数
+            low_quality_count = self.db.conn.execute(
+                "SELECT COUNT(*) FROM tags WHERE frequency <= 1 AND confidence < 0.5"
+            ).fetchone()[0]
+
+            # 核心 Tag 数
+            core_count = self.db.conn.execute(
+                "SELECT COUNT(*) FROM tags WHERE is_core = 1"
+            ).fetchone()[0]
+
+            coverage = with_tags / total_memories if total_memories > 0 else 0
+
+            return {
+                "coverage": round(coverage, 4),
+                "total_memories": total_memories,
+                "memories_with_tags": with_tags,
+                "total_tags": total_tags,
+                "avg_tags_per_memory": round(avg_tags, 2),
+                "type_distribution": {r[0] or "unknown": r[1] for r in type_dist},
+                "low_quality_count": low_quality_count,
+                "core_tag_count": core_count,
+            }
+
+        @app.get("/api/tags/residuals")
+        async def get_tag_residuals():
+            """返回 Tag 内生残差数据（供热力图使用）。"""
+            rows = self.db.conn.execute("""
+                SELECT t.id, t.name, t.frequency, COALESCE(r.residual_energy, 0.5) as residual
+                FROM tags t
+                LEFT JOIN tag_intrinsic_residuals r ON t.id = r.tag_id
+                ORDER BY residual DESC
+                LIMIT 200
+            """).fetchall()
+            return {
+                "items": [
+                    {"id": r[0], "name": r[1], "frequency": r[2], "residual": round(r[3], 4)}
+                    for r in rows
+                ],
+                "total": len(rows),
+            }
 
         # ─── Query Test ───
 
@@ -735,6 +917,122 @@ class WaveMemoryWebUI:
                 cfg.save_config()
 
             return {"ok": True, "changed": changed, "message": "配置已保存，部分参数需重启生效"}
+
+        # ─── 热调参 API ───
+
+        @app.get("/api/config/hot")
+        async def get_hot_config():
+            """返回可热调参数及其当前值和范围。"""
+            from ..services.hot_config import HotConfig
+            hot = HotConfig()
+            params = hot.get_tunable_params()
+            current = hot.get_all()
+            for p in params:
+                p["current"] = hot.get(p["key"], p["default"])
+            return {"params": params, "config": current}
+
+        @app.post("/api/config/hot")
+        async def update_hot_config(request: Request):
+            """热更新参数（无需重启）。"""
+            from ..services.hot_config import HotConfig
+            body = await request.json()
+            hot = HotConfig()
+
+            # 校验范围
+            params_meta = {p["key"]: p for p in hot.get_tunable_params()}
+            validated = {}
+            errors = []
+
+            for key, value in body.items():
+                if key not in params_meta:
+                    errors.append(f"Unknown param: {key}")
+                    continue
+                meta = params_meta[key]
+                try:
+                    if meta["type"] == "float":
+                        value = float(value)
+                    elif meta["type"] == "int":
+                        value = int(value)
+                    if value < meta["min"] or value > meta["max"]:
+                        errors.append(f"{key}: value {value} out of range [{meta['min']}, {meta['max']}]")
+                        continue
+                    validated[key] = value
+                except (ValueError, TypeError) as e:
+                    errors.append(f"{key}: invalid value - {e}")
+
+            if validated:
+                hot.update(validated)
+
+            return {"ok": len(errors) == 0, "updated": list(validated.keys()), "errors": errors}
+
+        # ─── 查询诊断 API ───
+
+        @app.post("/api/query/debug")
+        async def query_debug(req: QueryRequest):
+            """诊断查询：返回各阶段中间结果和耗时。"""
+            import numpy as np
+
+            text = req.text
+            timing = {}
+            debug_info = {}
+
+            t0 = time.time()
+
+            # Embedding
+            query_vec = await self.embedding_service.get_embedding(text)
+            timing["embedding_ms"] = (time.time() - t0) * 1000
+
+            if query_vec is None:
+                return {"error": "Embedding failed", "timing": timing}
+
+            # EPA
+            t1 = time.time()
+            epa_result = {}
+            if self.epa and hasattr(self.epa, "initialized") and self.epa.initialized:
+                epa_result = self.epa.analyze(query_vec)
+            timing["epa_ms"] = (time.time() - t1) * 1000
+            debug_info["epa"] = epa_result
+
+            # Tag 匹配
+            t2 = time.time()
+            matched_tags = []
+            if self.tag_index and self.tag_index.count >= 10:
+                tag_results = self.tag_index.search(query_vec, k=10)
+                for tid, dist in tag_results:
+                    sim = 1.0 - dist
+                    if sim > 0.2:
+                        matched_tags.append({"tag_id": tid, "similarity": round(sim, 4)})
+            timing["tag_match_ms"] = (time.time() - t2) * 1000
+            debug_info["matched_tags"] = matched_tags[:10]
+
+            # Spike 传播
+            t3 = time.time()
+            spike_result = {}
+            if self.spike_router and matched_tags:
+                seed_tags = [{"tag_id": t["tag_id"], "weight": t["similarity"]} for t in matched_tags[:10]]
+                spike_result = self.spike_router.propagate(seed_tags, epa_result=epa_result)
+                # 序列化
+                spike_result = {
+                    "activated_count": len(spike_result.get("activated_tags", [])),
+                    "emergent_count": sum(1 for t in spike_result.get("activated_tags", []) if t.get("is_emergent")),
+                    "energy_field_size": len(spike_result.get("energy_field", {})),
+                    "top_energies": sorted(
+                        [{"tag_id": k, "energy": round(v, 4)} for k, v in spike_result.get("energy_field", {}).items()],
+                        key=lambda x: x["energy"], reverse=True
+                    )[:10],
+                }
+            timing["spike_ms"] = (time.time() - t3) * 1000
+            debug_info["spike"] = spike_result
+
+            # 检索
+            t4 = time.time()
+            results = self.memory_index.search(query_vec, k=10)
+            timing["search_ms"] = (time.time() - t4) * 1000
+            debug_info["raw_results"] = len(results)
+
+            timing["total_ms"] = (time.time() - t0) * 1000
+
+            return {"timing": timing, "debug": debug_info}
 
         # ─── LLM Tag 提取（使用配置中固定的 provider） ───
 

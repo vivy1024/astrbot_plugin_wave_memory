@@ -18,13 +18,18 @@ from .engine.vector_index import VectorIndex
 from .engine.embedding import EmbeddingService
 from .engine.query_engine import QueryEngine
 from .engine.cooccurrence import CooccurrenceMatrix
+from .engine.directed_cooccurrence import DirectedCooccurrence, CooccurrenceScheduler
 from .engine.spike_routing import SpikeRouter
 from .engine.residual_pyramid import ResidualPyramid
 from .engine.geodesic_rerank import GeodesicReranker
 from .engine.epa import EPAModule
+from .engine.intrinsic_residual import IntrinsicResidualCalculator
 from .services.message_writer import MessageWriter
 from .services.tag_extractor import TagExtractor
+from .services.tag_job import TagBackfillJob
+from .services.hot_config import HotConfig
 from .tools.memory_search import WaveMemorySearchTool, WaveMemoryRememberTool
+from .tools.deep_search import WaveMemoryDeepSearchTool
 
 
 @register(
@@ -61,6 +66,7 @@ class WaveMemoryPlugin(Star):
         self.enable_pyramid = query_cfg.get("enable_residual_pyramid", True)
         self.enable_epa = query_cfg.get("enable_epa", False)
         self.enable_geodesic = query_cfg.get("enable_geodesic_rerank", False)
+        self.enable_shotgun = query_cfg.get("enable_shotgun", False)
         self.max_memories = int(storage_cfg.get("max_memories", 100000))
 
         # WebUI 配置
@@ -110,11 +116,23 @@ class WaveMemoryPlugin(Star):
             dimension=self.dimension,
         )
 
-        # 共现矩阵
-        self.cooccurrence = CooccurrenceMatrix(self.db)
+        # 共现矩阵（有向序位）
+        self.cooccurrence = DirectedCooccurrence(self.db)
+        self.intrinsic_residual = IntrinsicResidualCalculator(
+            db=self.db, cooccurrence=self.cooccurrence
+        )
+        self.cooccurrence_scheduler = CooccurrenceScheduler(
+            cooccurrence=self.cooccurrence,
+            threshold_pct=0.01,
+            cooldown_sec=300,
+            on_rebuild_complete=self._on_cooccurrence_rebuilt,
+        )
 
         # 脉冲传播
-        self.spike_router = SpikeRouter(self.cooccurrence) if self.enable_spike else None
+        self.spike_router = SpikeRouter(
+            self.cooccurrence,
+            residual_map=self.intrinsic_residual.load(),
+        ) if self.enable_spike else None
 
         # 残差金字塔
         self.residual_pyramid = ResidualPyramid(self.tag_index) if self.enable_pyramid else None
@@ -124,6 +142,17 @@ class WaveMemoryPlugin(Star):
 
         # 测地线重排
         self.geodesic = GeodesicReranker(self.db) if self.enable_geodesic else None
+
+        # 热配置
+        self.hot_config = HotConfig(initial_config={
+            "spike": {"firing_threshold": 0.10, "base_decay": 0.25, "wormhole_decay": 0.70,
+                      "tension_threshold": 1.0, "max_hops": 4},
+            "query": {"min_similarity": self.min_similarity, "boost_alpha_base": 0.3},
+            "geodesic": {"energy_weight": 0.3},
+            "residual": {"boost_range": 0.6},
+        })
+        if self.spike_router:
+            self.hot_config.on_change(self.spike_router.on_config_change)
 
         # 查询引擎（注入所有模块）
         self.query_engine = QueryEngine(
@@ -146,6 +175,7 @@ class WaveMemoryPlugin(Star):
                 context=context,
                 provider_id=self.tag_llm_provider_id,
                 max_tags=self.max_tags,
+                blacklist=tag_cfg.get("tag_blacklist", ""),
             )
 
         # 异步写入器
@@ -154,6 +184,7 @@ class WaveMemoryPlugin(Star):
             memory_index=self.memory_index,
             embedding_service=self.embedding_service,
             tag_extractor=self.tag_extractor,
+            on_tags_written=self.cooccurrence_scheduler.notify_tag_change,
         )
 
         logger.info(
@@ -187,7 +218,8 @@ class WaveMemoryPlugin(Star):
         # 注册 LLM 工具
         search_tool = WaveMemorySearchTool(query_engine=self.query_engine)
         remember_tool = WaveMemoryRememberTool(writer=self.writer)
-        self.context.add_llm_tools(search_tool, remember_tool)
+        deep_search_tool = WaveMemoryDeepSearchTool(db=self.db)
+        self.context.add_llm_tools(search_tool, remember_tool, deep_search_tool)
 
         # 启动 WebUI
         if self.webui_enabled:
@@ -218,10 +250,29 @@ class WaveMemoryPlugin(Star):
         else:
             self.webui = None
 
+        # 启动后台 Tag 补全（覆盖率 < 90% 时自动触发）
+        self.tag_job = TagBackfillJob(
+            db=self.db,
+            tag_extractor=self.tag_extractor,
+            embedding_service=self.embedding_service,
+            tag_index=self.tag_index,
+            config=tag_cfg,
+        )
+        tag_coverage = self.tag_job.get_coverage()
+        if tag_coverage < 0.90:
+            logger.info(
+                f"[WaveMemory] Tag coverage {tag_coverage:.1%} < 90%, starting backfill job"
+            )
+            self.tag_job.start()
+        else:
+            logger.info(f"[WaveMemory] Tag coverage {tag_coverage:.1%}, backfill not needed")
+
         logger.info("[WaveMemory] Fully initialized")
 
     async def terminate(self):
         """插件卸载时清理。"""
+        if hasattr(self, 'tag_job') and self.tag_job:
+            self.tag_job.stop()
         if hasattr(self, 'webui') and self.webui:
             self.webui.stop()
         self.writer.stop()
@@ -247,11 +298,22 @@ class WaveMemoryPlugin(Star):
         group_id = event.get_group_id()
 
         try:
-            memories = await self.query_engine.query(
-                text=message,
-                group_id=group_id,
-                top_k=self.inject_top_k,
-            )
+            # 霰弹枪模式：多路检索
+            if self.enable_shotgun:
+                # 获取最近上下文消息
+                context_messages = self._get_recent_messages(event, max_messages=8)
+                memories = await self.query_engine.shotgun_query(
+                    text=message,
+                    context_messages=context_messages,
+                    group_id=group_id,
+                    top_k=self.inject_top_k,
+                )
+            else:
+                memories = await self.query_engine.query(
+                    text=message,
+                    group_id=group_id,
+                    top_k=self.inject_top_k,
+                )
 
             if memories:
                 injection = self.query_engine.format_injection(memories)
@@ -345,8 +407,35 @@ class WaveMemoryPlugin(Star):
             self.tag_index.save()
             logger.info(f"[WaveMemory] Tag index rebuilt: {len(ids)} vectors")
 
+    def _get_recent_messages(self, event, max_messages: int = 8) -> list[str]:
+        """从事件上下文中获取最近的消息文本。"""
+        try:
+            # 从数据库获取最近消息
+            group_id = event.get_group_id()
+            rows = self.db.conn.execute(
+                """SELECT content FROM memories
+                   WHERE group_id = ? AND content IS NOT NULL
+                   ORDER BY created_at DESC LIMIT ?""",
+                (group_id, max_messages),
+            ).fetchall()
+            return [r[0] for r in reversed(rows)] if rows else []
+        except Exception:
+            return []
+
     async def _rebuild_cooccurrence(self):
         self.cooccurrence.rebuild()
+
+    async def _on_cooccurrence_rebuilt(self):
+        """共现矩阵重建完成后，重算内生残差。"""
+        try:
+            residuals = self.intrinsic_residual.compute_all()
+            if residuals:
+                self.intrinsic_residual.persist(residuals)
+                # 更新 SpikeRouter 的残差 map
+                if self.spike_router:
+                    self.spike_router.residual_map = residuals
+        except Exception as e:
+            logger.warning(f"[WaveMemory] Intrinsic residual computation failed: {e}")
 
     async def _init_epa(self):
         self.epa.initialize()

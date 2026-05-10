@@ -13,6 +13,7 @@ from .database import WaveMemoryDB
 from .vector_index import VectorIndex
 from .embedding import EmbeddingService
 from .cooccurrence import CooccurrenceMatrix
+from .context_segmenter import ContextSegmenter
 from .spike_routing import SpikeRouter
 from .residual_pyramid import ResidualPyramid
 from .epa import EPAModule
@@ -176,7 +177,8 @@ class QueryEngine:
         # ─── 脉冲传播：沿共现图扩散 ───
         if self.enable_spike and self.spike_router and self.cooccurrence and self.cooccurrence.node_count > 0:
             seed_tags = [{"tag_id": tid, "weight": w} for tid, w in matched_tags[:10]]
-            spike_result = self.spike_router.propagate(seed_tags)
+            epa_for_spike = {"logic_depth": logic_depth, "entropy": entropy}
+            spike_result = self.spike_router.propagate(seed_tags, epa_result=epa_for_spike)
             energy_field = spike_result.get("energy_field", {})
 
             # 收集涌现节点
@@ -233,6 +235,145 @@ class QueryEngine:
             self._tag_vec_cache = {t[0]: t[2] for t in tag_data}
             self._tag_vec_cache_ts = now
         return self._tag_vec_cache
+
+    async def shotgun_query(
+        self,
+        text: str,
+        context_messages: list[str] = None,
+        group_id: Optional[str] = None,
+        top_k: int = 5,
+    ) -> list[dict]:
+        """多路霰弹枪检索：主查询 + 上下文段查询，SVD 去重。
+
+        Args:
+            text: 当前查询文本
+            context_messages: 最近 N 轮消息文本列表
+            group_id: 群组 ID 过滤
+            top_k: 最终返回数量
+        """
+        start = time.time()
+
+        # 主查询向量
+        query_vec = await self.embedding.get_embedding(text)
+        if query_vec is None:
+            return []
+
+        # 主路：浪潮增强检索
+        search_vec, energy_field = self._wave_boost(query_vec)
+        main_results = self.memory_index.search(search_vec, k=top_k * 3)
+
+        # 段路：上下文分段检索
+        segment_results = []
+        if context_messages:
+            segmenter = ContextSegmenter(
+                similarity_threshold=float(self.config.get("shotgun_similarity_threshold", 0.70)),
+                max_segments=int(self.config.get("shotgun_max_segments", 3)),
+            )
+            # 获取上下文消息的向量
+            ctx_vecs = await self.embedding.get_embeddings(context_messages)
+            if ctx_vecs:
+                segment_vecs = segmenter.segment(ctx_vecs)
+                for seg_vec in segment_vecs:
+                    seg_results = self.memory_index.search(seg_vec, k=top_k * 2)
+                    segment_results.extend(seg_results)
+
+        # 合并去重（按 memory_id）
+        all_candidates = {}
+        for mem_id, dist in main_results:
+            all_candidates[mem_id] = min(all_candidates.get(mem_id, 999), dist)
+        for mem_id, dist in segment_results:
+            all_candidates[mem_id] = min(all_candidates.get(mem_id, 999), dist)
+
+        if not all_candidates:
+            return []
+
+        # 获取记忆内容
+        memory_ids = list(all_candidates.keys())
+        memories = self.db.get_memories_by_ids(memory_ids)
+
+        if group_id:
+            memories = [m for m in memories if m["group_id"] == group_id]
+
+        # 计算分数
+        for mem in memories:
+            dist = all_candidates.get(mem["id"], 1.0)
+            mem["similarity"] = 1.0 - dist
+            mem["score"] = mem["similarity"] * mem.get("importance", 1.0)
+
+        # 测地线重排
+        if self.enable_geodesic and self.geodesic and energy_field:
+            candidates_for_rerank = [{"id": m["id"], "score": m["score"]} for m in memories]
+            reranked = self.geodesic.rerank(candidates_for_rerank, energy_field)
+            rerank_scores = {c["id"]: c["score"] for c in reranked}
+            for mem in memories:
+                if mem["id"] in rerank_scores:
+                    mem["score"] = rerank_scores[mem["id"]]
+
+        # SVD 主题去重
+        memories = [m for m in memories if m["score"] >= self.min_similarity]
+        if len(memories) > top_k:
+            memories = self._svd_dedup(memories, query_vec, top_k)
+        else:
+            memories.sort(key=lambda m: m["score"], reverse=True)
+            memories = memories[:top_k]
+
+        # 更新访问记录
+        if memories:
+            self.db.touch_memories([m["id"] for m in memories])
+
+        total_ms = (time.time() - start) * 1000
+        logger.debug(
+            f"[WaveMemory] Shotgun query done: {len(memories)} results, "
+            f"candidates={len(all_candidates)}, total={total_ms:.0f}ms"
+        )
+        return memories
+
+    def _svd_dedup(self, memories: list[dict], query_vec: np.ndarray, top_k: int) -> list[dict]:
+        """SVD 主题去重：Gram-Schmidt 残差选择，确保结果多样性。"""
+        # 获取记忆向量
+        mem_ids = [m["id"] for m in memories]
+        mem_vectors = self.db.get_memory_vectors(mem_ids)
+
+        if not mem_vectors:
+            memories.sort(key=lambda m: m["score"], reverse=True)
+            return memories[:top_k]
+
+        # 按 score 排序
+        memories.sort(key=lambda m: m["score"], reverse=True)
+
+        # Gram-Schmidt 残差选择
+        selected = []
+        selected_vecs = []
+
+        for mem in memories:
+            if len(selected) >= top_k:
+                break
+
+            vec = mem_vectors.get(mem["id"])
+            if vec is None:
+                selected.append(mem)
+                continue
+
+            # 计算该向量在已选向量子空间中的残差
+            if selected_vecs:
+                basis = np.vstack(selected_vecs)
+                # 投影
+                proj_coeffs = basis @ vec
+                projection = proj_coeffs @ basis
+                residual = vec - projection
+                residual_norm = np.linalg.norm(residual)
+
+                # 如果残差太小（与已选内容太相似），跳过
+                if residual_norm < 0.3:
+                    continue
+
+            # 选中
+            selected.append(mem)
+            norm = np.linalg.norm(vec)
+            if norm > 1e-8:
+                selected_vecs.append(vec / norm)
+
+        return selected
 
     def format_injection(self, memories: list[dict], template: str = "") -> str:
         """将记忆列表格式化为注入文本。"""

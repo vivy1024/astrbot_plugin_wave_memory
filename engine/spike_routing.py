@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Union
 
 from .cooccurrence import CooccurrenceMatrix
+from .directed_cooccurrence import DirectedCooccurrence
 
 
 class SpikeRouter:
@@ -15,7 +17,7 @@ class SpikeRouter:
 
     def __init__(
         self,
-        cooccurrence: CooccurrenceMatrix,
+        cooccurrence: Union[CooccurrenceMatrix, DirectedCooccurrence],
         max_hops: int = 4,
         base_momentum: float = 2.0,
         firing_threshold: float = 0.10,
@@ -24,6 +26,7 @@ class SpikeRouter:
         tension_threshold: float = 1.0,
         max_emergent_nodes: int = 50,
         max_neighbors_per_node: int = 20,
+        residual_map: dict = None,
     ):
         self.cooccurrence = cooccurrence
         self.max_hops = max_hops
@@ -34,13 +37,28 @@ class SpikeRouter:
         self.tension_threshold = tension_threshold
         self.max_emergent_nodes = max_emergent_nodes
         self.max_neighbors_per_node = max_neighbors_per_node
+        self.residual_map = residual_map or {}  # {tag_id: residual_energy}
 
-    def propagate(self, seed_tags: list[dict]) -> dict:
+    def on_config_change(self, changed: dict):
+        """HotConfig 变更回调。"""
+        mapping = {
+            "spike.firing_threshold": "firing_threshold",
+            "spike.base_decay": "base_decay",
+            "spike.wormhole_decay": "wormhole_decay",
+            "spike.tension_threshold": "tension_threshold",
+            "spike.max_hops": "max_hops",
+        }
+        for key, attr in mapping.items():
+            if key in changed:
+                setattr(self, attr, changed[key]["new"])
+
+    def propagate(self, seed_tags: list[dict], epa_result: dict = None) -> dict:
         """执行脉冲传播。
 
         Args:
             seed_tags: [{"tag_id": int, "weight": float}, ...]
                        种子节点及其初始能量
+            epa_result: EPA 分析结果，含 logic_depth 等字段
 
         Returns:
             {
@@ -51,6 +69,13 @@ class SpikeRouter:
         if not seed_tags or self.cooccurrence.node_count == 0:
             return {"activated_tags": seed_tags, "energy_field": {}}
 
+        # 动态动量：聚焦查询动量低，发散查询动量高
+        if epa_result and "logic_depth" in epa_result:
+            logic_depth = epa_result["logic_depth"]  # 0~1, 1=高度聚焦
+            dynamic_momentum = 1.0 + (1.0 - logic_depth) * 3.0
+        else:
+            dynamic_momentum = self.base_momentum
+
         # 初始化能量场
         energy_field: dict[int, float] = {}
         seed_ids = set()
@@ -60,7 +85,7 @@ class SpikeRouter:
         for seed in seed_tags:
             tid = seed["tag_id"]
             energy = seed["weight"]
-            momentum = self.base_momentum
+            momentum = dynamic_momentum
             energy_field[tid] = energy
             seed_ids.add(tid)
             active_nodes.append({
@@ -85,8 +110,9 @@ class SpikeRouter:
                 )
 
                 for neighbor_id, cooc_weight in neighbors:
-                    # 计算张力
-                    tension = cooc_weight * node["energy"]
+                    # 计算张力（残差加权：高残差邻居更容易触发虫洞）
+                    neighbor_residual = self.residual_map.get(neighbor_id, 0.5)
+                    tension = cooc_weight * node["energy"] * (0.5 + neighbor_residual)
 
                     # 决定衰减方式
                     if tension >= self.tension_threshold:
@@ -101,6 +127,10 @@ class SpikeRouter:
                     # 微电流过滤
                     if propagated_energy < 0.01:
                         continue
+
+                    # 内生残差加权：残差越高的节点接收更多能量
+                    residual_boost = self.residual_map.get(neighbor_id, 0.5)
+                    propagated_energy *= (0.7 + 0.6 * residual_boost)  # [0.7, 1.3] 范围
 
                     # 累积能量
                     energy_field[neighbor_id] = energy_field.get(neighbor_id, 0) + propagated_energy

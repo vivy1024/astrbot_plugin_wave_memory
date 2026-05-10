@@ -27,6 +27,7 @@ class MessageWriter:
         tag_extractor: Optional[TagExtractor] = None,
         batch_size: int = 10,
         flush_interval: float = 30.0,
+        on_tags_written=None,
     ):
         self.db = db
         self.memory_index = memory_index
@@ -34,6 +35,7 @@ class MessageWriter:
         self.tag_extractor = tag_extractor
         self.batch_size = batch_size
         self.flush_interval = flush_interval
+        self.on_tags_written = on_tags_written  # callback(count: int)
 
         self._queue: asyncio.Queue = asyncio.Queue()
         self._task: Optional[asyncio.Task] = None
@@ -158,6 +160,10 @@ class MessageWriter:
                     (memory_id, tid, pos, tag_info.get("confidence", 0.8)),
                 )
             self.db.conn.commit()
+
+            # 通知共现矩阵调度器
+            if self.on_tags_written and tag_ids:
+                self.on_tags_written(len(tag_ids))
 
         except Exception as e:
             logger.debug(f"[WaveMemory] Tag extraction failed for memory {memory_id}: {e}")
