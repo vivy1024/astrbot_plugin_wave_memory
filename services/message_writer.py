@@ -116,7 +116,7 @@ class MessageWriter:
                 # 异步提取 Tag（不等待完成）
                 if self.tag_extractor:
                     asyncio.create_task(
-                        self._extract_and_link_tags(memory_id, item["content"])
+                        self._extract_and_link_tags(memory_id, item["content"], item.get("sender_name", ""))
                     )
 
                 self._write_count += 1
@@ -130,23 +130,34 @@ class MessageWriter:
             self._write_count = 0
             logger.debug(f"[WaveMemory] Index saved, total: {self.memory_index.count}")
 
-    async def _extract_and_link_tags(self, memory_id: int, content: str):
-        """提取 Tag 并关联到记忆。"""
+    async def _extract_and_link_tags(self, memory_id: int, content: str, sender_name: str = ""):
+        """提取结构化 Tag 并关联到记忆。"""
         try:
-            tags = await self.tag_extractor.extract_tags(content)
+            tags = await self.tag_extractor.extract_tags(content, sender=sender_name)
             if not tags:
                 return
 
-            # 获取 Tag 向量（复用 embedding）
-            tag_vecs = await self.embedding.get_embeddings(tags)
+            # 获取 Tag 名称列表用于 embedding
+            tag_names = [t["name"] for t in tags]
+            tag_vecs = await self.embedding.get_embeddings(tag_names)
 
             tag_ids = []
-            for tag_name, tag_vec in zip(tags, tag_vecs):
-                tid = self.db.add_tag(tag_name, tag_vec)
+            for tag_info, tag_vec in zip(tags, tag_vecs):
+                tid = self.db.add_tag_extended(
+                    name=tag_info["name"],
+                    tag_type=tag_info.get("type", "keyword"),
+                    vector=tag_vec,
+                    confidence=tag_info.get("confidence", 0.8),
+                )
                 tag_ids.append(tid)
 
-            # 关联
-            self.db.link_memory_tags(memory_id, tag_ids)
+            # 关联（带 relevance = confidence）
+            for pos, (tid, tag_info) in enumerate(zip(tag_ids, tags), 1):
+                self.db.conn.execute(
+                    "INSERT OR IGNORE INTO memory_tags (memory_id, tag_id, position, relevance) VALUES (?, ?, ?, ?)",
+                    (memory_id, tid, pos, tag_info.get("confidence", 0.8)),
+                )
+            self.db.conn.commit()
 
         except Exception as e:
             logger.debug(f"[WaveMemory] Tag extraction failed for memory {memory_id}: {e}")

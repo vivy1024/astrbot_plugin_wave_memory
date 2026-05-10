@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wave Memory · 管理面板</title>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { colors: {
+                primary: 'var(--primary)',
+                'primary-dim': 'var(--primary-dim)',
+            }}}
+        }
+    </script>
+    <style>
+        /* ─── Theme Variables ─── */
+        :root {
+            --bg: #f8fafc; --fg: #1e293b; --card: #ffffff; --card-hover: #f1f5f9;
+            --border: rgba(0,0,0,0.08); --border-hover: rgba(139,92,246,0.3);
+            --muted: #f1f5f9; --muted-fg: #64748b;
+            --primary: #7c3aed; --primary-dim: rgba(124,58,237,0.1); --primary-fg: #ffffff;
+            --success: #10b981; --warning: #f59e0b; --danger: #ef4444;
+            --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+            --shadow-lg: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        html.dark {
+            --bg: #0a0e17; --fg: #e2e8f0; --card: #0f1419; --card-hover: #1a2030;
+            --border: rgba(255,255,255,0.06); --border-hover: rgba(139,92,246,0.4);
+            --muted: #1e2530; --muted-fg: #64748b;
+            --primary: #8b5cf6; --primary-dim: rgba(139,92,246,0.15); --primary-fg: #ffffff;
+            --success: #10b981; --warning: #f59e0b; --danger: #ef4444;
+            --shadow: 0 1px 3px rgba(0,0,0,0.3); --shadow-lg: 0 4px 12px rgba(0,0,0,0.4);
+        }
+
+        body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+
+        /* ─── Component: Card ─── */
+        .card {
+            background: var(--card); border: 1px solid var(--border);
+            border-radius: 12px; padding: 20px; box-shadow: var(--shadow);
+            transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+        }
+        .card-hover:hover { border-color: var(--border-hover); box-shadow: var(--shadow-lg); transform: translateY(-1px); }
+
+        /* ─── Component: Button ─── */
+        .btn {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 500;
+            transition: all 0.15s; cursor: pointer; border: none; outline: none;
+        }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-primary { background: var(--primary); color: var(--primary-fg); }
+        .btn-primary:hover:not(:disabled) { opacity: 0.85; }
+        .btn-ghost { background: var(--primary-dim); color: var(--primary); }
+        .btn-ghost:hover:not(:disabled) { background: var(--primary); color: var(--primary-fg); }
+        .btn-muted { background: var(--muted); color: var(--muted-fg); }
+        .btn-muted:hover:not(:disabled) { color: var(--fg); }
+
+        /* ─── Component: Input ─── */
+        .input {
+            padding: 6px 12px; border-radius: 8px; font-size: 12px;
+            background: var(--muted); border: 1px solid var(--border); color: var(--fg);
+            outline: none; transition: border-color 0.15s;
+        }
+        .input:focus { border-color: var(--primary); }
+        .input::placeholder { color: var(--muted-fg); }
+
+        /* ─── Component: Badge ─── */
+        .badge { padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+        .badge-person { background: rgba(236,72,153,0.12); color: #f472b6; }
+        .badge-topic { background: rgba(59,130,246,0.12); color: #60a5fa; }
+        .badge-entity { background: rgba(239,68,68,0.12); color: #f87171; }
+        .badge-event { background: rgba(16,185,129,0.12); color: #34d399; }
+        .badge-emotion { background: rgba(245,158,11,0.12); color: #fbbf24; }
+        .badge-fact { background: rgba(99,102,241,0.12); color: #818cf8; }
+        .badge-location { background: rgba(20,184,166,0.12); color: #2dd4bf; }
+        .badge-time { background: rgba(168,85,247,0.12); color: #c084fc; }
+        .badge-keyword { background: var(--primary-dim); color: var(--primary); }
+
+        /* ─── Component: Stat Card ─── */
+        .stat-card { transition: all 0.2s; }
+        .stat-card:hover { border-color: var(--border-hover); transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+
+        /* ─── Component: Table ─── */
+        .table-row { transition: background 0.1s; }
+        .table-row:hover { background: var(--primary-dim); }
+
+        /* ─── Component: Progress ─── */
+        .progress-bar { transition: width 0.5s ease; }
+
+        /* ─── Utility ─── */
+        .sse-log { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 11px; line-height: 1.7; }
+        .glass-header { background: color-mix(in srgb, var(--card) 85%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+        .tab-btn { transition: all 0.15s; position: relative; }
+        .tab-btn.active { color: var(--primary); }
+        .tab-btn.active::after { content:''; position:absolute; bottom:-2px; left:25%; right:25%; height:2px; background:var(--primary); border-radius:1px; }
+
+        /* ─── Scrollbar ─── */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--primary-dim); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--primary); }
+
+        /* ─── Animations ─── */
+        @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+<body class="bg-[var(--bg)] text-[var(--fg)] min-h-screen transition-colors duration-300" x-data="dashboard()">
+
+<!-- Header -->
+<header class="fixed top-0 left-0 right-0 z-50 glass-header border-b px-6 py-3 flex items-center justify-between" style="border-color:var(--border)">
+    <div class="flex items-center gap-4">
+        <div class="flex items-center gap-2">
+            <div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background:var(--primary-dim)">
+                <svg class="w-4 h-4" style="color:var(--primary)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                </svg>
+            </div>
+            <span class="text-sm font-semibold">Wave Memory</span>
+        </div>
+        <nav class="flex gap-1 ml-4">
+            <button class="tab-btn px-3 py-1.5 text-xs rounded-md" :class="tab==='overview' && 'active'" @click="tab='overview'">概览</button>
+            <button class="tab-btn px-3 py-1.5 text-xs rounded-md" :class="tab==='memories' && 'active'" @click="tab='memories'; loadMemories()">记忆管理</button>
+            <button class="tab-btn px-3 py-1.5 text-xs rounded-md" :class="tab==='import' && 'active'" @click="tab='import'; loadProviders()">智能导入</button>
+            <button class="tab-btn px-3 py-1.5 text-xs rounded-md" :class="tab==='config' && 'active'" @click="tab='config'">配置</button>
+        </nav>
+    </div>
+    <div class="flex items-center gap-2">
+        <!-- Theme Toggle -->
+        <button @click="toggleTheme()" class="btn btn-muted" :title="isDark ? '切换亮色' : '切换暗色'">
+            <svg x-show="isDark" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path stroke-linecap="round" d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+            <svg x-show="!isDark" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+        </button>
+        <!-- Neural Cloud Link -->
+        <a href="/explore" class="btn btn-ghost">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+            神经云图
+        </a>
+    </div>
+</header>
+
+<!-- Main Content -->
+<main class="pt-16 px-6 pb-6 max-w-7xl mx-auto">
+
+    <!-- ═══ 概览 Tab ═══ -->
+    <div x-show="tab==='overview'" x-cloak>
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
+            <div class="card card-hover stat-card">
+                <div class="text-xs" style="color:var(--muted-fg)">记忆总量</div>
+                <div class="text-2xl font-bold mt-1" x-text="sys.memories?.total || '-'"></div>
+                <div class="text-xs mt-2" style="color:var(--muted-fg)">向量覆盖 <span style="color:var(--success)" x-text="sys.coverage?.vector_pct + '%'"></span></div>
+            </div>
+            <div class="card card-hover stat-card">
+                <div class="text-xs" style="color:var(--muted-fg)">Tag 总数</div>
+                <div class="text-2xl font-bold mt-1" x-text="sys.tags?.total || '-'"></div>
+                <div class="text-xs mt-2" style="color:var(--muted-fg)">结构化 <span style="color:var(--primary)" x-text="sys.tags?.structured || 0"></span></div>
+            </div>
+            <div class="card card-hover stat-card">
+                <div class="text-xs" style="color:var(--muted-fg)">Tag 覆盖率</div>
+                <div class="text-2xl font-bold mt-1" :style="`color:var(${(sys.coverage?.tag_pct||0) > 50 ? '--success' : '--warning'})`" x-text="(sys.coverage?.tag_pct || 0) + '%'"></div>
+                <div class="w-full h-1.5 rounded-full mt-3" style="background:var(--muted)">
+                    <div class="h-full rounded-full progress-bar" style="background:var(--primary)" :style="`width:${sys.coverage?.tag_pct || 0}%`"></div>
+                </div>
+            </div>
+            <div class="card card-hover stat-card">
+                <div class="text-xs" style="color:var(--muted-fg)">共现图谱</div>
+                <div class="text-2xl font-bold mt-1" x-text="sys.cooccurrence?.nodes || '-'"></div>
+                <div class="text-xs mt-2" style="color:var(--muted-fg)"><span x-text="sys.cooccurrence?.edges || 0"></span> 条边</div>
+            </div>
+        </div>
+
+        <!-- Tag Type Distribution -->
+        <div class="card mt-4">
+            <h3 class="text-sm font-medium mb-3">Tag 类型分布</h3>
+            <div class="flex gap-2 flex-wrap">
+                <template x-for="(count, type) in (sys.tags?.type_distribution || {})" :key="type">
+                    <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg" style="background:var(--muted)">
+                        <span :class="tagBadgeClass(type)" x-text="type"></span>
+                        <span class="text-xs font-mono" x-text="count"></span>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- System Health -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+            <div class="card">
+                <h3 class="text-sm font-medium mb-3">引擎状态</h3>
+                <div class="space-y-2.5 text-xs">
+                    <div class="flex justify-between"><span style="color:var(--muted-fg)">EPA 基底</span><span :style="`color:var(${sys.epa?.initialized ? '--success' : '--danger'})`" x-text="sys.epa?.initialized ? '✓ 已初始化' : '✗ 未就绪'"></span></div>
+                    <div class="flex justify-between"><span style="color:var(--muted-fg)">脉冲传播</span><span style="color:var(--success)">✓ 就绪</span></div>
+                    <div class="flex justify-between"><span style="color:var(--muted-fg)">残差金字塔</span><span style="color:var(--success)">✓ 就绪</span></div>
+                    <div class="flex justify-between"><span style="color:var(--muted-fg)">测地线重排</span><span style="color:var(--success)">✓ 就绪</span></div>
+                </div>
+            </div>
+            <div class="card">
+                <h3 class="text-sm font-medium mb-3">待处理</h3>
+                <div class="space-y-2.5 text-xs">
+                    <div class="flex justify-between"><span style="color:var(--muted-fg)">无 Tag 记忆</span><span style="color:var(--warning)" x-text="(sys.memories?.total||0) - (sys.memories?.with_tags||0)"></span></div>
+                    <div class="flex justify-between"><span style="color:var(--muted-fg)">无向量记忆</span><span style="color:var(--muted-fg)" x-text="(sys.memories?.total||0) - (sys.memories?.with_vector||0)"></span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ 记忆管理 Tab ═══ -->
+    <div x-show="tab==='memories'" x-cloak>
+        <!-- 筛选栏 -->
+        <div class="flex flex-wrap items-center gap-2 mt-4 mb-3">
+            <input type="text" x-model="memSearch" @keyup.enter="searchMemories()" placeholder="搜索内容..." class="input w-48">
+            <select x-model="memFilterSender" @change="searchMemories()" class="input w-32">
+                <option value="">全部发送者</option>
+                <template x-for="s in senderList" :key="s.name">
+                    <option :value="s.name" x-text="`${s.name} (${s.count})`"></option>
+                </template>
+            </select>
+            <select x-model="memFilterTags" @change="searchMemories()" class="input w-28">
+                <option value="">Tag 状态</option>
+                <option value="yes">有 Tag</option>
+                <option value="no">无 Tag</option>
+            </select>
+            <select x-model="memFilterVector" @change="searchMemories()" class="input w-28">
+                <option value="">向量状态</option>
+                <option value="yes">有向量</option>
+                <option value="no">无向量</option>
+            </select>
+            <button @click="searchMemories()" class="btn btn-ghost">搜索</button>
+            <button @click="resetFilters()" class="btn btn-muted text-xs">重置</button>
+            <div class="ml-auto text-xs" style="color:var(--muted-fg)">共 <span class="font-mono" x-text="memTotal"></span> 条</div>
+        </div>
+
+        <!-- 批量操作栏 -->
+        <div x-show="selectedIds.length > 0" class="flex items-center gap-3 mb-3 p-2.5 rounded-lg" style="background:var(--primary); background:rgba(99,102,241,0.1); border:1px solid var(--primary)">
+            <span class="text-xs font-medium" style="color:var(--primary)" x-text="`已选 ${selectedIds.length} 条`"></span>
+            <button @click="batchDelete()" class="btn btn-muted text-xs" style="color:var(--danger)">🗑 删除</button>
+            <button @click="batchReEmbed()" class="btn btn-muted text-xs">🔄 重新向量化</button>
+            <button @click="batchExtractTags()" class="btn btn-muted text-xs">🏷 提取 Tag</button>
+            <button @click="selectedIds=[]" class="btn btn-muted text-xs ml-auto">取消选择</button>
+        </div>
+
+        <!-- 表格 -->
+        <div class="card !p-0 overflow-hidden">
+            <table class="w-full text-xs">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border); color:var(--muted-fg)">
+                        <th class="px-3 py-2.5 w-8"><input type="checkbox" @change="toggleSelectAll($event)" :checked="selectedIds.length === memories.length && memories.length > 0"></th>
+                        <th class="px-3 py-2.5 text-left w-14 font-medium">ID</th>
+                        <th class="px-3 py-2.5 text-left font-medium">内容</th>
+                        <th class="px-3 py-2.5 text-left w-20 font-medium">发送者</th>
+                        <th class="px-3 py-2.5 text-left w-32 font-medium">Tags</th>
+                        <th class="px-3 py-2.5 text-left w-14 font-medium">状态</th>
+                        <th class="px-3 py-2.5 text-left w-28 font-medium">时间</th>
+                        <th class="px-3 py-2.5 text-left w-20 font-medium">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="m in memories" :key="m.id">
+                        <tr class="table-row" style="border-bottom:1px solid var(--border)">
+                            <td class="px-3 py-2"><input type="checkbox" :value="m.id" x-model.number="selectedIds"></td>
+                            <td class="px-3 py-2 font-mono" style="color:var(--muted-fg)" x-text="m.id"></td>
+                            <td class="px-3 py-2 cursor-pointer truncate max-w-sm" @click="openDetail(m.id)" x-text="m.content?.substring(0,60)"></td>
+                            <td class="px-3 py-2 truncate" style="color:var(--muted-fg)" x-text="m.sender_name || '-'"></td>
+                            <td class="px-3 py-2">
+                                <div class="flex gap-0.5 flex-wrap">
+                                    <template x-for="t in (m.tags||[]).slice(0,2)" :key="t.name">
+                                        <span :class="tagBadgeClass(t.type||'keyword')" x-text="t.name" style="font-size:10px"></span>
+                                    </template>
+                                    <span x-show="(m.tags||[]).length > 2" class="badge badge-keyword" style="font-size:10px" x-text="'+' + ((m.tags||[]).length - 2)"></span>
+                                </div>
+                            </td>
+                            <td class="px-3 py-2">
+                                <span x-show="m.has_vector" class="text-xs" style="color:var(--success)" title="有向量">●</span>
+                                <span x-show="!m.has_vector" class="text-xs" style="color:var(--danger)" title="无向量">○</span>
+                            </td>
+                            <td class="px-3 py-2 font-mono text-xs" style="color:var(--muted-fg)" x-text="formatTime(m.timestamp)"></td>
+                            <td class="px-3 py-2">
+                                <div class="flex gap-1">
+                                    <button @click="openDetail(m.id)" class="text-xs px-1.5 py-0.5 rounded" style="color:var(--primary)" title="详情">📋</button>
+                                    <button @click="deleteSingle(m.id)" class="text-xs px-1.5 py-0.5 rounded" style="color:var(--danger)" title="删除">🗑</button>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="flex justify-center items-center gap-3 mt-4">
+            <button @click="memPrev()" class="btn btn-muted" :disabled="memPage<=1">← 上一页</button>
+            <span class="text-xs font-mono" style="color:var(--muted-fg)" x-text="`${memPage} / ${memTotalPages}`"></span>
+            <button @click="memNext()" class="btn btn-muted" :disabled="memPage>=memTotalPages">下一页 →</button>
+        </div>
+
+        <!-- 详情弹窗 -->
+        <div x-show="detailOpen" x-cloak class="fixed inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.5)" @click.self="detailOpen=false">
+            <div class="w-full max-w-2xl mx-4 rounded-xl shadow-2xl p-6" style="background:var(--card-bg); border:1px solid var(--border); max-height:80vh; overflow-y:auto">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-sm font-medium">记忆详情 #<span x-text="detailData?.id"></span></h3>
+                    <button @click="detailOpen=false" class="text-lg" style="color:var(--muted-fg)">✕</button>
+                </div>
+
+                <template x-if="detailData">
+                    <div class="space-y-4">
+                        <!-- 内容编辑 -->
+                        <div>
+                            <label class="text-xs block mb-1" style="color:var(--muted-fg)">内容</label>
+                            <textarea x-model="detailData.content" class="input w-full" rows="5" style="font-size:12px; line-height:1.6"></textarea>
+                        </div>
+
+                        <!-- 元数据 -->
+                        <div class="grid grid-cols-2 gap-3 text-xs">
+                            <div><span style="color:var(--muted-fg)">发送者:</span> <span x-text="detailData.sender_name || '-'"></span></div>
+                            <div><span style="color:var(--muted-fg)">群组:</span> <span x-text="detailData.group_id || '-'"></span></div>
+                            <div><span style="color:var(--muted-fg)">重要度:</span> <input type="number" x-model.number="detailData.importance" step="0.01" min="0" max="1" class="input w-20 ml-1" style="font-size:11px"></div>
+                            <div><span style="color:var(--muted-fg)">访问次数:</span> <span x-text="detailData.access_count"></span></div>
+                            <div><span style="color:var(--muted-fg)">向量:</span> <span :style="`color:var(${detailData.has_vector ? '--success' : '--danger'})`" x-text="detailData.has_vector ? '✓ 有' : '✗ 无'"></span></div>
+                            <div><span style="color:var(--muted-fg)">时间:</span> <span x-text="formatTime(detailData.timestamp)"></span></div>
+                        </div>
+
+                        <!-- Tags -->
+                        <div>
+                            <label class="text-xs block mb-1.5" style="color:var(--muted-fg)">关联 Tags</label>
+                            <div class="flex gap-1 flex-wrap">
+                                <template x-for="t in (detailData.tags||[])" :key="t.id||t.name">
+                                    <span :class="tagBadgeClass(t.type||'keyword')" x-text="t.name"></span>
+                                </template>
+                                <span x-show="!(detailData.tags||[]).length" class="text-xs" style="color:var(--muted-fg)">无 Tag</span>
+                            </div>
+                        </div>
+
+                        <!-- 操作按钮 -->
+                        <div class="flex gap-2 pt-2" style="border-top:1px solid var(--border)">
+                            <button @click="saveDetail()" class="btn btn-primary">💾 保存修改</button>
+                            <button @click="reEmbedSingle(detailData.id)" class="btn btn-ghost">🔄 重新向量化</button>
+                            <button @click="deleteSingle(detailData.id); detailOpen=false" class="btn btn-muted" style="color:var(--danger)">🗑 删除</button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ 智能导入 Tab ═══ -->
+    <div x-show="tab==='import'" x-cloak>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+            <!-- 左侧：数据源 -->
+            <div class="card">
+                <div class="flex items-center justify-between mb-1">
+                    <h3 class="text-sm font-medium">📦 数据源导入</h3>
+                    <button @click="loadSources()" class="btn btn-muted text-xs">🔄 刷新</button>
+                </div>
+                <p class="text-xs mb-4" style="color:var(--muted-fg)">自动扫描所有已安装记忆插件（自动去重 + 向量化）</p>
+                <div class="space-y-3">
+                    <template x-for="src in importSources" :key="src.id">
+                        <div class="flex items-center justify-between p-3 rounded-lg" style="background:var(--muted); border:1px solid var(--border)">
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xs font-medium" x-text="src.name"></span>
+                                    <span x-show="src.has_adapter" class="badge badge-topic">已适配</span>
+                                    <span x-show="!src.has_adapter" class="badge badge-emotion">自动发现</span>
+                                </div>
+                                <div class="text-xs mt-0.5 truncate" style="color:var(--muted-fg)" x-text="src.description"></div>
+                            </div>
+                            <div class="flex items-center gap-2 ml-3 shrink-0">
+                                <span class="text-xs font-mono" style="color:var(--primary)" x-text="src.count.toLocaleString() + ' 条'"></span>
+                                <button @click="startImport(src)" class="btn btn-ghost" :disabled="importing">导入</button>
+                            </div>
+                        </div>
+                    </template>
+                    <div x-show="importSources.length === 0" class="text-xs text-center py-6" style="color:var(--muted-fg)">未发现可导入的数据源</div>
+                </div>
+            </div>
+
+            <!-- 右侧：LLM 智能提取 -->
+            <div class="card">
+                <h3 class="text-sm font-medium mb-1">🧠 LLM Tag 提取</h3>
+                <p class="text-xs mb-4" style="color:var(--muted-fg)">使用配置中的 tag_llm_provider 为无 Tag 记忆批量提取结构化标签</p>
+
+                <!-- Batch Size -->
+                <div class="mb-4">
+                    <label class="text-xs block mb-1.5" style="color:var(--muted-fg)">批量大小</label>
+                    <input type="number" x-model.number="llmBatchSize" min="1" max="50" class="input w-24">
+                </div>
+
+                <button @click="startLLMExtract()" class="btn btn-primary w-full justify-center py-2.5" :disabled="llmRunning">
+                    <span x-show="!llmRunning">🧠 开始 LLM 提取</span>
+                    <span x-show="llmRunning">提取中...</span>
+                </button>
+
+                <!-- 进度 -->
+                <div x-show="llmProgress > 0" class="mt-4">
+                    <div class="w-full h-2 rounded-full" style="background:var(--muted)">
+                        <div class="h-full rounded-full progress-bar" style="background:var(--primary)" :style="`width:${llmProgress*100}%`"></div>
+                    </div>
+                    <div class="text-xs mt-1.5" style="color:var(--muted-fg)" x-text="llmMessage"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 导入日志 -->
+        <div class="card mt-4" x-show="importLog.length > 0">
+            <h4 class="text-xs font-medium mb-2">导入日志</h4>
+            <div class="max-h-48 overflow-y-auto sse-log rounded-lg p-3" style="background:var(--muted); color:var(--muted-fg)">
+                <template x-for="(line, idx) in importLog" :key="idx">
+                    <div x-text="line"></div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ 配置 Tab ═══ -->
+    <div x-show="tab==='config'" x-cloak>
+        <div class="card mt-4">
+            <h3 class="text-sm font-medium mb-4">引擎参数</h3>
+            <p class="text-xs text-[var(--muted-fg)]">配置功能开发中...</p>
+        </div>
+    </div>
+
+</main>
+
+<script>
+function dashboard() {
+    return {
+        tab: 'overview',
+        isDark: true,
+        sys: {},
+        // 记忆管理
+        memories: [],
+        memSearch: '',
+        memPage: 1,
+        memTotal: 0,
+        memPageSize: 30,
+        memFilterSender: '',
+        memFilterTags: '',
+        memFilterVector: '',
+        selectedIds: [],
+        senderList: [],
+        // 详情弹窗
+        detailOpen: false,
+        detailData: null,
+        editContent: '',
+        editImportance: 0,
+        // 导入
+        importSources: [],
+        importing: false,
+        importLog: [],
+        importProgress: 0,
+        // LLM 提取
+        llmBatchSize: 10,
+        llmRunning: false,
+        llmProgress: 0,
+        llmMessage: '',
+
+        async init() {
+            // 读取主题偏好
+            const saved = localStorage.getItem('wm-theme');
+            if (saved === 'light') { this.isDark = false; document.documentElement.classList.remove('dark'); }
+            else { this.isDark = true; document.documentElement.classList.add('dark'); }
+            await this.loadSystem();
+            this.loadSenders();
+        },
+
+        toggleTheme() {
+            this.isDark = !this.isDark;
+            document.documentElement.classList.toggle('dark', this.isDark);
+            localStorage.setItem('wm-theme', this.isDark ? 'dark' : 'light');
+        },
+
+        async loadSystem() {
+            try {
+                const r = await fetch('/api/system');
+                this.sys = await r.json();
+            } catch(e) { console.error(e); }
+        },
+
+        async loadSenders() {
+            try {
+                const r = await fetch('/api/memories/senders');
+                const d = await r.json();
+                this.senderList = d.senders || [];
+            } catch(e) { console.error(e); }
+        },
+
+        async loadMemories() {
+            try {
+                const params = new URLSearchParams({ page: this.memPage, size: this.memPageSize });
+                if (this.memSearch) params.set('search', this.memSearch);
+                if (this.memFilterSender) params.set('sender', this.memFilterSender);
+                if (this.memFilterTags === 'yes') params.set('has_tags', 'true');
+                else if (this.memFilterTags === 'no') params.set('has_tags', 'false');
+                if (this.memFilterVector === 'yes') params.set('has_vector', 'true');
+                else if (this.memFilterVector === 'no') params.set('has_vector', 'false');
+                const r = await fetch('/api/memories?' + params);
+                const d = await r.json();
+                this.memories = d.items || [];
+                this.memTotal = d.total || 0;
+            } catch(e) { console.error(e); }
+        },
+
+        get memTotalPages() {
+            return Math.ceil(this.memTotal / this.memPageSize) || 1;
+        },
+
+        async memPrev() {
+            if (this.memPage > 1) { this.memPage--; await this.loadMemories(); }
+        },
+        async memNext() {
+            if (this.memPage < this.memTotalPages) { this.memPage++; await this.loadMemories(); }
+        },
+        async searchMemories() {
+            this.memPage = 1;
+            this.selectedIds = [];
+            await this.loadMemories();
+        },
+        resetFilters() {
+            this.memSearch = '';
+            this.memFilterSender = '';
+            this.memFilterTags = '';
+            this.memFilterVector = '';
+            this.searchMemories();
+        },
+
+        toggleSelectAll(e) {
+            if (e.target.checked) {
+                this.selectedIds = this.memories.map(m => m.id);
+            } else {
+                this.selectedIds = [];
+            }
+        },
+
+        // ─── 详情弹窗 ───
+        async openDetail(id) {
+            try {
+                const r = await fetch(`/api/memories/${id}`);
+                this.detailData = await r.json();
+                this.editContent = this.detailData.content || '';
+                this.editImportance = this.detailData.importance || 0;
+                this.detailOpen = true;
+            } catch(e) { console.error(e); }
+        },
+
+        async saveDetail() {
+            if (!this.detailData) return;
+            try {
+                await fetch(`/api/memories/${this.detailData.id}`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ content: this.editContent, importance: this.editImportance }),
+                });
+                this.detailOpen = false;
+                await this.loadMemories();
+            } catch(e) { console.error(e); }
+        },
+
+        // ─── 单条操作 ───
+        async deleteSingle(id) {
+            if (!confirm(`确定删除记忆 #${id}？`)) return;
+            try {
+                await fetch(`/api/memories/${id}`, { method: 'DELETE' });
+                await this.loadMemories();
+                this.loadSystem();
+            } catch(e) { console.error(e); }
+        },
+
+        async reEmbedSingle(id) {
+            try {
+                await fetch(`/api/memories/${id}/re-embed`, { method: 'POST' });
+                if (this.detailData && this.detailData.id === id) {
+                    this.detailData.has_vector = true;
+                }
+                await this.loadMemories();
+            } catch(e) { console.error(e); }
+        },
+
+        // ─── 批量操作 ───
+        async batchDelete() {
+            if (!confirm(`确定删除 ${this.selectedIds.length} 条记忆？此操作不可撤销。`)) return;
+            try {
+                await fetch('/api/memories/batch/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ids: this.selectedIds }),
+                });
+                this.selectedIds = [];
+                await this.loadMemories();
+                this.loadSystem();
+            } catch(e) { console.error(e); }
+        },
+
+        async batchReEmbed() {
+            try {
+                const r = await fetch('/api/memories/batch/re-embed', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ids: this.selectedIds }),
+                });
+                // SSE 流
+                const reader = r.body.getReader();
+                const decoder = new TextDecoder();
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    // 简单消费流
+                }
+                this.selectedIds = [];
+                await this.loadMemories();
+            } catch(e) { console.error(e); }
+        },
+
+        async batchExtractTags() {
+            try {
+                const r = await fetch('/api/memories/batch/extract-tags', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ids: this.selectedIds }),
+                });
+                const reader = r.body.getReader();
+                const decoder = new TextDecoder();
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                }
+                this.selectedIds = [];
+                await this.loadMemories();
+            } catch(e) { console.error(e); }
+        },
+
+        async loadProviders() {
+            // Provider 固定在配置中，不再前端选择
+            await this.loadSources();
+        },
+
+        async loadSources() {
+            try {
+                const r = await fetch('/api/import/sources');
+                const d = await r.json();
+                this.importSources = d.sources || [];
+            } catch(e) { console.error(e); }
+        },
+
+        async startImport(source) {
+            this.importing = true;
+            this.importProgress = 0;
+            this.importLog = [`[${this.ts()}] 开始导入 ${source.name}...`];
+            try {
+                const params = new URLSearchParams({ source_id: source.id, limit: 500 });
+                const r = await fetch('/api/import/from-source?' + params, { method: 'POST' });
+                const reader = r.body.getReader();
+                const decoder = new TextDecoder();
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    const text = decoder.decode(value);
+                    for (const line of text.split('\n')) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const d = JSON.parse(line.slice(6));
+                                if (d.error) { this.importLog.push(`[ERROR] ${d.error}`); break; }
+                                this.importProgress = d.progress || 0;
+                                if (d.message) this.importLog.push(`[${this.ts()}] ${d.message}`);
+                                else if (d.imported !== undefined) {
+                                    const last = this.importLog.length - 1;
+                                    this.importLog[last] = `[${this.ts()}] ${Math.round(d.progress*100)}% | 导入:${d.imported} 跳过:${d.skipped} 错误:${d.errors}`;
+                                }
+                            } catch(e) {}
+                        }
+                    }
+                }
+            } catch(e) { this.importLog.push(`[ERROR] ${e.message}`); }
+            this.importing = false;
+            this.importLog.push(`[${this.ts()}] ✓ 导入完成`);
+            this.loadSystem();
+            this.loadSources();
+        },
+
+        async startLLMExtract() {
+            this.llmRunning = true;
+            this.llmProgress = 0;
+            this.llmMessage = '启动中...';
+            this.importLog = [`[${this.ts()}] 🧠 LLM Tag 提取 (使用配置中的 provider)`];
+            try {
+                const params = new URLSearchParams({ batch_size: this.llmBatchSize });
+                const r = await fetch('/api/import/llm-extract?' + params, { method: 'POST' });
+                const reader = r.body.getReader();
+                const decoder = new TextDecoder();
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    const text = decoder.decode(value);
+                    for (const line of text.split('\n')) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const d = JSON.parse(line.slice(6));
+                                if (d.error) { this.importLog.push(`[ERROR] ${d.error}`); break; }
+                                this.llmProgress = d.progress || 0;
+                                this.llmMessage = d.message || '';
+                                if (d.message) this.importLog.push(`[${this.ts()}] ${d.message}`);
+                            } catch(e) {}
+                        }
+                    }
+                }
+            } catch(e) { this.importLog.push(`[ERROR] ${e.message}`); }
+            this.llmRunning = false;
+            this.importLog.push(`[${this.ts()}] ✓ LLM 提取完成`);
+            this.loadSystem();
+        },
+
+        ts() { return new Date().toLocaleTimeString('zh-CN', {hour12: false}); },
+
+        formatTime(ts) {
+            if (!ts) return '-';
+            const d = new Date(typeof ts === 'number' ? ts * 1000 : ts);
+            return d.toLocaleDateString('zh-CN') + ' ' + d.toLocaleTimeString('zh-CN', {hour12:false, hour:'2-digit', minute:'2-digit'});
+        },
+
+        tagBadgeClass(type) {
+            const map = { person:'badge-person', topic:'badge-topic', entity:'badge-entity', event:'badge-event', emotion:'badge-emotion', fact:'badge-fact', location:'badge-location', time:'badge-time', keyword:'badge-keyword' };
+            return 'badge ' + (map[type] || 'badge-keyword');
+        },
+    }
+}
+</script>
+</body>
+</html>

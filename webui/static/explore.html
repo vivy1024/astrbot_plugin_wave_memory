@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wave Memory · 神经云图</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { colors: {
+                background: 'hsl(var(--background))',
+                foreground: 'hsl(var(--foreground))',
+                primary: { DEFAULT: 'hsl(var(--primary))' },
+                muted: { DEFAULT: 'hsl(var(--muted))', foreground: 'hsl(var(--muted-foreground))' },
+                card: { DEFAULT: 'hsl(var(--card))' },
+                border: 'hsl(var(--border))',
+            }}}
+        }
+    </script>
+    <style>
+        :root { --background:240 10% 3.9%; --foreground:0 0% 98%; --primary:263 70% 50%; --muted:240 3.7% 15.9%; --muted-foreground:240 5% 64.9%; --card:240 10% 5.9%; --border:240 3.7% 15.9%; }
+        body { margin:0; overflow:hidden; background:#0a0e17; font-family:'Segoe UI',system-ui,sans-serif; }
+        #neural-canvas { position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:0; }
+        .overlay-ui { position:fixed; z-index:10; pointer-events:none; }
+        .overlay-ui > * { pointer-events:auto; }
+        .glass { background:rgba(15,20,30,0.85); backdrop-filter:blur(12px); border:1px solid rgba(139,92,246,0.15); border-radius:12px; }
+        .search-bar { position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:20; display:flex; gap:8px; align-items:center; }
+        .search-bar input { width:360px; padding:10px 16px; background:rgba(15,20,30,0.9); border:1px solid rgba(139,92,246,0.3); border-radius:8px; color:#e2e8f0; font-size:14px; outline:none; transition:border-color 0.2s; }
+        .search-bar input:focus { border-color:rgba(139,92,246,0.7); }
+        .search-bar button { padding:10px 20px; background:rgba(139,92,246,0.8); border:none; border-radius:8px; color:#fff; font-size:13px; cursor:pointer; transition:background 0.2s; }
+        .search-bar button:hover { background:rgba(139,92,246,1); }
+        .top-nav { position:fixed; top:20px; left:20px; z-index:20; display:flex; gap:8px; align-items:center; }
+        .top-nav a { color:#94a3b8; text-decoration:none; font-size:12px; padding:6px 12px; border-radius:6px; background:rgba(15,20,30,0.8); border:1px solid rgba(255,255,255,0.05); transition:all 0.2s; }
+        .top-nav a:hover { color:#e2e8f0; border-color:rgba(139,92,246,0.3); }
+        .stats-bar { position:fixed; top:20px; right:20px; z-index:20; color:#64748b; font-size:11px; padding:8px 14px; }
+        .detail-panel { position:fixed; right:20px; top:70px; bottom:20px; width:320px; z-index:20; overflow-y:auto; padding:20px; display:none; }
+        .detail-panel.active { display:block; }
+        .detail-panel h3 { color:#e2e8f0; font-size:14px; margin:0 0 8px; }
+        .detail-panel .tags { display:flex; flex-wrap:wrap; gap:6px; margin:12px 0; }
+        .detail-panel .tag { padding:3px 8px; background:rgba(139,92,246,0.15); border:1px solid rgba(139,92,246,0.3); border-radius:4px; color:#a78bfa; font-size:11px; }
+        .detail-panel .content-preview { color:#94a3b8; font-size:12px; line-height:1.6; white-space:pre-wrap; max-height:400px; overflow-y:auto; }
+        .detail-panel .score { color:#8b5cf6; font-size:12px; font-family:monospace; }
+        .detail-panel .btn { padding:6px 12px; background:rgba(139,92,246,0.2); border:1px solid rgba(139,92,246,0.3); border-radius:6px; color:#a78bfa; font-size:11px; cursor:pointer; margin-top:8px; }
+        .detail-panel .btn:hover { background:rgba(139,92,246,0.4); }
+        .loading-overlay { position:fixed; inset:0; z-index:100; display:none; align-items:center; justify-content:center; background:rgba(10,14,23,0.95); flex-direction:column; gap:16px; }
+        .loading-overlay.active { display:flex; }
+        .loading-overlay .spinner { width:40px; height:40px; border:3px solid rgba(139,92,246,0.2); border-top-color:#8b5cf6; border-radius:50%; animation:spin 1s linear infinite; }
+        .loading-overlay p { color:#94a3b8; font-size:13px; }
+        @keyframes spin { to { transform:rotate(360deg); } }
+        .config-panel { position:fixed; bottom:20px; left:20px; z-index:20; padding:12px 16px; font-size:11px; color:#64748b; }
+        .config-panel label { display:flex; align-items:center; gap:6px; margin:4px 0; cursor:pointer; }
+        .config-panel input[type=range] { width:80px; accent-color:#8b5cf6; }
+    </style>
+</head>
+<body>
+    <!-- Canvas -->
+    <canvas id="neural-canvas"></canvas>
+
+    <!-- Top Navigation -->
+    <div class="top-nav">
+        <a href="/">← 管理面板</a>
+        <span style="color:#1e293b;">|</span>
+        <span style="color:#8b5cf6;font-size:12px;font-weight:600;">⚡ 神经云图</span>
+    </div>
+
+    <!-- Search Bar -->
+    <div class="search-bar">
+        <input id="search-input" type="text" placeholder="输入查询，开始联想..." autofocus>
+        <button id="search-btn" onclick="startSearch()">联想</button>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-bar glass" id="stats-bar">
+        <span id="node-count">0 节点</span> · <span id="link-count">0 连线</span>
+    </div>
+
+    <!-- Detail Panel -->
+    <div class="detail-panel glass" id="detail-panel">
+        <h3 id="detail-title">-</h3>
+        <div class="score" id="detail-score">-</div>
+        <div class="tags" id="detail-tags"></div>
+        <div style="border-top:1px solid rgba(255,255,255,0.05);padding-top:12px;margin-top:12px;">
+            <div class="content-preview" id="detail-content">-</div>
+        </div>
+        <button class="btn" id="btn-expand" onclick="expandFromSelected()">从此节点继续联想 →</button>
+        <button class="btn" onclick="closeDetail()">关闭</button>
+    </div>
+
+    <!-- Config Panel -->
+    <div class="config-panel glass" id="config-panel">
+        <label>Top K: <span id="k-val">10</span> <input type="range" id="cfg-k" min="3" max="20" value="10" oninput="document.getElementById('k-val').textContent=this.value"></label>
+        <label><input type="checkbox" id="cfg-spike" checked> 脉冲传播</label>
+        <label><input type="checkbox" id="cfg-pyramid" checked> 残差金字塔</label>
+        <label><input type="checkbox" id="cfg-epa"> EPA</label>
+        <label><input type="checkbox" id="cfg-geodesic"> 测地线重排</label>
+    </div>
+
+    <!-- Loading -->
+    <div class="loading-overlay" id="loading">
+        <div class="spinner"></div>
+        <p id="loading-text">神经网络正在遍历记忆星图...</p>
+    </div>
+
+    <script>
+    // ═══════════════════════════════════════════════════════════
+    // Wave Memory 神经云图引擎（移植自 VCP memo-graph.js）
+    // ═══════════════════════════════════════════════════════════
+
+    const canvas = document.getElementById('neural-canvas');
+    const ctx = canvas.getContext('2d');
+
+    let state = {
+        nodes: [],
+        links: [],
+        transform: { x: 0, y: 0, scale: 1 },
+        selectedNode: null,
+        hoveredNode: null,
+        isDragging: false,
+        dragNode: null,
+        lastMouse: { x: 0, y: 0 },
+        animId: null,
+    };
+
+    // ─── Resize ───
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // ─── API ───
+    async function queryAPI(text, topK) {
+        const params = {
+            text,
+            top_k: topK || parseInt(document.getElementById('cfg-k').value),
+            enable_spike: document.getElementById('cfg-spike').checked,
+            enable_pyramid: document.getElementById('cfg-pyramid').checked,
+            enable_epa: document.getElementById('cfg-epa').checked,
+            enable_geodesic: document.getElementById('cfg-geodesic').checked,
+        };
+        const res = await fetch('/api/query', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(params) });
+        return res.json();
+    }
+
+    // ─── Search ───
+    async function startSearch() {
+        const text = document.getElementById('search-input').value.trim();
+        if (!text) return;
+
+        showLoading(`正在联想 "${text}" 的记忆星图...`);
+
+        try {
+            const data = await queryAPI(text);
+            await new Promise(r => setTimeout(r, 400)); // 算力感
+            hideLoading();
+            initGraph(text, data.results || [], false);
+        } catch (e) {
+            hideLoading();
+            alert('联想失败: ' + e.message);
+        }
+    }
+
+    async function expandFromSelected() {
+        if (!state.selectedNode || state.selectedNode.isSource) return;
+        const node = state.selectedNode;
+
+        showLoading(`从 "${node.name}" 继续联想...`);
+        try {
+            const data = await queryAPI(node.content.slice(0, 200));
+            await new Promise(r => setTimeout(r, 300));
+            hideLoading();
+            appendGraph(node, data.results || []);
+        } catch (e) {
+            hideLoading();
+        }
+    }
+
+    // ─── Graph Data ───
+    function initGraph(queryText, results, isAppend) {
+        const centerNode = {
+            id: 'SOURCE',
+            name: queryText.slice(0, 20),
+            content: queryText,
+            score: 1.0,
+            tags: [],
+            x: 0, y: 0, vx: 0, vy: 0,
+            fx: 0, fy: 0,
+            isSource: true,
+        };
+
+        state.nodes = [centerNode];
+        state.links = [];
+        state.transform = { x: 0, y: 0, scale: 1 };
+
+        addResultNodes(centerNode, results);
+        updateStats();
+        if (!state.animId) startEngine();
+    }
+
+    function appendGraph(parentNode, results) {
+        addResultNodes(parentNode, results);
+        updateStats();
+    }
+
+    function addResultNodes(parent, results) {
+        results.forEach((res, i) => {
+            const existing = state.nodes.find(n => n.id === `mem-${res.memory_id}`);
+            if (existing) {
+                // 已存在，只加连线
+                if (!state.links.find(l => l.source === parent && l.target === existing)) {
+                    state.links.push({ source: parent, target: existing, score: res.score });
+                }
+                return;
+            }
+
+            const angle = (i / results.length) * Math.PI * 2;
+            const dist = 280 + Math.random() * 80;
+            const node = {
+                id: `mem-${res.memory_id}`,
+                name: (res.sender_name || '').slice(0, 8) + ': ' + (res.content || '').slice(0, 15),
+                content: res.content || '',
+                sender: res.sender_name || '',
+                score: res.score,
+                tags: [],
+                x: parent.x + Math.cos(angle) * dist,
+                y: parent.y + Math.sin(angle) * dist,
+                vx: 0, vy: 0,
+            };
+            state.nodes.push(node);
+            state.links.push({ source: parent, target: node, score: res.score });
+        });
+    }
+
+    // ─── Physics Engine ───
+    function startEngine() {
+        function update() {
+            // 斥力
+            for (let i = 0; i < state.nodes.length; i++) {
+                for (let j = i + 1; j < state.nodes.length; j++) {
+                    const a = state.nodes[i], b = state.nodes[j];
+                    const dx = b.x - a.x, dy = b.y - a.y;
+                    const distSq = dx*dx + dy*dy || 1;
+                    const force = 10000 / distSq;
+                    const fx = (dx / Math.sqrt(distSq)) * force;
+                    const fy = (dy / Math.sqrt(distSq)) * force;
+                    a.vx -= fx; a.vy -= fy;
+                    b.vx += fx; b.vy += fy;
+                }
+            }
+            // 引力（连线）
+            state.links.forEach(link => {
+                const dx = link.target.x - link.source.x;
+                const dy = link.target.y - link.source.y;
+                const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+                const target = 200 + (1 - link.score) * 300;
+                const force = (dist - target) * 0.08;
+                const fx = (dx / dist) * force, fy = (dy / dist) * force;
+                link.source.vx += fx; link.source.vy += fy;
+                link.target.vx -= fx; link.target.vy -= fy;
+            });
+            // 更新位置
+            state.nodes.forEach(n => {
+                if (n.fx !== undefined) { n.x = n.fx; n.y = n.fy; n.vx = 0; n.vy = 0; }
+                else { n.vx *= 0.88; n.vy *= 0.88; n.x += n.vx; n.y += n.vy; }
+            });
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            ctx.translate(canvas.width/2 + state.transform.x, canvas.height/2 + state.transform.y);
+            ctx.scale(state.transform.scale, state.transform.scale);
+
+            const time = Date.now() / 1000;
+
+            // 连线 + 脉冲
+            state.links.forEach(link => {
+                const s = link.source, t = link.target;
+                const intensity = 0.15 + link.score * 0.7;
+                ctx.beginPath();
+                ctx.moveTo(s.x, s.y); ctx.lineTo(t.x, t.y);
+                ctx.lineWidth = 1 + link.score * 2.5;
+                ctx.strokeStyle = `rgba(139,92,246,${intensity})`;
+                ctx.stroke();
+
+                // 流动光点
+                const progress = ((time * 0.5) % 1);
+                const px = s.x + (t.x - s.x) * progress;
+                const py = s.y + (t.y - s.y) * progress;
+                ctx.beginPath();
+                ctx.arc(px, py, 2, 0, Math.PI*2);
+                ctx.fillStyle = '#fff';
+                ctx.shadowBlur = 8; ctx.shadowColor = '#8b5cf6';
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            });
+
+            // 节点（卡片）
+            state.nodes.forEach(node => {
+                const w = node.isSource ? 200 : 180;
+                const h = node.isSource ? 90 : 80;
+                const x = node.x - w/2, y = node.y - h/2;
+                const isHover = state.hoveredNode === node;
+                const isSel = state.selectedNode === node;
+
+                // 发光
+                if (isHover || isSel || node.isSource) {
+                    ctx.beginPath(); ctx.roundRect(x-4, y-4, w+8, h+8, 12);
+                    ctx.fillStyle = node.isSource ? 'rgba(255,215,0,0.12)' : 'rgba(139,92,246,0.15)';
+                    ctx.fill();
+                }
+
+                // 卡片背景
+                ctx.beginPath(); ctx.roundRect(x, y, w, h, 8);
+                ctx.fillStyle = isSel ? 'rgba(255,255,255,0.12)' : 'rgba(15,20,30,0.88)';
+                ctx.fill();
+                ctx.lineWidth = (isSel || node.isSource) ? 2 : 1;
+                ctx.strokeStyle = node.isSource ? '#ffd700' : (isSel ? '#8b5cf6' : 'rgba(255,255,255,0.08)');
+                ctx.stroke();
+
+                // 文字
+                ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+                ctx.fillStyle = node.isSource ? '#ffd700' : '#e2e8f0';
+                ctx.font = `bold ${node.isSource ? '12px' : '11px'} 'Segoe UI',system-ui`;
+                const title = node.name.length > 20 ? node.name.slice(0,18)+'...' : node.name;
+                ctx.fillText(title, x+10, y+10);
+
+                // 摘要
+                ctx.fillStyle = node.isSource ? 'rgba(255,215,0,0.6)' : 'rgba(148,163,184,0.8)';
+                ctx.font = "9px 'Segoe UI',system-ui";
+                const summary = node.content.slice(0, 80).replace(/\n/g,' ');
+                ctx.fillText(summary.slice(0,30), x+10, y+28);
+                if (summary.length > 30) ctx.fillText(summary.slice(30,60), x+10, y+40);
+
+                // 分数
+                if (!node.isSource) {
+                    ctx.fillStyle = '#8b5cf6'; ctx.font = "bold 9px monospace";
+                    ctx.textAlign = 'right';
+                    ctx.fillText(node.score.toFixed(3), x+w-8, y+h-10);
+                    ctx.textAlign = 'left';
+                }
+            });
+
+            ctx.restore();
+            update();
+            state.animId = requestAnimationFrame(draw);
+        }
+
+        draw();
+    }
+
+    // ─── Interaction ───
+    function getCoords(cx, cy) {
+        return { x: (cx - canvas.width/2 - state.transform.x) / state.transform.scale, y: (cy - canvas.height/2 - state.transform.y) / state.transform.scale };
+    }
+    function findNode(x, y) {
+        return state.nodes.find(n => { const w = n.isSource?200:180, h = n.isSource?90:80; return x >= n.x-w/2 && x <= n.x+w/2 && y >= n.y-h/2 && y <= n.y+h/2; });
+    }
+
+    canvas.onmousedown = (e) => {
+        state.lastMouse = { x: e.clientX, y: e.clientY };
+        const pos = getCoords(e.clientX, e.clientY);
+        const node = findNode(pos.x, pos.y);
+        if (node) { state.dragNode = node; state.isDragging = true; selectNode(node); }
+        else { state.isDragging = false; }
+    };
+    window.onmousemove = (e) => {
+        const dx = e.clientX - state.lastMouse.x, dy = e.clientY - state.lastMouse.y;
+        if (state.isDragging && state.dragNode) {
+            const p = getCoords(e.clientX, e.clientY);
+            state.dragNode.fx = p.x; state.dragNode.fy = p.y;
+        } else if (e.buttons === 1) {
+            state.transform.x += dx; state.transform.y += dy;
+        }
+        const pos = getCoords(e.clientX, e.clientY);
+        state.hoveredNode = findNode(pos.x, pos.y);
+        canvas.style.cursor = state.hoveredNode ? 'pointer' : (e.buttons===1 ? 'grabbing' : 'grab');
+        state.lastMouse = { x: e.clientX, y: e.clientY };
+    };
+    window.onmouseup = () => {
+        if (state.dragNode && !state.dragNode.isSource) { state.dragNode.fx = undefined; state.dragNode.fy = undefined; }
+        state.dragNode = null; state.isDragging = false;
+    };
+    canvas.onwheel = (e) => {
+        e.preventDefault();
+        const factor = e.deltaY > 0 ? 0.9 : 1.1;
+        const mx = e.clientX, my = e.clientY;
+        const bx = (mx - canvas.width/2 - state.transform.x) / state.transform.scale;
+        const by = (my - canvas.height/2 - state.transform.y) / state.transform.scale;
+        state.transform.scale = Math.max(0.1, Math.min(5, state.transform.scale * factor));
+        const ax = (mx - canvas.width/2 - state.transform.x) / state.transform.scale;
+        const ay = (my - canvas.height/2 - state.transform.y) / state.transform.scale;
+        state.transform.x += (ax - bx) * state.transform.scale;
+        state.transform.y += (ay - by) * state.transform.scale;
+    };
+
+    canvas.ondblclick = (e) => {
+        const pos = getCoords(e.clientX, e.clientY);
+        const node = findNode(pos.x, pos.y);
+        if (node && !node.isSource) expandFromSelected();
+    };
+
+    document.getElementById('search-input').onkeydown = (e) => { if (e.key === 'Enter') startSearch(); };
+
+    // ─── Detail Panel ───
+    function selectNode(node) {
+        state.selectedNode = node;
+        const panel = document.getElementById('detail-panel');
+        document.getElementById('detail-title').textContent = node.sender ? `${node.sender}: ${node.content.slice(0,30)}` : node.name;
+        document.getElementById('detail-score').textContent = node.isSource ? '源节点' : `相似度: ${node.score.toFixed(4)}`;
+        document.getElementById('detail-content').textContent = node.content;
+
+        const tagsEl = document.getElementById('detail-tags');
+        tagsEl.innerHTML = '';
+        (node.tags || []).forEach(t => {
+            const span = document.createElement('span');
+            span.className = 'tag'; span.textContent = t;
+            tagsEl.appendChild(span);
+        });
+
+        document.getElementById('btn-expand').style.display = node.isSource ? 'none' : 'block';
+        panel.classList.add('active');
+    }
+    function closeDetail() { document.getElementById('detail-panel').classList.remove('active'); state.selectedNode = null; }
+
+    // ─── Utils ───
+    function updateStats() {
+        document.getElementById('node-count').textContent = state.nodes.length + ' 节点';
+        document.getElementById('link-count').textContent = state.links.length + ' 连线';
+    }
+    function showLoading(text) { document.getElementById('loading-text').textContent = text; document.getElementById('loading').classList.add('active'); }
+    function hideLoading() { document.getElementById('loading').classList.remove('active'); }
+    </script>
+</body>
+</html>

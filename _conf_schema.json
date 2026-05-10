@@ -1,65 +1,87 @@
 {
-  "Embedding_Settings": {
-    "description": "向量模型配置",
-    "type": "object",
-    "items": {
-      "embedding_provider_id": {
-        "description": "Embedding 模型",
-        "hint": "用于记忆向量化的嵌入模型。在 AstrBot 模型提供商中添加 Embedding 类型的提供商后，此处填写其 ID",
-        "type": "string",
-        "default": ""
-      },
-      "dimension": {
-        "description": "向量维度",
-        "hint": "必须与所选 Embedding 模型输出维度一致（如 1024、1536、3072）",
-        "type": "int",
-        "default": 1024
-      }
-    }
+  "embedding_provider_id": {
+    "description": "Embedding 提供商 ID",
+    "type": "string",
+    "hint": "填写 Embedding 提供商的完整 ID（如 'siliconflow/Qwen3-Embedding-0.6B'）。需要先在 AstrBot 的 Provider 管理中创建 Embedding 类型的提供商，然后将其 ID 填写到此处",
+    "obvious_hint": true,
+    "default": ""
   },
-  "Tag_Settings": {
-    "description": "Tag 提取配置",
+  "embedding_dimension": {
+    "description": "向量维度",
+    "type": "int",
+    "hint": "必须与所选 Embedding 模型输出维度一致。Qwen3-Embedding-0.6B 默认 1024",
+    "default": 1024
+  },
+  "tag_llm_provider_id": {
+    "description": "Tag 提取 LLM",
+    "type": "string",
+    "hint": "用于从消息中提取关键标签的 LLM，建议选择快速便宜的模型。留空则禁用 Tag 提取，仅用向量检索",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "WebUI_Settings": {
+    "description": "WebUI 管理面板",
+    "hint": "Wave Memory 可视化管理面板配置",
     "type": "object",
     "items": {
-      "tag_llm_provider_id": {
-        "description": "Tag 提取模型",
-        "hint": "用于从消息中提取关键标签的 LLM，建议选择快速便宜的模型",
-        "type": "string",
-        "_special": "select_provider",
-        "default": ""
-      },
-      "max_tags_per_message": {
-        "description": "每条消息最大 Tag 数",
-        "type": "int",
-        "default": 10
-      },
-      "tag_extraction_enabled": {
-        "description": "启用 LLM Tag 提取",
-        "hint": "关闭后仅使用向量相似度检索，不提取 Tag，不构建共现图",
+      "webui_enabled": {
+        "description": "启用 WebUI",
+        "hint": "开启后可通过浏览器访问记忆管理面板",
         "type": "bool",
         "default": true
+      },
+      "webui_host": {
+        "description": "监听地址",
+        "hint": "127.0.0.1 仅本机访问；0.0.0.0 允许局域网访问",
+        "type": "string",
+        "default": "0.0.0.0"
+      },
+      "webui_port": {
+        "description": "监听端口",
+        "hint": "WebUI 服务端口，确保不与其他服务冲突",
+        "type": "int",
+        "default": 9876
+      },
+      "webui_password": {
+        "description": "访问密码",
+        "hint": "登录 WebUI 所需密码。留空则无需密码",
+        "type": "string",
+        "default": ""
       }
     }
   },
   "Query_Settings": {
-    "description": "查询配置",
+    "description": "记忆召回配置",
+    "hint": "控制记忆检索和注入行为",
     "type": "object",
     "items": {
       "enable_auto_inject": {
         "description": "自动注入记忆",
-        "hint": "每次 LLM 请求前自动检索并注入相关记忆",
+        "hint": "每次 LLM 请求前自动检索并注入相关记忆到 prompt",
         "type": "bool",
         "default": true
       },
       "inject_top_k": {
         "description": "注入记忆条数",
-        "hint": "每次注入的最大记忆片段数量",
+        "hint": "每次注入的最大记忆片段数量（1-20）",
         "type": "int",
         "default": 5
       },
+      "min_similarity": {
+        "description": "最低相似度阈值",
+        "hint": "低于此分数的记忆不会被注入（0-1）",
+        "type": "string",
+        "default": "0.35"
+      },
+      "injection_format": {
+        "description": "注入格式",
+        "hint": "记忆注入到 prompt 的格式模板。可用变量：{content} {sender} {time}",
+        "type": "string",
+        "default": "[记忆] {sender}({time}): {content}"
+      },
       "enable_spike_routing": {
         "description": "启用脉冲传播",
-        "hint": "通过 Tag 共现图发现间接关联记忆",
+        "hint": "通过 Tag 共现图发现间接关联记忆，提升联想能力",
         "type": "bool",
         "default": true
       },
@@ -71,24 +93,87 @@
       },
       "enable_epa": {
         "description": "启用 EPA 分析",
-        "hint": "根据问题聚焦度动态调整检索策略",
+        "hint": "根据问题聚焦度动态调整检索策略（实验性）",
         "type": "bool",
         "default": false
       },
       "enable_geodesic_rerank": {
         "description": "启用测地线重排",
-        "hint": "基于共现拓扑修正向量距离偏差",
+        "hint": "基于共现拓扑修正向量距离偏差（实验性）",
         "type": "bool",
         "default": false
       }
     }
   },
+  "Message_Filter": {
+    "description": "消息过滤",
+    "hint": "控制哪些消息会被记录为记忆",
+    "type": "object",
+    "items": {
+      "min_message_length": {
+        "description": "最小消息长度",
+        "hint": "短于此长度的消息不会被记录",
+        "type": "int",
+        "default": 4
+      },
+      "max_message_length": {
+        "description": "最大消息长度",
+        "hint": "超过此长度的消息会被截断后记录",
+        "type": "int",
+        "default": 2000
+      },
+      "ignore_bot_messages": {
+        "description": "忽略 Bot 自身消息",
+        "hint": "关闭后 Bot 的回复也会被记录为记忆",
+        "type": "bool",
+        "default": false
+      },
+      "group_whitelist": {
+        "description": "群组白名单",
+        "hint": "只记录这些群组的消息。留空则记录所有群组。格式：逗号分隔的群号",
+        "type": "string",
+        "default": ""
+      },
+      "group_blacklist": {
+        "description": "群组黑名单",
+        "hint": "不记录这些群组的消息。格式：逗号分隔的群号",
+        "type": "string",
+        "default": ""
+      }
+    }
+  },
+  "Tag_Settings": {
+    "description": "Tag 提取参数",
+    "type": "object",
+    "items": {
+      "max_tags_per_message": {
+        "description": "每条消息最大 Tag 数",
+        "hint": "LLM 每次提取的最大标签数量",
+        "type": "int",
+        "default": 10
+      },
+      "tag_extraction_enabled": {
+        "description": "启用 LLM Tag 提取",
+        "hint": "关闭后仅使用向量相似度检索，不提取 Tag，不构建共现图",
+        "type": "bool",
+        "default": true
+      },
+      "tag_batch_size": {
+        "description": "Tag 提取批次大小",
+        "hint": "每批提取 Tag 的消息数量，影响 LLM 调用频率",
+        "type": "int",
+        "default": 5
+      }
+    }
+  },
   "Storage_Settings": {
-    "description": "存储配置",
+    "description": "存储与衰减",
+    "hint": "记忆存储上限和衰减策略",
     "type": "object",
     "items": {
       "max_memories": {
         "description": "最大记忆条数",
+        "hint": "超过上限后最旧且重要性最低的记忆会被清理",
         "type": "int",
         "default": 100000
       },
@@ -99,10 +184,47 @@
         "default": true
       },
       "decay_rate": {
-        "description": "衰减率",
-        "hint": "每天未访问时重要性乘以此系数（0-1）",
+        "description": "每日衰减率",
+        "hint": "每天未访问时重要性乘以此系数（0.99=慢衰减，0.95=快衰减）",
         "type": "string",
         "default": "0.995"
+      },
+      "cleanup_importance_threshold": {
+        "description": "清理重要性阈值",
+        "hint": "重要性低于此值的记忆会在自动清理时被删除",
+        "type": "string",
+        "default": "0.1"
+      },
+      "auto_cleanup_enabled": {
+        "description": "启用自动清理",
+        "hint": "每日自动清理低重要性记忆",
+        "type": "bool",
+        "default": false
+      }
+    }
+  },
+  "Performance_Settings": {
+    "description": "性能调优",
+    "hint": "控制 Embedding 调用频率和批量大小",
+    "type": "object",
+    "items": {
+      "embedding_batch_size": {
+        "description": "Embedding 批量大小",
+        "hint": "每次批量 Embedding 的文本数量，过大可能触发 API 限流",
+        "type": "int",
+        "default": 10
+      },
+      "write_flush_interval": {
+        "description": "写入刷新间隔（秒）",
+        "hint": "消息队列等待多久后强制处理",
+        "type": "int",
+        "default": 30
+      },
+      "cooccurrence_rebuild_interval": {
+        "description": "共现矩阵重建间隔（秒）",
+        "hint": "多久重建一次共现矩阵。0=仅启动时重建",
+        "type": "int",
+        "default": 3600
       }
     }
   }

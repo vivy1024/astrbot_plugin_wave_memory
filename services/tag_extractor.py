@@ -1,103 +1,334 @@
-"""Wave Memory Tag 提取器 — 异步后台用 LLM 从消息中提取关键标签"""
+"""Wave Memory Tag 提取器 V2 — 结构化语义标注，对标 VCP TagMemo"""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import re
+import time
 from typing import Optional
-
-import numpy as np
 
 from astrbot.api import logger
 
 
-TAG_EXTRACTION_PROMPT = """从以下消息中提取 3-8 个关键标签（Tag），用于记忆检索。
+# ─── 结构化 Tag 提取 Prompt ───
 
-要求：
-- 提取人名、事件、话题、情绪、地点等关键信息
-- 每个标签 2-6 个字，简洁精准
-- 用逗号分隔，不要编号，不要解释
-- 如果消息太短或无意义（如"嗯""哦""草"），返回空
+TAG_EXTRACTION_PROMPT = """你是一个记忆标注系统。从对话消息中提取结构化语义标签，用于后续记忆检索和知识图谱构建。
 
-消息：{message}
+## 输出格式（严格 JSON 数组）
+[{{"name": "标签名", "type": "类型", "confidence": 0.9}}, ...]
 
-标签："""
+## 标签类型（type 字段）
+- person: 人名、昵称、群友称呼
+- topic: 话题、讨论主题
+- entity: 具体事物（游戏、小说、食物、品牌等）
+- event: 事件、行为、发生的事
+- emotion: 情绪、态度、语气
+- fact: 可提取的事实性信息
+- location: 地点、场所
+- time: 时间相关标记
+
+## 规则
+1. 每条消息提取 3-10 个标签，按重要性排序
+2. 标签名 2-8 字，简洁精准，是可复用的语义锚点
+3. confidence 范围 0.5-1.0，越确定越高
+4. 优先提取：人名 > 具体事物 > 话题 > 事件 > 情绪
+5. 避免提取：纯语气词、无意义碎片、过于宽泛的词
+6. 如果消息无实质内容（纯表情、"嗯""哦"），返回空数组 []
+
+## 消息
+发送者：{sender}
+内容：{message}
+
+## 输出（仅 JSON 数组，无其他文字）"""
+
+
+# ─── 批量提取 Prompt（多条消息一起处理，节省 LLM 调用）───
+
+BATCH_TAG_PROMPT = """你是一个记忆标注系统。从以下多条对话消息中分别提取结构化语义标签。
+
+## 输出格式（严格 JSON 对象，key 为消息编号）
+{{"1": [{{"name": "标签名", "type": "类型", "confidence": 0.9}}], "2": [...], ...}}
+
+## 标签类型
+person(人名) | topic(话题) | entity(具体事物) | event(事件) | emotion(情绪) | fact(事实) | location(地点) | time(时间)
+
+## 规则
+- 每条消息 3-8 个标签，按重要性排序
+- 标签名 2-8 字，简洁可复用
+- confidence 0.5-1.0
+- 无实质内容的消息返回空数组
+
+## 消息列表
+{messages}
+
+## 输出（仅 JSON，无其他文字）"""
+
+
+# 有效的 Tag 类型
+VALID_TAG_TYPES = {"person", "topic", "entity", "event", "emotion", "fact", "location", "time", "keyword"}
 
 
 class TagExtractor:
-    """异步 Tag 提取服务，后台运行不阻塞回复。"""
+    """结构化 Tag 提取服务 V2。
 
-    def __init__(self, context, provider_id: str, max_tags: int = 10):
+    核心改进：
+    1. 结构化输出：每个 Tag 带 type + confidence
+    2. 批量提取：多条消息合并一次 LLM 调用
+    3. 核心标签识别：高频 Tag 自动标记为核心
+    4. 质量过滤：基于 confidence 和规则过滤低质量 Tag
+    """
+
+    def __init__(self, context, provider_id: str, max_tags: int = 10, batch_size: int = 5):
         self.context = context
         self.provider_id = provider_id
         self.max_tags = max_tags
+        self.batch_size = batch_size
 
-    async def extract_tags(self, message: str) -> list[str]:
-        """从消息中提取 Tag 列表。"""
+        # 核心标签缓存（高频 Tag 名称集合）
+        self._core_tags: set = set()
+        self._tag_freq: dict[str, int] = {}
+
+    async def extract_tags(self, message: str, sender: str = "") -> list[dict]:
+        """从单条消息提取结构化 Tag。
+
+        Returns:
+            [{"name": str, "type": str, "confidence": float}, ...]
+        """
+        if not message or len(message.strip()) < 6:
+            return []
+
         if not self.provider_id:
             return self._fallback_extract(message)
-
-        if len(message.strip()) < 6:
-            return []
 
         try:
             provider = self.context.get_provider_by_id(self.provider_id)
             if not provider:
+                logger.warning(f"[WaveMemory] Tag LLM provider '{self.provider_id}' not found, using fallback")
                 return self._fallback_extract(message)
 
-            prompt = TAG_EXTRACTION_PROMPT.format(message=message[:500])
+            prompt = TAG_EXTRACTION_PROMPT.format(
+                sender=sender or "unknown",
+                message=message[:800],
+            )
 
             response = await provider.text_chat(
                 prompt=prompt,
-                contexts=[],
+                system_prompt="你是一个记忆标注系统，只输出 JSON 数组，不输出其他内容。",
             )
 
             if not response or not response.completion_text:
+                logger.debug(f"[WaveMemory] Tag LLM returned empty response")
                 return self._fallback_extract(message)
 
-            return self._parse_tags(response.completion_text)
+            logger.info(f"[WaveMemory] Tag LLM response (first 200): {response.completion_text[:200]}")
+            tags = self._parse_structured_tags(response.completion_text)
+            self._update_frequency(tags)
+            return tags
 
         except Exception as e:
-            logger.debug(f"[WaveMemory] Tag extraction failed: {e}")
+            import traceback
+            logger.warning(f"[WaveMemory] Tag extraction error: {type(e).__name__}: {e}\n{traceback.format_exc()}")
             return self._fallback_extract(message)
 
-    def _parse_tags(self, text: str) -> list[str]:
-        """解析 LLM 返回的标签文本。"""
-        # 清理
-        text = text.strip().strip("。.，,")
+    async def extract_tags_batch(self, messages: list[dict]) -> list[list[dict]]:
+        """批量提取多条消息的 Tag（一次 LLM 调用）。
 
-        # 分割（支持逗号、顿号、分号、竖线）
-        tags = re.split(r"[,，、;；|｜\n]", text)
+        Args:
+            messages: [{"content": str, "sender": str}, ...]
 
-        # 清洗
-        cleaned = []
-        for tag in tags:
-            tag = tag.strip().strip("#").strip("- ").strip("\"'")
-            # 长度限制
-            if len(tag) < 2 or len(tag) > 15:
-                continue
-            # 过滤纯数字、纯标点
-            if re.match(r"^[\d\s\W]+$", tag):
-                continue
-            cleaned.append(tag)
-
-        return cleaned[: self.max_tags]
-
-    def _fallback_extract(self, message: str) -> list[str]:
-        """无 LLM 时的简单规则提取。"""
-        if len(message) < 6:
+        Returns:
+            [[tags_for_msg1], [tags_for_msg2], ...]
+        """
+        if not messages:
             return []
 
-        # 简单分词：提取中文词组和英文单词
-        # 这只是 fallback，精度不高但不调 LLM
-        words = re.findall(r"[\u4e00-\u9fff]{2,6}|[a-zA-Z]{3,15}", message)
+        if not self.provider_id:
+            return [self._fallback_extract(m.get("content", "")) for m in messages]
 
-        # 去重保序
+        # 构建消息列表文本
+        msg_lines = []
+        for i, msg in enumerate(messages, 1):
+            sender = msg.get("sender", "unknown")
+            content = msg.get("content", "")[:400]
+            msg_lines.append(f"{i}. [{sender}]: {content}")
+
+        messages_text = "\n".join(msg_lines)
+
+        try:
+            provider = self.context.get_provider_by_id(self.provider_id)
+            if not provider:
+                return [self._fallback_extract(m.get("content", "")) for m in messages]
+
+            prompt = BATCH_TAG_PROMPT.format(messages=messages_text)
+            response = await provider.text_chat(prompt=prompt)
+
+            if not response or not response.completion_text:
+                return [self._fallback_extract(m.get("content", "")) for m in messages]
+
+            return self._parse_batch_response(response.completion_text, len(messages))
+
+        except Exception as e:
+            logger.debug(f"[WaveMemory] Batch tag extraction failed: {e}")
+            return [self._fallback_extract(m.get("content", "")) for m in messages]
+
+    def _parse_structured_tags(self, text: str) -> list[dict]:
+        """解析 LLM 返回的结构化 JSON Tag。"""
+        text = text.strip()
+
+        # 移除 markdown 代码块标记
+        text = re.sub(r'^```(?:json)?\s*', '', text, flags=re.MULTILINE)
+        text = re.sub(r'```\s*$', '', text, flags=re.MULTILINE)
+        text = text.strip()
+
+        # 尝试提取 JSON 数组
+        json_match = re.search(r'\[[\s\S]*\]', text)
+        if not json_match:
+            # fallback: 尝试逗号分隔的纯文本
+            return self._parse_plain_tags(text)
+
+        try:
+            raw_tags = json.loads(json_match.group())
+        except json.JSONDecodeError:
+            return self._parse_plain_tags(text)
+
+        if not isinstance(raw_tags, list):
+            return []
+
+        tags = []
+        for item in raw_tags:
+            if not isinstance(item, dict):
+                continue
+
+            # 兼容多种 key 格式（有些 LLM 会返回带引号的 key）
+            name = item.get("name") or item.get('"name"') or item.get("tag") or item.get("label") or ""
+            name = str(name).strip().strip('"')
+            tag_type = item.get("type") or item.get('"type"') or "keyword"
+            tag_type = str(tag_type).strip().strip('"').lower()
+            confidence = item.get("confidence") or item.get('"confidence"') or 0.8
+            try:
+                confidence = float(str(confidence).strip().strip('"'))
+            except (ValueError, TypeError):
+                confidence = 0.8
+
+            # 质量过滤
+            if not self._is_valid_tag(name, tag_type, confidence):
+                continue
+
+            if tag_type not in VALID_TAG_TYPES:
+                tag_type = "keyword"
+
+            tags.append({
+                "name": name,
+                "type": tag_type,
+                "confidence": min(max(confidence, 0.0), 1.0),
+            })
+
+        return tags[:self.max_tags]
+
+    def _parse_batch_response(self, text: str, count: int) -> list[list[dict]]:
+        """解析批量提取的 JSON 响应。"""
+        text = text.strip()
+
+        json_match = re.search(r'\{[\s\S]*\}', text)
+        if not json_match:
+            return [[] for _ in range(count)]
+
+        try:
+            raw = json.loads(json_match.group())
+        except json.JSONDecodeError:
+            return [[] for _ in range(count)]
+
+        results = []
+        for i in range(1, count + 1):
+            msg_tags = raw.get(str(i), [])
+            if isinstance(msg_tags, list):
+                parsed = []
+                for item in msg_tags:
+                    if isinstance(item, dict):
+                        name = str(item.get("name", "")).strip()
+                        tag_type = str(item.get("type", "keyword")).strip().lower()
+                        confidence = float(item.get("confidence", 0.8))
+                        if self._is_valid_tag(name, tag_type, confidence):
+                            if tag_type not in VALID_TAG_TYPES:
+                                tag_type = "keyword"
+                            parsed.append({"name": name, "type": tag_type, "confidence": confidence})
+                results.append(parsed[:self.max_tags])
+            else:
+                results.append([])
+
+        # 补齐
+        while len(results) < count:
+            results.append([])
+
+        # 更新频率
+        for tags in results:
+            self._update_frequency(tags)
+
+        return results
+
+    def _is_valid_tag(self, name: str, tag_type: str, confidence: float) -> bool:
+        """Tag 质量验证。"""
+        if not name or len(name) < 2 or len(name) > 20:
+            return False
+        if confidence < 0.4:
+            return False
+        # 过滤纯数字、纯标点、纯空白
+        if re.match(r'^[\d\s\W]+$', name):
+            return False
+        # 过滤过于宽泛的词
+        stop_words = {"东西", "事情", "问题", "情况", "感觉", "觉得", "可能", "应该", "这个", "那个", "什么"}
+        if name in stop_words:
+            return False
+        # 过滤碎片句子（超过 4 个字且包含动词结构的可能是句子而非标签）
+        if len(name) > 8 and any(c in name for c in "的了吗呢吧啊呀"):
+            return False
+        return True
+
+    def _parse_plain_tags(self, text: str) -> list[dict]:
+        """Fallback: 解析纯文本逗号分隔的标签。"""
+        text = text.strip().strip("。.，,")
+        tags = re.split(r'[,，、;；|｜\n]', text)
+
+        result = []
+        for tag in tags:
+            tag = tag.strip().strip('#"\'- ')
+            if self._is_valid_tag(tag, "keyword", 0.7):
+                result.append({"name": tag, "type": "keyword", "confidence": 0.7})
+
+        return result[:self.max_tags]
+
+    def _fallback_extract(self, message: str) -> list[dict]:
+        """无 LLM 时的规则提取。"""
+        if not message or len(message) < 6:
+            return []
+
+        # 提取中文词组和英文单词
+        words = re.findall(r'[\u4e00-\u9fff]{2,6}|[a-zA-Z]{3,15}', message)
+
         seen = set()
         result = []
         for w in words:
-            if w.lower() not in seen:
+            if w.lower() not in seen and self._is_valid_tag(w, "keyword", 0.5):
                 seen.add(w.lower())
-                result.append(w)
+                result.append({"name": w, "type": "keyword", "confidence": 0.5})
 
         return result[:5]
+
+    def _update_frequency(self, tags: list[dict]):
+        """更新 Tag 频率统计，识别核心标签。"""
+        for tag in tags:
+            name = tag["name"]
+            self._tag_freq[name] = self._tag_freq.get(name, 0) + 1
+            # 出现 5 次以上自动升级为核心标签
+            if self._tag_freq[name] >= 5:
+                self._core_tags.add(name)
+
+    @property
+    def core_tags(self) -> set:
+        """返回当前识别的核心标签集合。"""
+        return self._core_tags
+
+    def is_core_tag(self, name: str) -> bool:
+        """判断是否为核心标签。"""
+        return name in self._core_tags

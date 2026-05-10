@@ -25,7 +25,7 @@ class CooccurrenceMatrix:
 
         cooc_data = self.db.get_cooccurrence_data()
         for tag_a, tag_b, count in cooc_data:
-            weight = min(count / 5.0, 1.0)  # 归一化，5次共现 = 满权重
+            weight = min(count / 3.0, 1.0)  # 归一化，3次共现 = 满权重
             self.matrix[tag_a][tag_b] = weight
             self.matrix[tag_b][tag_a] = weight
 
@@ -44,6 +44,10 @@ class CooccurrenceMatrix:
     @property
     def node_count(self) -> int:
         return len(self.matrix)
+
+    @property
+    def edge_count(self) -> int:
+        return sum(len(v) for v in self.matrix.values()) // 2
 
     def needs_rebuild(self, threshold_pct: float = 0.01) -> bool:
         """判断是否需要重建（Tag 数量变化超过阈值）。"""
