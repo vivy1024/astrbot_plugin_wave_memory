@@ -186,9 +186,18 @@ astrbot_plugin_wave_memory/
 
 ---
 
+## 贡献者
+
+| 贡献者 | 角色 | 链接 |
+|--------|------|------|
+| [@lioensky](https://github.com/lioensky) | 算法原作者 — VCP TagMemo 浪潮认知引擎设计者 | [VCPChat](https://github.com/lioensky/VCPChat) · [VCPToolBox](https://github.com/lioensky/VCPToolBox) |
+| [@vivy1024](https://github.com/vivy1024) | AstrBot 移植 & 工程实现 | [Wave Memory](https://github.com/vivy1024/astrbot_plugin_wave_memory) |
+
+---
+
 ## 致谢
 
-核心算法设计参考 [VCPChat](https://github.com/lioensky/VCPChat) / [VCPToolBox](https://github.com/lioensky/VCPToolBox) by lioensky：
+核心算法设计源自 [VCPChat](https://github.com/lioensky/VCPChat) / [VCPToolBox](https://github.com/lioensky/VCPToolBox) by lioensky：
 - TagMemo V8 浪潮算法（脉冲传播 + 虫洞路由 + 动量系统）
 - EPA 嵌入投影分析（加权 PCA + 跨域共振检测）
 - 残差金字塔（Gram-Schmidt 正交化 + 能量截断）
