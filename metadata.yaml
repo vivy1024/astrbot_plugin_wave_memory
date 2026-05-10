@@ -1,0 +1,7 @@
+name: astrbot_plugin_wave_memory
+display_name: Wave Memory
+desc: 基于 VCP TagMemo 浪潮算法的高性能记忆插件，查询路径零 LLM 调用，延迟 < 500ms
+version: v0.1.0
+author: vivy1024
+repo: https://github.com/vivy1024/astrbot_plugin_wave_memory
+astrbot_version: ">=4.14.0"

@@ -1,0 +1,110 @@
+{
+  "Embedding_Settings": {
+    "description": "向量模型配置",
+    "type": "object",
+    "items": {
+      "embedding_provider_id": {
+        "description": "Embedding 模型",
+        "hint": "用于记忆向量化的嵌入模型，从 AstrBot 提供商列表中选择",
+        "type": "string",
+        "_special": "select_provider",
+        "default": ""
+      },
+      "dimension": {
+        "description": "向量维度",
+        "hint": "必须与所选 Embedding 模型输出维度一致（如 1024、1536、3072）",
+        "type": "int",
+        "default": 1024
+      }
+    }
+  },
+  "Tag_Settings": {
+    "description": "Tag 提取配置",
+    "type": "object",
+    "items": {
+      "tag_llm_provider_id": {
+        "description": "Tag 提取模型",
+        "hint": "用于从消息中提取关键标签的 LLM，建议选择快速便宜的模型",
+        "type": "string",
+        "_special": "select_provider",
+        "default": ""
+      },
+      "max_tags_per_message": {
+        "description": "每条消息最大 Tag 数",
+        "type": "int",
+        "default": 10
+      },
+      "tag_extraction_enabled": {
+        "description": "启用 LLM Tag 提取",
+        "hint": "关闭后仅使用向量相似度检索，不提取 Tag，不构建共现图",
+        "type": "bool",
+        "default": true
+      }
+    }
+  },
+  "Query_Settings": {
+    "description": "查询配置",
+    "type": "object",
+    "items": {
+      "enable_auto_inject": {
+        "description": "自动注入记忆",
+        "hint": "每次 LLM 请求前自动检索并注入相关记忆",
+        "type": "bool",
+        "default": true
+      },
+      "inject_top_k": {
+        "description": "注入记忆条数",
+        "hint": "每次注入的最大记忆片段数量",
+        "type": "int",
+        "default": 5
+      },
+      "enable_spike_routing": {
+        "description": "启用脉冲传播",
+        "hint": "通过 Tag 共现图发现间接关联记忆",
+        "type": "bool",
+        "default": true
+      },
+      "enable_residual_pyramid": {
+        "description": "启用残差金字塔",
+        "hint": "多层语义分解，提升复杂问题的召回精度",
+        "type": "bool",
+        "default": true
+      },
+      "enable_epa": {
+        "description": "启用 EPA 分析",
+        "hint": "根据问题聚焦度动态调整检索策略",
+        "type": "bool",
+        "default": false
+      },
+      "enable_geodesic_rerank": {
+        "description": "启用测地线重排",
+        "hint": "基于共现拓扑修正向量距离偏差",
+        "type": "bool",
+        "default": false
+      }
+    }
+  },
+  "Storage_Settings": {
+    "description": "存储配置",
+    "type": "object",
+    "items": {
+      "max_memories": {
+        "description": "最大记忆条数",
+        "type": "int",
+        "default": 100000
+      },
+      "memory_decay_enabled": {
+        "description": "启用记忆衰减",
+        "hint": "长期未访问的记忆重要性逐渐降低",
+        "type": "bool",
+        "default": true
+      },
+      "decay_rate": {
+        "description": "衰减率",
+        "hint": "每天未访问时重要性乘以此系数（0-1）",
+        "type": "string",
+        "default": "0.995"
+      }
+    }
+  }
+}
