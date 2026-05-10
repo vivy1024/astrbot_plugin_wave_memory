@@ -604,6 +604,11 @@ class UniversalImporter:
             ).fetchone()
             if row:
                 last_rowid = int(row[0])
+                # 安全检查：如果 wave_memory 是空的但游标不为 0，说明数据被清空了，重置游标
+                mem_count = self.db.conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+                if mem_count == 0 and last_rowid > 0:
+                    logger.warning(f"[WaveMemory] memories 表为空但游标={last_rowid}，重置游标")
+                    last_rowid = 0
         except Exception:
             pass
 
@@ -636,11 +641,10 @@ class UniversalImporter:
 
             batch = rows[i:i + batch_size]
             processed_rows += len(batch)
+            errors_before_batch = errors  # 记录本批开始前的错误数
 
-            # 更新 rowid 游标（batch 第一列是 rowid）
-            for row in batch:
-                if row[0] > max_rowid_seen:
-                    max_rowid_seen = row[0]
+            # batch 最后一条的 rowid（第 0 列），用于游标
+            batch_last_rowid = batch[-1][0] if batch else max_rowid_seen
             texts_to_embed = []
             records = []
 
@@ -768,6 +772,10 @@ class UniversalImporter:
                 except Exception as e:
                     errors += len(texts_to_embed)
                     logger.warning(f"[WaveMemory] Batch embed error: {e}")
+
+            # 这批没有新增 error 才推进游标（有 error 的批次下次会重试）
+            if errors == errors_before_batch and batch_last_rowid > max_rowid_seen:
+                max_rowid_seen = batch_last_rowid
 
             progress = min(processed_rows / total, 1.0)
             yield json.dumps({
