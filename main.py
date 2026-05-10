@@ -29,6 +29,8 @@ from .services.tag_extractor import TagExtractor
 from .services.tag_job import TagBackfillJob
 from .services.hot_config import HotConfig
 from .services.lifecycle import LifecycleService
+from .services.consolidation import ConsolidationService
+from .services.persona_evolution import PersonaEvolution
 from .tools.memory_search import WaveMemorySearchTool, WaveMemoryRememberTool
 from .tools.deep_search import WaveMemoryDeepSearchTool
 from .tools.person_search import WaveMemoryPersonSearchTool
@@ -274,10 +276,24 @@ class WaveMemoryPlugin(Star):
         self.lifecycle = LifecycleService(db=self.db, bot_qq_id="2500447291")
         self.lifecycle.start()
 
+        # 启动记忆整合服务（LLM 摘要 → tag_relations）
+        self.consolidation = ConsolidationService(
+            db=self.db,
+            context=self.context,
+            provider_id=self.tag_llm_provider_id,
+            interval_hours=4.0,
+        )
+        self.consolidation.start()
+
+        # 人格进化引擎
+        self.persona_evolution = PersonaEvolution(db=self.db)
+
         logger.info("[WaveMemory] Fully initialized")
 
     async def terminate(self):
         """插件卸载时清理。"""
+        if hasattr(self, 'consolidation') and self.consolidation:
+            self.consolidation.stop()
         if hasattr(self, 'lifecycle') and self.lifecycle:
             self.lifecycle.stop()
         if hasattr(self, 'tag_job') and self.tag_job:
@@ -326,6 +342,14 @@ class WaveMemoryPlugin(Star):
 
             if memories:
                 injection = self.query_engine.format_injection(memories)
+
+                # 人格进化注入：根据好感度调整态度
+                if hasattr(self, 'persona_evolution'):
+                    sender_id = event.get_sender_id()
+                    persona_text = self.persona_evolution.get_persona_injection(sender_id, group_id)
+                    if persona_text:
+                        injection = injection + chr(10) + chr(10) + persona_text
+
                 from astrbot.core.agent.message import TextPart
                 req.extra_user_content_parts.append(TextPart(text=injection))
 
