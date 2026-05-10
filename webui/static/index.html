@@ -359,18 +359,31 @@
                 <p class="text-xs mb-4" style="color:var(--muted-fg)">自动扫描所有已安装记忆插件（自动去重 + 向量化）</p>
                 <div class="space-y-3">
                     <template x-for="src in importSources" :key="src.id">
-                        <div class="flex items-center justify-between p-3 rounded-lg" style="background:var(--muted); border:1px solid var(--border)">
-                            <div class="flex-1 min-w-0">
-                                <div class="flex items-center gap-2">
-                                    <span class="text-xs font-medium" x-text="src.name"></span>
-                                    <span x-show="src.has_adapter" class="badge badge-topic">已适配</span>
-                                    <span x-show="!src.has_adapter" class="badge badge-emotion">自动发现</span>
+                        <div class="p-3 rounded-lg" style="background:var(--muted); border:1px solid var(--border)">
+                            <div class="flex items-center justify-between">
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-xs font-medium" x-text="src.name"></span>
+                                        <span x-show="src.has_adapter" class="badge badge-topic">已适配</span>
+                                        <span x-show="!src.has_adapter" class="badge badge-emotion">自动发现</span>
+                                    </div>
+                                    <div class="text-xs mt-0.5 truncate" style="color:var(--muted-fg)" x-text="src.description"></div>
                                 </div>
-                                <div class="text-xs mt-0.5 truncate" style="color:var(--muted-fg)" x-text="src.description"></div>
+                                <div class="flex items-center gap-2 ml-3 shrink-0">
+                                    <span class="text-xs font-mono" style="color:var(--primary)" x-text="src.count.toLocaleString() + ' 条'"></span>
+                                    <button @click="startImport(src)" class="btn btn-ghost" :disabled="importing">导入</button>
+                                </div>
                             </div>
-                            <div class="flex items-center gap-2 ml-3 shrink-0">
-                                <span class="text-xs font-mono" style="color:var(--primary)" x-text="src.count.toLocaleString() + ' 条'"></span>
-                                <button @click="startImport(src)" class="btn btn-ghost" :disabled="importing">导入</button>
+                            <!-- 已导入进度 -->
+                            <div class="mt-2">
+                                <div class="w-full h-1.5 rounded-full" style="background:var(--border)">
+                                    <div class="h-full rounded-full" :style="`width:${src.imported_pct || 0}%; background:var(${src.imported_pct >= 95 ? '--success' : '--primary'})`"></div>
+                                </div>
+                                <div class="flex justify-between mt-1 text-xs" style="color:var(--muted-fg)">
+                                    <span x-text="`已导入 ~${src.imported_pct || 0}%`"></span>
+                                    <span x-show="src.remaining > 0" style="color:var(--warning)" x-text="`剩余 ~${src.remaining.toLocaleString()} 条`"></span>
+                                    <span x-show="src.remaining === 0" style="color:var(--success)">✓ 已全部导入</span>
+                                </div>
                             </div>
                         </div>
                     </template>
@@ -436,10 +449,116 @@
 
     <!-- ═══ 配置 Tab ═══ -->
     <div x-show="tab==='config'" x-cloak>
-        <div class="card mt-4">
-            <h3 class="text-sm font-medium mb-4">引擎参数</h3>
-            <p class="text-xs text-[var(--muted-fg)]">配置功能开发中...</p>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+            <!-- 模型配置 -->
+            <div class="card">
+                <h3 class="text-sm font-medium mb-3">🤖 模型配置</h3>
+                <div class="space-y-3">
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">Embedding Provider</span>
+                        <span class="text-xs font-mono" x-text="pluginConfig.embedding_provider_id || '未配置'"></span>
+                    </div>
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">向量维度</span>
+                        <span class="text-xs font-mono" x-text="pluginConfig.embedding_dimension || 1024"></span>
+                    </div>
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">Tag 提取 LLM</span>
+                        <span class="text-xs font-mono" x-text="pluginConfig.tag_llm_provider_id || '未配置（禁用）'"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 查询配置 -->
+            <div class="card">
+                <h3 class="text-sm font-medium mb-3">🔍 记忆召回</h3>
+                <div class="space-y-3">
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">自动注入</span>
+                        <span class="text-xs font-mono" :style="`color:var(${pluginConfig.query?.enable_auto_inject !== false ? '--success' : '--error'})`" x-text="pluginConfig.query?.enable_auto_inject !== false ? '✓ 开启' : '✗ 关闭'"></span>
+                    </div>
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">注入 Top-K</span>
+                        <span class="text-xs font-mono" x-text="pluginConfig.query?.inject_top_k || 5"></span>
+                    </div>
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">最低相似度</span>
+                        <span class="text-xs font-mono" x-text="pluginConfig.query?.min_similarity || '0.35'"></span>
+                    </div>
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">脉冲传播</span>
+                        <span class="text-xs font-mono" :style="`color:var(${pluginConfig.query?.enable_spike_routing !== false ? '--success' : '--muted-fg'})`" x-text="pluginConfig.query?.enable_spike_routing !== false ? '✓' : '✗'"></span>
+                    </div>
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">残差金字塔</span>
+                        <span class="text-xs font-mono" :style="`color:var(${pluginConfig.query?.enable_residual_pyramid !== false ? '--success' : '--muted-fg'})`" x-text="pluginConfig.query?.enable_residual_pyramid !== false ? '✓' : '✗'"></span>
+                    </div>
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">EPA 分析</span>
+                        <span class="text-xs font-mono" :style="`color:var(${pluginConfig.query?.enable_epa ? '--success' : '--muted-fg'})`" x-text="pluginConfig.query?.enable_epa ? '✓' : '✗'"></span>
+                    </div>
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">测地线重排</span>
+                        <span class="text-xs font-mono" :style="`color:var(${pluginConfig.query?.enable_geodesic_rerank ? '--success' : '--muted-fg'})`" x-text="pluginConfig.query?.enable_geodesic_rerank ? '✓' : '✗'"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 消息过滤 -->
+            <div class="card">
+                <h3 class="text-sm font-medium mb-3">📝 消息过滤</h3>
+                <div class="space-y-3">
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">最小长度</span>
+                        <span class="text-xs font-mono" x-text="(pluginConfig.filter?.min_message_length || 4) + ' 字符'"></span>
+                    </div>
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">最大长度</span>
+                        <span class="text-xs font-mono" x-text="(pluginConfig.filter?.max_message_length || 2000) + ' 字符'"></span>
+                    </div>
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">忽略 Bot 消息</span>
+                        <span class="text-xs font-mono" x-text="pluginConfig.filter?.ignore_bot_messages ? '是' : '否'"></span>
+                    </div>
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">群组白名单</span>
+                        <span class="text-xs font-mono" x-text="pluginConfig.filter?.group_whitelist || '全部'"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 存储与性能 -->
+            <div class="card">
+                <h3 class="text-sm font-medium mb-3">⚙️ 存储与性能</h3>
+                <div class="space-y-3">
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">最大记忆条数</span>
+                        <span class="text-xs font-mono" x-text="(pluginConfig.storage?.max_memories || 100000).toLocaleString()"></span>
+                    </div>
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">记忆衰减</span>
+                        <span class="text-xs font-mono" x-text="pluginConfig.storage?.memory_decay_enabled !== false ? '✓ 开启' : '✗ 关闭'"></span>
+                    </div>
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">每日衰减率</span>
+                        <span class="text-xs font-mono" x-text="pluginConfig.storage?.decay_rate || '0.995'"></span>
+                    </div>
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">Embedding 批量</span>
+                        <span class="text-xs font-mono" x-text="pluginConfig.performance?.embedding_batch_size || 10"></span>
+                    </div>
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">写入刷新间隔</span>
+                        <span class="text-xs font-mono" x-text="(pluginConfig.performance?.write_flush_interval || 30) + 's'"></span>
+                    </div>
+                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
+                        <span class="text-xs" style="color:var(--muted-fg)">共现重建间隔</span>
+                        <span class="text-xs font-mono" x-text="(pluginConfig.performance?.cooccurrence_rebuild_interval || 3600) + 's'"></span>
+                    </div>
+                </div>
+            </div>
         </div>
+        <p class="text-xs mt-4 text-center" style="color:var(--muted-fg)">配置修改请前往 AstrBot WebUI → 插件管理 → Wave Memory</p>
     </div>
 
 </main>
@@ -481,6 +600,8 @@ function dashboard() {
         llmTagged: 0,
         llmErrors: 0,
         _llmAbort: null,
+        // 配置
+        pluginConfig: {},
 
         async init() {
             // 读取主题偏好
@@ -489,6 +610,7 @@ function dashboard() {
             else { this.isDark = true; document.documentElement.classList.add('dark'); }
             await this.loadSystem();
             this.loadSenders();
+            this.loadConfig();
         },
 
         toggleTheme() {
@@ -501,6 +623,13 @@ function dashboard() {
             try {
                 const r = await fetch('/api/system');
                 this.sys = await r.json();
+            } catch(e) { console.error(e); }
+        },
+
+        async loadConfig() {
+            try {
+                const r = await fetch('/api/config');
+                this.pluginConfig = await r.json();
             } catch(e) { console.error(e); }
         },
 

@@ -61,6 +61,7 @@ class WaveMemoryWebUI:
         host: str = "0.0.0.0",
         port: int = 7890,
         password: str = "",
+        plugin_config: dict = None,
     ):
         self.db = db
         self.query_engine = query_engine
@@ -77,6 +78,7 @@ class WaveMemoryWebUI:
         self.host = host
         self.port = port
         self.password = password
+        self.plugin_config = plugin_config or {}
         self._task: Optional[asyncio.Task] = None
         self._sessions: set = set()  # 简单 token 管理
 
@@ -650,6 +652,28 @@ class WaveMemoryWebUI:
             except Exception as e:
                 return {"providers": [], "error": str(e)}
 
+        # ─── 当前配置（只读） ───
+
+        @app.get("/api/config")
+        async def get_config():
+            """返回当前插件运行配置（脱敏）。"""
+            cfg = self.plugin_config
+            return {
+                "embedding_provider_id": cfg.get("embedding_provider_id", ""),
+                "embedding_dimension": cfg.get("embedding_dimension", 1024),
+                "tag_llm_provider_id": cfg.get("tag_llm_provider_id", ""),
+                "query": cfg.get("Query_Settings", {}),
+                "tags": cfg.get("Tag_Settings", {}),
+                "storage": cfg.get("Storage_Settings", {}),
+                "filter": cfg.get("Message_Filter", {}),
+                "performance": cfg.get("Performance_Settings", {}),
+                "webui": {
+                    "enabled": cfg.get("WebUI_Settings", {}).get("webui_enabled", True),
+                    "host": cfg.get("WebUI_Settings", {}).get("webui_host", "0.0.0.0"),
+                    "port": cfg.get("WebUI_Settings", {}).get("webui_port", 9876),
+                },
+            }
+
         # ─── LLM Tag 提取（使用配置中固定的 provider） ───
 
         @app.post("/api/import/llm-extract")
@@ -721,13 +745,15 @@ class WaveMemoryWebUI:
 
         @app.get("/api/import/sources")
         async def discover_sources():
-            """通用数据源发现 — 自动扫描所有插件的数据库。"""
+            """通用数据源发现 — 自动扫描所有插件的数据库，附带已导入估算。"""
             from .source_discovery import SourceDiscovery
             discovery = SourceDiscovery()
             sources = discovery.discover_all()
-            # 返回前端需要的格式
-            return {"sources": [
-                {
+            # 对每个源做采样估算
+            result = []
+            for s in sources:
+                progress = discovery.estimate_imported(s, self.db)
+                result.append({
                     "id": s["id"],
                     "name": s["name"],
                     "description": s["description"],
@@ -735,9 +761,10 @@ class WaveMemoryWebUI:
                     "type": s["type"],
                     "db_path": s.get("db_path", ""),
                     "has_adapter": s["type"] == "known",
-                }
-                for s in sources
-            ]}
+                    "imported_pct": progress["estimated_pct"],
+                    "remaining": progress["estimated_remaining"],
+                })
+            return {"sources": result}
 
         # ─── 从数据源导入（通用） ───
 

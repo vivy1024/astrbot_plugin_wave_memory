@@ -275,6 +275,71 @@ class SourceDiscovery:
             "samples": samples,
         }
 
+    def estimate_imported(self, source: dict, wave_db) -> dict:
+        """采样估算某个数据源已导入到 wave_memory 的比例。
+
+        返回 {"sampled": N, "existing": M, "estimated_pct": float, "estimated_remaining": int}
+        """
+        sample_size = 50
+        try:
+            db_path = source.get("db_path")
+            if not db_path:
+                return {"sampled": 0, "existing": 0, "estimated_pct": 0, "estimated_remaining": source.get("count", 0)}
+
+            conn = sqlite3.connect(db_path)
+
+            if source["type"] == "known":
+                adapter = source["adapter"]
+                table = adapter["table"]
+                content_field = adapter["fields"].get("content", "content")
+                where = adapter.get("filter", "1=1")
+                rows = conn.execute(
+                    f"SELECT {content_field} FROM {table} WHERE {where} ORDER BY rowid DESC LIMIT ?",
+                    (sample_size,)
+                ).fetchall()
+            else:
+                # 未知源：取第一个 importable table
+                analysis = source.get("analysis", {})
+                importable = analysis.get("importable_tables", [])
+                if not importable:
+                    conn.close()
+                    return {"sampled": 0, "existing": 0, "estimated_pct": 0, "estimated_remaining": source.get("count", 0)}
+                table = importable[0]["name"]
+                cols = [c.lower() for c in importable[0].get("columns", [])]
+                content_field = next((c for c in cols if c in ("content", "text", "message", "judgment", "summary")), cols[0] if cols else "content")
+                rows = conn.execute(
+                    f"SELECT {content_field} FROM {table} ORDER BY rowid DESC LIMIT ?",
+                    (sample_size,)
+                ).fetchall()
+
+            conn.close()
+
+            if not rows:
+                return {"sampled": 0, "existing": 0, "estimated_pct": 0, "estimated_remaining": 0}
+
+            # 检查这些内容在 wave_memory 中是否已存在
+            existing = 0
+            for (content,) in rows:
+                if content and wave_db.conn.execute(
+                    "SELECT 1 FROM memories WHERE content = ? LIMIT 1", (content,)
+                ).fetchone():
+                    existing += 1
+
+            sampled = len(rows)
+            pct = existing / sampled if sampled > 0 else 0
+            total = source.get("count", 0)
+            estimated_remaining = max(0, int(total * (1 - pct)))
+
+            return {
+                "sampled": sampled,
+                "existing": existing,
+                "estimated_pct": round(pct * 100, 1),
+                "estimated_remaining": estimated_remaining,
+            }
+        except Exception as e:
+            logger.debug(f"[WaveMemory] estimate_imported error: {e}")
+            return {"sampled": 0, "existing": 0, "estimated_pct": 0, "estimated_remaining": source.get("count", 0)}
+
 
 class UniversalImporter:
     """通用导入器 — 根据适配器配置或 LLM 分析结果导入数据。"""

@@ -209,6 +209,7 @@ class WaveMemoryPlugin(Star):
                     host=self.webui_host,
                     port=self.webui_port,
                     password=self.webui_password,
+                    plugin_config=self.config,
                 )
                 await self.webui.start()
             except Exception as e:
