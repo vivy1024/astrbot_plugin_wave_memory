@@ -361,6 +361,11 @@
                     <button @click="loadSources(true)" class="btn btn-muted text-xs">🔄 刷新</button>
                 </div>
                 <p class="text-xs mb-4" style="color:var(--muted-fg)">自动扫描所有已安装记忆插件（自动去重 + 向量化）</p>
+                <div class="flex items-center gap-2 mb-3">
+                    <label class="text-xs" style="color:var(--muted-fg)">单次上限:</label>
+                    <input type="number" x-model.number="importLimit" min="100" max="50000" step="500" class="input text-xs" style="width:100px">
+                    <span class="text-xs" style="color:var(--muted-fg)">条</span>
+                </div>
                 <div class="space-y-3">
                     <template x-for="src in importSources" :key="src.id">
                         <div class="p-3 rounded-lg" style="background:var(--muted); border:1px solid var(--border)">
@@ -619,6 +624,7 @@ function dashboard() {
         // 导入
         importSources: [],
         importing: false,
+        importLimit: 5000,
         importLog: [],
         importProgress: 0,
         // LLM 提取
@@ -889,9 +895,10 @@ function dashboard() {
         async startImport(source) {
             this.importing = true;
             this.importProgress = 0;
-            this.importLog = [`[${this.ts()}] 开始导入 ${source.name}...`];
+            const limit = this.importLimit || 5000;
+            this.importLog = [`[${this.ts()}] 开始导入 ${source.name}（最多 ${limit} 条）...`];
             try {
-                const params = new URLSearchParams({ source_id: source.id, limit: 500 });
+                const params = new URLSearchParams({ source_id: source.id, limit: limit });
                 const r = await fetch('/api/import/from-source?' + params, { method: 'POST' });
                 const reader = r.body.getReader();
                 const decoder = new TextDecoder();

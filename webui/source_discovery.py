@@ -488,7 +488,8 @@ class UniversalImporter:
         if group_field:
             select_fields.append(group_field)
 
-        query = f"SELECT {', '.join(select_fields)} FROM {table} WHERE {where} ORDER BY rowid DESC LIMIT ?"
+        # ASC 保证从最早开始导入，去重跳过已有的，后续记录能被触及
+        query = f"SELECT {', '.join(select_fields)} FROM {table} WHERE {where} ORDER BY rowid ASC LIMIT ?"
         rows = conn.execute(query, (limit,)).fetchall()
         conn.close()
 
