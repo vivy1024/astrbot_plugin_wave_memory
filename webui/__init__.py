@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import uvicorn
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -652,7 +652,7 @@ class WaveMemoryWebUI:
             except Exception as e:
                 return {"providers": [], "error": str(e)}
 
-        # ─── 当前配置（只读） ───
+        # ─── 当前配置（读写） ───
 
         @app.get("/api/config")
         async def get_config():
@@ -673,6 +673,43 @@ class WaveMemoryWebUI:
                     "port": cfg.get("WebUI_Settings", {}).get("webui_port", 9876),
                 },
             }
+
+        @app.post("/api/config")
+        async def update_config(request: Request):
+            """更新插件配置并持久化。需要重启才能完全生效。"""
+            body = await request.json()
+            cfg = self.plugin_config
+
+            # 映射前端字段 → 实际配置 key
+            field_map = {
+                "embedding_provider_id": "embedding_provider_id",
+                "embedding_dimension": "embedding_dimension",
+                "tag_llm_provider_id": "tag_llm_provider_id",
+                "query": "Query_Settings",
+                "tags": "Tag_Settings",
+                "storage": "Storage_Settings",
+                "filter": "Message_Filter",
+                "performance": "Performance_Settings",
+            }
+
+            changed = []
+            for front_key, cfg_key in field_map.items():
+                if front_key in body:
+                    val = body[front_key]
+                    if isinstance(val, dict):
+                        # 合并嵌套 object
+                        existing = cfg.get(cfg_key, {})
+                        existing.update(val)
+                        cfg[cfg_key] = existing
+                    else:
+                        cfg[cfg_key] = val
+                    changed.append(front_key)
+
+            # 持久化
+            if changed and hasattr(cfg, "save_config"):
+                cfg.save_config()
+
+            return {"ok": True, "changed": changed, "message": "配置已保存，部分参数需重启生效"}
 
         # ─── LLM Tag 提取（使用配置中固定的 provider） ───
 

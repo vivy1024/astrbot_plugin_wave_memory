@@ -67,6 +67,10 @@
         }
         .input:focus { border-color: var(--primary); }
         .input::placeholder { color: var(--muted-fg); }
+        .toggle { appearance: none; width: 36px; height: 20px; border-radius: 10px; background: var(--border); position: relative; cursor: pointer; transition: background 0.2s; }
+        .toggle:checked { background: var(--primary); }
+        .toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: white; transition: transform 0.2s; }
+        .toggle:checked::after { transform: translateX(16px); }
 
         /* ─── Component: Badge ─── */
         .badge { padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 500; white-space: nowrap; }
@@ -449,22 +453,41 @@
 
     <!-- ═══ 配置 Tab ═══ -->
     <div x-show="tab==='config'" x-cloak>
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+        <div class="flex items-center justify-between mt-4 mb-3">
+            <span class="text-xs" style="color:var(--muted-fg)">修改后点击保存，部分参数需重启生效</span>
+            <div class="flex gap-2">
+                <button @click="loadConfig()" class="btn btn-muted text-xs">🔄 重载</button>
+                <button @click="saveConfig()" class="btn btn-ghost text-xs" :disabled="configSaving">💾 保存配置</button>
+            </div>
+        </div>
+        <div x-show="configMsg" class="text-xs mb-3 p-2 rounded" :style="`background:var(--muted); color:var(${configMsgOk ? '--success' : '--error'})`" x-text="configMsg"></div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <!-- 模型配置 -->
             <div class="card">
                 <h3 class="text-sm font-medium mb-3">🤖 模型配置</h3>
                 <div class="space-y-3">
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">Embedding Provider</span>
-                        <span class="text-xs font-mono" x-text="pluginConfig.embedding_provider_id || '未配置'"></span>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">Embedding Provider ID</label>
+                        <select x-model="pluginConfig.embedding_provider_id" class="input text-xs w-full">
+                            <option value="">未配置</option>
+                            <template x-for="p in providers" :key="p.id">
+                                <option :value="p.id" x-text="p.id + ' (' + p.model + ')'"></option>
+                            </template>
+                        </select>
                     </div>
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">向量维度</span>
-                        <span class="text-xs font-mono" x-text="pluginConfig.embedding_dimension || 1024"></span>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">向量维度</label>
+                        <input type="number" x-model.number="pluginConfig.embedding_dimension" class="input text-xs w-full" min="64" max="4096">
                     </div>
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">Tag 提取 LLM</span>
-                        <span class="text-xs font-mono" x-text="pluginConfig.tag_llm_provider_id || '未配置（禁用）'"></span>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">Tag 提取 LLM Provider</label>
+                        <select x-model="pluginConfig.tag_llm_provider_id" class="input text-xs w-full">
+                            <option value="">禁用 Tag 提取</option>
+                            <template x-for="p in providers" :key="p.id">
+                                <option :value="p.id" x-text="p.id + ' (' + p.model + ')'"></option>
+                            </template>
+                        </select>
                     </div>
                 </div>
             </div>
@@ -473,34 +496,34 @@
             <div class="card">
                 <h3 class="text-sm font-medium mb-3">🔍 记忆召回</h3>
                 <div class="space-y-3">
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">自动注入</span>
-                        <span class="text-xs font-mono" :style="`color:var(${pluginConfig.query?.enable_auto_inject !== false ? '--success' : '--error'})`" x-text="pluginConfig.query?.enable_auto_inject !== false ? '✓ 开启' : '✗ 关闭'"></span>
+                    <label class="flex items-center justify-between p-2.5 rounded cursor-pointer" style="background:var(--muted)">
+                        <span class="text-xs">自动注入记忆</span>
+                        <input type="checkbox" x-model="pluginConfig.query.enable_auto_inject" class="toggle">
+                    </label>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">注入 Top-K</label>
+                        <input type="number" x-model.number="pluginConfig.query.inject_top_k" class="input text-xs w-full" min="1" max="20">
                     </div>
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">注入 Top-K</span>
-                        <span class="text-xs font-mono" x-text="pluginConfig.query?.inject_top_k || 5"></span>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">最低相似度</label>
+                        <input type="text" x-model="pluginConfig.query.min_similarity" class="input text-xs w-full" placeholder="0.35">
                     </div>
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">最低相似度</span>
-                        <span class="text-xs font-mono" x-text="pluginConfig.query?.min_similarity || '0.35'"></span>
-                    </div>
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">脉冲传播</span>
-                        <span class="text-xs font-mono" :style="`color:var(${pluginConfig.query?.enable_spike_routing !== false ? '--success' : '--muted-fg'})`" x-text="pluginConfig.query?.enable_spike_routing !== false ? '✓' : '✗'"></span>
-                    </div>
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">残差金字塔</span>
-                        <span class="text-xs font-mono" :style="`color:var(${pluginConfig.query?.enable_residual_pyramid !== false ? '--success' : '--muted-fg'})`" x-text="pluginConfig.query?.enable_residual_pyramid !== false ? '✓' : '✗'"></span>
-                    </div>
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">EPA 分析</span>
-                        <span class="text-xs font-mono" :style="`color:var(${pluginConfig.query?.enable_epa ? '--success' : '--muted-fg'})`" x-text="pluginConfig.query?.enable_epa ? '✓' : '✗'"></span>
-                    </div>
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">测地线重排</span>
-                        <span class="text-xs font-mono" :style="`color:var(${pluginConfig.query?.enable_geodesic_rerank ? '--success' : '--muted-fg'})`" x-text="pluginConfig.query?.enable_geodesic_rerank ? '✓' : '✗'"></span>
-                    </div>
+                    <label class="flex items-center justify-between p-2.5 rounded cursor-pointer" style="background:var(--muted)">
+                        <span class="text-xs">脉冲传播</span>
+                        <input type="checkbox" x-model="pluginConfig.query.enable_spike_routing" class="toggle">
+                    </label>
+                    <label class="flex items-center justify-between p-2.5 rounded cursor-pointer" style="background:var(--muted)">
+                        <span class="text-xs">残差金字塔</span>
+                        <input type="checkbox" x-model="pluginConfig.query.enable_residual_pyramid" class="toggle">
+                    </label>
+                    <label class="flex items-center justify-between p-2.5 rounded cursor-pointer" style="background:var(--muted)">
+                        <span class="text-xs">EPA 分析（实验性）</span>
+                        <input type="checkbox" x-model="pluginConfig.query.enable_epa" class="toggle">
+                    </label>
+                    <label class="flex items-center justify-between p-2.5 rounded cursor-pointer" style="background:var(--muted)">
+                        <span class="text-xs">测地线重排（实验性）</span>
+                        <input type="checkbox" x-model="pluginConfig.query.enable_geodesic_rerank" class="toggle">
+                    </label>
                 </div>
             </div>
 
@@ -508,21 +531,25 @@
             <div class="card">
                 <h3 class="text-sm font-medium mb-3">📝 消息过滤</h3>
                 <div class="space-y-3">
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">最小长度</span>
-                        <span class="text-xs font-mono" x-text="(pluginConfig.filter?.min_message_length || 4) + ' 字符'"></span>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">最小消息长度</label>
+                        <input type="number" x-model.number="pluginConfig.filter.min_message_length" class="input text-xs w-full" min="1" max="100">
                     </div>
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">最大长度</span>
-                        <span class="text-xs font-mono" x-text="(pluginConfig.filter?.max_message_length || 2000) + ' 字符'"></span>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">最大消息长度</label>
+                        <input type="number" x-model.number="pluginConfig.filter.max_message_length" class="input text-xs w-full" min="100" max="10000">
                     </div>
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">忽略 Bot 消息</span>
-                        <span class="text-xs font-mono" x-text="pluginConfig.filter?.ignore_bot_messages ? '是' : '否'"></span>
+                    <label class="flex items-center justify-between p-2.5 rounded cursor-pointer" style="background:var(--muted)">
+                        <span class="text-xs">忽略 Bot 自身消息</span>
+                        <input type="checkbox" x-model="pluginConfig.filter.ignore_bot_messages" class="toggle">
+                    </label>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">群组白名单（逗号分隔）</label>
+                        <input type="text" x-model="pluginConfig.filter.group_whitelist" class="input text-xs w-full" placeholder="留空=全部">
                     </div>
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">群组白名单</span>
-                        <span class="text-xs font-mono" x-text="pluginConfig.filter?.group_whitelist || '全部'"></span>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">群组黑名单（逗号分隔）</label>
+                        <input type="text" x-model="pluginConfig.filter.group_blacklist" class="input text-xs w-full" placeholder="留空=不排除">
                     </div>
                 </div>
             </div>
@@ -531,34 +558,37 @@
             <div class="card">
                 <h3 class="text-sm font-medium mb-3">⚙️ 存储与性能</h3>
                 <div class="space-y-3">
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">最大记忆条数</span>
-                        <span class="text-xs font-mono" x-text="(pluginConfig.storage?.max_memories || 100000).toLocaleString()"></span>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">最大记忆条数</label>
+                        <input type="number" x-model.number="pluginConfig.storage.max_memories" class="input text-xs w-full" min="1000" max="1000000">
                     </div>
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">记忆衰减</span>
-                        <span class="text-xs font-mono" x-text="pluginConfig.storage?.memory_decay_enabled !== false ? '✓ 开启' : '✗ 关闭'"></span>
+                    <label class="flex items-center justify-between p-2.5 rounded cursor-pointer" style="background:var(--muted)">
+                        <span class="text-xs">记忆衰减</span>
+                        <input type="checkbox" x-model="pluginConfig.storage.memory_decay_enabled" class="toggle">
+                    </label>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">每日衰减率</label>
+                        <input type="text" x-model="pluginConfig.storage.decay_rate" class="input text-xs w-full" placeholder="0.995">
                     </div>
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">每日衰减率</span>
-                        <span class="text-xs font-mono" x-text="pluginConfig.storage?.decay_rate || '0.995'"></span>
+                    <label class="flex items-center justify-between p-2.5 rounded cursor-pointer" style="background:var(--muted)">
+                        <span class="text-xs">自动清理</span>
+                        <input type="checkbox" x-model="pluginConfig.storage.auto_cleanup_enabled" class="toggle">
+                    </label>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">Embedding 批量大小</label>
+                        <input type="number" x-model.number="pluginConfig.performance.embedding_batch_size" class="input text-xs w-full" min="1" max="100">
                     </div>
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">Embedding 批量</span>
-                        <span class="text-xs font-mono" x-text="pluginConfig.performance?.embedding_batch_size || 10"></span>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">写入刷新间隔（秒）</label>
+                        <input type="number" x-model.number="pluginConfig.performance.write_flush_interval" class="input text-xs w-full" min="5" max="300">
                     </div>
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">写入刷新间隔</span>
-                        <span class="text-xs font-mono" x-text="(pluginConfig.performance?.write_flush_interval || 30) + 's'"></span>
-                    </div>
-                    <div class="flex justify-between items-center p-2.5 rounded" style="background:var(--muted)">
-                        <span class="text-xs" style="color:var(--muted-fg)">共现重建间隔</span>
-                        <span class="text-xs font-mono" x-text="(pluginConfig.performance?.cooccurrence_rebuild_interval || 3600) + 's'"></span>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">共现矩阵重建间隔（秒）</label>
+                        <input type="number" x-model.number="pluginConfig.performance.cooccurrence_rebuild_interval" class="input text-xs w-full" min="0" max="86400">
                     </div>
                 </div>
             </div>
         </div>
-        <p class="text-xs mt-4 text-center" style="color:var(--muted-fg)">配置修改请前往 AstrBot WebUI → 插件管理 → Wave Memory</p>
     </div>
 
 </main>
@@ -602,6 +632,10 @@ function dashboard() {
         _llmAbort: null,
         // 配置
         pluginConfig: {},
+        providers: [],
+        configSaving: false,
+        configMsg: '',
+        configMsgOk: true,
 
         async init() {
             // 读取主题偏好
@@ -611,6 +645,7 @@ function dashboard() {
             await this.loadSystem();
             this.loadSenders();
             this.loadConfig();
+            this.loadProviders();
         },
 
         toggleTheme() {
@@ -629,8 +664,48 @@ function dashboard() {
         async loadConfig() {
             try {
                 const r = await fetch('/api/config');
-                this.pluginConfig = await r.json();
+                const data = await r.json();
+                // 确保嵌套对象存在
+                data.query = data.query || {};
+                data.tags = data.tags || {};
+                data.storage = data.storage || {};
+                data.filter = data.filter || {};
+                data.performance = data.performance || {};
+                this.pluginConfig = data;
             } catch(e) { console.error(e); }
+        },
+
+        async loadProviders() {
+            try {
+                const r = await fetch('/api/providers');
+                const data = await r.json();
+                this.providers = data.providers || [];
+            } catch(e) { console.error(e); }
+        },
+
+        async saveConfig() {
+            this.configSaving = true;
+            this.configMsg = '';
+            try {
+                const r = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(this.pluginConfig),
+                });
+                const data = await r.json();
+                if (data.ok) {
+                    this.configMsg = '✓ ' + data.message;
+                    this.configMsgOk = true;
+                } else {
+                    this.configMsg = '✗ 保存失败: ' + (data.detail || data.error || 'Unknown');
+                    this.configMsgOk = false;
+                }
+            } catch(e) {
+                this.configMsg = '✗ 网络错误: ' + e.message;
+                this.configMsgOk = false;
+            }
+            this.configSaving = false;
+            setTimeout(() => this.configMsg = '', 5000);
         },
 
         async loadSenders() {

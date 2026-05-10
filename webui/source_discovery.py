@@ -279,8 +279,9 @@ class SourceDiscovery:
         """采样估算某个数据源已导入到 wave_memory 的比例。
 
         返回 {"sampled": N, "existing": M, "estimated_pct": float, "estimated_remaining": int}
+        使用内容前缀批量 IN 查询，避免逐条全表扫描。
         """
-        sample_size = 50
+        sample_size = 20
         try:
             db_path = source.get("db_path")
             if not db_path:
@@ -317,15 +318,18 @@ class SourceDiscovery:
             if not rows:
                 return {"sampled": 0, "existing": 0, "estimated_pct": 0, "estimated_remaining": 0}
 
-            # 检查这些内容在 wave_memory 中是否已存在
-            existing = 0
-            for (content,) in rows:
-                if content and wave_db.conn.execute(
-                    "SELECT 1 FROM memories WHERE content = ? LIMIT 1", (content,)
-                ).fetchone():
-                    existing += 1
+            # 批量检查：用 content 精确匹配，一次 IN 查询
+            contents = [r[0] for r in rows if r[0]]
+            if not contents:
+                return {"sampled": 0, "existing": 0, "estimated_pct": 0, "estimated_remaining": source.get("count", 0)}
 
-            sampled = len(rows)
+            placeholders = ",".join(["?"] * len(contents))
+            existing = wave_db.conn.execute(
+                f"SELECT COUNT(*) FROM memories WHERE content IN ({placeholders})",
+                contents
+            ).fetchone()[0]
+
+            sampled = len(contents)
             pct = existing / sampled if sampled > 0 else 0
             total = source.get("count", 0)
             estimated_remaining = max(0, int(total * (1 - pct)))
