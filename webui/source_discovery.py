@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -354,14 +355,113 @@ class UniversalImporter:
         self.tag_extractor = tag_extractor
         self.memory_index = memory_index
 
+    async def validate_mapping(self, db_path: str, table: str, fields: dict) -> dict:
+        """用 LLM 验证字段映射是否正确。
+
+        返回:
+            {"valid": True} 或 {"valid": False, "corrected": {...}, "issues": [...]}
+        如果没有 LLM 可用，返回 {"valid": True, "skipped": True}
+        """
+        if not self.tag_extractor or not self.tag_extractor.provider_id:
+            return {"valid": True, "skipped": True}
+
+        try:
+            provider = self.tag_extractor.context.get_provider_by_id(self.tag_extractor.provider_id)
+            if not provider:
+                return {"valid": True, "skipped": True}
+
+            conn = sqlite3.connect(db_path)
+            cols = conn.execute(f"PRAGMA table_info({table})").fetchall()
+            col_names = [c[1] for c in cols]
+
+            # 取 3 条样本
+            rows = conn.execute(f"SELECT * FROM {table} LIMIT 3").fetchall()
+            samples = []
+            for row in rows:
+                sample = {}
+                for i, val in enumerate(row):
+                    if i < len(col_names):
+                        if isinstance(val, str) and len(val) > 100:
+                            val = val[:100] + "..."
+                        sample[col_names[i]] = val
+                samples.append(sample)
+            conn.close()
+
+            mapping_json = json.dumps(fields, ensure_ascii=False, indent=2)
+            samples_json = json.dumps(samples, ensure_ascii=False, indent=2)
+
+            prompt = VALIDATE_MAPPING_PROMPT.format(
+                mapping_json=mapping_json,
+                table_name=table,
+                columns=", ".join(col_names),
+                samples=samples_json,
+            )
+
+            response = await provider.text_chat(prompt=prompt)
+            if not response or not response.completion_text:
+                return {"valid": True, "skipped": True}
+
+            text = response.completion_text.strip()
+            text = re.sub(r'^```(?:json)?\s*', '', text, flags=re.MULTILINE)
+            text = re.sub(r'```\s*$', '', text, flags=re.MULTILINE)
+            json_match = re.search(r'\{[\s\S]*\}', text)
+            if json_match:
+                result = json.loads(json_match.group())
+                if not result.get("valid", True):
+                    corrected = result.get("corrected_mapping", {})
+                    return {
+                        "valid": False,
+                        "issues": result.get("issues", []),
+                        "corrected": corrected,
+                    }
+                return {"valid": True}
+
+            return {"valid": True, "skipped": True}
+        except Exception as e:
+            logger.debug(f"[WaveMemory] validate_mapping error: {e}")
+            return {"valid": True, "skipped": True}
+
     async def import_known(self, source: dict, limit: int = 500,
                            extract_tags: bool = False) -> AsyncGenerator[str, None]:
         """导入已知适配器的数据源。"""
         adapter = source["adapter"]
         db_path = source["db_path"]
         table = adapter["table"]
-        fields = adapter["fields"]
+        fields = adapter["fields"].copy()  # 可能被 LLM 修正
         where = adapter.get("filter", "1=1")
+
+        # ─── LLM 预检：验证字段映射 ───
+        validation = await self.validate_mapping(db_path, table, fields)
+        if not validation.get("valid", True):
+            issues = validation.get("issues", [])
+            corrected = validation.get("corrected", {})
+            logger.warning(f"[WaveMemory] Mapping validation failed for {table}: {issues}")
+            yield json.dumps({
+                "progress": 0, "message": f"⚠️ LLM 预检发现映射问题: {'; '.join(issues)}，自动修正中..."
+            })
+
+            # 获取实际表列名，用于验证 LLM 修正
+            conn_check = sqlite3.connect(db_path)
+            actual_cols = {c[1].lower() for c in conn_check.execute(f"PRAGMA table_info({table})").fetchall()}
+            conn_check.close()
+
+            # 应用 LLM 修正（仅当字段名存在于实际表列中）
+            if corrected.get("content_field") and corrected["content_field"].lower() in actual_cols:
+                fields["content"] = corrected["content_field"]
+            if corrected.get("sender_field") and corrected["sender_field"].lower() in actual_cols:
+                fields["sender"] = corrected["sender_field"]
+            elif corrected.get("sender_field") is None and "sender" in fields:
+                del fields["sender"]
+            if corrected.get("timestamp_field") and corrected["timestamp_field"].lower() in actual_cols:
+                fields["timestamp"] = corrected["timestamp_field"]
+            elif corrected.get("timestamp_field") is None and "timestamp" in fields:
+                del fields["timestamp"]
+            if corrected.get("group_field") and corrected["group_field"].lower() in actual_cols:
+                fields["group"] = corrected["group_field"]
+            elif corrected.get("group_field") is None and "group" in fields:
+                del fields["group"]
+            if corrected.get("filter"):
+                where = corrected["filter"]
 
         conn = sqlite3.connect(db_path)
         content_field = fields.get("content", "content")
@@ -400,6 +500,8 @@ class UniversalImporter:
         skipped = 0
         errors = 0
         batch_size = 10
+        consecutive_errors = 0  # 连续错误计数
+        llm_fallback_attempted = False  # 是否已尝试 LLM 降级
 
         for i in range(0, total, batch_size):
             batch = rows[i:i + batch_size]
@@ -482,10 +584,33 @@ class UniversalImporter:
                                 if vec is not None and self.memory_index:
                                     self.memory_index.add([mem_id], np.array(vec).reshape(1, -1))
                                 imported += 1
+                                consecutive_errors = 0  # 成功则重置
                             except Exception as e:
                                 errors += 1
+                                consecutive_errors += 1
                                 if errors <= 3:
                                     logger.warning(f"[WaveMemory] Import add_memory error: {e}")
+
+                        # ─── 连续错误降级：LLM 重新分析 ───
+                        if consecutive_errors >= 5 and not llm_fallback_attempted:
+                            llm_fallback_attempted = True
+                            logger.warning(f"[WaveMemory] 连续 {consecutive_errors} 条失败，尝试 LLM 重新分析映射...")
+                            yield json.dumps({
+                                "progress": round((i + batch_size) / total, 3),
+                                "imported": imported, "skipped": skipped, "errors": errors,
+                                "message": f"⚠️ 连续失败 {consecutive_errors} 条，正在用 LLM 重新分析字段映射..."
+                            })
+                            # 用 LLM 重新验证
+                            revalidation = await self.validate_mapping(db_path, table, fields)
+                            if not revalidation.get("valid", True) and revalidation.get("corrected"):
+                                corrected = revalidation["corrected"]
+                                logger.info(f"[WaveMemory] LLM 修正映射: {corrected}")
+                                # 这里无法重建 SELECT（已经取完数据），但记录修正信息供用户下次使用
+                                yield json.dumps({
+                                    "progress": round((i + batch_size) / total, 3),
+                                    "imported": imported, "skipped": skipped, "errors": errors,
+                                    "message": f"🔧 LLM 建议修正映射: {revalidation.get('issues', [])}。建议重新导入。"
+                                })
                 except Exception as e:
                     errors += len(texts_to_embed)
                     logger.warning(f"[WaveMemory] Batch embed error: {e}")
@@ -525,6 +650,7 @@ class UniversalImporter:
             "content_field": "field_name",
             "sender_field": "field_name" | null,
             "timestamp_field": "field_name" | null,
+            "group_field": "field_name" | null,
             "filter": "WHERE clause" | null,
         }
         """
@@ -533,6 +659,7 @@ class UniversalImporter:
         content_field = mapping["content_field"]
         sender_field = mapping.get("sender_field")
         ts_field = mapping.get("timestamp_field")
+        group_field = mapping.get("group_field")
         where = mapping.get("filter", "1=1")
 
         select_fields = [content_field]
@@ -540,6 +667,8 @@ class UniversalImporter:
             select_fields.append(sender_field)
         if ts_field:
             select_fields.append(ts_field)
+        if group_field:
+            select_fields.append(group_field)
 
         conn = sqlite3.connect(db_path)
         query = f"SELECT {', '.join(select_fields)} FROM {table} WHERE {where} ORDER BY rowid DESC LIMIT ?"
@@ -559,13 +688,30 @@ class UniversalImporter:
 
         for i, row in enumerate(rows):
             try:
-                content = str(row[0] or "")
+                idx = 0
+                content = str(row[idx] or "")
+                idx += 1
                 if len(content) < 6:
                     skipped += 1
                     continue
 
-                sender = str(row[1]) if sender_field and len(row) > 1 else ""
-                ts = row[2] if ts_field and len(row) > 2 else time.time()
+                sender = ""
+                if sender_field:
+                    sender = str(row[idx] or "")
+                    idx += 1
+
+                ts = time.time()
+                if ts_field:
+                    ts = row[idx] or time.time()
+                    idx += 1
+
+                group_id = "default"
+                if group_field:
+                    raw_group = str(row[idx] or "")
+                    idx += 1
+                    if raw_group:
+                        parts = raw_group.split(":")
+                        group_id = parts[-1] if parts else raw_group
 
                 existing = self.db.conn.execute(
                     "SELECT id FROM memories WHERE content = ? LIMIT 1", (content,)
@@ -575,10 +721,12 @@ class UniversalImporter:
                     continue
 
                 vec = await self.embedding_service.get_embedding(content[:500])
-                self.db.add_memory(group_id="default", content=content, sender_name=sender, vector=vec, timestamp=ts)
+                self.db.add_memory(group_id=group_id, content=content, sender_name=sender, vector=vec, timestamp=ts)
                 imported += 1
-            except Exception:
+            except Exception as e:
                 errors += 1
+                if errors <= 3:
+                    logger.warning(f"[WaveMemory] LLM mapping import error: {e}")
 
             if (i + 1) % 20 == 0:
                 yield json.dumps({
@@ -606,7 +754,13 @@ ANALYZE_SOURCE_PROMPT = """你是一个数据库分析专家。我需要你分�
 记忆系统需要的数据格式：
 - content: 文本内容（必须，至少 10 字符）
 - sender: 发送者名称（可选）
-- timestamp: 时间戳（可选）
+- timestamp: 时间戳（可选，Unix 时间戳或 ISO 格式）
+- group_id: 群组/会话标识（可选，用于区分不同对话场景）
+
+group_id 说明：
+- 通常是群号、session_id、conversation_id 等标识对话来源的字段
+- 如果字段值包含前缀（如 "defaultnapcat:GroupMessage:1015727706"），系统会自动提取最后的数字部分
+- 如果表中没有明确的群组字段，设为 null
 
 以下是数据库的表结构和样本数据：
 
@@ -622,10 +776,56 @@ ANALYZE_SOURCE_PROMPT = """你是一个数据库分析专家。我需要你分�
             "content_field": "内容字段名",
             "sender_field": "发送者字段名或null",
             "timestamp_field": "时间戳字段名或null",
+            "group_field": "群组/会话ID字段名或null",
             "filter": "SQL WHERE 条件或null",
             "description": "这个表包含什么数据"
         }}
     ]
 }}
 
+只返回 JSON，不要其他内容。"""
+
+
+# ─── LLM 导入预检 Prompt ───
+
+VALIDATE_MAPPING_PROMPT = """你是一个数据库导入验证专家。请验证以下字段映射是否正确。
+
+## 目标：将源表数据导入记忆系统
+记忆系统 add_memory 需要：
+- group_id: str（群组/会话标识，必须）
+- content: str（文本内容，必须）
+- sender_name: str（发送者，可选）
+- timestamp: float（时间戳，可选）
+
+## 当前映射配置
+{mapping_json}
+
+## 实际表结构
+表名: {table_name}
+字段: {columns}
+
+## 样本数据（前 3 条）
+{samples}
+
+## 重要约束
+- corrected_mapping 中的所有字段名必须是表的**顶层列名**（即上面"字段"列表中的名称）
+- 不要使用 JSON 内嵌字段（如 metadata 中的子字段）作为映射目标
+- 如果需要的信息只存在于 JSON 字段内部，将该映射设为 null（系统会用默认值）
+- 如果没有合适的群组字段，group_field 设为 null（系统默认 "default"）
+
+## 请验证并返回 JSON：
+{{
+    "valid": true/false,
+    "issues": ["问题描述1", ...],
+    "corrected_mapping": {{
+        "content_field": "正确的内容字段（必须是顶层列名）",
+        "sender_field": "正确的发送者字段或null",
+        "timestamp_field": "正确的时间戳字段或null",
+        "group_field": "正确的群组字段或null",
+        "filter": "建议的 WHERE 条件或null"
+    }}
+}}
+
+如果映射正确，valid=true 且 corrected_mapping 与原映射一致。
+如果有问题，valid=false 并给出修正后的映射。
 只返回 JSON，不要其他内容。"""

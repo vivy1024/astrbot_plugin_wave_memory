@@ -852,12 +852,14 @@ class WaveMemoryWebUI:
                         content_field = next((c for c in cols if c in ("content", "text", "message", "judgment", "summary", "note")), cols[0] if cols else "content")
                         sender_field = next((c for c in cols if c in ("sender", "sender_name", "sender_id", "user_name", "author")), None)
                         ts_field = next((c for c in cols if c in ("timestamp", "created_at", "time", "ts")), None)
+                        group_field = next((c for c in cols if c in ("group_id", "group", "session_id", "conversation_id", "channel_id")), None)
 
                         mapping = {
                             "table": table_info["name"],
                             "content_field": content_field,
                             "sender_field": sender_field,
                             "timestamp_field": ts_field,
+                            "group_field": group_field,
                             "filter": f"LENGTH({content_field}) >= 10",
                         }
                         async for event in importer.import_with_llm_mapping({"db_path": source["db_path"]}, mapping, limit=limit):
