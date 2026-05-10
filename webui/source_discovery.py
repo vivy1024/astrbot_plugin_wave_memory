@@ -556,21 +556,30 @@ class UniversalImporter:
         if group_field:
             select_fields.append(group_field)
 
-        # ASC 保证从最早开始导入；取全部记录（受源总量限制），去重在内存中做
-        # 不再用 LIMIT 截断，因为跳过的不应占 limit 名额
-        source_total = source.get("count", 0)
-        query = f"SELECT {', '.join(select_fields)} FROM {table} WHERE {where} ORDER BY rowid ASC"
+        # 用 rowid 游标：记录上次扫描到的位置，下次直接跳过已处理的
+        cursor_key = f"import_cursor:{source['id']}"
+        last_rowid = 0
+        try:
+            row = self.db.conn.execute(
+                "SELECT value FROM kv_store WHERE key = ?", (cursor_key,)
+            ).fetchone()
+            if row:
+                last_rowid = int(row[0])
+        except Exception:
+            pass
+
         conn = sqlite3.connect(db_path)
-        rows = conn.execute(query).fetchall()
+        query = f"SELECT rowid, {', '.join(select_fields)} FROM {table} WHERE {where} AND rowid > ? ORDER BY rowid ASC"
+        rows = conn.execute(query, (last_rowid,)).fetchall()
         conn.close()
 
         total = len(rows)
         if total == 0:
-            yield json.dumps({"progress": 1.0, "message": "No data to import"})
+            yield json.dumps({"progress": 1.0, "message": "✓ 没有新记录需要导入（已全部处理过）"})
             return
 
-        logger.info(f"[WaveMemory] Import started: {source['name']} ({total} source records, import limit={limit})")
-        yield json.dumps({"progress": 0, "total": total, "message": f"Importing from {source['name']} (source: {total}, limit: {limit})..."})
+        logger.info(f"[WaveMemory] Import started: {source['name']} ({total} new records after rowid {last_rowid}, limit={limit})")
+        yield json.dumps({"progress": 0, "total": total, "message": f"从断点继续: {source['name']} (新记录: {total}, limit: {limit})..."})
 
         imported = 0
         skipped = 0
@@ -579,26 +588,20 @@ class UniversalImporter:
         consecutive_errors = 0  # 连续错误计数
         llm_fallback_attempted = False  # 是否已尝试 LLM 降级
         processed_rows = 0  # 已扫描的源记录数
-        consecutive_skips = 0  # 连续跳过计数（用于提前终止）
+        max_rowid_seen = last_rowid  # 跟踪处理到的最大 rowid
 
         for i in range(0, total, batch_size):
             # 已导入够 limit 条，提前结束
             if imported >= limit:
                 break
 
-            # 连续跳过超过 1000 条，说明后续大概率也是重复的，提前结束
-            if consecutive_skips >= 1000:
-                yield json.dumps({
-                    "progress": 1.0,
-                    "imported": imported, "skipped": skipped, "errors": errors,
-                    "message": f"✓ 连续 1000 条重复，提前结束（导入 {imported} 条，跳过 {skipped} 条）"
-                })
-                if self.memory_index:
-                    self.memory_index.save()
-                return
-
             batch = rows[i:i + batch_size]
             processed_rows += len(batch)
+
+            # 更新 rowid 游标（batch 第一列是 rowid）
+            for row in batch:
+                if row[0] > max_rowid_seen:
+                    max_rowid_seen = row[0]
             texts_to_embed = []
             records = []
 
@@ -607,7 +610,7 @@ class UniversalImporter:
             batch_parsed = []
 
             for row in batch:
-                idx = 0
+                idx = 1  # 第 0 列是 rowid
                 content = row[idx] or ""
                 idx += 1
 
@@ -672,11 +675,9 @@ class UniversalImporter:
                 for rec in batch_parsed:
                     if rec["content"] in existing_set:
                         skipped += 1
-                        consecutive_skips += 1
                     else:
                         texts_to_embed.append(rec["content"][:500])
                         records.append(rec)
-                        consecutive_skips = 0  # 有新记录，重置
 
             # 批量 embedding
             if texts_to_embed:
@@ -741,10 +742,21 @@ class UniversalImporter:
             import asyncio
             await asyncio.sleep(0.02)
 
+        # 保存游标位置（无论导入多少，都记录扫描到的最大 rowid）
+        if max_rowid_seen > last_rowid:
+            try:
+                self.db.conn.execute(
+                    "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
+                    (cursor_key, str(max_rowid_seen))
+                )
+                self.db.conn.commit()
+            except Exception as e:
+                logger.warning(f"[WaveMemory] Failed to save import cursor: {e}")
+
         if self.memory_index:
             self.memory_index.save()
 
-        logger.info(f"[WaveMemory] Import done: {source['name']} — imported={imported}, skipped={skipped}, errors={errors}")
+        logger.info(f"[WaveMemory] Import done: {source['name']} — imported={imported}, skipped={skipped}, errors={errors}, cursor={max_rowid_seen}")
 
         yield json.dumps({
             "progress": 1.0,
