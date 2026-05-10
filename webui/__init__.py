@@ -708,71 +708,76 @@ class WaveMemoryWebUI:
             """后台批量为无 Tag 的记忆提取 Tag（SSE 流）。"""
             from fastapi.responses import StreamingResponse
 
-            async def run_batch():
-                if not self.tag_extractor:
-                    yield f"data: {json.dumps({'error': 'Tag extractor not configured'})}\n\n"
-                    return
+            if _import_lock.locked():
+                return StreamingResponse(
+                    iter([f"data: {json.dumps({'error': '另一个导入/提取任务正在运行，请等待完成后再试'})}\n\n"]),
+                    media_type="text/event-stream"
+                )
 
-                # 查找无 Tag 的记忆
-                rows = self.db.conn.execute(
-                    """SELECT m.id, m.content, m.sender_name FROM memories m
-                       WHERE m.id NOT IN (SELECT DISTINCT memory_id FROM memory_tags)
-                       AND LENGTH(m.content) >= 10
+            async def run_batch():
+                async with _import_lock:
+                    if not self.tag_extractor:
+                        yield f"data: {json.dumps({'error': 'Tag extractor not configured'})}\n\n"
+                        return
+
+                    # 查找无 Tag 的记忆
+                    rows = self.db.conn.execute(
+                        """SELECT m.id, m.content, m.sender_name FROM memories m
+                           WHERE m.id NOT IN (SELECT DISTINCT memory_id FROM memory_tags)
+                           AND LENGTH(m.content) >= 10
                        ORDER BY m.id DESC
                        LIMIT 5000"""
-                ).fetchall()
+                    ).fetchall()
 
-                total = len(rows)
-                if total == 0:
-                    yield f"data: {json.dumps({'progress': 1.0, 'message': 'All memories already have tags'})}\n\n"
-                    return
+                    total = len(rows)
+                    if total == 0:
+                        yield f"data: {json.dumps({'progress': 1.0, 'message': 'All memories already have tags'})}\n\n"
+                        return
 
-                yield f"data: {json.dumps({'progress': 0, 'total': total, 'message': f'Starting batch tag extraction for {total} memories...'})}\n\n"
+                    yield f"data: {json.dumps({'progress': 0, 'total': total, 'message': f'Starting batch tag extraction for {total} memories...'})}\n\n"
 
-                processed = 0
-                tagged = 0
-                errors = 0
+                    processed = 0
+                    tagged = 0
+                    errors = 0
 
-                for i in range(0, total, batch_size):
-                    batch = rows[i:i + batch_size]
+                    for i in range(0, total, batch_size):
+                        batch = rows[i:i + batch_size]
 
-                    for mem_id, content, sender_name in batch:
-                        try:
-                            tags = await self.tag_extractor.extract_tags(content[:800], sender=sender_name or "")
-                            if tags:
-                                tag_names = [t["name"] for t in tags]
-                                tag_vecs = await self.embedding_service.get_embeddings(tag_names)
+                        for mem_id, content, sender_name in batch:
+                            try:
+                                tags = await self.tag_extractor.extract_tags(content[:800], sender=sender_name or "")
+                                if tags:
+                                    tag_names = [t["name"] for t in tags]
+                                    tag_vecs = await self.embedding_service.get_embeddings(tag_names)
 
-                                tag_ids = []
-                                for tag_info, tag_vec in zip(tags, tag_vecs):
-                                    tid = self.db.add_tag_extended(
-                                        name=tag_info["name"],
-                                        tag_type=tag_info.get("type", "keyword"),
-                                        vector=tag_vec,
-                                        confidence=tag_info.get("confidence", 0.8),
-                                    )
-                                    tag_ids.append(tid)
+                                    tag_ids = []
+                                    for tag_info, tag_vec in zip(tags, tag_vecs):
+                                        tid = self.db.add_tag_extended(
+                                            name=tag_info["name"],
+                                            tag_type=tag_info.get("type", "keyword"),
+                                            vector=tag_vec,
+                                            confidence=tag_info.get("confidence", 0.8),
+                                        )
+                                        tag_ids.append(tid)
 
-                                for pos, (tid, tag_info) in enumerate(zip(tag_ids, tags), 1):
-                                    self.db.conn.execute(
-                                        "INSERT OR IGNORE INTO memory_tags (memory_id, tag_id, position, relevance) VALUES (?, ?, ?, ?)",
-                                        (mem_id, tid, pos, tag_info.get("confidence", 0.8)),
-                                    )
-                                self.db.conn.commit()
-                                tagged += 1
-                        except Exception as e:
-                            errors += 1
+                                    for pos, (tid, tag_info) in enumerate(zip(tag_ids, tags), 1):
+                                        self.db.conn.execute(
+                                            "INSERT OR IGNORE INTO memory_tags (memory_id, tag_id, position, relevance) VALUES (?, ?, ?, ?)",
+                                            (mem_id, tid, pos, tag_info.get("confidence", 0.8)),
+                                        )
+                                    self.db.conn.commit()
+                                    tagged += 1
+                            except Exception as e:
+                                errors += 1
 
-                        processed += 1
+                            processed += 1
 
-                    progress = processed / total
-                    yield f"data: {json.dumps({'progress': round(progress, 3), 'processed': processed, 'total': total, 'tagged': tagged, 'errors': errors, 'message': f'Batch {i // batch_size + 1}: {processed}/{total} ({tagged} tagged, {errors} errors)'})}\n\n"
+                        progress = processed / total
+                        yield f"data: {json.dumps({'progress': round(progress, 3), 'processed': processed, 'total': total, 'tagged': tagged, 'errors': errors, 'message': f'Batch {i // batch_size + 1}: {processed}/{total} ({tagged} tagged, {errors} errors)'})}\n\n"
 
-                    # 让出事件循环
-                    import asyncio
-                    await asyncio.sleep(0.1)
+                        await asyncio.sleep(0.1)
 
-                yield f"data: {json.dumps({'progress': 1.0, 'processed': total, 'total': total, 'tagged': tagged, 'errors': errors, 'message': f'Complete: {tagged}/{total} tagged, {errors} errors'})}\n\n"
+                    yield f"data: {json.dumps({'progress': 1.0, 'processed': total, 'total': total, 'tagged': tagged, 'errors': errors, 'message': f'Complete: {tagged}/{total} tagged, {errors} errors'})}\n\n"
 
             return StreamingResponse(run_batch(), media_type="text/event-stream")
 
@@ -1131,12 +1136,13 @@ class WaveMemoryWebUI:
         # ─── 数据源发现（通用，带缓存） ───
 
         _sources_cache = {"data": None, "ts": 0}
+        _import_lock = asyncio.Lock()  # 导入/提取互斥锁
 
         @app.get("/api/import/sources")
         async def discover_sources(refresh: bool = False):
-            """通用数据源发现 — 结果缓存 60s，?refresh=true 强制刷新。"""
+            """通用数据源发现 — 结果缓存 10min，?refresh=true 强制刷新。"""
             now = time.time()
-            if not refresh and _sources_cache["data"] and now - _sources_cache["ts"] < 60:
+            if not refresh and _sources_cache["data"] and now - _sources_cache["ts"] < 600:
                 return _sources_cache["data"]
 
             from .source_discovery import SourceDiscovery
@@ -1169,6 +1175,12 @@ class WaveMemoryWebUI:
             from fastapi.responses import StreamingResponse
             from .source_discovery import SourceDiscovery, UniversalImporter
 
+            if _import_lock.locked():
+                return StreamingResponse(
+                    iter([f"data: {json.dumps({'error': '另一个导入/提取任务正在运行，请等待完成后再试'})}\n\n"]),
+                    media_type="text/event-stream"
+                )
+
             discovery = SourceDiscovery()
             all_sources = discovery.discover_all()
             source = next((s for s in all_sources if s["id"] == source_id), None)
@@ -1184,38 +1196,37 @@ class WaveMemoryWebUI:
             )
 
             async def event_stream():
-                if source["type"] == "known":
-                    async for event in importer.import_known(source, limit=limit):
-                        yield f"data: {event}\n\n"
-                elif source.get("llm_mapping"):
-                    async for event in importer.import_with_llm_mapping(source, source["llm_mapping"], limit=limit):
-                        yield f"data: {event}\n\n"
-                else:
-                    # 未知源且无 LLM mapping — 尝试启发式导入
-                    # 用第一个 importable table 的启发式映射
-                    analysis = source.get("analysis", {})
-                    importable = analysis.get("importable_tables", [])
-                    if importable:
-                        table_info = importable[0]
-                        # 启发式字段映射
-                        cols = [c.lower() for c in table_info["columns"]]
-                        content_field = next((c for c in cols if c in ("content", "text", "message", "judgment", "summary", "note")), cols[0] if cols else "content")
-                        sender_field = next((c for c in cols if c in ("sender", "sender_name", "sender_id", "user_name", "author")), None)
-                        ts_field = next((c for c in cols if c in ("timestamp", "created_at", "time", "ts")), None)
-                        group_field = next((c for c in cols if c in ("group_id", "group", "session_id", "conversation_id", "channel_id")), None)
-
-                        mapping = {
-                            "table": table_info["name"],
-                            "content_field": content_field,
-                            "sender_field": sender_field,
-                            "timestamp_field": ts_field,
-                            "group_field": group_field,
-                            "filter": f"LENGTH({content_field}) >= 10",
-                        }
-                        async for event in importer.import_with_llm_mapping({"db_path": source["db_path"]}, mapping, limit=limit):
+                async with _import_lock:
+                    if source["type"] == "known":
+                        async for event in importer.import_known(source, limit=limit):
+                            yield f"data: {event}\n\n"
+                    elif source.get("llm_mapping"):
+                        async for event in importer.import_with_llm_mapping(source, source["llm_mapping"], limit=limit):
                             yield f"data: {event}\n\n"
                     else:
-                        yield f"data: {json.dumps({'error': 'No importable tables found in this source'})}\n\n"
+                        # 未知源且无 LLM mapping — 尝试启发式导入
+                        analysis = source.get("analysis", {})
+                        importable = analysis.get("importable_tables", [])
+                        if importable:
+                            table_info = importable[0]
+                            cols = [c.lower() for c in table_info["columns"]]
+                            content_field = next((c for c in cols if c in ("content", "text", "message", "judgment", "summary", "note")), cols[0] if cols else "content")
+                            sender_field = next((c for c in cols if c in ("sender", "sender_name", "sender_id", "user_name", "author")), None)
+                            ts_field = next((c for c in cols if c in ("timestamp", "created_at", "time", "ts")), None)
+                            group_field = next((c for c in cols if c in ("group_id", "group", "session_id", "conversation_id", "channel_id")), None)
+
+                            mapping = {
+                                "table": table_info["name"],
+                                "content_field": content_field,
+                                "sender_field": sender_field,
+                                "timestamp_field": ts_field,
+                                "group_field": group_field,
+                                "filter": f"LENGTH({content_field}) >= 10",
+                            }
+                            async for event in importer.import_with_llm_mapping({"db_path": source["db_path"]}, mapping, limit=limit):
+                                yield f"data: {event}\n\n"
+                        else:
+                            yield f"data: {json.dumps({'error': 'No importable tables found in this source'})}\n\n"
 
             return StreamingResponse(event_stream(), media_type="text/event-stream")
 
