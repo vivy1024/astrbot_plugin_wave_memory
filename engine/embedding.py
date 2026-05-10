@@ -1,4 +1,4 @@
-"""Wave Memory Embedding — 复用 AstrBot 的 Provider 系统获取向量"""
+"""Wave Memory Embedding — 通过 AstrBot 的 Embedding Provider 获取向量"""
 
 from __future__ import annotations
 
@@ -10,12 +10,50 @@ from astrbot.api import logger
 
 
 class EmbeddingService:
-    """通过 AstrBot 的 embedding provider 获取文本向量。"""
+    """通过 AstrBot 的 embedding provider 获取文本向量。
+
+    AstrBot 的 embedding provider 和 chat provider 是分开的：
+    - chat provider: context.get_provider_by_id(id) → text_chat()
+    - embedding provider: context.get_all_embedding_providers() → get_embeddings()
+
+    配置中的 embedding_provider_id 用于匹配 embedding provider 的 ID。
+    """
 
     def __init__(self, context, provider_id: str, dimension: int = 1024):
         self.context = context
         self.provider_id = provider_id
         self.dimension = dimension
+        self._provider = None
+
+    def _get_provider(self):
+        """获取 embedding provider 实例。"""
+        if self._provider is not None:
+            return self._provider
+
+        providers = self.context.get_all_embedding_providers()
+        if not providers:
+            logger.warning("[WaveMemory] No embedding providers available")
+            return None
+
+        # 按 ID 匹配
+        if self.provider_id:
+            for p in providers:
+                if hasattr(p, 'meta') and p.meta().id == self.provider_id:
+                    self._provider = p
+                    return p
+                # fallback: 直接比较
+                pid = getattr(p, 'provider_id', '') or (p.meta().id if hasattr(p, 'meta') else '')
+                if pid == self.provider_id:
+                    self._provider = p
+                    return p
+
+        # 没匹配到就用第一个
+        if providers:
+            self._provider = providers[0]
+            logger.info(f"[WaveMemory] Using first available embedding provider")
+            return self._provider
+
+        return None
 
     async def get_embedding(self, text: str) -> Optional[np.ndarray]:
         """获取单条文本的 embedding 向量。"""
@@ -27,13 +65,12 @@ class EmbeddingService:
         if not texts:
             return []
 
-        try:
-            provider = self.context.get_provider_by_id(self.provider_id)
-            if not provider:
-                logger.warning(f"[WaveMemory] Embedding provider '{self.provider_id}' not found")
-                return [None] * len(texts)
+        provider = self._get_provider()
+        if not provider:
+            return [None] * len(texts)
 
-            # AstrBot 的 embedding provider 返回 list[list[float]]
+        try:
+            # AstrBot embedding provider 的标准接口
             raw_result = await provider.get_embeddings(texts)
 
             results = []

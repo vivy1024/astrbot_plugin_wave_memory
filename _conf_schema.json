@@ -5,9 +5,8 @@
     "items": {
       "embedding_provider_id": {
         "description": "Embedding 模型",
-        "hint": "用于记忆向量化的嵌入模型，从 AstrBot 提供商列表中选择",
+        "hint": "用于记忆向量化的嵌入模型。在 AstrBot 模型提供商中添加 Embedding 类型的提供商后，此处填写其 ID",
         "type": "string",
-        "_special": "select_provider",
         "default": ""
       },
       "dimension": {
