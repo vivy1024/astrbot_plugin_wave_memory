@@ -25,7 +25,7 @@ KNOWN_ADAPTERS = {
                 "file": "conversations.db",
                 "label": "对话记录",
                 "table": "messages",
-                "fields": {"content": "content", "sender": "sender_name", "timestamp": "timestamp"},
+                "fields": {"content": "content", "sender": "sender_name", "timestamp": "timestamp", "group": "group_id"},
                 "filter": "LENGTH(content) >= 10",
             },
             {
@@ -57,7 +57,7 @@ KNOWN_ADAPTERS = {
                 "file": "messages.db",
                 "label": "原始消息",
                 "table": "raw_messages",
-                "fields": {"content": "message", "sender": "sender_name", "timestamp": "timestamp"},
+                "fields": {"content": "message", "sender": "sender_name", "timestamp": "timestamp", "group": "group_id"},
                 "filter": "LENGTH(message) >= 10 AND message NOT LIKE '[图片%' AND message NOT LIKE '[语音%'",
             },
             {
@@ -371,6 +371,7 @@ class UniversalImporter:
         ts_field = fields.get("timestamp")
         extra_field = fields.get("extra")
         metadata_field = fields.get("metadata")
+        group_field = fields.get("group")
 
         if sender_field:
             select_fields.append(sender_field)
@@ -380,6 +381,8 @@ class UniversalImporter:
             select_fields.append(extra_field)
         if metadata_field:
             select_fields.append(metadata_field)
+        if group_field:
+            select_fields.append(group_field)
 
         query = f"SELECT {', '.join(select_fields)} FROM {table} WHERE {where} ORDER BY rowid DESC LIMIT ?"
         rows = conn.execute(query, (limit,)).fetchall()
@@ -434,6 +437,15 @@ class UniversalImporter:
                     except Exception:
                         pass
 
+                group_id = "default"
+                if group_field:
+                    raw_group = row[idx] or ""
+                    idx += 1
+                    # group_id 可能是 "defaultnapcat:GroupMessage:1015727706" 格式，提取纯数字部分
+                    if raw_group:
+                        parts = raw_group.split(":")
+                        group_id = parts[-1] if parts else raw_group
+
                 # 拼接 extra 到 content
                 if extra and extra.strip():
                     content = f"{content}\n{extra}"
@@ -448,25 +460,32 @@ class UniversalImporter:
                     continue
 
                 texts_to_embed.append(content[:500])
-                records.append({"content": content, "sender": sender, "timestamp": ts})
+                records.append({"content": content, "sender": sender, "timestamp": ts, "group_id": group_id})
 
             # 批量 embedding
             if texts_to_embed:
                 try:
                     vectors = await self.embedding_service.get_embeddings(texts_to_embed)
-                    for rec, vec in zip(records, vectors):
-                        try:
-                            mem_id = self.db.add_memory(
-                                content=rec["content"],
-                                sender_name=rec["sender"],
-                                vector=vec,
-                                timestamp=rec["timestamp"] or time.time(),
-                            )
-                            if vec is not None and self.memory_index:
-                                self.memory_index.add([mem_id], np.array(vec).reshape(1, -1))
-                            imported += 1
-                        except Exception:
-                            errors += 1
+                    if len(vectors) != len(records):
+                        logger.warning(f"[WaveMemory] Import: vectors({len(vectors)}) != records({len(records)}), skip batch")
+                        errors += len(records)
+                    else:
+                        for rec, vec in zip(records, vectors):
+                            try:
+                                mem_id = self.db.add_memory(
+                                    group_id=rec["group_id"],
+                                    content=rec["content"],
+                                    sender_name=rec["sender"],
+                                    vector=vec,
+                                    timestamp=rec["timestamp"] or time.time(),
+                                )
+                                if vec is not None and self.memory_index:
+                                    self.memory_index.add([mem_id], np.array(vec).reshape(1, -1))
+                                imported += 1
+                            except Exception as e:
+                                errors += 1
+                                if errors <= 3:
+                                    logger.warning(f"[WaveMemory] Import add_memory error: {e}")
                 except Exception as e:
                     errors += len(texts_to_embed)
                     logger.warning(f"[WaveMemory] Batch embed error: {e}")
@@ -477,7 +496,7 @@ class UniversalImporter:
                 "imported": imported,
                 "skipped": skipped,
                 "errors": errors,
-                "message": f"{imported + skipped + errors}/{total} (导入:{imported} 跳过:{skipped})"
+                "message": f"{imported + skipped + errors}/{total} (导入:{imported} 跳过:{skipped} 失败:{errors})"
             })
 
             import asyncio
@@ -556,7 +575,7 @@ class UniversalImporter:
                     continue
 
                 vec = await self.embedding_service.get_embedding(content[:500])
-                self.db.add_memory(content=content, sender_name=sender, vector=vec, timestamp=ts)
+                self.db.add_memory(group_id="default", content=content, sender_name=sender, vector=vec, timestamp=ts)
                 imported += 1
             except Exception:
                 errors += 1
