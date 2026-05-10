@@ -381,10 +381,10 @@
                             <!-- 已导入进度 -->
                             <div class="mt-2">
                                 <div class="w-full h-1.5 rounded-full" style="background:var(--border)">
-                                    <div class="h-full rounded-full" :style="`width:${src.imported_pct || 0}%; background:var(${src.imported_pct >= 95 ? '--success' : '--primary'})`"></div>
+                                    <div class="h-full rounded-full" :style="`width:${Math.min(src.imported_pct || 0, 100)}%; background:var(${src.imported_pct >= 95 ? '--success' : '--primary'})`"></div>
                                 </div>
                                 <div class="flex justify-between mt-1 text-xs" style="color:var(--muted-fg)">
-                                    <span x-text="`已导入 ~${src.imported_pct || 0}%`"></span>
+                                    <span x-text="`已导入 ~${Math.min(src.imported_pct || 0, 100)}%`"></span>
                                     <span x-show="src.remaining > 0" style="color:var(--warning)" x-text="`剩余 ~${src.remaining.toLocaleString()} 条`"></span>
                                     <span x-show="src.remaining === 0" style="color:var(--success)">✓ 已全部导入</span>
                                 </div>

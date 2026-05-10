@@ -325,12 +325,12 @@ class SourceDiscovery:
 
             placeholders = ",".join(["?"] * len(contents))
             existing = wave_db.conn.execute(
-                f"SELECT COUNT(*) FROM memories WHERE content IN ({placeholders})",
+                f"SELECT COUNT(DISTINCT content) FROM memories WHERE content IN ({placeholders})",
                 contents
             ).fetchone()[0]
 
             sampled = len(contents)
-            pct = existing / sampled if sampled > 0 else 0
+            pct = min(existing / sampled, 1.0) if sampled > 0 else 0
             total = source.get("count", 0)
             estimated_remaining = max(0, int(total * (1 - pct)))
 
