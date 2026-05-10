@@ -43,26 +43,36 @@ TAG_EXTRACTION_PROMPT = """你是一个记忆标注系统。从对话消息中�
 ## 输出（仅 JSON 数组，无其他文字）"""
 
 
-# ─── 批量提取 Prompt（多条消息一起处理，节省 LLM 调用）───
+# ─── 批量提取 Prompt（一个 JSON 文档批量处理，节省 LLM 调用）───
 
-BATCH_TAG_PROMPT = """你是一个记忆标注系统。从以下多条对话消息中分别提取结构化语义标签。
+BATCH_TAG_PROMPT = """你是一个记忆标注系统。输入是一份 JSON 批处理文档，请为每条记忆提取结构化语义标签并打分。
 
-## 输出格式（严格 JSON 对象，key 为消息编号）
-{{"1": [{{"name": "标签名", "type": "类型", "confidence": 0.9}}], "2": [...], ...}}
+## 输入 JSON
+{batch_json}
+
+## 输出格式（严格 JSON 对象）
+{{
+  "items": [
+    {{
+      "id": 123,
+      "tags": [
+        {{"name": "标签名", "type": "类型", "score": 0.9}}
+      ]
+    }}
+  ]
+}}
 
 ## 标签类型
-person(人名) | topic(话题) | entity(具体事物) | event(事件) | emotion(情绪) | fact(事实) | location(地点) | time(时间)
+person(人名/昵称/群友) | topic(话题) | entity(具体事物/作品/游戏/工具) | event(事件/行为) | emotion(情绪/态度) | fact(事实) | location(地点) | time(时间)
 
 ## 规则
-- 每条消息 3-8 个标签，按重要性排序
-- 标签名 2-8 字，简洁可复用
-- confidence 0.5-1.0
-- 无实质内容的消息返回空数组
-
-## 消息列表
-{messages}
-
-## 输出（仅 JSON，无其他文字）"""
+- 必须按输入 item.id 原样返回 id，不能重新编号，不能漏掉 id
+- 每条记忆 0-8 个标签，按重要性排序
+- 标签名 2-12 字，简洁可复用，不要长句
+- score 范围 0.0-1.0，表示标签与该记忆的相关性/置信度
+- 无实质内容、纯表情、纯寒暄返回空 tags: []
+- 只输出 JSON，不要 markdown 代码块，不要解释文字
+"""
 
 
 # 有效的 Tag 类型
@@ -146,27 +156,40 @@ class TagExtractor:
         if not self.provider_id:
             return [self._fallback_extract(m.get("content", "")) for m in messages]
 
-        # 构建消息列表文本
-        msg_lines = []
+        # 构建一个 JSON 文档作为批处理输入，避免靠自然语言编号对齐
+        batch_items = []
+        ids = []
         for i, msg in enumerate(messages, 1):
-            sender = msg.get("sender", "unknown")
-            content = msg.get("content", "")[:400]
-            msg_lines.append(f"{i}. [{sender}]: {content}")
+            mem_id = msg.get("id", i)
+            ids.append(mem_id)
+            batch_items.append({
+                "id": mem_id,
+                "sender": msg.get("sender", "unknown"),
+                "content": msg.get("content", "")[:700],
+            })
 
-        messages_text = "\n".join(msg_lines)
+        batch_doc = {
+            "batch_size": len(batch_items),
+            "items": batch_items,
+        }
+        batch_json = json.dumps(batch_doc, ensure_ascii=False, separators=(",", ":"))
 
         try:
             provider = self.context.get_provider_by_id(self.provider_id)
             if not provider:
                 return [self._fallback_extract(m.get("content", "")) for m in messages]
 
-            prompt = BATCH_TAG_PROMPT.format(messages=messages_text)
-            response = await provider.text_chat(prompt=prompt)
+            prompt = BATCH_TAG_PROMPT.format(batch_json=batch_json)
+            response = await provider.text_chat(
+                prompt=prompt,
+                system_prompt="你是一个记忆标注系统，只输出严格 JSON 对象，不输出 markdown 或解释。",
+            )
 
             if not response or not response.completion_text:
                 return [self._fallback_extract(m.get("content", "")) for m in messages]
 
-            return self._parse_batch_response(response.completion_text, len(messages))
+            logger.info(f"[WaveMemory] Batch Tag LLM response (first 200): {response.completion_text[:200]}")
+            return self._parse_batch_response(response.completion_text, len(messages), ids=ids)
 
         except Exception as e:
             logger.debug(f"[WaveMemory] Batch tag extraction failed: {e}")
@@ -226,9 +249,15 @@ class TagExtractor:
 
         return tags[:self.max_tags]
 
-    def _parse_batch_response(self, text: str, count: int) -> list[list[dict]]:
-        """解析批量提取的 JSON 响应。"""
+    def _parse_batch_response(self, text: str, count: int, ids: list | None = None) -> list[list[dict]]:
+        """解析批量提取的 JSON 响应。
+
+        新格式：{"items": [{"id": memory_id, "tags": [{name,type,score}]}]}
+        兼容旧格式：{"1": [{name,type,confidence}], "2": [...]}。
+        """
         text = text.strip()
+        text = re.sub(r'^```(?:json)?\s*', '', text, flags=re.MULTILINE)
+        text = re.sub(r'```\s*$', '', text, flags=re.MULTILINE)
 
         json_match = re.search(r'\{[\s\S]*\}', text)
         if not json_match:
@@ -239,29 +268,43 @@ class TagExtractor:
         except json.JSONDecodeError:
             return [[] for _ in range(count)]
 
-        results = []
-        for i in range(1, count + 1):
-            msg_tags = raw.get(str(i), [])
-            if isinstance(msg_tags, list):
-                parsed = []
-                for item in msg_tags:
-                    if isinstance(item, dict):
-                        name = str(item.get("name", "")).strip()
-                        tag_type = str(item.get("type", "keyword")).strip().lower()
-                        confidence = float(item.get("confidence", 0.8))
-                        if self._is_valid_tag(name, tag_type, confidence):
-                            if tag_type not in VALID_TAG_TYPES:
-                                tag_type = "keyword"
-                            parsed.append({"name": name, "type": tag_type, "confidence": confidence})
-                results.append(parsed[:self.max_tags])
-            else:
-                results.append([])
+        def parse_tags(msg_tags) -> list[dict]:
+            parsed = []
+            if not isinstance(msg_tags, list):
+                return parsed
+            for item in msg_tags:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name", "")).strip()
+                tag_type = str(item.get("type", "keyword")).strip().lower()
+                score = item.get("score", item.get("confidence", 0.8))
+                try:
+                    confidence = float(score)
+                except (TypeError, ValueError):
+                    confidence = 0.8
+                confidence = min(max(confidence, 0.0), 1.0)
+                if self._is_valid_tag(name, tag_type, confidence):
+                    if tag_type not in VALID_TAG_TYPES:
+                        tag_type = "keyword"
+                    parsed.append({"name": name, "type": tag_type, "confidence": confidence})
+            return parsed[:self.max_tags]
 
-        # 补齐
-        while len(results) < count:
-            results.append([])
+        results = [[] for _ in range(count)]
 
-        # 更新频率
+        # 新格式：按 id 精确对齐
+        if isinstance(raw.get("items"), list) and ids is not None:
+            index_by_id = {str(mem_id): idx for idx, mem_id in enumerate(ids)}
+            for item in raw["items"]:
+                if not isinstance(item, dict):
+                    continue
+                item_id = str(item.get("id", ""))
+                if item_id in index_by_id:
+                    results[index_by_id[item_id]] = parse_tags(item.get("tags", []))
+        else:
+            # 旧格式：按 1..N 顺序兼容
+            for i in range(1, count + 1):
+                results[i - 1] = parse_tags(raw.get(str(i), []))
+
         for tags in results:
             self._update_frequency(tags)
 

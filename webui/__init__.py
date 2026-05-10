@@ -740,7 +740,7 @@ class WaveMemoryWebUI:
 
         @app.post("/api/import/llm-extract")
         async def llm_import_extract(
-            batch_size: int = Query(10, ge=1, le=50),
+            batch_size: int = Query(50, ge=1, le=100),
             limit: int = Query(2000, ge=1, le=10000),
         ):
             """使用配置中的 tag_llm_provider_id 为无 Tag 记忆批量提取结构化 Tag（SSE 流）。"""
@@ -776,8 +776,8 @@ class WaveMemoryWebUI:
                 for i in range(0, total, batch_size):
                     batch = rows[i:i + batch_size]
                     messages = [
-                        {"content": content[:800], "sender": sender_name or ""}
-                        for _, content, sender_name in batch
+                        {"id": mem_id, "content": content[:800], "sender": sender_name or ""}
+                        for mem_id, content, sender_name in batch
                     ]
                     try:
                         batch_tags = await extractor.extract_tags_batch(messages)

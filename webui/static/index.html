@@ -415,7 +415,8 @@
                 <!-- Batch Size -->
                 <div class="mb-4">
                     <label class="text-xs block mb-1.5" style="color:var(--muted-fg)">批量大小</label>
-                    <input type="number" x-model.number="llmBatchSize" min="1" max="50" class="input w-24">
+                    <input type="number" x-model.number="llmBatchSize" min="1" max="100" class="input w-24">
+                    <p class="text-xs mt-1" style="color:var(--muted-fg)">每批会整理成一个 JSON 文档，LLM 按 id 返回标签和 score</p>
                 </div>
 
                 <div class="flex gap-2">
@@ -621,7 +622,7 @@ function dashboard() {
         importLog: [],
         importProgress: 0,
         // LLM 提取
-        llmBatchSize: 10,
+        llmBatchSize: 50,
         llmRunning: false,
         llmProgress: 0,
         llmMessage: '',
