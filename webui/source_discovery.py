@@ -556,9 +556,12 @@ class UniversalImporter:
         if group_field:
             select_fields.append(group_field)
 
-        # ASC 保证从最早开始导入，去重跳过已有的，后续记录能被触及
-        query = f"SELECT {', '.join(select_fields)} FROM {table} WHERE {where} ORDER BY rowid ASC LIMIT ?"
-        rows = conn.execute(query, (limit,)).fetchall()
+        # ASC 保证从最早开始导入；取全部记录（受源总量限制），去重在内存中做
+        # 不再用 LIMIT 截断，因为跳过的不应占 limit 名额
+        source_total = source.get("count", 0)
+        query = f"SELECT {', '.join(select_fields)} FROM {table} WHERE {where} ORDER BY rowid ASC"
+        conn = sqlite3.connect(db_path)
+        rows = conn.execute(query).fetchall()
         conn.close()
 
         total = len(rows)
@@ -566,8 +569,8 @@ class UniversalImporter:
             yield json.dumps({"progress": 1.0, "message": "No data to import"})
             return
 
-        logger.info(f"[WaveMemory] Import started: {source['name']} ({total} records, limit={limit})")
-        yield json.dumps({"progress": 0, "total": total, "message": f"Importing {total} records from {source['name']}..."})
+        logger.info(f"[WaveMemory] Import started: {source['name']} ({total} source records, import limit={limit})")
+        yield json.dumps({"progress": 0, "total": total, "message": f"Importing from {source['name']} (source: {total}, limit: {limit})..."})
 
         imported = 0
         skipped = 0
@@ -575,9 +578,27 @@ class UniversalImporter:
         batch_size = 50
         consecutive_errors = 0  # 连续错误计数
         llm_fallback_attempted = False  # 是否已尝试 LLM 降级
+        processed_rows = 0  # 已扫描的源记录数
+        consecutive_skips = 0  # 连续跳过计数（用于提前终止）
 
         for i in range(0, total, batch_size):
+            # 已导入够 limit 条，提前结束
+            if imported >= limit:
+                break
+
+            # 连续跳过超过 1000 条，说明后续大概率也是重复的，提前结束
+            if consecutive_skips >= 1000:
+                yield json.dumps({
+                    "progress": 1.0,
+                    "imported": imported, "skipped": skipped, "errors": errors,
+                    "message": f"✓ 连续 1000 条重复，提前结束（导入 {imported} 条，跳过 {skipped} 条）"
+                })
+                if self.memory_index:
+                    self.memory_index.save()
+                return
+
             batch = rows[i:i + batch_size]
+            processed_rows += len(batch)
             texts_to_embed = []
             records = []
 
@@ -651,9 +672,11 @@ class UniversalImporter:
                 for rec in batch_parsed:
                     if rec["content"] in existing_set:
                         skipped += 1
+                        consecutive_skips += 1
                     else:
                         texts_to_embed.append(rec["content"][:500])
                         records.append(rec)
+                        consecutive_skips = 0  # 有新记录，重置
 
             # 批量 embedding
             if texts_to_embed:
@@ -706,13 +729,13 @@ class UniversalImporter:
                     errors += len(texts_to_embed)
                     logger.warning(f"[WaveMemory] Batch embed error: {e}")
 
-            progress = min((i + batch_size) / total, 1.0)
+            progress = min(processed_rows / total, 1.0)
             yield json.dumps({
                 "progress": round(progress, 3),
                 "imported": imported,
                 "skipped": skipped,
                 "errors": errors,
-                "message": f"{imported + skipped + errors}/{total} (导入:{imported} 跳过:{skipped} 失败:{errors})"
+                "message": f"扫描 {processed_rows}/{total} | 导入:{imported}/{limit} 跳过:{skipped} 失败:{errors}"
             })
 
             import asyncio
