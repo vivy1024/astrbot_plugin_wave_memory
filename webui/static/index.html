@@ -358,7 +358,7 @@
             <div class="card">
                 <div class="flex items-center justify-between mb-1">
                     <h3 class="text-sm font-medium">📦 数据源导入</h3>
-                    <button @click="loadSources()" class="btn btn-muted text-xs">🔄 刷新</button>
+                    <button @click="loadSources(true)" class="btn btn-muted text-xs">🔄 刷新</button>
                 </div>
                 <p class="text-xs mb-4" style="color:var(--muted-fg)">自动扫描所有已安装记忆插件（自动去重 + 向量化）</p>
                 <div class="space-y-3">
@@ -865,9 +865,9 @@ function dashboard() {
             await this.loadSources();
         },
 
-        async loadSources() {
+        async loadSources(refresh = false) {
             try {
-                const r = await fetch('/api/import/sources');
+                const r = await fetch('/api/import/sources' + (refresh ? '?refresh=true' : ''));
                 const d = await r.json();
                 this.importSources = d.sources || [];
             } catch(e) { console.error(e); }
@@ -905,7 +905,7 @@ function dashboard() {
             this.importing = false;
             this.importLog.push(`[${this.ts()}] ✓ 导入完成`);
             this.loadSystem();
-            this.loadSources();
+            this.loadSources(true);
         },
 
         async startLLMExtract() {

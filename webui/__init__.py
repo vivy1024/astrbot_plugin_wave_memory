@@ -778,15 +778,20 @@ class WaveMemoryWebUI:
 
             return StreamingResponse(run(), media_type="text/event-stream")
 
-        # ─── 数据源发现（通用） ───
+        # ─── 数据源发现（通用，带缓存） ───
+
+        _sources_cache = {"data": None, "ts": 0}
 
         @app.get("/api/import/sources")
-        async def discover_sources():
-            """通用数据源发现 — 自动扫描所有插件的数据库，附带已导入估算。"""
+        async def discover_sources(refresh: bool = False):
+            """通用数据源发现 — 结果缓存 60s，?refresh=true 强制刷新。"""
+            now = time.time()
+            if not refresh and _sources_cache["data"] and now - _sources_cache["ts"] < 60:
+                return _sources_cache["data"]
+
             from .source_discovery import SourceDiscovery
             discovery = SourceDiscovery()
             sources = discovery.discover_all()
-            # 对每个源做采样估算
             result = []
             for s in sources:
                 progress = discovery.estimate_imported(s, self.db)
@@ -801,7 +806,10 @@ class WaveMemoryWebUI:
                     "imported_pct": progress["estimated_pct"],
                     "remaining": progress["estimated_remaining"],
                 })
-            return {"sources": result}
+            resp = {"sources": result}
+            _sources_cache["data"] = resp
+            _sources_cache["ts"] = now
+            return resp
 
         # ─── 从数据源导入（通用） ───
 
