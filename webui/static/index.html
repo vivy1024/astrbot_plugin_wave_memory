@@ -383,6 +383,18 @@
                 <h3 class="text-sm font-medium mb-1">🧠 LLM Tag 提取</h3>
                 <p class="text-xs mb-4" style="color:var(--muted-fg)">使用配置中的 tag_llm_provider 为无 Tag 记忆批量提取结构化标签</p>
 
+                <!-- 待标记统计 -->
+                <div x-show="sys.memories" class="mb-4 p-3 rounded-lg" style="background:var(--muted); border:1px solid var(--border)">
+                    <div class="flex justify-between items-center text-xs">
+                        <span style="color:var(--muted-fg)">待标记记忆</span>
+                        <span class="font-mono font-medium" style="color:var(--warning)" x-text="((sys.memories?.total || 0) - (sys.memories?.with_tags || 0)).toLocaleString() + ' 条'"></span>
+                    </div>
+                    <div class="flex justify-between items-center text-xs mt-1.5">
+                        <span style="color:var(--muted-fg)">已标记</span>
+                        <span class="font-mono" style="color:var(--success)" x-text="(sys.memories?.with_tags || 0).toLocaleString() + ' / ' + (sys.memories?.total || 0).toLocaleString()"></span>
+                    </div>
+                </div>
+
                 <!-- Batch Size -->
                 <div class="mb-4">
                     <label class="text-xs block mb-1.5" style="color:var(--muted-fg)">批量大小</label>
