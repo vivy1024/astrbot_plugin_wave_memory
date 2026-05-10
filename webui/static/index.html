@@ -384,9 +384,9 @@
                                     <div class="h-full rounded-full" :style="`width:${Math.min(src.imported_pct || 0, 100)}%; background:var(${src.imported_pct >= 95 ? '--success' : '--primary'})`"></div>
                                 </div>
                                 <div class="flex justify-between mt-1 text-xs" style="color:var(--muted-fg)">
-                                    <span x-text="`已导入 ~${Math.min(src.imported_pct || 0, 100)}%`"></span>
-                                    <span x-show="src.imported_pct >= 95" style="color:var(--success)">✓ 已全部导入</span>
-                                    <span x-show="src.imported_pct < 95" style="color:var(--muted-fg)" x-text="`采样估算，源间可能重叠`"></span>
+                                    <span x-text="`已存在 ~${Math.min(src.imported_pct || 0, 100)}%`"></span>
+                                    <span x-show="src.remaining === 0" style="color:var(--success)">✓ 全部内容已存在</span>
+                                    <span x-show="src.remaining > 0" style="color:var(--muted-fg)" x-text="`未匹配 ${src.remaining.toLocaleString()} 条，源间可能重叠`"></span>
                                 </div>
                             </div>
                         </div>
@@ -598,7 +598,7 @@ function dashboard() {
     return {
         tab: 'overview',
         isDark: true,
-        sys: {},
+        sys: { memories: { total: 0, with_vector: 0, with_tags: 0 }, tags: { total: 0 }, coverage: {}, cooccurrence: {}, epa: {} },
         // 记忆管理
         memories: [],
         memSearch: '',
@@ -631,7 +631,15 @@ function dashboard() {
         llmErrors: 0,
         _llmAbort: null,
         // 配置
-        pluginConfig: {},
+        pluginConfig: {
+            embedding_provider_id: '', embedding_dimension: 1024, tag_llm_provider_id: '',
+            query: { enable_auto_inject: false, inject_top_k: 5, min_similarity: 0.3, injection_format: '', enable_spike_routing: false, enable_residual_pyramid: false, enable_epa: false, enable_geodesic_rerank: false },
+            filter: { min_message_length: 6, max_message_length: 2000, ignore_bot_messages: false, group_whitelist: '', group_blacklist: '' },
+            tags: {},
+            storage: { max_memories: 100000, memory_decay_enabled: true, decay_rate: '0.995', auto_cleanup_enabled: false },
+            performance: { embedding_batch_size: 10, write_flush_interval: 30, cooccurrence_rebuild_interval: 3600 },
+            webui: {}
+        },
         providers: [],
         get embeddingProviders() {
             return this.providers.filter(p => p.type === 'embedding' || p.model.toLowerCase().includes('embed'));

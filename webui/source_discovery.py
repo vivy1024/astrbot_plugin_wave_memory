@@ -277,30 +277,37 @@ class SourceDiscovery:
         }
 
     def estimate_imported(self, source: dict, wave_db) -> dict:
-        """采样估算某个数据源已导入到 wave_memory 的比例。
+        """精确统计某个数据源中已有多少内容存在于 wave_memory。
 
-        返回 {"sampled": N, "existing": M, "estimated_pct": float, "estimated_remaining": int}
-        使用内容前缀批量 IN 查询，避免逐条全表扫描。
+        注意：这是“内容已存在比例”，不等同于“从该源导入的比例”。
+        统计时复用导入时的内容拼接规则（content + extra），避免 UI 刷新后进度不变。
         """
-        sample_size = 20
         try:
             db_path = source.get("db_path")
             if not db_path:
                 return {"sampled": 0, "existing": 0, "estimated_pct": 0, "estimated_remaining": source.get("count", 0)}
 
             conn = sqlite3.connect(db_path)
+            rows = []
 
             if source["type"] == "known":
                 adapter = source["adapter"]
                 table = adapter["table"]
-                content_field = adapter["fields"].get("content", "content")
+                fields = adapter.get("fields", {})
+                content_field = fields.get("content", "content")
+                extra_field = fields.get("extra")
                 where = adapter.get("filter", "1=1")
-                rows = conn.execute(
-                    f"SELECT {content_field} FROM {table} WHERE {where} ORDER BY rowid DESC LIMIT ?",
-                    (sample_size,)
-                ).fetchall()
+                if extra_field:
+                    rows = conn.execute(
+                        f"SELECT {content_field}, {extra_field} FROM {table} WHERE {where}"
+                    ).fetchall()
+                    contents = [f"{r[0]}\n{r[1]}" if r[1] and str(r[1]).strip() else r[0] for r in rows if r[0]]
+                else:
+                    rows = conn.execute(
+                        f"SELECT {content_field} FROM {table} WHERE {where}"
+                    ).fetchall()
+                    contents = [r[0] for r in rows if r[0]]
             else:
-                # 未知源：取第一个 importable table
                 analysis = source.get("analysis", {})
                 importable = analysis.get("importable_tables", [])
                 if not importable:
@@ -309,34 +316,31 @@ class SourceDiscovery:
                 table = importable[0]["name"]
                 cols = [c.lower() for c in importable[0].get("columns", [])]
                 content_field = next((c for c in cols if c in ("content", "text", "message", "judgment", "summary")), cols[0] if cols else "content")
-                rows = conn.execute(
-                    f"SELECT {content_field} FROM {table} ORDER BY rowid DESC LIMIT ?",
-                    (sample_size,)
-                ).fetchall()
+                rows = conn.execute(f"SELECT {content_field} FROM {table}").fetchall()
+                contents = [r[0] for r in rows if r[0]]
 
             conn.close()
 
-            if not rows:
+            distinct_contents = list({str(c) for c in contents if c})
+            total = len(distinct_contents)
+            if total == 0:
                 return {"sampled": 0, "existing": 0, "estimated_pct": 0, "estimated_remaining": 0}
 
-            # 批量检查：用 content 精确匹配，一次 IN 查询
-            contents = [r[0] for r in rows if r[0]]
-            if not contents:
-                return {"sampled": 0, "existing": 0, "estimated_pct": 0, "estimated_remaining": source.get("count", 0)}
+            existing = 0
+            chunk_size = 400
+            for i in range(0, total, chunk_size):
+                chunk = distinct_contents[i:i + chunk_size]
+                placeholders = ",".join(["?"] * len(chunk))
+                existing += wave_db.conn.execute(
+                    f"SELECT COUNT(DISTINCT content) FROM memories WHERE content IN ({placeholders})",
+                    chunk,
+                ).fetchone()[0]
 
-            placeholders = ",".join(["?"] * len(contents))
-            existing = wave_db.conn.execute(
-                f"SELECT COUNT(DISTINCT content) FROM memories WHERE content IN ({placeholders})",
-                contents
-            ).fetchone()[0]
-
-            sampled = len(contents)
-            pct = min(existing / sampled, 1.0) if sampled > 0 else 0
-            total = source.get("count", 0)
-            estimated_remaining = max(0, int(total * (1 - pct)))
+            pct = min(existing / total, 1.0)
+            estimated_remaining = max(0, total - existing)
 
             return {
-                "sampled": sampled,
+                "sampled": total,
                 "existing": existing,
                 "estimated_pct": round(pct * 100, 1),
                 "estimated_remaining": estimated_remaining,

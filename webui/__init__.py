@@ -739,7 +739,10 @@ class WaveMemoryWebUI:
         # ─── LLM Tag 提取（使用配置中固定的 provider） ───
 
         @app.post("/api/import/llm-extract")
-        async def llm_import_extract(batch_size: int = Query(10, ge=1, le=50)):
+        async def llm_import_extract(
+            batch_size: int = Query(10, ge=1, le=50),
+            limit: int = Query(2000, ge=1, le=10000),
+        ):
             """使用配置中的 tag_llm_provider_id 为无 Tag 记忆批量提取结构化 Tag（SSE 流）。"""
             from fastapi.responses import StreamingResponse
 
@@ -753,7 +756,8 @@ class WaveMemoryWebUI:
                     """SELECT m.id, m.content, m.sender_name FROM memories m
                        WHERE m.id NOT IN (SELECT DISTINCT memory_id FROM memory_tags)
                        AND LENGTH(m.content) >= 10
-                       ORDER BY m.id DESC LIMIT 2000"""
+                       ORDER BY m.id DESC LIMIT ?""",
+                    (limit,),
                 ).fetchall()
 
                 total = len(rows)
@@ -761,17 +765,35 @@ class WaveMemoryWebUI:
                     yield f"data: {json.dumps({'progress': 1.0, 'message': 'All memories already have tags'})}\n\n"
                     return
 
-                yield f"data: {json.dumps({'progress': 0, 'total': total, 'provider': extractor.provider_id, 'message': f'Starting LLM tag extraction ({total} memories)...'})}\n\n"
+                logger.info(f"[WaveMemory] LLM tag extraction started: total={total}, batch_size={batch_size}, provider={extractor.provider_id}")
+                yield f"data: {json.dumps({'progress': 0, 'total': total, 'provider': extractor.provider_id, 'message': f'Starting LLM tag extraction ({total} memories, batch={batch_size})...'})}\n\n"
 
                 processed = 0
                 tagged = 0
+                no_tags = 0
                 errors = 0
 
                 for i in range(0, total, batch_size):
                     batch = rows[i:i + batch_size]
-                    for mem_id, content, sender_name in batch:
+                    messages = [
+                        {"content": content[:800], "sender": sender_name or ""}
+                        for _, content, sender_name in batch
+                    ]
+                    try:
+                        batch_tags = await extractor.extract_tags_batch(messages)
+                    except Exception as e:
+                        logger.warning(f"[WaveMemory] Batch tag extraction error: {e}")
+                        batch_tags = [[] for _ in batch]
+                        errors += len(batch)
+
+                    # 防御：LLM 返回数量异常时补齐/截断，避免错位
+                    if len(batch_tags) < len(batch):
+                        batch_tags.extend([[] for _ in range(len(batch) - len(batch_tags))])
+                    elif len(batch_tags) > len(batch):
+                        batch_tags = batch_tags[:len(batch)]
+
+                    for (mem_id, _content, _sender_name), tags in zip(batch, batch_tags):
                         try:
-                            tags = await extractor.extract_tags(content[:800], sender=sender_name or "")
                             if tags:
                                 tag_names = [t["name"] for t in tags]
                                 tag_vecs = await self.embedding_service.get_embeddings(tag_names)
@@ -791,15 +813,20 @@ class WaveMemoryWebUI:
                                     )
                                 self.db.conn.commit()
                                 tagged += 1
-                        except Exception:
+                            else:
+                                no_tags += 1
+                        except Exception as e:
                             errors += 1
+                            if errors <= 3:
+                                logger.warning(f"[WaveMemory] Link tags failed for memory {mem_id}: {e}")
                         processed += 1
 
-                    yield f"data: {json.dumps({'progress': round(processed/total, 3), 'processed': processed, 'total': total, 'tagged': tagged, 'errors': errors, 'message': f'{processed}/{total} ({tagged} tagged)'})}\n\n"
+                    yield f"data: {json.dumps({'progress': round(processed/total, 3), 'processed': processed, 'total': total, 'tagged': tagged, 'no_tags': no_tags, 'errors': errors, 'message': f'{processed}/{total} (标记:{tagged} 空:{no_tags} 失败:{errors})'})}\n\n"
                     import asyncio
                     await asyncio.sleep(0.05)
 
-                yield f"data: {json.dumps({'progress': 1.0, 'processed': total, 'total': total, 'tagged': tagged, 'errors': errors, 'message': f'Complete: {tagged}/{total} tagged, {errors} errors'})}\n\n"
+                logger.info(f"[WaveMemory] LLM tag extraction done: processed={processed}, tagged={tagged}, no_tags={no_tags}, errors={errors}")
+                yield f"data: {json.dumps({'progress': 1.0, 'processed': total, 'total': total, 'tagged': tagged, 'no_tags': no_tags, 'errors': errors, 'message': f'Complete: {tagged}/{total} tagged, {no_tags} empty, {errors} errors'})}\n\n"
 
             return StreamingResponse(run(), media_type="text/event-stream")
 
