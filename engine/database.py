@@ -921,5 +921,140 @@ class WaveMemoryDB:
         except Exception:
             return {}
 
+
+    # ═══════════════════════════════════════════════════════
+    # 人物关联查询 (Person Association Layer)
+    # ═══════════════════════════════════════════════════════
+
+    def get_person_by_qq(self, qq_id: str) -> dict | None:
+        """根据 QQ 号获取人物信息。"""
+        row = self.conn.execute(
+            "SELECT qq_id, display_name, aliases, tag_ids, first_seen, last_seen, message_count, groups "
+            "FROM person_registry WHERE qq_id = ?",
+            (qq_id,),
+        ).fetchone()
+        if not row:
+            return None
+        import json
+        return {
+            "qq_id": row[0], "display_name": row[1],
+            "aliases": json.loads(row[2]) if row[2] else [],
+            "tag_ids": json.loads(row[3]) if row[3] else [],
+            "first_seen": row[4], "last_seen": row[5],
+            "message_count": row[6],
+            "groups": json.loads(row[7]) if row[7] else [],
+        }
+
+    def find_person_by_name(self, name: str) -> list[dict]:
+        """根据昵称模糊查找人物（搜索 aliases JSON）。"""
+        import json
+        rows = self.conn.execute(
+            "SELECT qq_id, display_name, aliases, message_count FROM person_registry"
+        ).fetchall()
+        results = []
+        name_lower = name.lower()
+        for qq_id, display, aliases_json, cnt in rows:
+            aliases = json.loads(aliases_json) if aliases_json else []
+            # 精确匹配
+            if any(a.lower() == name_lower for a in aliases):
+                results.append({"qq_id": qq_id, "display_name": display, "message_count": cnt, "match": "exact"})
+            # 子串匹配
+            elif any(name_lower in a.lower() or a.lower() in name_lower for a in aliases if len(a) >= 2):
+                results.append({"qq_id": qq_id, "display_name": display, "message_count": cnt, "match": "fuzzy"})
+        # 精确优先，然后按消息数排序
+        results.sort(key=lambda x: (0 if x["match"] == "exact" else 1, -x["message_count"]))
+        return results[:5]
+
+    def get_memories_by_person(self, qq_id: str, role: str = None, limit: int = 50, offset: int = 0) -> list[dict]:
+        """获取某人相关的所有记忆。
+        
+        Args:
+            qq_id: QQ 号
+            role: 过滤角色 ('sender'|'mentioned'|'about')，None 表示全部
+            limit: 返回数量
+            offset: 偏移
+        """
+        if role:
+            rows = self.conn.execute(
+                """SELECT m.id, m.group_id, m.sender_id, m.sender_name, m.content, m.timestamp, m.importance
+                   FROM memories m
+                   JOIN memory_mentions mm ON mm.memory_id = m.id
+                   WHERE mm.qq_id = ? AND mm.role = ?
+                   ORDER BY m.timestamp DESC LIMIT ? OFFSET ?""",
+                (qq_id, role, limit, offset),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """SELECT m.id, m.group_id, m.sender_id, m.sender_name, m.content, m.timestamp, m.importance
+                   FROM memories m
+                   JOIN memory_mentions mm ON mm.memory_id = m.id
+                   WHERE mm.qq_id = ?
+                   ORDER BY m.timestamp DESC LIMIT ? OFFSET ?""",
+                (qq_id, limit, offset),
+            ).fetchall()
+        return [
+            {"id": r[0], "group_id": r[1], "sender_id": r[2], "sender_name": r[3],
+             "content": r[4], "timestamp": r[5], "importance": r[6]}
+            for r in rows
+        ]
+
+    def get_person_cooccurrence(self, qq_id: str, top_k: int = 10) -> list[dict]:
+        """获取某人的社交共现（经常一起出现的人）。"""
+        import json
+        rows = self.conn.execute(
+            """SELECT mm2.qq_id, COUNT(DISTINCT mm1.memory_id) as co_count
+               FROM memory_mentions mm1
+               JOIN memory_mentions mm2 ON mm1.memory_id = mm2.memory_id
+               WHERE mm1.qq_id = ? AND mm2.qq_id != ?
+               GROUP BY mm2.qq_id
+               ORDER BY co_count DESC
+               LIMIT ?""",
+            (qq_id, qq_id, top_k),
+        ).fetchall()
+        results = []
+        for co_qq, co_count in rows:
+            person = self.conn.execute(
+                "SELECT display_name FROM person_registry WHERE qq_id = ?", (co_qq,)
+            ).fetchone()
+            results.append({
+                "qq_id": co_qq,
+                "display_name": person[0] if person else co_qq,
+                "co_count": co_count,
+            })
+        return results
+
+    def get_person_stats(self, qq_id: str) -> dict:
+        """获取某人的统计摘要。"""
+        import json
+        person = self.get_person_by_qq(qq_id)
+        if not person:
+            return {}
+        
+        # 各角色计数
+        role_counts = {}
+        for role in ('sender', 'mentioned', 'about'):
+            cnt = self.conn.execute(
+                "SELECT count(*) FROM memory_mentions WHERE qq_id = ? AND role = ?",
+                (qq_id, role),
+            ).fetchone()[0]
+            role_counts[role] = cnt
+        
+        # top tags
+        top_tags = self.conn.execute(
+            """SELECT t.name, COUNT(*) as cnt
+               FROM memory_tags mt
+               JOIN tags t ON t.id = mt.tag_id
+               JOIN memories m ON m.id = mt.memory_id
+               WHERE m.sender_id = ? AND t.tag_type NOT IN ('person', 'time')
+               GROUP BY t.name ORDER BY cnt DESC LIMIT 8""",
+            (qq_id,),
+        ).fetchall()
+        
+        return {
+            **person,
+            "role_counts": role_counts,
+            "top_tags": [{"name": t[0], "count": t[1]} for t in top_tags],
+        }
+
     def close(self):
         self.conn.close()

@@ -30,6 +30,7 @@ from .services.tag_job import TagBackfillJob
 from .services.hot_config import HotConfig
 from .tools.memory_search import WaveMemorySearchTool, WaveMemoryRememberTool
 from .tools.deep_search import WaveMemoryDeepSearchTool
+from .tools.person_search import WaveMemoryPersonSearchTool
 
 
 @register(
@@ -219,7 +220,8 @@ class WaveMemoryPlugin(Star):
         search_tool = WaveMemorySearchTool(query_engine=self.query_engine)
         remember_tool = WaveMemoryRememberTool(writer=self.writer)
         deep_search_tool = WaveMemoryDeepSearchTool(db=self.db)
-        self.context.add_llm_tools(search_tool, remember_tool, deep_search_tool)
+        person_search_tool = WaveMemoryPersonSearchTool(db=self.db)
+        self.context.add_llm_tools(search_tool, remember_tool, deep_search_tool, person_search_tool)
 
         # 启动 WebUI
         if self.webui_enabled:

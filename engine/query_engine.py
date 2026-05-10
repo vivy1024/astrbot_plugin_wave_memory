@@ -375,6 +375,58 @@ class QueryEngine:
 
         return selected
 
+    async def query_by_person(
+        self,
+        qq_id: str,
+        topic: str = None,
+        group_id: str = None,
+        top_k: int = 8,
+    ) -> list[dict]:
+        """按人查询记忆：结合结构化索引 + 浪潮语义增强。
+
+        如果提供 topic，在该人的记忆中做语义排序。
+        如果不提供 topic，按时间倒序返回。
+        """
+        # 获取该人的所有记忆 ID
+        if topic:
+            # 有主题：先获取候选，再用浪潮增强排序
+            memories = self.db.get_memories_by_person(qq_id, limit=top_k * 5)
+            if not memories:
+                return []
+
+            # 获取 topic 的向量
+            topic_vec = await self.embedding.get_embedding(topic)
+            if topic_vec is None:
+                # fallback: 按时间排序
+                return memories[:top_k]
+
+            # 浪潮增强 topic 向量
+            search_vec, _ = self._wave_boost(topic_vec)
+
+            # 获取这些记忆的向量，计算相似度
+            memory_ids = [m["id"] for m in memories]
+            mem_vectors = self.db.get_memory_vectors(memory_ids)
+
+            import numpy as np
+            for mem in memories:
+                vec = mem_vectors.get(mem["id"])
+                if vec is not None:
+                    # 余弦相似度
+                    sim = float(np.dot(search_vec, vec) / (np.linalg.norm(search_vec) * np.linalg.norm(vec) + 1e-10))
+                    mem["score"] = max(0, sim) * mem.get("importance", 1.0)
+                else:
+                    mem["score"] = 0.0
+
+            # 按分数排序
+            memories.sort(key=lambda m: m["score"], reverse=True)
+            return [m for m in memories[:top_k] if m["score"] > 0.1]
+        else:
+            # 无主题：直接按时间倒序
+            memories = self.db.get_memories_by_person(qq_id, role="sender", limit=top_k)
+            for m in memories:
+                m["score"] = m.get("importance", 1.0)
+            return memories
+
     def format_injection(self, memories: list[dict], template: str = "") -> str:
         """将记忆列表格式化为注入文本。"""
         if not memories:
