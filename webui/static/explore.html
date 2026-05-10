@@ -117,6 +117,7 @@
         selectedNode: null,
         hoveredNode: null,
         isDragging: false,
+        isPanning: false,
         dragNode: null,
         lastMouse: { x: 0, y: 0 },
         animId: null,
@@ -358,25 +359,31 @@
 
     canvas.onmousedown = (e) => {
         state.lastMouse = { x: e.clientX, y: e.clientY };
+        if (e.button === 1) { e.preventDefault(); state.isPanning = true; return; } // 中键拖拽
         const pos = getCoords(e.clientX, e.clientY);
         const node = findNode(pos.x, pos.y);
         if (node) { state.dragNode = node; state.isDragging = true; selectNode(node); }
         else { state.isDragging = false; }
     };
+    // 阻止中键默认滚动行为
+    canvas.onauxclick = (e) => { if (e.button === 1) e.preventDefault(); };
+    canvas.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
     window.onmousemove = (e) => {
         const dx = e.clientX - state.lastMouse.x, dy = e.clientY - state.lastMouse.y;
         if (state.isDragging && state.dragNode) {
             const p = getCoords(e.clientX, e.clientY);
             state.dragNode.fx = p.x; state.dragNode.fy = p.y;
-        } else if (e.buttons === 1) {
+        } else if ((e.buttons & 1) || (e.buttons & 4) || state.isPanning) {
             state.transform.x += dx; state.transform.y += dy;
         }
         const pos = getCoords(e.clientX, e.clientY);
         state.hoveredNode = findNode(pos.x, pos.y);
-        canvas.style.cursor = state.hoveredNode ? 'pointer' : (e.buttons===1 ? 'grabbing' : 'grab');
+        const panning = (e.buttons & 1) || (e.buttons & 4) || state.isPanning;
+        canvas.style.cursor = state.hoveredNode ? 'pointer' : (panning ? 'grabbing' : 'grab');
         state.lastMouse = { x: e.clientX, y: e.clientY };
     };
-    window.onmouseup = () => {
+    window.onmouseup = (e) => {
+        if (e.button === 1) state.isPanning = false; // 中键释放
         if (state.dragNode && !state.dragNode.isSource) { state.dragNode.fx = undefined; state.dragNode.fy = undefined; }
         state.dragNode = null; state.isDragging = false;
     };
