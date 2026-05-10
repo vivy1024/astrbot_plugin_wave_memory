@@ -385,8 +385,8 @@
                                 </div>
                                 <div class="flex justify-between mt-1 text-xs" style="color:var(--muted-fg)">
                                     <span x-text="`已导入 ~${Math.min(src.imported_pct || 0, 100)}%`"></span>
-                                    <span x-show="src.remaining > 0" style="color:var(--warning)" x-text="`剩余 ~${src.remaining.toLocaleString()} 条`"></span>
-                                    <span x-show="src.remaining === 0" style="color:var(--success)">✓ 已全部导入</span>
+                                    <span x-show="src.imported_pct >= 95" style="color:var(--success)">✓ 已全部导入</span>
+                                    <span x-show="src.imported_pct < 95" style="color:var(--muted-fg)" x-text="`采样估算，源间可能重叠`"></span>
                                 </div>
                             </div>
                         </div>

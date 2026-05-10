@@ -390,6 +390,7 @@ class UniversalImporter:
             yield json.dumps({"progress": 1.0, "message": "No data to import"})
             return
 
+        logger.info(f"[WaveMemory] Import started: {source['name']} ({total} records, limit={limit})")
         yield json.dumps({"progress": 0, "total": total, "message": f"Importing {total} records from {source['name']}..."})
 
         imported = 0
@@ -484,6 +485,8 @@ class UniversalImporter:
 
         if self.memory_index:
             self.memory_index.save()
+
+        logger.info(f"[WaveMemory] Import done: {source['name']} — imported={imported}, skipped={skipped}, errors={errors}")
 
         yield json.dumps({
             "progress": 1.0,
