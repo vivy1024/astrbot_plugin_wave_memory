@@ -412,7 +412,7 @@
                                 </div>
                                 <div class="flex items-center gap-2 ml-3 shrink-0">
                                     <span class="text-xs font-mono" style="color:var(--primary)" x-text="src.count.toLocaleString() + ' 条'"></span>
-                                    <button @click="startImport(src)" class="btn btn-ghost" :disabled="importing">导入</button>
+                                    <button @click="startImport(src)" class="btn btn-ghost" :disabled="importing || llmRunning">导入</button>
                                 </div>
                             </div>
                             <!-- 已导入进度 -->
@@ -457,7 +457,7 @@
                 </div>
 
                 <div class="flex gap-2">
-                    <button @click="startLLMExtract()" class="btn btn-primary flex-1 justify-center py-2.5" :disabled="llmRunning">
+                    <button @click="startLLMExtract()" class="btn btn-primary flex-1 justify-center py-2.5" :disabled="llmRunning || importing">
                         <span x-show="!llmRunning">🧠 开始 LLM 提取</span>
                         <span x-show="llmRunning">提取中...</span>
                     </button>
@@ -475,6 +475,17 @@
                     </div>
                     <p x-show="!llmRunning && llmProgress < 1" class="text-xs mt-2" style="color:var(--success)">💡 中断后再次点击"开始"会自动跳过已标记的记忆，从断点继续</p>
                 </div>
+            </div>
+        </div>
+
+        <!-- 导入实时进度 -->
+        <div class="card mt-4" x-show="importing || importProgress > 0">
+            <div class="flex items-center justify-between mb-2">
+                <h4 class="text-xs font-medium">导入进度</h4>
+                <span class="text-xs font-mono" x-text="Math.round(importProgress * 100) + '%'" style="color:var(--primary)"></span>
+            </div>
+            <div class="w-full h-2 rounded-full" style="background:var(--border)">
+                <div class="h-full rounded-full progress-bar" style="background:var(--primary)" :style="`width:${importProgress*100}%`"></div>
             </div>
         </div>
 
