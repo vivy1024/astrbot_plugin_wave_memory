@@ -501,7 +501,7 @@ class WaveMemoryDB:
             return []
         placeholders = ",".join("?" * len(ids))
         rows = self.conn.execute(
-            f"SELECT id, group_id, sender_id, sender_name, content, timestamp, importance FROM memories WHERE id IN ({placeholders})",
+            f"SELECT id, group_id, sender_id, sender_name, content, timestamp, importance, access_count FROM memories WHERE id IN ({placeholders})",
             ids,
         ).fetchall()
         return [
@@ -513,6 +513,7 @@ class WaveMemoryDB:
                 "content": r[4],
                 "timestamp": r[5],
                 "importance": r[6],
+                "access_count": r[7] if len(r) > 7 else 0,
             }
             for r in rows
         ]

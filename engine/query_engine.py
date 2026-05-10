@@ -96,11 +96,21 @@ class QueryEngine:
         if group_id:
             memories = [m for m in memories if m["group_id"] == group_id]
 
-        # Step 5: 计算分数
+        # Step 5: 计算分数（含时间衰减 + 访问加成）
         for mem in memories:
             dist = distances.get(mem["id"], 1.0)
             mem["similarity"] = 1.0 - dist
-            mem["score"] = mem["similarity"] * mem.get("importance", 1.0)
+
+            # 时间衰减: 半衰期 ~231 天
+            days_old = (time.time() - mem.get("timestamp", time.time())) / 86400.0
+            time_decay = 0.997 ** max(0, days_old)
+
+            # 访问加成: 被召回越多越不容易沉底
+            access_count = mem.get("access_count", 0) or 0
+            import math
+            access_boost = 1.0 + math.log2(1 + access_count) * 0.15
+
+            mem["score"] = mem["similarity"] * mem.get("importance", 1.0) * time_decay * access_boost
 
         # Step 6: 测地线重排
         if self.enable_geodesic and self.geodesic and energy_field:

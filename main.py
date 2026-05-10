@@ -28,6 +28,7 @@ from .services.message_writer import MessageWriter
 from .services.tag_extractor import TagExtractor
 from .services.tag_job import TagBackfillJob
 from .services.hot_config import HotConfig
+from .services.lifecycle import LifecycleService
 from .tools.memory_search import WaveMemorySearchTool, WaveMemoryRememberTool
 from .tools.deep_search import WaveMemoryDeepSearchTool
 from .tools.person_search import WaveMemoryPersonSearchTool
@@ -269,10 +270,16 @@ class WaveMemoryPlugin(Star):
         else:
             logger.info(f"[WaveMemory] Tag coverage {tag_coverage:.1%}, backfill not needed")
 
+        # 启动生命周期服务（好感度 + 表达模式 + 衰减）
+        self.lifecycle = LifecycleService(db=self.db, bot_qq_id="2500447291")
+        self.lifecycle.start()
+
         logger.info("[WaveMemory] Fully initialized")
 
     async def terminate(self):
         """插件卸载时清理。"""
+        if hasattr(self, 'lifecycle') and self.lifecycle:
+            self.lifecycle.stop()
         if hasattr(self, 'tag_job') and self.tag_job:
             self.tag_job.stop()
         if hasattr(self, 'webui') and self.webui:
@@ -358,6 +365,18 @@ class WaveMemoryPlugin(Star):
             "content": message,
             "timestamp": time.time(),
         })
+
+        # 好感度引擎处理
+        if hasattr(self, 'lifecycle'):
+            is_at_bot = '2500447291' in (event.message_str or '')
+            hour = int(time.strftime('%H', time.localtime()))
+            self.lifecycle.affinity.process_message(
+                sender_id=sender_id,
+                group_id=group_id,
+                content=content,
+                is_at_bot=is_at_bot,
+                hour=hour,
+            )
 
     @filter.after_message_sent()
     async def on_bot_sent(self, event: AstrMessageEvent):
