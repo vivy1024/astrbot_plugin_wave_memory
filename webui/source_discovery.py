@@ -425,7 +425,7 @@ class UniversalImporter:
             logger.debug(f"[WaveMemory] validate_mapping error: {e}")
             return {"valid": True, "skipped": True}
 
-    async def import_known(self, source: dict, limit: int = 500,
+    async def import_known(self, source: dict, limit: int = 5000,
                            extract_tags: bool = False) -> AsyncGenerator[str, None]:
         """导入已知适配器的数据源。"""
         adapter = source["adapter"]
@@ -503,7 +503,7 @@ class UniversalImporter:
         imported = 0
         skipped = 0
         errors = 0
-        batch_size = 10
+        batch_size = 50
         consecutive_errors = 0  # 连续错误计数
         llm_fallback_attempted = False  # 是否已尝试 LLM 降级
 
@@ -511,6 +511,10 @@ class UniversalImporter:
             batch = rows[i:i + batch_size]
             texts_to_embed = []
             records = []
+
+            # 批量去重：一次查询整批 content
+            batch_contents = []
+            batch_parsed = []
 
             for row in batch:
                 idx = 0
@@ -556,17 +560,31 @@ class UniversalImporter:
                 if extra and extra.strip():
                     content = f"{content}\n{extra}"
 
-                # 内容去重
-                content_hash = hashlib.md5(content.encode()).hexdigest()
-                existing = self.db.conn.execute(
-                    "SELECT id FROM memories WHERE content = ? LIMIT 1", (content,)
-                ).fetchone()
-                if existing:
-                    skipped += 1
-                    continue
+                batch_contents.append(content)
+                batch_parsed.append({"content": content, "sender": sender, "timestamp": ts, "group_id": group_id})
 
-                texts_to_embed.append(content[:500])
-                records.append({"content": content, "sender": sender, "timestamp": ts, "group_id": group_id})
+            # 批量去重查询
+            if batch_contents:
+                placeholders = ",".join(["?"] * len(batch_contents))
+                existing_set = set()
+                try:
+                    cursor = self.db.conn.execute(
+                        f"SELECT content FROM memories WHERE content IN ({placeholders})",
+                        batch_contents
+                    )
+                    existing_set = {r[0] for r in cursor.fetchall()}
+                except Exception:
+                    # fallback: 逐条查
+                    for c in batch_contents:
+                        if self.db.conn.execute("SELECT 1 FROM memories WHERE content = ? LIMIT 1", (c,)).fetchone():
+                            existing_set.add(c)
+
+                for rec in batch_parsed:
+                    if rec["content"] in existing_set:
+                        skipped += 1
+                    else:
+                        texts_to_embed.append(rec["content"][:500])
+                        records.append(rec)
 
             # 批量 embedding
             if texts_to_embed:

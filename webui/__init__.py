@@ -1164,7 +1164,7 @@ class WaveMemoryWebUI:
         # ─── 从数据源导入（通用） ───
 
         @app.post("/api/import/from-source")
-        async def import_from_source(source_id: str = Query(...), limit: int = Query(500, ge=1, le=5000)):
+        async def import_from_source(source_id: str = Query(...), limit: int = Query(5000, ge=1, le=50000)):
             """从指定数据源导入记忆到 Wave Memory（SSE 流）。"""
             from fastapi.responses import StreamingResponse
             from .source_discovery import SourceDiscovery, UniversalImporter
