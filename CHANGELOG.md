@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.4.0 (2025-07-13)
+
+### 新功能
+
+- **跨群记忆共享**：去掉 group_id 过滤，所有群共享同一记忆池；跨群人物画像自动合并
+- **Tag 审计系统**：LLM 驱动的 Tag 质量审计（合并/重分类/删除建议），SSE 流式进度
+- **Tag RAG 提取**：embedding 搜索已有 Tag 库注入提取 prompt，提升 Tag 复用率
+- **维护工作台 WebUI**：`/maintain` 页面 — 统计卡片、审计触发、建议列表、批量批准/拒绝
+- **社区检测**：Label Propagation 轻量实现，用于 Tag 聚类分析
+- **神经云图重构**：Sigma.js + Graphology 全新渲染，支持星图/联想/人物/路径四视角
+
+### 改进
+
+- Tag 提取引入已有 Tag 库参考词表（静态 top-200 fallback）
+- 审计 API 支持 action 类型过滤
+- 审计触发加并发保护，防止重复执行
+- 维护面板 XSS 防护
+
+### 修复
+
+- SSE 审计端点从 POST 改为 GET（EventSource 兼容）
+- 批量 resolve API 兼容前端简化格式
+- Tag RAG 补充 keyword 等未列出类型避免丢失
+- WebUI 查询 bot_mood 使用 is_active 而非 expires_at
+
+---
+
 ## v0.3.0 (2025-07-07)
 
 ### 新功能
