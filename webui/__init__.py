@@ -157,8 +157,7 @@ class WaveMemoryWebUI:
             facts_count = self.db.conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
             mood_count = self.db.conn.execute("SELECT COUNT(*) FROM bot_mood").fetchone()[0]
             active_moods = self.db.conn.execute(
-                "SELECT group_id, mood_type, description FROM bot_mood WHERE expires_at > ?",
-                (time.time(),),
+                "SELECT group_id, mood_type, description FROM bot_mood WHERE is_active = 1",
             ).fetchall()
 
             return {
@@ -826,8 +825,7 @@ class WaveMemoryWebUI:
             # 新功能状态
             facts_count = self.db.conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
             active_moods = self.db.conn.execute(
-                "SELECT group_id, mood_type, intensity, description FROM bot_mood WHERE expires_at > ?",
-                (time.time(),),
+                "SELECT group_id, mood_type, intensity, description FROM bot_mood WHERE is_active = 1",
             ).fetchall()
             person_count = self.db.conn.execute("SELECT COUNT(*) FROM person_registry").fetchone()[0]
             user_profiles_count = self.db.conn.execute("SELECT COUNT(*) FROM user_profiles").fetchone()[0]
