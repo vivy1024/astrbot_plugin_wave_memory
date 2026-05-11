@@ -142,6 +142,13 @@ class WaveMemoryWebUI:
                 return explore_path.read_text(encoding="utf-8")
             return "<h1>Wave Memory</h1><p>explore.html not found</p>"
 
+        @app.get("/maintain", response_class=HTMLResponse)
+        async def maintain():
+            maintain_path = Path(__file__).parent / "static" / "maintain.html"
+            if maintain_path.exists():
+                return maintain_path.read_text(encoding="utf-8")
+            return "<h1>Wave Memory</h1><p>maintain.html not found</p>"
+
         # ─── Explore API（神经云图多视角）───
 
         @app.get("/api/explore/galaxy")
@@ -867,11 +874,12 @@ class WaveMemoryWebUI:
             status: str = Query("pending"),
             limit: int = Query(50),
             offset: int = Query(0),
+            action: str = Query(None),
         ):
             """获取审计建议列表。"""
             from ..services.tag_auditor import TagAuditor
             auditor = TagAuditor(db=self.db)
-            suggestions = auditor.get_suggestions(status=status, limit=limit, offset=offset)
+            suggestions = auditor.get_suggestions(status=status, limit=limit, offset=offset, action=action)
             counts = auditor.get_suggestion_counts()
             return {"suggestions": suggestions, "counts": counts}
 

@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wave Memory · Tag 维护工作台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+    tailwind.config = {
+        theme: { extend: { colors: {
+            nebula: { 900:'#06080d', 800:'#0a0e17', 700:'#0f141e', 600:'#1a1f2e' },
+            glow: { purple:'#8b5cf6', blue:'#3b82f6', amber:'#f59e0b', dim:'rgba(139,92,246,0.25)' }
+        }}}
+    }
+    </script>
+    <style>
+    * { box-sizing: border-box; }
+    body { background: #06080d; }
+    .glass { background: rgba(10, 14, 23, 0.92); backdrop-filter: blur(16px); border: 1px solid rgba(139, 92, 246, 0.08); box-shadow: 0 4px 24px rgba(0,0,0,0.4); }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-thumb { background: rgba(139,92,246,0.2); border-radius: 3px; }
+    .suggestion-card { transition: all 0.2s ease; }
+    .suggestion-card:hover { border-color: rgba(139, 92, 246, 0.3); }
+    .progress-bar { transition: width 0.3s ease; }
+    .fade-out { opacity: 0; transform: translateX(20px); transition: all 0.3s ease; }
+    </style>
+</head>
+<body class="text-slate-200 font-sans min-h-screen">
+    <div class="fixed top-0 inset-x-0 z-30 glass flex items-center gap-3 px-5 py-2.5">
+        <a href="/explore" class="text-slate-400 text-xs px-3 py-1.5 rounded-md border border-white/5 hover:text-white transition">← 神经云图</a>
+        <span class="font-semibold text-sm text-amber-400">🔧 Tag 维护工作台</span>
+    </div>
+    <div class="pt-14 px-4 pb-8 max-w-5xl mx-auto">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 mb-6">
+            <div class="glass rounded-xl p-4 text-center"><div class="text-2xl font-bold text-glow-purple" id="stat-total">-</div><div class="text-xs text-slate-500 mt-1">总 Tag</div></div>
+            <div class="glass rounded-xl p-4 text-center"><div class="text-2xl font-bold text-green-400" id="stat-coverage">-</div><div class="text-xs text-slate-500 mt-1">覆盖率</div></div>
+            <div class="glass rounded-xl p-4 text-center"><div class="text-2xl font-bold text-amber-400" id="stat-pending">-</div><div class="text-xs text-slate-500 mt-1">待处理</div></div>
+            <div class="glass rounded-xl p-4 text-center"><div class="text-2xl font-bold text-blue-400" id="stat-approved">-</div><div class="text-xs text-slate-500 mt-1">已处理</div></div>
+        </div>
+        <div class="glass rounded-xl p-4 mb-4">
+            <div class="flex items-center gap-3 flex-wrap">
+                <span class="text-sm font-medium text-slate-300">审计</span>
+                <select id="audit-strategy" class="bg-nebula-700 border border-white/10 rounded-md px-3 py-1.5 text-xs text-slate-300">
+                    <option value="mixed">混合</option><option value="low_quality">低质量</option><option value="high_freq">高频</option>
+                </select>
+                <input id="audit-count" type="number" value="200" min="20" max="1000" step="20" class="w-20 bg-nebula-700 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-300">
+                <button onclick="triggerAudit()" id="btn-audit" class="px-4 py-1.5 bg-glow-purple/80 hover:bg-glow-purple rounded-md text-white text-xs font-medium transition">▶ 触发</button>
+                <button onclick="batchResolve('approve')" class="px-3 py-1.5 bg-green-600/60 hover:bg-green-600 rounded-md text-white text-xs transition">✓ 全部批准</button>
+                <button onclick="batchResolve('reject')" class="px-3 py-1.5 bg-red-600/40 hover:bg-red-600/70 rounded-md text-white text-xs transition">✗ 全部拒绝</button>
+            </div>
+            <div id="audit-progress" class="hidden mt-3">
+                <div class="h-2 bg-nebula-700 rounded-full overflow-hidden"><div id="progress-fill" class="progress-bar h-full bg-glow-purple rounded-full" style="width:0%"></div></div>
+                <div id="progress-text" class="text-xs text-slate-500 mt-1"></div>
+            </div>
+        </div>
+        <div class="flex gap-2 mb-3">
+            <button onclick="setFilter('all')" data-f="all" class="fbtn px-3 py-1 rounded-md text-xs bg-glow-purple/20 text-glow-purple border border-glow-purple/30">全部</button>
+            <button onclick="setFilter('merge')" data-f="merge" class="fbtn px-3 py-1 rounded-md text-xs bg-nebula-600 text-slate-400 border border-white/5">🔀 合并</button>
+            <button onclick="setFilter('retype')" data-f="retype" class="fbtn px-3 py-1 rounded-md text-xs bg-nebula-600 text-slate-400 border border-white/5">🏷️ 重分类</button>
+            <button onclick="setFilter('delete')" data-f="delete" class="fbtn px-3 py-1 rounded-md text-xs bg-nebula-600 text-slate-400 border border-white/5">🗑️ 删除</button>
+        </div>
+        <div id="list" class="space-y-2"><div class="text-center text-slate-500 text-sm py-8">加载中...</div></div>
+        <div id="pager" class="flex items-center justify-center gap-3 mt-4 hidden">
+            <button onclick="loadPage(page-1)" class="px-3 py-1 rounded bg-nebula-600 text-xs text-slate-400 hover:text-white transition">← 上一页</button>
+            <span id="page-info" class="text-xs text-slate-500"></span>
+            <button onclick="loadPage(page+1)" class="px-3 py-1 rounded bg-nebula-600 text-xs text-slate-400 hover:text-white transition">下一页 →</button>
+        </div>
+    </div>
+<script>
+const API = '';
+let suggestions = [];
+let page = 1;
+let filter = 'all';
+let counts = {};
+
+async function loadStats() {
+    try {
+        const r = await fetch(API + '/api/tags/quality');
+        const d = await r.json();
+        document.getElementById('stat-total').textContent = d.total_tags?.toLocaleString() || '-';
+        document.getElementById('stat-coverage').textContent = ((d.coverage || 0) * 100).toFixed(1) + '%';
+    } catch(e) {}
+}
+
+async function loadSuggestions() {
+    try {
+        const status = 'pending';
+        const action = filter === 'all' ? '' : `&action=${filter}`;
+        const r = await fetch(API + `/api/tags/audit/suggestions?status=${status}&limit=50&offset=${(page-1)*50}${action}`);
+        const d = await r.json();
+        suggestions = d.suggestions || [];
+        counts = d.counts || {};
+        document.getElementById('stat-pending').textContent = counts.pending || 0;
+        document.getElementById('stat-approved').textContent = (counts.approved || 0) + (counts.rejected || 0);
+        renderList();
+        const pager = document.getElementById('pager');
+        if (suggestions.length >= 50 || page > 1) {
+            pager.classList.remove('hidden');
+            document.getElementById('page-info').textContent = `第 ${page} 页`;
+        } else {
+            pager.classList.add('hidden');
+        }
+    } catch(e) {
+        document.getElementById('list').innerHTML = '<div class="text-center text-red-400 text-sm py-8">加载失败</div>';
+    }
+}
+
+function renderList() {
+    const el = document.getElementById('list');
+    if (!suggestions.length) {
+        el.innerHTML = '<div class="text-center text-slate-500 text-sm py-8">暂无待处理建议，点击"触发"开始审计</div>';
+        return;
+    }
+    el.innerHTML = suggestions.map(s => renderCard(s)).join('');
+}
+
+function renderCard(s) {
+    const icons = { merge: '🔀', retype: '🏷️', delete: '🗑️' };
+    const icon = icons[s.action] || '📋';
+    const names = Object.values(s.tag_names || {}).map(t => `<span class="inline-block px-2 py-0.5 rounded bg-nebula-600 text-xs mr-1 mb-1">${t.name} <span class="text-slate-500">${t.type}</span></span>`).join('');
+    let detail = '';
+    if (s.action === 'merge' && s.target_name) {
+        detail = `<div class="text-xs text-green-400 mt-1">→ 合并为: ${s.target_name} (${s.target_type || ''})</div>`;
+    } else if (s.action === 'retype' && s.target_type) {
+        detail = `<div class="text-xs text-blue-400 mt-1">→ 改为: ${s.target_type}</div>`;
+    }
+    return `<div class="suggestion-card glass rounded-lg p-3 border border-white/5" id="card-${s.id}">
+        <div class="flex items-start justify-between gap-2">
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="text-sm">${icon}</span>
+                    <span class="text-xs font-medium text-slate-300 uppercase">${s.action}</span>
+                </div>
+                <div class="flex flex-wrap gap-0.5 mb-1">${names}</div>
+                ${detail}
+                <div class="text-xs text-slate-500 mt-1">${s.reason || ''}</div>
+            </div>
+            <div class="flex gap-1.5 shrink-0">
+                <button onclick="resolve(${s.id},'approve')" class="px-2.5 py-1 rounded bg-green-600/50 hover:bg-green-600 text-white text-xs transition">✓</button>
+                <button onclick="resolve(${s.id},'reject')" class="px-2.5 py-1 rounded bg-red-600/30 hover:bg-red-600/60 text-white text-xs transition">✗</button>
+            </div>
+        </div>
+    </div>`;
+}
+
+async function resolve(id, decision) {
+    const card = document.getElementById('card-' + id);
+    if (card) card.classList.add('fade-out');
+    try {
+        await fetch(API + '/api/tags/audit/resolve', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({suggestion_id: id, decision})
+        });
+        setTimeout(() => { if(card) card.remove(); }, 300);
+        suggestions = suggestions.filter(s => s.id !== id);
+        if (!suggestions.length) loadSuggestions();
+    } catch(e) {
+        if(card) card.classList.remove('fade-out');
+    }
+}
+
+async function batchResolve(decision) {
+    if (!suggestions.length) return;
+    if (!confirm(`确定要${decision === 'approve' ? '批准' : '拒绝'}当前页所有 ${suggestions.length} 条建议？`)) return;
+    const ids = suggestions.map(s => s.id);
+    try {
+        await fetch(API + '/api/tags/audit/resolve-batch', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({suggestion_ids: ids, decision})
+        });
+        loadSuggestions();
+        loadStats();
+    } catch(e) { alert('批量操作失败'); }
+}
+
+function triggerAudit() {
+    const strategy = document.getElementById('audit-strategy').value;
+    const count = document.getElementById('audit-count').value;
+    const prog = document.getElementById('audit-progress');
+    const fill = document.getElementById('progress-fill');
+    const text = document.getElementById('progress-text');
+    const btn = document.getElementById('btn-audit');
+    prog.classList.remove('hidden');
+    btn.disabled = true;
+    btn.textContent = '审计中...';
+    fill.style.width = '0%';
+
+    const es = new EventSource(API + `/api/tags/audit/trigger?strategy=${strategy}&total_count=${count}`);
+    es.onmessage = (e) => {
+        try {
+            const d = JSON.parse(e.data);
+            if (d.progress !== undefined) {
+                fill.style.width = d.progress + '%';
+                text.textContent = d.message || '';
+            }
+            if (d.progress >= 100 || d.done) {
+                es.close();
+                btn.disabled = false;
+                btn.textContent = '▶ 触发';
+                text.textContent = `完成！生成 ${d.total_suggestions || 0} 条建议`;
+                setTimeout(() => { prog.classList.add('hidden'); loadSuggestions(); loadStats(); }, 2000);
+            }
+        } catch(err) {}
+    };
+    es.onerror = () => {
+        es.close();
+        btn.disabled = false;
+        btn.textContent = '▶ 触发';
+        text.textContent = '审计完成或连接断开';
+        setTimeout(() => { prog.classList.add('hidden'); loadSuggestions(); }, 1500);
+    };
+}
+
+function setFilter(f) {
+    filter = f;
+    page = 1;
+    document.querySelectorAll('.fbtn').forEach(b => {
+        if (b.dataset.f === f) {
+            b.className = 'fbtn px-3 py-1 rounded-md text-xs bg-glow-purple/20 text-glow-purple border border-glow-purple/30';
+        } else {
+            b.className = 'fbtn px-3 py-1 rounded-md text-xs bg-nebula-600 text-slate-400 border border-white/5';
+        }
+    });
+    loadSuggestions();
+}
+
+function loadPage(p) {
+    if (p < 1) return;
+    page = p;
+    loadSuggestions();
+}
+
+// Init
+loadStats();
+loadSuggestions();
+</script>
+</body>
+</html>

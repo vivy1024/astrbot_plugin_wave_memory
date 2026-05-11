@@ -206,15 +206,24 @@ class TagAuditor:
         """, (action, tag_ids, target_name, target_type, reason, time.time()))
         self.db.conn.commit()
 
-    def get_suggestions(self, status: str = "pending", limit: int = 50, offset: int = 0) -> list[dict]:
+    def get_suggestions(self, status: str = "pending", limit: int = 50, offset: int = 0, action: str = None) -> list[dict]:
         """获取审计建议列表。"""
-        rows = self.db.conn.execute("""
-            SELECT id, action, tag_ids, target_name, target_type, reason, status, created_at, resolved_at
-            FROM tag_audit_suggestions
-            WHERE status = ?
-            ORDER BY created_at DESC
-            LIMIT ? OFFSET ?
-        """, (status, limit, offset)).fetchall()
+        if action:
+            rows = self.db.conn.execute("""
+                SELECT id, action, tag_ids, target_name, target_type, reason, status, created_at, resolved_at
+                FROM tag_audit_suggestions
+                WHERE status = ? AND action = ?
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+            """, (status, action, limit, offset)).fetchall()
+        else:
+            rows = self.db.conn.execute("""
+                SELECT id, action, tag_ids, target_name, target_type, reason, status, created_at, resolved_at
+                FROM tag_audit_suggestions
+                WHERE status = ?
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+            """, (status, limit, offset)).fetchall()
 
         suggestions = []
         for r in rows:

@@ -11,41 +11,139 @@
     <script>
     tailwind.config = {
         theme: { extend: { colors: {
-            nebula: { 900:'#0a0e17', 800:'#0f141e', 700:'#1a1f2e', 600:'#252b3d' },
-            glow: { purple:'#8b5cf6', dim:'rgba(139,92,246,0.3)' }
+            nebula: { 900:'#06080d', 800:'#0a0e17', 700:'#0f141e', 600:'#1a1f2e' },
+            glow: { purple:'#8b5cf6', blue:'#3b82f6', dim:'rgba(139,92,246,0.25)' }
         }}}
     }
     </script>
     <style>
-    body { background: #0a0e17; overflow: hidden; }
+    * { box-sizing: border-box; }
+    body { background: #06080d; overflow: hidden; margin: 0; }
     #sigma-container { position: fixed; inset: 0; z-index: 0; }
-    .glass { background: rgba(15,20,30,0.88); backdrop-filter: blur(12px); border: 1px solid rgba(139,92,246,0.12); }
-    .legend-pill { transition: all 0.2s; }
-    .legend-pill.active { ring: 2px; transform: scale(1.1); box-shadow: 0 0 12px rgba(139,92,246,0.4); }
-    .legend-pill:hover { transform: scale(1.05); }
-    ::-webkit-scrollbar { width: 4px; }
-    ::-webkit-scrollbar-thumb { background: rgba(139,92,246,0.3); border-radius: 2px; }
+
+    /* Glass panels */
+    .glass {
+        background: rgba(10, 14, 23, 0.92);
+        backdrop-filter: blur(16px) saturate(1.2);
+        border: 1px solid rgba(139, 92, 246, 0.08);
+        box-shadow: 0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.02);
+    }
+    .topbar {
+        background: rgba(6, 8, 13, 0.95);
+        backdrop-filter: blur(20px);
+        border-bottom: 1px solid rgba(139, 92, 246, 0.06);
+        box-shadow: 0 2px 20px rgba(0,0,0,0.5);
+    }
+    .brand-text {
+        background: linear-gradient(135deg, #8b5cf6, #3b82f6);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+
+    /* Tab buttons */
+    .tab-btn { color: #64748b; border: 1px solid transparent; }
+    .tab-btn.active {
+        background: rgba(139, 92, 246, 0.12);
+        color: #a78bfa;
+        border-color: rgba(139, 92, 246, 0.25);
+        box-shadow: 0 0 12px rgba(139, 92, 246, 0.1);
+    }
+    .tab-btn:hover:not(.active) { color: #94a3b8; background: rgba(255,255,255,0.03); }
+
+    /* Tooltip */
+    .node-tooltip {
+        position: fixed;
+        z-index: 100;
+        pointer-events: none;
+        opacity: 0;
+        transform: translateY(4px);
+        transition: opacity 0.15s ease, transform 0.15s ease;
+        max-width: 320px;
+        padding: 12px 16px;
+        border-radius: 12px;
+        background: rgba(6, 8, 13, 0.97);
+        border: 1px solid rgba(139, 92, 246, 0.3);
+        box-shadow: 0 0 20px rgba(139, 92, 246, 0.15), 0 8px 32px rgba(0,0,0,0.6);
+    }
+    .node-tooltip.visible { opacity: 1; transform: translateY(0); }
+    .node-tooltip .tt-name {
+        font-size: 13px; font-weight: 600; color: #f1f5f9;
+        margin-bottom: 4px;
+    }
+    .node-tooltip .tt-type {
+        display: inline-block;
+        font-size: 10px; font-weight: 500;
+        padding: 2px 8px; border-radius: 99px;
+        margin-bottom: 6px;
+    }
+    .node-tooltip .tt-meta {
+        font-size: 11px; color: #94a3b8; line-height: 1.5;
+    }
+    .node-tooltip .tt-neighbors {
+        font-size: 10px; color: #64748b; margin-top: 6px;
+        border-top: 1px solid rgba(255,255,255,0.05); padding-top: 6px;
+    }
+
+    /* Legend pills */
+    .legend-pill { transition: all 0.2s ease; }
+    .legend-pill:hover { transform: scale(1.08); }
+    .legend-pill.active {
+        transform: scale(1.12);
+        box-shadow: 0 0 16px var(--pill-glow);
+    }
+
+    /* Detail panel */
+    .detail-panel {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(139,92,246,0.2) transparent;
+    }
+    .detail-panel::-webkit-scrollbar { width: 4px; }
+    .detail-panel::-webkit-scrollbar-thumb { background: rgba(139,92,246,0.25); border-radius: 2px; }
+
+    /* Person list items */
+    .person-item {
+        padding: 8px 12px; border-radius: 8px; cursor: pointer;
+        transition: all 0.15s ease;
+        border: 1px solid transparent;
+    }
+    .person-item:hover {
+        background: rgba(139, 92, 246, 0.06);
+        border-color: rgba(139, 92, 246, 0.15);
+    }
+
+    /* Scrollbar global */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(139,92,246,0.2); border-radius: 3px; }
+
+    /* Animations */
+    @keyframes pulse-glow {
+        0%, 100% { box-shadow: 0 0 12px rgba(139,92,246,0.1); }
+        50% { box-shadow: 0 0 20px rgba(139,92,246,0.25); }
+    }
     </style>
 </head>
 <body class="text-slate-200 font-sans">
     <div id="sigma-container"></div>
+    <div id="node-tooltip" class="node-tooltip"></div>
 
     <!-- Top Bar -->
-    <div class="fixed top-0 inset-x-0 z-30 glass border-b border-white/5 flex items-center gap-3 px-5 py-2.5">
+    <div class="fixed top-0 inset-x-0 z-30 topbar flex items-center gap-3 px-5 py-2.5">
         <a href="/" class="text-slate-400 text-xs px-3 py-1.5 rounded-md border border-white/5 hover:text-white hover:border-glow-dim transition">← 管理面板</a>
-        <span class="text-glow-purple font-semibold text-sm">⚡ 神经云图</span>
+        <span class="brand-text font-semibold text-sm">⚡ 神经云图</span>
         <div class="ml-auto flex gap-1" id="view-tabs">
             <button data-view="galaxy" class="tab-btn active px-3 py-1.5 rounded-md text-xs transition">星图</button>
             <button data-view="query" class="tab-btn px-3 py-1.5 rounded-md text-xs transition">联想</button>
             <button data-view="person" class="tab-btn px-3 py-1.5 rounded-md text-xs transition">人物</button>
             <button data-view="path" class="tab-btn px-3 py-1.5 rounded-md text-xs transition">路径</button>
+            <a href="/maintain" class="px-3 py-1.5 rounded-md text-xs text-amber-400/80 border border-amber-400/20 hover:bg-amber-400/10 transition">🔧 维护</a>
         </div>
     </div>
 
     <!-- Search Box -->
     <div id="search-box" class="fixed top-14 left-1/2 -translate-x-1/2 z-20 hidden items-center gap-2">
         <input id="search-input" type="text" placeholder="输入查询，开始联想..."
-            class="w-80 px-4 py-2.5 bg-nebula-800 border border-glow-dim rounded-lg text-sm text-slate-200 outline-none focus:border-glow-purple transition">
+            class="w-80 px-4 py-2.5 bg-nebula-700 border border-glow-dim rounded-lg text-sm text-slate-200 outline-none focus:border-glow-purple transition">
         <button onclick="doQuery()" class="px-5 py-2.5 bg-glow-purple/80 hover:bg-glow-purple rounded-lg text-white text-xs font-medium transition">联想</button>
     </div>
 
@@ -66,21 +164,31 @@
     </div>
 
     <!-- Detail Panel -->
-    <div id="detail-panel" class="fixed right-4 top-24 bottom-4 w-80 z-20 glass rounded-xl p-5 overflow-y-auto hidden">
-        <h3 id="detail-title" class="text-white text-sm font-medium">-</h3>
-        <p id="detail-meta" class="text-slate-500 text-[11px] mt-1">-</p>
-        <div id="detail-tags" class="flex flex-wrap gap-1.5 mt-3"></div>
-        <div id="detail-content" class="text-slate-400 text-xs leading-relaxed whitespace-pre-wrap max-h-64 overflow-y-auto border-t border-white/5 pt-3 mt-3"></div>
-        <div class="flex gap-2 mt-4 flex-wrap">
-            <button id="btn-expand" onclick="expandNode()" class="px-3 py-1.5 bg-glow-purple/15 border border-glow-dim rounded-md text-purple-300 text-[11px] hover:bg-glow-purple/30 transition">展开邻居</button>
-            <button onclick="hideDetail()" class="px-3 py-1.5 bg-white/5 border border-white/10 rounded-md text-slate-400 text-[11px] hover:text-white transition">关闭</button>
+    <div id="detail-panel" class="fixed right-4 top-16 bottom-4 w-80 z-20 glass rounded-2xl overflow-hidden hidden detail-panel">
+        <div class="p-5 h-full overflow-y-auto">
+            <div class="flex items-start justify-between mb-3">
+                <div>
+                    <h3 id="detail-title" class="text-white text-sm font-semibold">-</h3>
+                    <p id="detail-meta" class="text-slate-500 text-[11px] mt-1">-</p>
+                </div>
+                <button onclick="hideDetail()" class="w-7 h-7 flex items-center justify-center rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white text-xs transition">✕</button>
+            </div>
+            <div id="detail-tags" class="flex flex-wrap gap-1.5 mb-3"></div>
+            <div id="detail-content" class="text-slate-400 text-xs leading-relaxed whitespace-pre-wrap max-h-48 overflow-y-auto border-t border-white/5 pt-3"></div>
+            <div id="detail-neighbors" class="mt-3 border-t border-white/5 pt-3">
+                <p class="text-slate-500 text-[10px] uppercase tracking-wider mb-2">关联节点</p>
+                <div id="detail-neighbor-list" class="flex flex-wrap gap-1"></div>
+            </div>
+            <div class="flex gap-2 mt-4 flex-wrap">
+                <button id="btn-expand" onclick="expandNode()" class="px-3 py-1.5 bg-glow-purple/10 border border-glow-dim rounded-lg text-purple-300 text-[11px] hover:bg-glow-purple/20 transition">展开邻居</button>
+            </div>
         </div>
     </div>
 
     <!-- Stats Badge -->
     <div id="stats-badge" class="fixed bottom-4 left-4 z-20 glass rounded-lg px-3 py-2 text-[11px] text-slate-500">0 节点 · 0 连线</div>
 
-    <!-- Legend (clickable) -->
+    <!-- Legend -->
     <div id="legend" class="fixed bottom-4 right-4 z-20 glass rounded-xl px-4 py-3 flex flex-wrap gap-2 max-w-xs"></div>
 
     <!-- Loading -->
@@ -91,7 +199,7 @@
 
 <script>
 // ═══════════════════════════════════════════════════════════
-// Wave Memory 神经云图 v3 — Sigma.js + Graphology
+// Wave Memory 神经云图 v4 — Premium Dark Neon UI
 // ═══════════════════════════════════════════════════════════
 
 const TYPE_COLORS = {
@@ -111,18 +219,87 @@ let renderer = null;
 let graph = null;
 let currentView = 'galaxy';
 let selectedNode = null;
-let activeFilter = null; // 当前筛选的类型
+let activeFilter = null;
 let hoveredNode = null;
 let hoveredNeighbors = new Set();
 
-// ─── Legend 初始化 ───
+// ─── Custom Label Renderer ───
+function drawLabel(context, data, settings) {
+    if (!data.label) return;
+    const size = settings.labelSize || 12;
+    const font = settings.labelFont || 'system-ui, -apple-system, sans-serif';
+    const weight = data.highlighted ? '600' : '400';
+    context.font = `${weight} ${size}px ${font}`;
+    context.fillStyle = data.highlighted ? '#ffffff' : 'rgba(226, 232, 240, 0.85)';
+    context.shadowColor = 'rgba(0,0,0,0.8)';
+    context.shadowBlur = 4;
+    context.fillText(data.label, data.x + data.size + 4, data.y + size / 3);
+    context.shadowBlur = 0;
+}
+
+// ─── Custom Hover Renderer (glow ring + backdrop label) ───
+function drawHover(context, data, settings) {
+    const size = data.size;
+    const color = data.color || '#8b5cf6';
+
+    // Outer glow ring
+    context.beginPath();
+    context.arc(data.x, data.y, size + 6, 0, Math.PI * 2);
+    context.strokeStyle = color;
+    context.lineWidth = 2;
+    context.shadowColor = color;
+    context.shadowBlur = 16;
+    context.stroke();
+    context.shadowBlur = 0;
+
+    // Second glow ring (softer)
+    context.beginPath();
+    context.arc(data.x, data.y, size + 10, 0, Math.PI * 2);
+    context.strokeStyle = color + '40';
+    context.lineWidth = 1;
+    context.stroke();
+
+    // Label with dark backdrop
+    if (data.label) {
+        const fontSize = 13;
+        const font = `600 ${fontSize}px system-ui, -apple-system, sans-serif`;
+        context.font = font;
+        const textWidth = context.measureText(data.label).width;
+        const labelX = data.x + size + 8;
+        const labelY = data.y;
+        const padding = 6;
+        const boxX = labelX - padding;
+        const boxY = labelY - fontSize / 2 - padding;
+        const boxW = textWidth + padding * 2;
+        const boxH = fontSize + padding * 2;
+        const radius = 6;
+
+        // Rounded rect backdrop
+        context.beginPath();
+        context.roundRect(boxX, boxY, boxW, boxH, radius);
+        context.fillStyle = 'rgba(6, 8, 13, 0.95)';
+        context.fill();
+        context.strokeStyle = color + '60';
+        context.lineWidth = 1;
+        context.stroke();
+
+        // Label text
+        context.fillStyle = '#f8fafc';
+        context.shadowColor = color;
+        context.shadowBlur = 6;
+        context.fillText(data.label, labelX, labelY + fontSize / 3);
+        context.shadowBlur = 0;
+    }
+}
+
+// ─── Legend ───
 function initLegend() {
     const legend = document.getElementById('legend');
-    const types = ['person','topic','event','emotion','entity','keyword'];
+    const types = ['person','topic','event','emotion','entity','keyword','fact','location'];
     legend.innerHTML = types.map(t => `
-        <button class="legend-pill flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] cursor-pointer border border-transparent hover:border-white/20"
-                data-type="${t}" style="background:${TYPE_COLORS[t]}22; color:${TYPE_COLORS[t]}">
-            <span class="w-2 h-2 rounded-full" style="background:${TYPE_COLORS[t]}"></span>
+        <button class="legend-pill flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[10px] cursor-pointer border border-transparent"
+                data-type="${t}" style="background:${TYPE_COLORS[t]}15; color:${TYPE_COLORS[t]}; --pill-glow:${TYPE_COLORS[t]}40">
+            <span class="w-2.5 h-2.5 rounded-full" style="background: radial-gradient(circle at 30% 30%, ${TYPE_COLORS[t]}, ${TYPE_COLORS[t]}80)"></span>
             ${TYPE_LABELS[t]}
         </button>
     `).join('');
@@ -132,21 +309,16 @@ function initLegend() {
 }
 
 function toggleFilter(type) {
-    if (activeFilter === type) {
-        activeFilter = null;
-    } else {
-        activeFilter = type;
-    }
-    // 更新 pill 样式
+    activeFilter = activeFilter === type ? null : type;
     document.querySelectorAll('.legend-pill').forEach(btn => {
         const isActive = btn.dataset.type === activeFilter;
         btn.classList.toggle('active', isActive);
-        btn.style.borderColor = isActive ? TYPE_COLORS[type] : 'transparent';
+        btn.style.borderColor = isActive ? TYPE_COLORS[type] + '60' : 'transparent';
     });
     renderer.refresh();
 }
 
-// ─── Graph 初始化 ───
+// ─── Graph Init ───
 function initGraph() {
     graph = new graphology.Graph();
     const container = document.getElementById('sigma-container');
@@ -154,22 +326,28 @@ function initGraph() {
     renderer = new Sigma(graph, container, {
         allowInvalidContainer: true,
         renderLabels: true,
-        labelFont: 'system-ui, sans-serif',
+        labelFont: 'system-ui, -apple-system, sans-serif',
         labelSize: 11,
-        labelColor: { color: '#e2e8f0' },
-        labelRenderedSizeThreshold: 6,
-        defaultNodeColor: '#94a3b8',
-        defaultEdgeColor: 'rgba(139,92,246,0.15)',
+        labelColor: { color: '#cbd5e1' },
+        labelRenderedSizeThreshold: 8,
+        defaultNodeColor: '#64748b',
+        defaultEdgeColor: 'rgba(100, 116, 139, 0.08)',
+        defaultDrawNodeLabel: drawLabel,
+        defaultDrawNodeHover: drawHover,
+        hoverRenderer: drawHover,
         edgeReducer(edge, data) {
             const res = { ...data };
             if (hoveredNode) {
                 const src = graph.source(edge);
                 const tgt = graph.target(edge);
-                if (src !== hoveredNode && tgt !== hoveredNode) {
-                    res.color = 'rgba(139,92,246,0.03)';
+                if (src === hoveredNode || tgt === hoveredNode) {
+                    const neighborNode = src === hoveredNode ? tgt : src;
+                    const nColor = graph.getNodeAttribute(neighborNode, 'color') || '#8b5cf6';
+                    res.color = nColor + '60';
+                    res.size = Math.max(1.5, (res.size || 1) * 2);
                 } else {
-                    res.color = 'rgba(139,92,246,0.7)';
-                    res.size = 2;
+                    res.color = 'rgba(100, 116, 139, 0.02)';
+                    res.hidden = false;
                 }
             }
             if (activeFilter) {
@@ -178,7 +356,7 @@ function initGraph() {
                 const srcType = graph.getNodeAttribute(src, 'nodeType');
                 const tgtType = graph.getNodeAttribute(tgt, 'nodeType');
                 if (srcType !== activeFilter && tgtType !== activeFilter) {
-                    res.color = 'rgba(139,92,246,0.02)';
+                    res.color = 'rgba(100, 116, 139, 0.01)';
                 }
             }
             return res;
@@ -191,8 +369,9 @@ function initGraph() {
                     res.zIndex = 2;
                 } else if (hoveredNeighbors.has(node)) {
                     res.zIndex = 1;
+                    // Keep label for neighbors
                 } else {
-                    res.color = res.color + '33';
+                    res.color = '#1e293b';
                     res.label = '';
                     res.zIndex = 0;
                 }
@@ -200,8 +379,8 @@ function initGraph() {
             if (activeFilter) {
                 const nodeType = graph.getNodeAttribute(node, 'nodeType');
                 if (nodeType !== activeFilter) {
-                    res.color = '#334155';
-                    res.size = Math.max(2, (res.size || 4) * 0.5);
+                    res.color = '#1e293b';
+                    res.size = Math.max(2, (res.size || 4) * 0.4);
                     res.label = '';
                 }
             }
@@ -209,112 +388,218 @@ function initGraph() {
         },
     });
 
-    // 事件
+    // Tooltip logic
+    const tooltip = document.getElementById('node-tooltip');
+    let tooltipTimeout = null;
+
     renderer.on('enterNode', ({ node }) => {
         hoveredNode = node;
         hoveredNeighbors = new Set(graph.neighbors(node));
         renderer.refresh();
         container.style.cursor = 'pointer';
+
+        // Show tooltip
+        clearTimeout(tooltipTimeout);
+        tooltipTimeout = setTimeout(() => {
+            const attrs = graph.getNodeAttributes(node);
+            const nodeData = attrs._data || {};
+            const color = TYPE_COLORS[nodeData.type] || '#94a3b8';
+            const neighbors = graph.neighbors(node);
+            const degree = neighbors.length;
+
+            tooltip.innerHTML = `
+                <div class="tt-name">${attrs.label || node}</div>
+                <span class="tt-type" style="background:${color}20; color:${color}; border: 1px solid ${color}40">${TYPE_LABELS[nodeData.type] || nodeData.type || '未知'}</span>
+                <div class="tt-meta">
+                    ${nodeData.score ? `相似度: ${nodeData.score.toFixed(3)}<br>` : ''}
+                    ${nodeData.community !== undefined ? `社区: #${nodeData.community}<br>` : ''}
+                    连接数: ${degree}
+                </div>
+                ${degree > 0 ? `<div class="tt-neighbors">邻居: ${neighbors.slice(0, 5).map(n => graph.getNodeAttribute(n, 'label') || n).join(', ')}${degree > 5 ? ` +${degree-5}` : ''}</div>` : ''}
+            `;
+            tooltip.classList.add('visible');
+        }, 200);
     });
+
     renderer.on('leaveNode', () => {
         hoveredNode = null;
         hoveredNeighbors.clear();
         renderer.refresh();
         container.style.cursor = 'grab';
+        clearTimeout(tooltipTimeout);
+        tooltip.classList.remove('visible');
     });
+
     renderer.on('clickNode', ({ node }) => {
         selectedNode = node;
         showDetail(node);
-    });
-    renderer.on('clickStage', () => {
-        hideDetail();
-        selectedNode = null;
+        tooltip.classList.remove('visible');
     });
 
-    // ─── 中键拖拽 ───
-    let midDrag = false, midStartX = 0, midStartY = 0, midStartCamera = null;
-    container.addEventListener('mousedown', (e) => {
-        if (e.button === 1) { // 中键
-            e.preventDefault();
-            midDrag = true;
-            midStartX = e.clientX;
-            midStartY = e.clientY;
-            midStartCamera = renderer.getCamera().getState();
-            container.style.cursor = 'grabbing';
+    // Track mouse for tooltip position
+    container.addEventListener('mousemove', (e) => {
+        tooltip.style.left = (e.clientX + 16) + 'px';
+        tooltip.style.top = (e.clientY - 10) + 'px';
+        // Prevent overflow
+        const rect = tooltip.getBoundingClientRect();
+        if (rect.right > window.innerWidth - 10) {
+            tooltip.style.left = (e.clientX - rect.width - 16) + 'px';
+        }
+        if (rect.bottom > window.innerHeight - 10) {
+            tooltip.style.top = (e.clientY - rect.height - 10) + 'px';
         }
     });
-    document.addEventListener('mousemove', (e) => {
-        if (!midDrag) return;
-        const camera = renderer.getCamera();
-        const dx = e.clientX - midStartX;
-        const dy = e.clientY - midStartY;
-        const ratio = midStartCamera.ratio / container.offsetWidth;
-        camera.setState({
-            x: midStartCamera.x - dx * ratio,
-            y: midStartCamera.y - dy * ratio,
-        });
+
+    renderer.on('clickStage', () => {
+        selectedNode = null;
+        hideDetail();
     });
-    document.addEventListener('mouseup', (e) => {
-        if (e.button === 1 && midDrag) {
-            midDrag = false;
-            container.style.cursor = 'grab';
-        }
-    });
-    // 阻止中键默认滚动行为
-    container.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
-    container.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
 }
 
-// ─── 数据加载 ───
-function loadGraphData(nodes, edges) {
+// ─── Load Galaxy ───
+async function loadGalaxy() {
+    showLoading('正在加载星图...');
+    try {
+        const res = await fetch('/api/tags/graph');
+        const data = await res.json();
+        renderGraph(data.nodes || [], data.edges || []);
+    } catch(e) {
+        console.error('Load galaxy failed:', e);
+    }
+    hideLoading();
+}
+
+function renderGraph(nodes, edges) {
     graph.clear();
-    const nodeIds = new Set();
-    nodes.forEach(n => {
-        if (nodeIds.has(String(n.id))) return;
-        nodeIds.add(String(n.id));
-        const color = n.isSource ? TYPE_COLORS.source : (TYPE_COLORS[n.type] || TYPE_COLORS.keyword);
-        const size = n.isSource ? 12 : Math.max(4, Math.sqrt(n.degree || 1) * 3);
-        graph.addNode(String(n.id), {
-            label: n.name || String(n.id),
-            x: Math.random() * 100,
-            y: Math.random() * 100,
+    nodes.forEach((n, i) => {
+        const nid = String(n.id || n.tag_id || i);
+        const type = n.type || n.tag_type || 'keyword';
+        const isSeed = n.isSource || n.isSeed;
+        const color = isSeed ? TYPE_COLORS.source : (TYPE_COLORS[type] || TYPE_COLORS.keyword);
+        const degree = n.value || n.degree || n.weight || 1;
+        const size = isSeed ? 16 : Math.max(5, Math.min(24, Math.log2(degree + 1) * 4 + 4));
+        graph.addNode(nid, {
+            label: n.name || n.label || nid,
+            x: n.x || (Math.random() * 100),
+            y: n.y || (Math.random() * 100),
             size,
             color,
-            nodeType: n.type || 'keyword',
-            // 存储额外数据
-            _data: n,
+            nodeType: type,
+            _data: { ...n, type, degree },
         });
     });
     edges.forEach(e => {
-        const src = String(e.source);
-        const tgt = String(e.target);
+        const src = String(e.source || e.from);
+        const tgt = String(e.target || e.to);
         if (!graph.hasNode(src) || !graph.hasNode(tgt)) return;
         if (graph.hasEdge(src, tgt) || graph.hasEdge(tgt, src)) return;
+        const weight = e.value || e.weight || e.count || 1;
+        const srcColor = graph.getNodeAttribute(src, 'color');
         graph.addEdge(src, tgt, {
-            size: Math.max(0.5, (e.weight || 0.3) * 2),
-            color: 'rgba(139,92,246,0.18)',
+            size: Math.max(0.3, Math.min(3, weight * 3)),
+            color: srcColor + '18',
         });
     });
 
-    // ForceAtlas2 布局
-    if (graph.order > 0) {
+    // Layout
+    if (graph.order > 0 && typeof graphologyLibrary !== 'undefined') {
         try {
-            const settings = graphologyLibrary.layoutForceAtlas2.inferSettings(graph);
-            settings.gravity = 1;
-            settings.scalingRatio = 5;
             graphologyLibrary.layoutForceAtlas2.assign(graph, {
                 iterations: 80,
-                settings,
+                settings: {
+                    gravity: 0.5,
+                    scalingRatio: 3,
+                    barnesHutOptimize: graph.order > 200,
+                    strongGravityMode: true,
+                    slowDown: 5,
+                }
             });
-        } catch(e) { console.warn('FA2 layout failed:', e); }
+        } catch(e) { console.warn('Layout failed:', e); }
     }
 
     updateStats();
-    // 适应视口
     setTimeout(() => {
         const camera = renderer.getCamera();
-        camera.animatedReset({ duration: 300 });
-    }, 100);
+        camera.animatedReset({ duration: 400 });
+    }, 150);
+}
+
+// ─── Query (联想) ───
+async function doQuery() {
+    const q = document.getElementById('search-input').value.trim();
+    if (!q) return;
+    showLoading('联想中...');
+    try {
+        const res = await fetch(`/api/tags/graph?query=${encodeURIComponent(q)}&limit=30`);
+        const data = await res.json();
+        if (data.nodes && data.nodes.length) {
+            // Add source node
+            data.nodes.unshift({ id: '__query__', name: q, type: 'source', isSource: true, degree: 0 });
+            if (data.edges) {
+                const firstFew = data.nodes.slice(1, 6);
+                firstFew.forEach(n => {
+                    data.edges.push({ source: '__query__', target: String(n.id || n.tag_id), weight: 2 });
+                });
+            }
+            renderGraph(data.nodes, data.edges || []);
+        }
+    } catch(e) { console.error('Query failed:', e); }
+    hideLoading();
+}
+
+// ─── Person View ───
+async function loadPersonList() {
+    const list = document.getElementById('person-list');
+    list.innerHTML = '<p class="text-slate-600 text-xs">加载中...</p>';
+    try {
+        const res = await fetch('/api/tags?type=person&limit=50');
+        const data = await res.json();
+        const tags = data.tags || data || [];
+        list.innerHTML = tags.map(t => `
+            <div class="person-item" onclick="loadPersonGraph('${t.name || t.tag_name}')">
+                <div class="text-slate-200 text-xs font-medium">${t.name || t.tag_name}</div>
+                <div class="text-slate-500 text-[10px] mt-0.5">${t.memory_count || t.count || 0} 条记忆</div>
+            </div>
+        `).join('');
+    } catch(e) {
+        list.innerHTML = '<p class="text-red-400 text-xs">加载失败</p>';
+    }
+}
+
+async function loadPersonGraph(name) {
+    showLoading(`加载 ${name} 的关系网...`);
+    try {
+        const res = await fetch(`/api/tags/graph?query=${encodeURIComponent(name)}&limit=25`);
+        const data = await res.json();
+        if (data.nodes) renderGraph(data.nodes, data.edges || []);
+    } catch(e) { console.error(e); }
+    hideLoading();
+}
+
+// ─── Path Finding ───
+async function doPathFind() {
+    const from = document.getElementById('path-from').value.trim();
+    const to = document.getElementById('path-to').value.trim();
+    if (!from || !to) return;
+    showLoading('寻路中...');
+    try {
+        const res = await fetch(`/api/tags/path?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+        const data = await res.json();
+        if (data.nodes) renderGraph(data.nodes, data.edges || []);
+    } catch(e) { console.error(e); }
+    hideLoading();
+}
+
+// ─── Expand Node ───
+async function expandNode() {
+    if (!selectedNode) return;
+    const attrs = graph.getNodeAttributes(selectedNode);
+    const name = attrs.label || selectedNode;
+    try {
+        const res = await fetch(`/api/tags/graph?query=${encodeURIComponent(name)}&limit=15`);
+        const data = await res.json();
+        if (data.nodes) appendGraphData(data.nodes, data.edges || []);
+    } catch(e) { console.error(e); }
 }
 
 function appendGraphData(newNodes, newEdges) {
@@ -322,181 +607,35 @@ function appendGraphData(newNodes, newEdges) {
     graph.forEachNode(n => existingIds.add(n));
 
     newNodes.forEach(n => {
-        const nid = String(n.id);
+        const nid = String(n.id || n.tag_id);
         if (existingIds.has(nid)) return;
         existingIds.add(nid);
-        const color = n.isSource ? TYPE_COLORS.source : (TYPE_COLORS[n.type] || TYPE_COLORS.keyword);
-        const size = n.isSource ? 12 : Math.max(4, Math.sqrt(n.degree || 1) * 3);
-        // 放在选中节点附近
+        const type = n.type || n.tag_type || 'keyword';
+        const color = n.isSource ? TYPE_COLORS.source : (TYPE_COLORS[type] || TYPE_COLORS.keyword);
+        const degree = n.degree || 1;
+        const size = Math.max(4, Math.min(16, Math.sqrt(degree) * 2.5 + 3));
         const selPos = selectedNode ? { x: graph.getNodeAttribute(selectedNode, 'x'), y: graph.getNodeAttribute(selectedNode, 'y') } : { x: 50, y: 50 };
         graph.addNode(nid, {
             label: n.name || nid,
-            x: selPos.x + (Math.random() - 0.5) * 20,
-            y: selPos.y + (Math.random() - 0.5) * 20,
+            x: selPos.x + (Math.random() - 0.5) * 30,
+            y: selPos.y + (Math.random() - 0.5) * 30,
             size, color,
-            nodeType: n.type || 'keyword',
-            _data: n,
+            nodeType: type,
+            _data: { ...n, type, degree },
         });
     });
     newEdges.forEach(e => {
-        const src = String(e.source);
-        const tgt = String(e.target);
+        const src = String(e.source || e.from);
+        const tgt = String(e.target || e.to);
         if (!graph.hasNode(src) || !graph.hasNode(tgt)) return;
         if (graph.hasEdge(src, tgt) || graph.hasEdge(tgt, src)) return;
+        const srcColor = graph.getNodeAttribute(src, 'color');
         graph.addEdge(src, tgt, {
-            size: Math.max(0.5, (e.weight || 0.3) * 2),
-            color: 'rgba(139,92,246,0.18)',
+            size: Math.max(0.4, Math.sqrt(e.weight || 1) * 0.5),
+            color: srcColor + '20',
         });
     });
-
-    // 增量布局
-    try {
-        const settings = graphologyLibrary.layoutForceAtlas2.inferSettings(graph);
-        graphologyLibrary.layoutForceAtlas2.assign(graph, { iterations: 30, settings });
-    } catch(e) {}
     updateStats();
-}
-
-// ─── Views ───
-async function loadGalaxy() {
-    showLoading('正在加载记忆星图全貌...');
-    try {
-        const res = await fetch('/api/explore/galaxy');
-        const data = await res.json();
-        loadGraphData(data.nodes, data.edges);
-        hideLoading();
-    } catch(e) { hideLoading(); console.error(e); }
-}
-
-async function doQuery() {
-    const text = document.getElementById('search-input').value.trim();
-    if (!text) return;
-    showLoading(`正在联想 "${text}" 的记忆星图...`);
-    try {
-        const res = await fetch('/api/query', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ text, top_k: 12, enable_spike: true, enable_pyramid: true }),
-        });
-        const data = await res.json();
-        const results = data.results || [];
-        const sourceNode = { id:'SOURCE', name: text.slice(0,20), type:'source', isSource:true, degree: results.length };
-        const nodes = [sourceNode];
-        const edges = [];
-        results.forEach(r => {
-            const nid = `mem-${r.memory_id}`;
-            nodes.push({
-                id: nid, name: (r.sender_name||'').slice(0,6)+': '+(r.content||'').slice(0,18),
-                type:'memory', degree:1, content: r.content, sender: r.sender_name, score: r.score, memId: r.memory_id,
-            });
-            edges.push({ source:'SOURCE', target: nid, weight: r.score });
-        });
-        loadGraphData(nodes, edges);
-        hideLoading();
-    } catch(e) { hideLoading(); console.error(e); }
-}
-
-async function loadPersonList() {
-    try {
-        const res = await fetch('/api/explore/persons?limit=50');
-        const persons = await res.json();
-        const list = document.getElementById('person-list');
-        list.innerHTML = '';
-        persons.forEach(p => {
-            const div = document.createElement('div');
-            div.className = 'flex justify-between items-center px-3 py-2 rounded-md cursor-pointer text-xs hover:bg-glow-purple/10 transition';
-            div.innerHTML = `<span class="text-slate-300">${p.name||p.id}</span><span class="text-slate-600">${p.count} 条</span>`;
-            div.onclick = () => loadPersonGraph(p.id, p.name);
-            list.appendChild(div);
-        });
-    } catch(e) { console.error(e); }
-}
-
-async function loadPersonGraph(qqId, name) {
-    showLoading(`加载 ${name} 的记忆网络...`);
-    try {
-        const res = await fetch(`/api/explore/person/${qqId}?max_memories=80`);
-        const data = await res.json();
-        const nodes = data.nodes.map(n => ({
-            id: n.id, name: n.name, type: n.type||'memory',
-            degree:1, content: n.content, sender: n.sender, memId: n.memId, tagId: n.tagId,
-        }));
-        nodes.unshift({ id:`person-${qqId}`, name, type:'person', isSource:true, degree: nodes.length });
-        const edges = data.edges.map(e => ({ source: e.source, target: e.target, weight: e.weight }));
-        data.nodes.filter(n => n.type==='memory').forEach(n => {
-            edges.push({ source:`person-${qqId}`, target: n.id, weight:0.3 });
-        });
-        loadGraphData(nodes, edges);
-        hideLoading();
-    } catch(e) { hideLoading(); console.error(e); }
-}
-
-async function doPathFind() {
-    const fromName = document.getElementById('path-from').value.trim();
-    const toName = document.getElementById('path-to').value.trim();
-    if (!fromName || !toName) return;
-    showLoading(`寻找 "${fromName}" → "${toName}" 的路径...`);
-    try {
-        const [t1Res, t2Res] = await Promise.all([
-            fetch('/api/tags?search='+encodeURIComponent(fromName)+'&size=1'),
-            fetch('/api/tags?search='+encodeURIComponent(toName)+'&size=1'),
-        ]);
-        const t1 = await t1Res.json();
-        const t2 = await t2Res.json();
-        const fromId = (t1.items||t1)?.[0]?.id;
-        const toId = (t2.items||t2)?.[0]?.id;
-        if (!fromId || !toId) { hideLoading(); alert('未找到对应 Tag'); return; }
-
-        const res = await fetch('/api/explore/path', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ source_id: fromId, target_id: toId, max_depth: 6 }),
-        });
-        const data = await res.json();
-        if (!data.nodes || data.nodes.length === 0) { hideLoading(); alert(data.message||'未找到路径'); return; }
-        const nodes = data.nodes.map(n => ({ id: n.id, name: n.name, type: n.type, degree:3 }));
-        const edges = data.edges.map(e => ({ source: e.source, target: e.target, weight: e.weight||0.5 }));
-        loadGraphData(nodes, edges);
-        hideLoading();
-    } catch(e) { hideLoading(); console.error(e); }
-}
-
-async function expandNode() {
-    if (!selectedNode) return;
-    const attrs = graph.getNodeAttributes(selectedNode);
-    const nodeData = attrs._data || {};
-
-    if (nodeData.tagId || typeof nodeData.id === 'number') {
-        const tagId = nodeData.tagId || nodeData.id;
-        showLoading(`展开 "${attrs.label}" 的邻居...`);
-        try {
-            const res = await fetch(`/api/tags/${tagId}/memories?size=20`);
-            const mems = await res.json();
-            const newNodes = []; const newEdges = [];
-            (mems.items||mems||[]).forEach(m => {
-                const nid = `mem-${m.id||m.memory_id}`;
-                newNodes.push({ id: nid, name:(m.sender_name||'').slice(0,6)+': '+(m.content||'').slice(0,18), type:'memory', degree:1, content:m.content, sender:m.sender_name });
-                newEdges.push({ source: selectedNode, target: nid, weight:0.5 });
-            });
-            appendGraphData(newNodes, newEdges);
-            hideLoading();
-        } catch(e) { hideLoading(); }
-    } else if (nodeData.content) {
-        showLoading(`从 "${attrs.label}" 继续联想...`);
-        try {
-            const res = await fetch('/api/query', {
-                method:'POST', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({ text: nodeData.content.slice(0,200), top_k:8, enable_spike:true }),
-            });
-            const data = await res.json();
-            const newNodes = []; const newEdges = [];
-            (data.results||[]).forEach(r => {
-                const nid = `mem-${r.memory_id}`;
-                newNodes.push({ id: nid, name:(r.sender_name||'').slice(0,6)+': '+(r.content||'').slice(0,18), type:'memory', degree:1, content:r.content, sender:r.sender_name, score:r.score });
-                newEdges.push({ source: selectedNode, target: nid, weight: r.score||0.5 });
-            });
-            appendGraphData(newNodes, newEdges);
-            hideLoading();
-        } catch(e) { hideLoading(); }
-    }
 }
 
 // ─── Detail Panel ───
@@ -504,17 +643,33 @@ function showDetail(nodeId) {
     const attrs = graph.getNodeAttributes(nodeId);
     const data = attrs._data || {};
     const panel = document.getElementById('detail-panel');
+    const color = TYPE_COLORS[data.type] || '#94a3b8';
+
     document.getElementById('detail-title').textContent = attrs.label || nodeId;
+
     let meta = '';
-    if (data.type) meta += `类型: ${TYPE_LABELS[data.type]||data.type}`;
-    if (data.degree) meta += ` · 度数: ${data.degree}`;
-    if (data.score) meta += ` · 相似度: ${data.score.toFixed(4)}`;
-    if (data.community !== undefined) meta += ` · 社区: #${data.community}`;
-    document.getElementById('detail-meta').textContent = meta;
+    if (data.type) meta += `<span style="color:${color}">${TYPE_LABELS[data.type] || data.type}</span>`;
+    if (data.degree) meta += ` · 度数 ${data.degree}`;
+    if (data.score) meta += ` · 相似度 ${data.score.toFixed(3)}`;
+    if (data.community !== undefined) meta += ` · 社区 #${data.community}`;
+    document.getElementById('detail-meta').innerHTML = meta;
+
     document.getElementById('detail-content').textContent = data.content || '';
     document.getElementById('btn-expand').style.display = data.isSource ? 'none' : '';
+
+    // Neighbor list
+    const neighbors = graph.neighbors(nodeId);
+    const neighborList = document.getElementById('detail-neighbor-list');
+    neighborList.innerHTML = neighbors.slice(0, 12).map(n => {
+        const nAttrs = graph.getNodeAttributes(n);
+        const nData = nAttrs._data || {};
+        const nColor = TYPE_COLORS[nData.type] || '#94a3b8';
+        return `<span class="inline-block px-2 py-0.5 rounded text-[10px] cursor-pointer hover:opacity-80 transition" style="background:${nColor}15; color:${nColor}; border: 1px solid ${nColor}25" onclick="selectedNode='${n}'; showDetail('${n}')">${nAttrs.label || n}</span>`;
+    }).join('') + (neighbors.length > 12 ? `<span class="text-slate-600 text-[10px] ml-1">+${neighbors.length - 12}</span>` : '');
+
     panel.classList.remove('hidden');
 }
+
 function hideDetail() {
     document.getElementById('detail-panel').classList.add('hidden');
 }
@@ -537,15 +692,9 @@ function hideLoading() {
 function switchView(view) {
     currentView = view;
     document.querySelectorAll('.tab-btn').forEach(b => {
-        const isActive = b.dataset.view === view;
-        b.classList.toggle('active', isActive);
-        b.style.background = isActive ? 'rgba(139,92,246,0.15)' : '';
-        b.style.color = isActive ? '#8b5cf6' : '#64748b';
-        b.style.borderColor = isActive ? 'rgba(139,92,246,0.3)' : 'transparent';
+        b.classList.toggle('active', b.dataset.view === view);
     });
-    document.getElementById('search-box').classList.toggle('hidden', view !== 'query');
     document.getElementById('search-box').style.display = view === 'query' ? 'flex' : 'none';
-    document.getElementById('path-input').classList.toggle('hidden', view !== 'path');
     document.getElementById('path-input').style.display = view === 'path' ? 'flex' : 'none';
     document.getElementById('person-panel').classList.toggle('hidden', view !== 'person');
     hideDetail();
@@ -566,7 +715,7 @@ function switchView(view) {
 document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => switchView(btn.dataset.view));
 });
-document.getElementById('search-input').addEventListener('keydown', e => { if (e.key==='Enter') doQuery(); });
+document.getElementById('search-input')?.addEventListener('keydown', e => { if (e.key === 'Enter') doQuery(); });
 
 initLegend();
 initGraph();
