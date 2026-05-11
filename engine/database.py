@@ -635,7 +635,9 @@ class WaveMemoryDB:
             conditions.append("m.group_id = ?")
             params.append(group_id)
         if sender:
-            conditions.append("m.sender_name LIKE ?")
+            # 支持按 sender_id 精确匹配或 sender_name 模糊匹配
+            conditions.append("(m.sender_id = ? OR m.sender_name LIKE ?)")
+            params.append(sender)
             params.append(f"%{sender}%")
         if from_ts:
             conditions.append("m.timestamp >= ?")
@@ -866,13 +868,19 @@ class WaveMemoryDB:
         self.conn.commit()
 
     def get_senders_list(self) -> list[dict]:
-        """获取所有发送者及其消息数量。"""
+        """获取所有发送者及其消息数量（按 sender_id 分组）。"""
         rows = self.conn.execute(
-            """SELECT sender_name, COUNT(*) as cnt FROM memories
-               WHERE sender_name IS NOT NULL AND sender_name != ''
-               GROUP BY sender_name ORDER BY cnt DESC LIMIT 100"""
+            """SELECT sender_id, 
+                    (SELECT sender_name FROM memories m2 
+                     WHERE m2.sender_id = m.sender_id AND m2.sender_name IS NOT NULL AND m2.sender_name != ''
+                     ORDER BY m2.timestamp DESC LIMIT 1) as latest_name,
+                    COUNT(*) as cnt 
+               FROM memories m
+               WHERE sender_id IS NOT NULL AND sender_id != ''
+                 AND sender_id != 'bot_self'
+               GROUP BY sender_id ORDER BY cnt DESC LIMIT 100"""
         ).fetchall()
-        return [{"name": r[0], "count": r[1]} for r in rows]
+        return [{"id": r[0], "name": r[1] or r[0], "count": r[2]} for r in rows]
 
     def get_memories_without_tags(self, limit: int = 100) -> list[int]:
         """获取无 Tag 的记忆 ID 列表。"""
