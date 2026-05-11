@@ -50,7 +50,7 @@ class WaveMemoryDeepSearchTool(FunctionTool[AstrAgentContext]):
 
     db: Any = None
 
-    async def execute(self, ctx: ContextWrapper, **kwargs) -> str:
+    async def call(self, ctx: ContextWrapper, **kwargs) -> str:
         keywords = kwargs.get("keywords", "").strip()
         window_size = int(kwargs.get("window_size", 3))
         max_results = int(kwargs.get("max_results", 5))

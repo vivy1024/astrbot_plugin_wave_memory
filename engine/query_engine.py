@@ -103,7 +103,16 @@ class QueryEngine:
             mem["similarity"] = 1.0 - dist
 
             # 时间衰减: 半衰期 ~231 天
-            days_old = (time.time() - mem.get("timestamp", time.time())) / 86400.0
+            ts = mem.get("timestamp", None)
+            if isinstance(ts, str):
+                try:
+                    from datetime import datetime
+                    ts = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+                except (ValueError, TypeError):
+                    ts = time.time()
+            elif ts is None:
+                ts = time.time()
+            days_old = (time.time() - ts) / 86400.0
             time_decay = 0.997 ** max(0, days_old)
 
             # 访问加成: 被召回越多越不容易沉底
