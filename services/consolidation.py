@@ -296,20 +296,24 @@ class ConsolidationService:
         if not name:
             return None
 
+        # tags.name 有 UNIQUE 约束，先按 name 查（不限 tag_type）
         row = self.db.conn.execute(
-            "SELECT id FROM tags WHERE name = ? AND tag_type = ?",
-            (name, tag_type),
+            "SELECT id FROM tags WHERE name = ?",
+            (name,),
         ).fetchone()
 
         if row:
             return row[0]
 
-        # 创建新 tag
-        cursor = self.db.conn.execute(
-            "INSERT INTO tags (name, tag_type, frequency, created_at) VALUES (?, ?, 1, ?)",
+        # 创建新 tag（INSERT OR IGNORE 防止并发冲突）
+        self.db.conn.execute(
+            "INSERT OR IGNORE INTO tags (name, tag_type, frequency, created_at) VALUES (?, ?, 1, ?)",
             (name, tag_type, time.time()),
         )
-        return cursor.lastrowid
+        row = self.db.conn.execute(
+            "SELECT id FROM tags WHERE name = ?", (name,)
+        ).fetchone()
+        return row[0] if row else None
 
     def _find_tag(self, name: str) -> Optional[int]:
         """模糊查找 tag（先精确匹配，再 LIKE）。"""
