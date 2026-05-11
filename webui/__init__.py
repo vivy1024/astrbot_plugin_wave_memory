@@ -704,7 +704,7 @@ class WaveMemoryWebUI:
         # ─── 批量 Tag 提取 ───
 
         @app.post("/api/tags/batch-extract")
-        async def batch_extract_tags(batch_size: int = Query(20, ge=1, le=100)):
+        async def batch_extract_tags(batch_size: int = Query(50, ge=1, le=500)):
             """后台批量为无 Tag 的记忆提取 Tag（SSE 流）。"""
             from fastapi.responses import StreamingResponse
 
@@ -1043,8 +1043,8 @@ class WaveMemoryWebUI:
 
         @app.post("/api/import/llm-extract")
         async def llm_import_extract(
-            batch_size: int = Query(50, ge=1, le=100),
-            limit: int = Query(2000, ge=1, le=10000),
+            batch_size: int = Query(500, ge=1, le=500),
+            limit: int = Query(20000, ge=1, le=50000),
         ):
             """使用配置中的 tag_llm_provider_id 为无 Tag 记忆批量提取结构化 Tag（SSE 流）。"""
             from fastapi.responses import StreamingResponse

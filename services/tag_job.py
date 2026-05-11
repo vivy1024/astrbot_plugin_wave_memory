@@ -24,7 +24,7 @@ class TagBackfillJob:
         self.extractor = tag_extractor
         self.embedding = embedding_service
         self.tag_index = tag_index
-        self.batch_size = int(config.get("tag_backfill_batch_size", 50))
+        self.batch_size = int(config.get("tag_backfill_batch_size", 500))
         self.max_retries = 3
         self.sleep_between_batches = float(config.get("tag_backfill_sleep", 2.0))
         self._running = False
@@ -48,7 +48,7 @@ class TagBackfillJob:
 
         # 等待 embedding 服务就绪（最多 60 秒）
         for _ in range(12):
-            if self.embedding_service and await self.embedding_service.is_available():
+            if self.embedding and await self.embedding.is_available():
                 break
             await asyncio.sleep(5)
         else:
@@ -97,7 +97,7 @@ class TagBackfillJob:
             )
             AND m.id NOT IN (
                 SELECT memory_id FROM tag_extraction_status
-                WHERE status IN ('failed', 'skipped')
+                WHERE status IN ('done', 'failed', 'skipped')
             )
             AND LENGTH(m.content) >= 10
             ORDER BY m.id ASC
