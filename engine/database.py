@@ -1065,5 +1065,87 @@ class WaveMemoryDB:
             "top_tags": [{"name": t[0], "count": t[1]} for t in top_tags],
         }
 
+    # ─── Facts 三元组 ───
+
+    def insert_fact(
+        self,
+        subject: str,
+        predicate: str,
+        obj: str,
+        group_id: str = None,
+        source_memory_id: int = None,
+        confidence: float = 0.8,
+    ) -> int:
+        """写入一条事实三元组，返回 id。去重：相同 subject+predicate+object 不重复写入。"""
+        existing = self.conn.execute(
+            "SELECT id FROM facts WHERE subject = ? AND predicate = ? AND object = ?",
+            (subject, predicate, obj),
+        ).fetchone()
+        if existing:
+            # 更新 confidence（取较高值）
+            self.conn.execute(
+                "UPDATE facts SET confidence = MAX(confidence, ?), valid_from = ? WHERE id = ?",
+                (confidence, time.time(), existing[0]),
+            )
+            return existing[0]
+
+        cursor = self.conn.execute(
+            """INSERT INTO facts (subject, predicate, object, group_id, source_memory_id, confidence, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (subject, predicate, obj, group_id, source_memory_id, confidence, time.time()),
+        )
+        self.conn.commit()
+        return cursor.lastrowid
+
+    def get_facts_by_subject(self, subject: str, limit: int = 20) -> list[dict]:
+        """按主语查询事实。"""
+        rows = self.conn.execute(
+            "SELECT id, subject, predicate, object, confidence, created_at FROM facts WHERE subject = ? ORDER BY confidence DESC LIMIT ?",
+            (subject, limit),
+        ).fetchall()
+        return [{"id": r[0], "subject": r[1], "predicate": r[2], "object": r[3], "confidence": r[4], "created_at": r[5]} for r in rows]
+
+    # ─── Bot Mood ───
+
+    def set_mood(self, group_id: str, mood_type: str, intensity: float = 0.5, description: str = "", duration_hours: float = 2.0):
+        """设置 bot 当前情绪（同一群同一时间只保留一个活跃情绪）。"""
+        now = time.time()
+        end_time = now + duration_hours * 3600
+
+        # 先关闭该群旧的活跃情绪
+        self.conn.execute(
+            "UPDATE bot_mood SET is_active = 0 WHERE group_id = ? AND is_active = 1",
+            (group_id,),
+        )
+
+        self.conn.execute(
+            """INSERT INTO bot_mood (group_id, mood_type, intensity, description, start_time, end_time, is_active)
+               VALUES (?, ?, ?, ?, ?, ?, 1)""",
+            (group_id, mood_type, intensity, description, now, end_time),
+        )
+        self.conn.commit()
+
+    def get_active_mood(self, group_id: str) -> dict | None:
+        """获取当前活跃情绪，自动过期。"""
+        now = time.time()
+        # 过期清理
+        self.conn.execute(
+            "UPDATE bot_mood SET is_active = 0 WHERE is_active = 1 AND end_time < ?",
+            (now,),
+        )
+        row = self.conn.execute(
+            "SELECT mood_type, intensity, description, start_time, end_time FROM bot_mood WHERE group_id = ? AND is_active = 1 ORDER BY start_time DESC LIMIT 1",
+            (group_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "mood_type": row[0],
+            "intensity": row[1],
+            "description": row[2],
+            "start_time": row[3],
+            "end_time": row[4],
+        }
+
     def close(self):
         self.conn.close()

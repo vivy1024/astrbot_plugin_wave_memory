@@ -25,7 +25,10 @@ CONSOLIDATION_PROMPT = """从以下群聊消息中提取结构化知识。
 {{
   "summary": "一句话概括这段对话的核心内容",
   "topics": ["话题1", "话题2"],
-  "facts": ["具体事实1（含人名）", "事实2"],
+  "facts": [
+    {{"subject": "人名或事物", "predicate": "动作或关系", "object": "对象或属性"}},
+    {{"subject": "人名", "predicate": "是/喜欢/说了", "object": "具体内容"}}
+  ],
   "relations": [
     {{"source": "话题或人物名", "target": "事实或话题", "type": "discusses|mentions|decides"}}
   ]
@@ -33,7 +36,7 @@ CONSOLIDATION_PROMPT = """从以下群聊消息中提取结构化知识。
 
 规则：
 - topics 最多 3 个，用简短名词短语
-- facts 最多 5 个，必须包含具体人名，写成陈述句
+- facts 最多 5 个，必须是三元组格式，subject 必须包含具体人名
 - relations 描述 topics/人物 之间的关联
 - type 只能是 discusses（讨论）、mentions（提及）、decides（决策）
 - 如果对话是无意义灌水，summary 写"日常灌水"，其他字段留空数组
@@ -203,10 +206,13 @@ class ConsolidationService:
         # 写入 tag_relations
         relations_written = self._write_relations(topics, facts, relations)
 
+        # 写入 facts 三元组
+        facts_written = self._write_facts(facts, group_id, msg_ids[0] if msg_ids else None)
+
         # 写入 summary
         self._write_summary(msg_ids, summary)
 
-        return {"messages": len(msg_ids), "relations": relations_written}
+        return {"messages": len(msg_ids), "relations": relations_written, "facts": facts_written}
 
     def _parse_response(self, text: str) -> Optional[dict]:
         """解析 LLM 返回的 JSON。"""
@@ -247,9 +253,16 @@ class ConsolidationService:
         for fact in facts:
             if not fact:
                 continue
-            tag_id = self._ensure_tag(fact, "fact")
+            # 兼容新格式（dict）和旧格式（str）
+            if isinstance(fact, dict):
+                fact_text = fact.get("subject", "") + fact.get("predicate", "") + fact.get("object", "")
+            else:
+                fact_text = str(fact)
+            if not fact_text:
+                continue
+            tag_id = self._ensure_tag(fact_text[:100], "fact")
             if tag_id:
-                tag_cache[fact] = tag_id
+                tag_cache[fact_text[:100]] = tag_id
 
         # 写入 relations
         for rel in relations:
@@ -332,6 +345,52 @@ class ConsolidationService:
             "SELECT id FROM tags WHERE name LIKE ? LIMIT 1", (f"%{name}%",)
         ).fetchone()
         return row[0] if row else None
+
+    def _write_facts(self, facts: list, group_id: str, source_memory_id: int = None) -> int:
+        """将 facts 写入 facts 三元组表。
+
+        兼容两种格式：
+        - 新格式: [{"subject": "...", "predicate": "...", "object": "..."}]
+        - 旧格式: ["陈述句字符串"] — 尝试简单解析
+        """
+        written = 0
+        for fact in facts:
+            if not fact:
+                continue
+
+            if isinstance(fact, dict):
+                subject = fact.get("subject", "").strip()
+                predicate = fact.get("predicate", "").strip()
+                obj = fact.get("object", "").strip()
+            elif isinstance(fact, str):
+                # 旧格式兼容：尝试拆分 "A是B" / "A喜欢B"
+                parts = re.split(r"(是|喜欢|认为|说了|决定|提到|觉得|想要|正在|已经)", fact, maxsplit=1)
+                if len(parts) == 3:
+                    subject, predicate, obj = parts[0].strip(), parts[1].strip(), parts[2].strip()
+                else:
+                    # 无法解析，跳过
+                    continue
+            else:
+                continue
+
+            if not subject or not predicate or not obj:
+                continue
+            if len(subject) > 50 or len(obj) > 200:
+                continue
+
+            try:
+                self.db.insert_fact(
+                    subject=subject,
+                    predicate=predicate,
+                    obj=obj,
+                    group_id=group_id,
+                    source_memory_id=source_memory_id,
+                )
+                written += 1
+            except Exception:
+                pass
+
+        return written
 
     def _write_summary(self, msg_ids: list[int], summary: str):
         """批量写入 summary 到 memories 表。"""

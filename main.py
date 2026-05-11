@@ -34,6 +34,7 @@ from .services.persona_evolution import PersonaEvolution
 from .tools.memory_search import WaveMemorySearchTool, WaveMemoryRememberTool
 from .tools.deep_search import WaveMemoryDeepSearchTool
 from .tools.person_search import WaveMemoryPersonSearchTool
+from .services.dream import DreamService
 
 
 @register(
@@ -288,10 +289,20 @@ class WaveMemoryPlugin(Star):
         # 人格进化引擎
         self.persona_evolution = PersonaEvolution(db=self.db)
 
+        # 启动做梦系统（后台记忆巩固与联想发现）
+        self.dream_service = DreamService(
+            db=self.db,
+            memory_index=self.memory_index,
+            dream_interval_hours=6.0,
+        )
+        self.dream_service.start()
+
         logger.info("[WaveMemory] Fully initialized")
 
     async def terminate(self):
         """插件卸载时清理。"""
+        if hasattr(self, 'dream_service') and self.dream_service:
+            self.dream_service.stop()
         if hasattr(self, 'consolidation') and self.consolidation:
             self.consolidation.stop()
         if hasattr(self, 'lifecycle') and self.lifecycle:
@@ -349,6 +360,13 @@ class WaveMemoryPlugin(Star):
                     persona_text = self.persona_evolution.get_persona_injection(sender_id, group_id)
                     if persona_text:
                         injection = injection + chr(10) + chr(10) + persona_text
+
+                # Bot 情绪注入
+                if group_id:
+                    mood = self.db.get_active_mood(group_id)
+                    if mood:
+                        mood_text = f"[当前情绪] {mood['mood_type']}（{mood['description']}）"
+                        injection = injection + chr(10) + mood_text
 
                 from astrbot.core.agent.message import TextPart
                 req.extra_user_content_parts.append(TextPart(text=injection))

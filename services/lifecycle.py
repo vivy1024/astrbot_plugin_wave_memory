@@ -450,7 +450,7 @@ class LifecycleService:
                 await asyncio.sleep(60)
 
     def _tick(self):
-        """一次 tick：flush 好感度 + 可能触发模式更新/衰减。"""
+        """一次 tick：flush 好感度 + 可能触发模式更新/衰减/情绪。"""
         now = time.time()
 
         # 1. 好感度 flush（每次 tick 都做）
@@ -476,6 +476,12 @@ class LifecycleService:
                     logger.info(f"[WaveMemory] Decay: {archived} memories archived")
             except Exception as e:
                 logger.warning(f"[WaveMemory] Decay failed: {e}")
+
+        # 4. Bot 情绪更新（每次 tick）
+        try:
+            self._update_mood(now)
+        except Exception as e:
+            logger.debug(f"[WaveMemory] Mood update failed: {e}")
 
     def _run_decay(self) -> int:
         """标记过期记忆为 archived。
@@ -521,3 +527,85 @@ class LifecycleService:
             "attitude": meta.get("attitude_level", "neutral"),
             "dimensions": dims,
         }
+
+    def _update_mood(self, now: float):
+        """根据最近 30 分钟的情感 tag 分布更新 bot 情绪。"""
+        window = now - 1800  # 30 分钟
+
+        # 获取最近活跃的群
+        groups = self.db.conn.execute(
+            """SELECT DISTINCT group_id FROM memories
+               WHERE timestamp > ? AND memory_type = 'message'
+                 AND sender_id != 'bot_self'""",
+            (window,),
+        ).fetchall()
+
+        emotion_cache = self.affinity._get_emotion_classification()
+        if not emotion_cache:
+            return
+
+        for (group_id,) in groups:
+            # 已有活跃情绪则跳过
+            existing = self.db.get_active_mood(group_id)
+            if existing:
+                continue
+
+            # 统计该群最近消息的情感 tag
+            rows = self.db.conn.execute(
+                """SELECT mt.tag_id FROM memory_tags mt
+                   JOIN memories m ON m.id = mt.memory_id
+                   WHERE m.group_id = ? AND m.timestamp > ?
+                     AND m.sender_id != 'bot_self'""",
+                (group_id, window),
+            ).fetchall()
+
+            if len(rows) < 5:
+                continue
+
+            positive = 0
+            negative = 0
+            fun = 0
+            total = len(rows)
+
+            for (tag_id,) in rows:
+                emo_type = emotion_cache.get(tag_id)
+                if emo_type == "positive":
+                    positive += 1
+                elif emo_type == "negative":
+                    negative += 1
+                elif emo_type == "fun":
+                    fun += 1
+
+            # 统计消息密度
+            msg_count = self.db.conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE group_id = ? AND timestamp > ? AND memory_type = 'message'",
+                (group_id, window),
+            ).fetchone()[0]
+
+            # 判断情绪
+            pos_ratio = (positive + fun) / total if total > 0 else 0
+            neg_ratio = negative / total if total > 0 else 0
+
+            mood_type = None
+            intensity = 0.5
+            description = ""
+
+            # 情感 tag 匹配数
+            emotion_matched = positive + negative + fun
+
+            if msg_count > 30:
+                # 高密度互动 → energetic（不依赖情感分类）
+                mood_type = "energetic"
+                intensity = min(0.5 + msg_count / 100, 0.9)
+                description = "群里很热闹，大家聊得起劲"
+            elif emotion_matched > 0 and pos_ratio > 0.6:
+                mood_type = "cheerful"
+                intensity = 0.5 + pos_ratio * 0.3
+                description = "氛围不错，心情愉快"
+            elif emotion_matched > 0 and neg_ratio > 0.4:
+                mood_type = "concerned"
+                intensity = 0.4 + neg_ratio * 0.3
+                description = "感觉到一些负面情绪"
+
+            if mood_type:
+                self.db.set_mood(group_id, mood_type, intensity, description, duration_hours=2.0)
