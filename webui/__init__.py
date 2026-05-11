@@ -844,18 +844,23 @@ class WaveMemoryWebUI:
 
         # ─── Tag 审计工作台 API ───
 
-        @app.post("/api/tags/audit/trigger")
-        async def trigger_audit(request: Request):
+        @app.get("/api/tags/audit/trigger")
+        async def trigger_audit(
+            strategy: str = Query("mixed"),
+            batch_size: int = Query(50),
+            total_count: int = Query(500),
+        ):
             """触发 LLM Tag 审计任务（SSE 流式返回进度）。"""
             from fastapi.responses import StreamingResponse
             from ..services.tag_auditor import TagAuditor
 
-            body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-            batch_size = body.get("batch_size", 50)
-            strategy = body.get("strategy", "mixed")
-
             if not self.tag_extractor or not self.tag_extractor.provider_id:
                 return {"error": "No LLM provider configured"}
+
+            # 并发保护
+            if getattr(self, '_audit_running', False):
+                return {"error": "Audit already in progress"}
+            self._audit_running = True
 
             auditor = TagAuditor(
                 db=self.db,
@@ -864,8 +869,11 @@ class WaveMemoryWebUI:
             )
 
             async def event_stream():
-                async for event in auditor.run_audit(batch_size=batch_size, strategy=strategy):
-                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                try:
+                    async for event in auditor.run_audit(batch_size=batch_size, strategy=strategy, total_count=total_count):
+                        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                finally:
+                    self._audit_running = False
 
             return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -905,8 +913,15 @@ class WaveMemoryWebUI:
             body = await request.json()
             items = body.get("items", [])  # [{"id": 1, "decision": "approve"}, ...]
 
+            # 兼容前端简化格式: {suggestion_ids: [...], decision: "approve"}
             if not items:
-                return {"error": "items required"}
+                ids = body.get("suggestion_ids", [])
+                decision = body.get("decision")
+                if ids and decision:
+                    items = [{"id": sid, "decision": decision} for sid in ids]
+
+            if not items:
+                return {"error": "items or suggestion_ids+decision required"}
 
             auditor = TagAuditor(db=self.db)
             results = []

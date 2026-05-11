@@ -72,7 +72,7 @@ class TagAuditor:
 
         return self._parse_suggestions(response.completion_text)
 
-    async def run_audit(self, batch_size: int = 50, strategy: str = "mixed") -> AsyncIterator[dict]:
+    async def run_audit(self, batch_size: int = 50, strategy: str = "mixed", total_count: int = 500) -> AsyncIterator[dict]:
         """运行完整审计流程，yield 进度事件。
 
         strategy:
@@ -81,7 +81,7 @@ class TagAuditor:
           - "mixed": 混合抽样
         """
         # 获取待审计 tag
-        tags = self._get_audit_candidates(strategy, limit=batch_size * 10)
+        tags = self._get_audit_candidates(strategy, limit=total_count)
         total = len(tags)
 
         if total == 0:

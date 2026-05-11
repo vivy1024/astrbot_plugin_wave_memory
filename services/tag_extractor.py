@@ -246,6 +246,10 @@ class TagExtractor:
             for t in type_order:
                 if t in by_type and by_type[t]:
                     lines.append(f"  {t}: {', '.join(by_type[t])}")
+            # 追加 type_order 中未列出的类型（如 keyword）
+            for t in by_type:
+                if t not in type_order and by_type[t]:
+                    lines.append(f"  {t}: {', '.join(by_type[t])}")
 
             if not lines:
                 return ""
