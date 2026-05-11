@@ -397,7 +397,7 @@ class WaveMemoryPlugin(Star):
             self.lifecycle.affinity.process_message(
                 sender_id=sender_id,
                 group_id=group_id,
-                content=content,
+                content=message,
                 is_at_bot=is_at_bot,
                 hour=hour,
             )
