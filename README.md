@@ -19,7 +19,10 @@
 - **通用数据源导入**：自动扫描所有已安装记忆插件的数据库，已知插件免配置导入，未知插件 LLM 自动分析表结构
 - **结构化 Tag 体系**：8 种语义类型（person/topic/entity/event/emotion/fact/location/time），支持 LLM 批量提取
 - **脉冲传播 + 虫洞路由**：模拟神经网络的联想激活，发现跨域关联
-- **做梦系统 (AgentDream)**：模拟人脑睡眠记忆巩固，三层时间线涟漪浪潮
+- **做梦系统 (AgentDream)**：模拟人脑睡眠记忆巩固，三层时间线涟漪浪潮，6 小时周期自动执行
+- **人格进化系统**：多维好感度（熟悉度/信任/趣味/深度/敌意）→ 态度分级 → 动态 prompt 注入
+- **Bot 情绪系统**：根据群消息密度和情感 tag 分布动态生成情绪状态，影响回复风格
+- **事实三元组提取**：LLM 整合时自动提取结构化 facts（subject/predicate/object），构建知识图谱
 - **WebUI 管理面板**：记忆浏览、查询测试台、数据导入（实时进度条 + 互斥锁）、LLM Tag 批量提取、暗色/亮色主题
 
 ---
@@ -98,6 +101,50 @@
 
 ---
 
+## 生命周期系统
+
+### 好感度引擎
+
+多维好感度模型，每个用户独立追踪：
+
+| 维度 | 权重 | 半衰期 | 说明 |
+|------|------|--------|------|
+| familiarity | 25% | 200 天 | 互动频率积累 |
+| trust | 30% | 90 天 | 正面情感 / 深度对话 |
+| fun | 20% | 30 天 | 玩梗整活 |
+| depth | 25% | 150 天 | 深入讨论 |
+| hostility | -50% | 60 天 | 负面行为惩罚 |
+
+好感度 → 态度分级：hostile / cold / neutral / friendly / intimate
+
+### 人格进化
+
+根据好感度和表达模式，为每个用户生成差异化的态度指令注入到 LLM prompt：
+- intimate：轻松随意，主动关心
+- friendly：友好正常，偶尔调侃
+- neutral：礼貌但保持距离
+- cold：简短回复，不延伸
+- hostile：有戒备，不配合无理要求
+
+### Bot 情绪
+
+每 30 分钟 tick 一次，根据群消息密度和情感 tag 分布判断：
+- **energetic**：30 分钟内 > 30 条消息 → "群里很热闹"
+- **cheerful**：正面情感 > 60% → "氛围不错"
+- **concerned**：负面情感 > 40% → "感觉到负面情绪"
+
+情绪持续 2 小时后自动过期。
+
+### 做梦系统
+
+每 6 小时执行一次后台记忆巩固：
+1. **近期涟漪** (0-7天)：随机抽 3 个种子，向量联想 k=5
+2. **中期回音** (7-30天)：抽 2 个种子，联想 k=3
+3. **深渊浪潮** (>30天)：合成浪潮向量，在深远记忆中搜索
+4. **共振桥梁**：被多个种子同时联想到的记忆 → 强化 importance
+
+---
+
 ## 通用数据源导入
 
 Wave Memory 的导入系统不硬编码特定插件，而是：
@@ -125,18 +172,21 @@ Wave Memory 的导入系统不硬编码特定插件，而是：
 
 ```
 wave_memory.db
-├── memories          原始记忆 (向量 + 元数据)
-├── tags              结构化语义节点 (type/aliases/hierarchy/confidence)
-├── tag_relations     Tag 间关系图谱 (is_a/part_of/related_to/causes)
-├── memory_tags       记忆↔Tag 多对多 (position + relevance)
-├── user_profiles     用户画像 (好感度/交互统计/人格标签)
-├── bot_mood          Bot 情绪状态
-├── expression_patterns 表达模式库
-├── facts             结构化事实三元组
-└── kv_store          EPA 缓存 + 导入游标 (import_cursor:*)
+├── memories              原始记忆 (向量 + 元数据 + summary)
+├── tags                  结构化语义节点 (type/aliases/hierarchy/confidence)
+├── tag_relations         Tag 间关系图谱 (is_a/part_of/related_to/causes)
+├── memory_tags           记忆↔Tag 多对多 (position + relevance)
+├── memory_mentions       记忆↔人物提及关系
+├── person_registry       人物注册表 (QQ号/昵称/别名/角色)
+├── user_profiles         用户画像 (好感度/交互统计/人格标签)
+├── expression_patterns   表达模式库 (消息长度/活跃时段/情感偏向)
+├── bot_mood              Bot 情绪状态 (类型/强度/持续时间)
+├── facts                 结构化事实三元组 (subject/predicate/object)
+├── tag_extraction_status Tag 提取进度追踪
+└── kv_store              EPA 缓存 + 导入游标 (import_cursor:*)
 
-memory.hnsw           HNSW 向量索引 (记忆检索)
-tags.hnsw             HNSW 向量索引 (Tag 检索)
+memory.hnsw               HNSW 向量索引 (记忆检索)
+tags.hnsw                 HNSW 向量索引 (Tag 检索)
 ```
 
 ---
@@ -146,7 +196,7 @@ tags.hnsw             HNSW 向量索引 (Tag 检索)
 | 指标 | 数值 |
 |------|------|
 | 向量检索 (万级 memories) | < 1ms |
-| 脉冲传播 (1700+ nodes) | 0.1ms |
+| 脉冲传播 (11000+ nodes) | 0.1ms |
 | 残差金字塔 (缓存命中) | 0.3ms |
 | EPA 分析 | 0.2ms |
 | 测地线重排 | 0.3ms |
@@ -169,16 +219,26 @@ astrbot_plugin_wave_memory/
 │   ├── vector_index.py        # HNSW 向量索引
 │   ├── embedding.py           # Embedding 服务
 │   ├── query_engine.py        # 查询引擎
-│   ├── cooccurrence.py        # 共现矩阵
+│   ├── cooccurrence.py        # 共现矩阵（无向）
+│   ├── directed_cooccurrence.py # 有向共现矩阵 + 防抖调度器
 │   ├── spike_routing.py       # 脉冲传播 + 虫洞路由
 │   ├── residual_pyramid.py    # 残差金字塔
 │   ├── geodesic_rerank.py     # 测地线重排
-│   └── epa.py                 # EPA 嵌入投影分析
+│   ├── epa.py                 # EPA 嵌入投影分析
+│   └── intrinsic_residual.py  # 内禀残差计算
 ├── services/                  # 业务服务
-│   ├── message_writer.py      # 消息写入
-│   └── tag_extractor.py       # LLM Tag 提取
+│   ├── message_writer.py      # 消息写入（异步队列）
+│   ├── tag_extractor.py       # LLM Tag 提取
+│   ├── tag_job.py             # Tag 回填后台任务
+│   ├── lifecycle.py           # 好感度 + 表达模式 + 衰减 + 情绪
+│   ├── consolidation.py       # LLM 摘要整合 + facts 提取
+│   ├── persona_evolution.py   # 人格进化注入
+│   ├── dream.py               # 做梦系统（记忆巩固）
+│   └── hot_config.py          # 热配置
 ├── tools/                     # AstrBot Agent 工具
-│   └── memory_search.py       # 记忆搜索 / 记忆存储工具
+│   ├── memory_search.py       # 记忆搜索工具
+│   ├── deep_search.py         # 深度搜索工具
+│   └── person_search.py       # 人物搜索工具
 └── webui/                     # WebUI 管理面板
     ├── __init__.py            # FastAPI 后端
     ├── source_discovery.py    # 通用数据源发现 + 导入

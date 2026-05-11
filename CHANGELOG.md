@@ -1,0 +1,47 @@
+# Changelog
+
+## v0.3.0 (2025-07-07)
+
+### 新功能
+
+- **人格进化系统**：多维好感度引擎（familiarity/trust/fun/depth/hostility）→ 态度分级 → 动态 prompt 注入
+- **生命周期服务**：好感度 flush + 表达模式聚合 + 记忆衰减标记，30 分钟 tick 周期
+- **做梦系统**：6 小时周期后台记忆巩固，三层时间线（近期涟漪/中期回音/深渊浪潮）+ 共振桥梁发现
+- **Bot 情绪系统**：根据群消息密度和情感 tag 分布动态设置情绪（energetic/cheerful/concerned），注入 prompt
+- **事实三元组提取**：consolidation 整合时提取结构化 facts（subject/predicate/object）写入 facts 表
+- **人物搜索工具**：person_registry + memory_mentions 双层架构，支持按人物查询相关记忆
+- **深度搜索工具**：wave_memory_deep_search，多轮联想搜索
+- **LLM 摘要整合**：定时 4 小时周期，碎片消息 → 结构化知识（summary + topics + facts + relations）
+- **VCP 完整对齐**：Phase 1-7 全部实现（EPA/残差金字塔/脉冲传播/向量融合/测地线重排/有向共现/内禀残差）
+- **LLM 辅助导入验证**：未知数据源自动 LLM 分析表结构 + 字段映射
+
+### 改进
+
+- 有向共现矩阵 + 防抖调度器（双缓冲原子切换，不阻塞查询）
+- 内禀残差计算器（共现矩阵重建后自动重算）
+- 导入系统：rowid 游标增量导入 + 安全游标（失败不推进）+ 连续重复提前终止
+- 导入 batch_size 10→50, limit 500→5000, 批量去重
+- Tag 提取改为 JSON 文档批处理
+- 数据源列表 60s 缓存 + 手动刷新强制失效
+- WebUI：导入进度条 + 导入/LLM提取按钮互斥 + 模型配置迁移到智能导入 Tab
+
+### 修复
+
+- `_ensure_tag` 处理 UNIQUE 约束冲突
+- 发送者列表按 sender_id 分组，显示最新昵称
+- `on_message` 中好感度引擎变量名 content → message
+- SQL 优先级 bug：filter 条件必须加括号再拼 AND rowid
+- 游标安全性：有 error 的批次不推进游标 + memories 为空时重置
+- 配置页模型下拉框为空 / 不显示当前值
+- 导入全部失败（缺少 group_id 参数）
+- 导入进度超 100% 问题
+- 数据源加载慢 + 导入/提取并发卡死
+- tag_cfg NameError + tag_extraction_status migration + tag_job startup delay
+
+---
+
+## v0.2.1
+
+- 数据源进度估算 + 配置面板只读展示
+- 数据源列表批量 IN 查询避免超时
+- 初始版本稳定化
