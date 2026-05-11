@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.4.1 (2025-07-13)
+
+### 修复
+
+- **deep_search 工具不可用**：方法名 `execute` → `call`，对齐 AstrBot FunctionTool 接口
+- **memory_search 偶发 TypeError**：timestamp 字段为 ISO 字符串，解析后再计算时间衰减
+
 ## v0.4.0 (2025-07-13)
 
 ### 新功能
