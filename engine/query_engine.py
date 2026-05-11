@@ -92,9 +92,10 @@ class QueryEngine:
         distances = {r[0]: r[1] for r in results}
         memories = self.db.get_memories_by_ids(memory_ids)
 
-        # 按 group_id 过滤
-        if group_id:
-            memories = [m for m in memories if m["group_id"] == group_id]
+        # 跨群记忆：不再按 group_id 过滤，全局共享
+        # 标注来源群以便注入时区分
+        for mem in memories:
+            mem["_is_cross_group"] = (mem.get("group_id", "") != group_id) if group_id else False
 
         # Step 5: 计算分数（含时间衰减 + 访问加成）
         for mem in memories:
@@ -301,8 +302,9 @@ class QueryEngine:
         memory_ids = list(all_candidates.keys())
         memories = self.db.get_memories_by_ids(memory_ids)
 
-        if group_id:
-            memories = [m for m in memories if m["group_id"] == group_id]
+        # 跨群记忆：不再按 group_id 过滤
+        for mem in memories:
+            mem["_is_cross_group"] = (mem.get("group_id", "") != group_id) if group_id else False
 
         # 计算分数
         for mem in memories:
@@ -437,8 +439,8 @@ class QueryEngine:
                 m["score"] = m.get("importance", 1.0)
             return memories
 
-    def format_injection(self, memories: list[dict], template: str = "") -> str:
-        """将记忆列表格式化为注入文本。"""
+    def format_injection(self, memories: list[dict], template: str = "", current_group_id: str = "") -> str:
+        """将记忆列表格式化为注入文本。跨群记忆标注来源群号。"""
         if not memories:
             return ""
 
@@ -451,9 +453,15 @@ class QueryEngine:
             ts = time.strftime("%m-%d %H:%M", time.localtime(mem["timestamp"]))
             content = mem.get("content", "")
             score = mem.get("score", 0)
+            group_id = mem.get("group_id", "")
+
+            # 跨群标注
+            group_tag = ""
+            if mem.get("_is_cross_group") and group_id:
+                group_tag = f"[群{group_id}] "
 
             line = template.replace("{sender}", sender).replace("{time}", ts).replace("{content}", content)
-            parts.append(f"{line} (relevance: {score:.2f})")
+            parts.append(f"{group_tag}{line} (relevance: {score:.2f})")
 
         parts.append("</wave_memory>")
         return "\n".join(parts)
