@@ -105,6 +105,67 @@
       }
     }
   },
+  "Lifecycle_Settings": {
+    "description": "人格与情绪",
+    "hint": "好感度引擎、人格进化、Bot 情绪、做梦系统",
+    "type": "object",
+    "items": {
+      "enable_affinity": {
+        "description": "启用好感度系统",
+        "hint": "追踪每个用户的多维好感度（熟悉度/信任/趣味/深度/敌意），影响 Bot 态度",
+        "type": "bool",
+        "default": true
+      },
+      "enable_persona_evolution": {
+        "description": "启用人格进化",
+        "hint": "根据好感度等级动态调整 Bot 对不同用户的态度和语气",
+        "type": "bool",
+        "default": true
+      },
+      "enable_mood": {
+        "description": "启用 Bot 情绪",
+        "hint": "根据群消息密度和情感分布动态生成情绪状态，影响回复风格",
+        "type": "bool",
+        "default": true
+      },
+      "mood_duration_hours": {
+        "description": "情绪持续时间（小时）",
+        "hint": "情绪触发后持续多久自动过期",
+        "type": "string",
+        "default": "2.0"
+      },
+      "mood_msg_threshold": {
+        "description": "活跃情绪消息阈值",
+        "hint": "30 分钟内消息超过此数量触发 energetic 情绪",
+        "type": "int",
+        "default": 30
+      },
+      "enable_dream": {
+        "description": "启用做梦系统",
+        "hint": "后台定时记忆巩固：三层时间线涟漪浪潮 + 共振桥梁发现",
+        "type": "bool",
+        "default": true
+      },
+      "dream_interval_hours": {
+        "description": "做梦间隔（小时）",
+        "hint": "每隔多少小时执行一次做梦（记忆巩固）",
+        "type": "string",
+        "default": "6.0"
+      },
+      "enable_consolidation": {
+        "description": "启用 LLM 摘要整合",
+        "hint": "定时将碎片消息整合为结构化知识（summary + facts + relations）",
+        "type": "bool",
+        "default": true
+      },
+      "consolidation_interval_hours": {
+        "description": "整合间隔（小时）",
+        "hint": "每隔多少小时执行一次 LLM 摘要整合",
+        "type": "string",
+        "default": "4.0"
+      }
+    }
+  },
   "Message_Filter": {
     "description": "消息过滤",
     "hint": "控制哪些消息会被记录为记忆",
@@ -163,6 +224,12 @@
         "hint": "每批提取 Tag 的消息数量，影响 LLM 调用频率",
         "type": "int",
         "default": 5
+      },
+      "tag_backfill_batch_size": {
+        "description": "Tag 回填批次大小",
+        "hint": "后台 Tag 回填任务每批处理的记忆数量",
+        "type": "int",
+        "default": 500
       }
     }
   },

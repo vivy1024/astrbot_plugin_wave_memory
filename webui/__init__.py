@@ -153,6 +153,14 @@ class WaveMemoryWebUI:
             today_new = self.db.get_today_new_count()
             cooc_edges = self.cooccurrence.edge_count if self.cooccurrence else 0
 
+            # 新功能状态
+            facts_count = self.db.conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
+            mood_count = self.db.conn.execute("SELECT COUNT(*) FROM bot_mood").fetchone()[0]
+            active_moods = self.db.conn.execute(
+                "SELECT group_id, mood_type, description FROM bot_mood WHERE expires_at > ?",
+                (time.time(),),
+            ).fetchall()
+
             return {
                 "total_memories": total,
                 "memories_with_vector": with_vec,
@@ -161,6 +169,12 @@ class WaveMemoryWebUI:
                 "today_new": today_new,
                 "cooccurrence_edges": cooc_edges,
                 "groups": groups,
+                "facts_count": facts_count,
+                "mood_history_count": mood_count,
+                "active_moods": [
+                    {"group_id": m[0], "mood_type": m[1], "description": m[2]}
+                    for m in active_moods
+                ],
             }
 
         # ─── Memories ───
@@ -809,12 +823,30 @@ class WaveMemoryWebUI:
             cooc_nodes = self.cooccurrence.node_count if self.cooccurrence else 0
             cooc_edges = self.cooccurrence.edge_count if self.cooccurrence else 0
 
+            # 新功能状态
+            facts_count = self.db.conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
+            active_moods = self.db.conn.execute(
+                "SELECT group_id, mood_type, intensity, description FROM bot_mood WHERE expires_at > ?",
+                (time.time(),),
+            ).fetchall()
+            person_count = self.db.conn.execute("SELECT COUNT(*) FROM person_registry").fetchone()[0]
+            user_profiles_count = self.db.conn.execute("SELECT COUNT(*) FROM user_profiles").fetchone()[0]
+
             return {
                 "memories": {"total": total_mem, "with_vector": with_vec, "with_tags": tagged_memories},
                 "tags": {"total": total_tags, "structured": structured_tags, "type_distribution": {r[0]: r[1] for r in type_dist}},
                 "coverage": {"vector_pct": round(with_vec / total_mem * 100, 1) if total_mem > 0 else 0, "tag_pct": round(tagged_memories / total_mem * 100, 1) if total_mem > 0 else 0},
                 "cooccurrence": {"nodes": cooc_nodes, "edges": cooc_edges},
                 "epa": {"initialized": self.epa.initialized if self.epa else False},
+                "lifecycle": {
+                    "facts": facts_count,
+                    "persons": person_count,
+                    "user_profiles": user_profiles_count,
+                    "active_moods": [
+                        {"group_id": m[0], "type": m[1], "intensity": m[2], "desc": m[3]}
+                        for m in active_moods
+                    ],
+                },
             }
 
         # ─── LLM Provider 列表 ───
@@ -879,6 +911,7 @@ class WaveMemoryWebUI:
                 "storage": cfg.get("Storage_Settings", {}),
                 "filter": cfg.get("Message_Filter", {}),
                 "performance": cfg.get("Performance_Settings", {}),
+                "lifecycle": cfg.get("Lifecycle_Settings", {}),
                 "webui": {
                     "enabled": cfg.get("WebUI_Settings", {}).get("webui_enabled", True),
                     "host": cfg.get("WebUI_Settings", {}).get("webui_host", "0.0.0.0"),
@@ -902,6 +935,7 @@ class WaveMemoryWebUI:
                 "storage": "Storage_Settings",
                 "filter": "Message_Filter",
                 "performance": "Performance_Settings",
+                "lifecycle": "Lifecycle_Settings",
             }
 
             changed = []

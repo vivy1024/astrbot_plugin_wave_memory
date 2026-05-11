@@ -57,6 +57,7 @@ class WaveMemoryPlugin(Star):
         webui_cfg = self.config.get("WebUI_Settings", {})
         filter_cfg = self.config.get("Message_Filter", {})
         perf_cfg = self.config.get("Performance_Settings", {})
+        lifecycle_cfg = self.config.get("Lifecycle_Settings", {})
 
         self.embedding_provider_id = self.config.get("embedding_provider_id", "")
         self.dimension = int(self.config.get("embedding_dimension", 1024))
@@ -90,6 +91,17 @@ class WaveMemoryPlugin(Star):
         # 性能配置
         self.embedding_batch_size = int(perf_cfg.get("embedding_batch_size", 10))
         self.write_flush_interval = int(perf_cfg.get("write_flush_interval", 30))
+
+        # 生命周期配置
+        self.enable_affinity = lifecycle_cfg.get("enable_affinity", True)
+        self.enable_persona = lifecycle_cfg.get("enable_persona_evolution", True)
+        self.enable_mood = lifecycle_cfg.get("enable_mood", True)
+        self.mood_duration_hours = float(lifecycle_cfg.get("mood_duration_hours", "2.0"))
+        self.mood_msg_threshold = int(lifecycle_cfg.get("mood_msg_threshold", 30))
+        self.enable_dream = lifecycle_cfg.get("enable_dream", True)
+        self.dream_interval_hours = float(lifecycle_cfg.get("dream_interval_hours", "6.0"))
+        self.enable_consolidation = lifecycle_cfg.get("enable_consolidation", True)
+        self.consolidation_interval_hours = float(lifecycle_cfg.get("consolidation_interval_hours", "4.0"))
 
         # 初始化数据目录
         data_path = get_astrbot_data_path() or os.path.dirname(__file__)
@@ -273,29 +285,38 @@ class WaveMemoryPlugin(Star):
         else:
             logger.info(f"[WaveMemory] Tag coverage {tag_coverage:.1%}, backfill not needed")
 
-        # 启动生命周期服务（好感度 + 表达模式 + 衰减）
-        self.lifecycle = LifecycleService(db=self.db, bot_qq_id="2500447291")
-        self.lifecycle.start()
+        # 启动生命周期服务（好感度 + 表达模式 + 衰减 + 情绪）
+        if self.enable_affinity:
+            self.lifecycle = LifecycleService(db=self.db, bot_qq_id="2500447291")
+            self.lifecycle.start()
+        else:
+            self.lifecycle = None
 
-        # 启动记忆整合服务（LLM 摘要 → tag_relations）
-        self.consolidation = ConsolidationService(
-            db=self.db,
-            context=self.context,
-            provider_id=self.tag_llm_provider_id,
-            interval_hours=4.0,
-        )
-        self.consolidation.start()
+        # 启动记忆整合服务（LLM 摘要 → tag_relations + facts）
+        if self.enable_consolidation and self.tag_llm_provider_id:
+            self.consolidation = ConsolidationService(
+                db=self.db,
+                context=self.context,
+                provider_id=self.tag_llm_provider_id,
+                interval_hours=self.consolidation_interval_hours,
+            )
+            self.consolidation.start()
+        else:
+            self.consolidation = None
 
         # 人格进化引擎
-        self.persona_evolution = PersonaEvolution(db=self.db)
+        self.persona_evolution = PersonaEvolution(db=self.db) if self.enable_persona else None
 
         # 启动做梦系统（后台记忆巩固与联想发现）
-        self.dream_service = DreamService(
-            db=self.db,
-            memory_index=self.memory_index,
-            dream_interval_hours=6.0,
-        )
-        self.dream_service.start()
+        if self.enable_dream:
+            self.dream_service = DreamService(
+                db=self.db,
+                memory_index=self.memory_index,
+                dream_interval_hours=self.dream_interval_hours,
+            )
+            self.dream_service.start()
+        else:
+            self.dream_service = None
 
         logger.info("[WaveMemory] Fully initialized")
 
@@ -355,14 +376,14 @@ class WaveMemoryPlugin(Star):
                 injection = self.query_engine.format_injection(memories)
 
                 # 人格进化注入：根据好感度调整态度
-                if hasattr(self, 'persona_evolution'):
+                if self.persona_evolution:
                     sender_id = event.get_sender_id()
                     persona_text = self.persona_evolution.get_persona_injection(sender_id, group_id)
                     if persona_text:
                         injection = injection + chr(10) + chr(10) + persona_text
 
                 # Bot 情绪注入
-                if group_id:
+                if self.enable_mood and group_id:
                     mood = self.db.get_active_mood(group_id)
                     if mood:
                         mood_text = f"[当前情绪] {mood['mood_type']}（{mood['description']}）"

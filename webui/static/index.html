@@ -204,6 +204,36 @@
                 </div>
             </div>
             <div class="card">
+                <h3 class="text-sm font-medium mb-3">生命周期</h3>
+                <div class="space-y-2.5 text-xs">
+                    <div class="flex justify-between"><span style="color:var(--muted-fg)">人物注册</span><span style="color:var(--primary)" x-text="(sys.lifecycle?.persons || 0) + ' 人'"></span></div>
+                    <div class="flex justify-between"><span style="color:var(--muted-fg)">用户画像</span><span style="color:var(--primary)" x-text="(sys.lifecycle?.user_profiles || 0) + ' 份'"></span></div>
+                    <div class="flex justify-between"><span style="color:var(--muted-fg)">事实三元组</span><span style="color:var(--primary)" x-text="(sys.lifecycle?.facts || 0) + ' 条'"></span></div>
+                    <div class="flex justify-between"><span style="color:var(--muted-fg)">活跃情绪</span><span :style="`color:var(${(sys.lifecycle?.active_moods||[]).length > 0 ? '--success' : '--muted-fg'})`" x-text="(sys.lifecycle?.active_moods||[]).length > 0 ? (sys.lifecycle.active_moods.map(m => m.type).join(', ')) : '无'"></span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Active Moods Detail -->
+        <template x-if="(sys.lifecycle?.active_moods||[]).length > 0">
+            <div class="card mt-4">
+                <h3 class="text-sm font-medium mb-3">当前群情绪</h3>
+                <div class="space-y-2 text-xs">
+                    <template x-for="mood in sys.lifecycle.active_moods" :key="mood.group_id">
+                        <div class="flex items-center gap-3 px-3 py-2 rounded-lg" style="background:var(--muted)">
+                            <span class="font-mono" style="color:var(--muted-fg)" x-text="mood.group_id"></span>
+                            <span class="badge badge-emotion" x-text="mood.type"></span>
+                            <span style="color:var(--muted-fg)" x-text="mood.desc"></span>
+                            <span class="ml-auto font-mono" style="color:var(--primary)" x-text="Math.round(mood.intensity * 100) + '%'"></span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </template>
+
+        <!-- Pending Tasks -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+            <div class="card">
                 <h3 class="text-sm font-medium mb-3">待处理</h3>
                 <div class="space-y-2.5 text-xs">
                     <div class="flex justify-between"><span style="color:var(--muted-fg)">无 Tag 记忆</span><span style="color:var(--warning)" x-text="(sys.memories?.total||0) - (sys.memories?.with_tags||0)"></span></div>
@@ -608,6 +638,49 @@
                     </div>
                 </div>
             </div>
+
+            <!-- 人格与情绪 -->
+            <div class="card">
+                <h3 class="text-sm font-medium mb-3">🧠 人格与情绪</h3>
+                <div class="space-y-3">
+                    <label class="flex items-center justify-between p-2.5 rounded cursor-pointer" style="background:var(--muted)">
+                        <span class="text-xs">好感度系统</span>
+                        <input type="checkbox" x-model="pluginConfig.lifecycle.enable_affinity" class="toggle">
+                    </label>
+                    <label class="flex items-center justify-between p-2.5 rounded cursor-pointer" style="background:var(--muted)">
+                        <span class="text-xs">人格进化</span>
+                        <input type="checkbox" x-model="pluginConfig.lifecycle.enable_persona_evolution" class="toggle">
+                    </label>
+                    <label class="flex items-center justify-between p-2.5 rounded cursor-pointer" style="background:var(--muted)">
+                        <span class="text-xs">Bot 情绪</span>
+                        <input type="checkbox" x-model="pluginConfig.lifecycle.enable_mood" class="toggle">
+                    </label>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">情绪持续时间（小时）</label>
+                        <input type="text" x-model="pluginConfig.lifecycle.mood_duration_hours" class="input text-xs w-full" placeholder="2.0">
+                    </div>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">活跃消息阈值（30min）</label>
+                        <input type="number" x-model.number="pluginConfig.lifecycle.mood_msg_threshold" class="input text-xs w-full" min="5" max="200">
+                    </div>
+                    <label class="flex items-center justify-between p-2.5 rounded cursor-pointer" style="background:var(--muted)">
+                        <span class="text-xs">做梦系统</span>
+                        <input type="checkbox" x-model="pluginConfig.lifecycle.enable_dream" class="toggle">
+                    </label>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">做梦间隔（小时）</label>
+                        <input type="text" x-model="pluginConfig.lifecycle.dream_interval_hours" class="input text-xs w-full" placeholder="6.0">
+                    </div>
+                    <label class="flex items-center justify-between p-2.5 rounded cursor-pointer" style="background:var(--muted)">
+                        <span class="text-xs">LLM 摘要整合</span>
+                        <input type="checkbox" x-model="pluginConfig.lifecycle.enable_consolidation" class="toggle">
+                    </label>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:var(--muted-fg)">整合间隔（小时）</label>
+                        <input type="text" x-model="pluginConfig.lifecycle.consolidation_interval_hours" class="input text-xs w-full" placeholder="4.0">
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -659,6 +732,7 @@ function dashboard() {
             tags: {},
             storage: { max_memories: 100000, memory_decay_enabled: true, decay_rate: '0.995', auto_cleanup_enabled: false },
             performance: { embedding_batch_size: 10, write_flush_interval: 30, cooccurrence_rebuild_interval: 3600 },
+            lifecycle: { enable_affinity: true, enable_persona_evolution: true, enable_mood: true, mood_duration_hours: '2.0', mood_msg_threshold: 30, enable_dream: true, dream_interval_hours: '6.0', enable_consolidation: true, consolidation_interval_hours: '4.0' },
             webui: {}
         },
         providers: [],
@@ -706,6 +780,7 @@ function dashboard() {
                 data.storage = data.storage || {};
                 data.filter = data.filter || {};
                 data.performance = data.performance || {};
+                data.lifecycle = data.lifecycle || {};
                 this.pluginConfig = data;
             } catch(e) { console.error(e); }
         },
