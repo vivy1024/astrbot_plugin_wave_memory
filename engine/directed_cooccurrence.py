@@ -128,6 +128,139 @@ class DirectedCooccurrence:
         sorted_n = sorted(neighbors.items(), key=lambda x: x[1], reverse=True)
         return sorted_n[:max_neighbors]
 
+    # ─── 社区检测（Label Propagation 轻量版）───
+
+    def detect_communities(self, min_community_size: int = 3) -> dict[int, list[int]]:
+        """基于标签传播的社区检测。返回 {community_id: [tag_id, ...]}。
+
+        轻量级实现：
+        1. 构建无向邻接（forward + backward 合并）
+        2. Label Propagation 迭代（最多 20 轮）
+        3. 过滤掉小于 min_community_size 的社区
+        """
+        # 构建无向邻接表
+        adj: dict[int, dict[int, float]] = defaultdict(lambda: defaultdict(float))
+        for src, neighbors in self.forward.items():
+            for tgt, w in neighbors.items():
+                adj[src][tgt] += w
+                adj[tgt][src] += w
+
+        if not adj:
+            return {}
+
+        # 初始化：每个节点自成一个社区
+        labels: dict[int, int] = {node: node for node in adj}
+        nodes = list(adj.keys())
+
+        import random
+        for _ in range(20):
+            random.shuffle(nodes)
+            changed = False
+            for node in nodes:
+                if not adj[node]:
+                    continue
+                # 统计邻居标签的加权投票
+                votes: dict[int, float] = defaultdict(float)
+                for neighbor, weight in adj[node].items():
+                    votes[labels[neighbor]] += weight
+                if votes:
+                    best_label = max(votes, key=lambda k: votes[k])
+                    if labels[node] != best_label:
+                        labels[node] = best_label
+                        changed = True
+            if not changed:
+                break
+
+        # 聚合社区
+        communities: dict[int, list[int]] = defaultdict(list)
+        for node, label in labels.items():
+            communities[label].append(node)
+
+        # 过滤小社区，重新编号
+        result: dict[int, list[int]] = {}
+        for i, (_, members) in enumerate(
+            sorted(communities.items(), key=lambda x: len(x[1]), reverse=True)
+        ):
+            if len(members) < min_community_size:
+                continue
+            result[i] = members
+
+        return result
+
+    def get_galaxy_data(self, max_nodes: int = 300, max_edges: int = 800) -> dict:
+        """生成全局星图数据：社区核心节点 + 社区间连线。"""
+        communities = self.detect_communities(min_community_size=5)
+        if not communities:
+            return {"nodes": [], "edges": [], "communities": []}
+
+        # 计算每个节点的度数
+        degree: dict[int, int] = defaultdict(int)
+        for src, neighbors in self.forward.items():
+            degree[src] += len(neighbors)
+        for tgt, neighbors in self.backward.items():
+            degree[tgt] += len(neighbors)
+
+        # 每个社区取 Top 节点
+        selected_nodes: set[int] = set()
+        community_meta: list[dict] = []
+        nodes_per_community = max(3, max_nodes // max(len(communities), 1))
+
+        for cid, members in communities.items():
+            sorted_members = sorted(members, key=lambda n: degree.get(n, 0), reverse=True)
+            top_members = sorted_members[:nodes_per_community]
+            selected_nodes.update(top_members)
+            community_meta.append({
+                "id": cid,
+                "size": len(members),
+                "top_nodes": top_members[:3],
+            })
+            if len(selected_nodes) >= max_nodes:
+                break
+
+        # 构建边（只保留 selected_nodes 之间的边）
+        edges: list[dict] = []
+        for src in selected_nodes:
+            if src not in self.forward:
+                continue
+            for tgt, weight in self.forward[src].items():
+                if tgt in selected_nodes and weight >= 0.05:
+                    edges.append({"source": src, "target": tgt, "weight": round(weight, 3)})
+                    if len(edges) >= max_edges:
+                        break
+            if len(edges) >= max_edges:
+                break
+
+        # 获取节点信息
+        node_info: dict[int, dict] = {}
+        if selected_nodes:
+            placeholders = ",".join("?" * len(selected_nodes))
+            rows = self.db.conn.execute(
+                f"""SELECT id, name, tag_type FROM tags WHERE id IN ({placeholders})""",
+                list(selected_nodes),
+            ).fetchall()
+            for r in rows:
+                node_info[r[0]] = {"id": r[0], "name": r[1], "type": r[2], "degree": degree.get(r[0], 0)}
+
+        # 为每个节点标注社区
+        node_community: dict[int, int] = {}
+        for cid, members in communities.items():
+            for m in members:
+                if m in selected_nodes:
+                    node_community[m] = cid
+
+        nodes = []
+        for nid in selected_nodes:
+            if nid in node_info:
+                info = node_info[nid]
+                info["community"] = node_community.get(nid, -1)
+                nodes.append(info)
+
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "communities": community_meta,
+        }
+
     @property
     def node_count(self) -> int:
         return len(self.forward)
