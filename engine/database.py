@@ -300,6 +300,21 @@ class WaveMemoryDB:
             );
         """)
 
+        # Tag 审计建议表
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS tag_audit_suggestions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action TEXT NOT NULL,
+                tag_ids TEXT NOT NULL,
+                target_name TEXT,
+                target_type TEXT,
+                reason TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at REAL,
+                resolved_at REAL
+            )
+        """)
+
         # FTS5 全文搜索虚拟表（Phase 6: DeepMemo）
         self.conn.executescript("""
             CREATE VIRTUAL TABLE IF NOT EXISTS fts_memories USING fts5(

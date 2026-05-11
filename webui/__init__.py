@@ -142,6 +142,200 @@ class WaveMemoryWebUI:
                 return explore_path.read_text(encoding="utf-8")
             return "<h1>Wave Memory</h1><p>explore.html not found</p>"
 
+        # ─── Explore API（神经云图多视角）───
+
+        @app.get("/api/explore/galaxy")
+        async def explore_galaxy():
+            """全局星图：社区聚类 + 核心节点。"""
+            if not self.cooccurrence:
+                return {"nodes": [], "edges": [], "communities": []}
+            return self.cooccurrence.get_galaxy_data(max_nodes=300, max_edges=800)
+
+        @app.get("/api/explore/community/{community_id}")
+        async def explore_community(community_id: int, max_nodes: int = Query(50, ge=10, le=200)):
+            """展开某个社区的详细节点。"""
+            if not self.cooccurrence:
+                return {"nodes": [], "edges": []}
+
+            communities = self.cooccurrence.detect_communities(min_community_size=5)
+            if community_id not in communities:
+                return {"nodes": [], "edges": []}
+
+            members = communities[community_id]
+
+            # 度数
+            degree: dict = {}
+            for m in members:
+                d = len(self.cooccurrence.forward.get(m, {})) + len(self.cooccurrence.backward.get(m, {}))
+                degree[m] = d
+
+            # 取 Top 节点
+            sorted_members = sorted(members, key=lambda n: degree.get(n, 0), reverse=True)[:max_nodes]
+            selected = set(sorted_members)
+
+            # 边
+            edges = []
+            for src in selected:
+                for tgt, w in self.cooccurrence.forward.get(src, {}).items():
+                    if tgt in selected and w >= 0.03:
+                        edges.append({"source": src, "target": tgt, "weight": round(w, 3)})
+
+            # 节点信息
+            if selected:
+                placeholders = ",".join("?" * len(selected))
+                rows = self.db.conn.execute(
+                    f"SELECT id, name, tag_type FROM tags WHERE id IN ({placeholders})",
+                    list(selected),
+                ).fetchall()
+                nodes = [{"id": r[0], "name": r[1], "type": r[2], "degree": degree.get(r[0], 0), "community": community_id} for r in rows]
+            else:
+                nodes = []
+
+            return {"nodes": nodes, "edges": edges}
+
+        @app.get("/api/explore/person/{qq_id}")
+        async def explore_person(qq_id: str, max_memories: int = Query(80, ge=10, le=200)):
+            """人物记忆网络：该人物的记忆 + 记忆间通过共享 Tag 连线。"""
+            # 获取人物信息
+            person = self.db.conn.execute(
+                "SELECT qq_id, display_name, message_count FROM person_registry WHERE qq_id = ?",
+                (qq_id,),
+            ).fetchone()
+            if not person:
+                return {"person": None, "nodes": [], "edges": []}
+
+            # 获取该人物的记忆
+            rows = self.db.conn.execute(
+                """SELECT m.id, m.content, m.sender_name, m.timestamp
+                   FROM memories m
+                   WHERE m.sender_id = ?
+                   ORDER BY m.timestamp DESC LIMIT ?""",
+                (qq_id, max_memories),
+            ).fetchall()
+
+            if not rows:
+                return {"person": {"id": qq_id, "name": person[1], "count": person[2]}, "nodes": [], "edges": []}
+
+            mem_ids = [r[0] for r in rows]
+            nodes = [{"id": f"m{r[0]}", "memId": r[0], "name": (r[2] or "")[:6] + ": " + (r[1] or "")[:20], "content": r[1] or "", "sender": r[2] or "", "ts": r[3], "type": "memory"} for r in rows]
+
+            # 获取这些记忆的 Tag
+            if mem_ids:
+                placeholders = ",".join("?" * len(mem_ids))
+                tag_rows = self.db.conn.execute(
+                    f"""SELECT mt.memory_id, t.id, t.name, t.tag_type
+                        FROM memory_tags mt JOIN tags t ON mt.tag_id = t.id
+                        WHERE mt.memory_id IN ({placeholders})""",
+                    mem_ids,
+                ).fetchall()
+
+                # 构建 memory → tags 映射
+                from collections import defaultdict as ddict
+                mem_tags: dict = ddict(set)
+                tag_info: dict = {}
+                for tr in tag_rows:
+                    mem_tags[tr[0]].add(tr[1])
+                    tag_info[tr[1]] = {"id": f"t{tr[1]}", "tagId": tr[1], "name": tr[2], "type": tr[3]}
+
+                # 添加高频 Tag 节点（出现在 >= 2 条记忆中的 Tag）
+                tag_count: dict = ddict(int)
+                for tags in mem_tags.values():
+                    for t in tags:
+                        tag_count[t] += 1
+
+                shared_tags = {t for t, c in tag_count.items() if c >= 2}
+                for t in list(shared_tags)[:50]:
+                    if t in tag_info:
+                        nodes.append(tag_info[t])
+
+                # 边：记忆 → 共享 Tag
+                edges = []
+                for mid, tags in mem_tags.items():
+                    for t in tags:
+                        if t in shared_tags:
+                            edges.append({"source": f"m{mid}", "target": f"t{t}", "weight": 0.5})
+            else:
+                edges = []
+
+            return {
+                "person": {"id": qq_id, "name": person[1], "count": person[2]},
+                "nodes": nodes,
+                "edges": edges,
+            }
+
+        @app.get("/api/explore/persons")
+        async def explore_persons(limit: int = Query(30, ge=5, le=100)):
+            """人物列表（按消息数排序）。"""
+            rows = self.db.conn.execute(
+                "SELECT qq_id, display_name, message_count FROM person_registry ORDER BY message_count DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [{"id": r[0], "name": r[1], "count": r[2]} for r in rows]
+
+        @app.post("/api/explore/path")
+        async def explore_path(request: Request):
+            """路径查找：两个 Tag 之间的最短路径（BFS）。"""
+            body = await request.json()
+            source_id = body.get("source_id")
+            target_id = body.get("target_id")
+            max_depth = body.get("max_depth", 5)
+
+            if not source_id or not target_id or not self.cooccurrence:
+                return {"path": [], "nodes": [], "edges": []}
+
+            # BFS
+            from collections import deque
+            visited = {source_id: None}
+            queue = deque([(source_id, 0)])
+            found = False
+
+            while queue:
+                current, depth = queue.popleft()
+                if depth >= max_depth:
+                    continue
+                neighbors = list(self.cooccurrence.forward.get(current, {}).keys()) + \
+                            list(self.cooccurrence.backward.get(current, {}).keys())
+                for neighbor in neighbors:
+                    if neighbor not in visited:
+                        visited[neighbor] = current
+                        if neighbor == target_id:
+                            found = True
+                            break
+                        queue.append((neighbor, depth + 1))
+                if found:
+                    break
+
+            if not found:
+                return {"path": [], "nodes": [], "edges": [], "message": "未找到路径"}
+
+            # 回溯路径
+            path = []
+            current = target_id
+            while current is not None:
+                path.append(current)
+                current = visited[current]
+            path.reverse()
+
+            # 获取路径节点信息
+            if path:
+                placeholders = ",".join("?" * len(path))
+                rows = self.db.conn.execute(
+                    f"SELECT id, name, tag_type FROM tags WHERE id IN ({placeholders})",
+                    path,
+                ).fetchall()
+                nodes = [{"id": r[0], "name": r[1], "type": r[2], "onPath": True} for r in rows]
+            else:
+                nodes = []
+
+            # 路径上的边
+            edges = []
+            for i in range(len(path) - 1):
+                w = self.cooccurrence.forward.get(path[i], {}).get(path[i+1], 0) or \
+                    self.cooccurrence.backward.get(path[i], {}).get(path[i+1], 0)
+                edges.append({"source": path[i], "target": path[i+1], "weight": round(w, 3)})
+
+            return {"path": path, "nodes": nodes, "edges": edges}
+
         # ─── Stats ───
 
         @app.get("/api/stats")
@@ -373,11 +567,50 @@ class WaveMemoryWebUI:
             }
 
         @app.get("/api/tags/graph")
-        async def get_tag_graph():
-            """返回有向共现图数据（兼容 vis-network）。"""
+        async def get_tag_graph(query: str = Query(None), limit: int = Query(30, ge=5, le=100)):
+            """返回有向共现图数据（兼容 vis-network）。支持 query 参数做子图查询。"""
             # 优先从 DirectedCooccurrence 获取有向边
             if hasattr(self, 'cooccurrence') and self.cooccurrence and hasattr(self.cooccurrence, 'forward'):
                 cooc = self.cooccurrence
+
+                # 如果有 query，找到匹配的 tag 并返回其邻居子图
+                if query:
+                    # 找到匹配的 tag
+                    matched_rows = self.db.conn.execute(
+                        "SELECT id, name, tag_type FROM tags WHERE name LIKE ? LIMIT 5",
+                        (f"%{query}%",),
+                    ).fetchall()
+                    if not matched_rows:
+                        return {"nodes": [], "edges": [], "directed": True}
+
+                    # 收集种子 tag 及其邻居
+                    seed_ids = set(r[0] for r in matched_rows)
+                    neighbor_ids = set()
+                    edges = []
+                    for seed_id in seed_ids:
+                        if seed_id in cooc.forward:
+                            for tgt_id, weight in sorted(cooc.forward[seed_id].items(), key=lambda x: x[1], reverse=True)[:limit]:
+                                edges.append({"from": seed_id, "to": tgt_id, "value": round(weight, 3), "direction": "forward"})
+                                neighbor_ids.add(tgt_id)
+                        # 也看反向边
+                        if hasattr(cooc, 'backward') and seed_id in cooc.backward:
+                            for src_id, weight in sorted(cooc.backward[seed_id].items(), key=lambda x: x[1], reverse=True)[:limit]:
+                                edges.append({"from": src_id, "to": seed_id, "value": round(weight, 3), "direction": "forward"})
+                                neighbor_ids.add(src_id)
+
+                    # 获取所有相关节点信息
+                    all_ids = list(seed_ids | neighbor_ids)[:200]
+                    if not all_ids:
+                        return {"nodes": [], "edges": [], "directed": True}
+                    placeholders = ",".join("?" * len(all_ids))
+                    tag_rows = self.db.conn.execute(
+                        f"""SELECT t.id, t.name, t.tag_type,
+                                  (SELECT COUNT(*) FROM memory_tags mt WHERE mt.tag_id = t.id) as mem_count
+                           FROM tags t WHERE t.id IN ({placeholders})""",
+                        all_ids,
+                    ).fetchall()
+                    nodes = [{"id": r[0], "label": r[1], "type": r[2] or "keyword", "value": r[3], "isSeed": r[0] in seed_ids} for r in tag_rows]
+                    return {"nodes": nodes, "edges": edges, "directed": True}
                 edges = []
                 tag_ids_in_edges = set()
                 for src_id, neighbors in cooc.forward.items():
@@ -390,23 +623,49 @@ class WaveMemoryWebUI:
                         })
                         tag_ids_in_edges.add(src_id)
                         tag_ids_in_edges.add(tgt_id)
-                        if len(edges) >= 500:
+                        if len(edges) >= 400:
                             break
-                    if len(edges) >= 500:
+                    if len(edges) >= 400:
                         break
+
+                # 确保每种类型都有代表性节点：每种类型取关联记忆最多的 top N
+                type_supplement_ids = set()
+                for ttype in ('person', 'topic', 'event', 'emotion', 'entity', 'fact', 'location'):
+                    type_top = self.db.conn.execute(
+                        """SELECT t.id FROM tags t
+                           WHERE t.tag_type = ?
+                           ORDER BY (SELECT COUNT(*) FROM memory_tags mt WHERE mt.tag_id = t.id) DESC
+                           LIMIT 15""",
+                        (ttype,),
+                    ).fetchall()
+                    for row in type_top:
+                        type_supplement_ids.add(row[0])
+
+                # 为补充节点添加共现边
+                for sid in type_supplement_ids:
+                    if sid in cooc.forward:
+                        for tgt_id, weight in sorted(cooc.forward[sid].items(), key=lambda x: x[1], reverse=True)[:5]:
+                            if tgt_id in tag_ids_in_edges or tgt_id in type_supplement_ids:
+                                edges.append({"from": sid, "to": tgt_id, "value": round(weight, 3), "direction": "forward"})
+                    if hasattr(cooc, 'backward') and sid in cooc.backward:
+                        for src_id, weight in sorted(cooc.backward[sid].items(), key=lambda x: x[1], reverse=True)[:5]:
+                            if src_id in tag_ids_in_edges or src_id in type_supplement_ids:
+                                edges.append({"from": src_id, "to": sid, "value": round(weight, 3), "direction": "forward"})
+
+                all_node_ids = tag_ids_in_edges | type_supplement_ids
 
                 # 获取节点信息
                 nodes = []
-                if tag_ids_in_edges:
-                    limited_ids = list(tag_ids_in_edges)[:200]
+                if all_node_ids:
+                    limited_ids = list(all_node_ids)[:300]
                     placeholders = ",".join("?" * len(limited_ids))
                     tag_rows = self.db.conn.execute(
-                        f"""SELECT t.id, t.name,
+                        f"""SELECT t.id, t.name, t.tag_type,
                                   (SELECT COUNT(*) FROM memory_tags mt WHERE mt.tag_id = t.id) as mem_count
                            FROM tags t WHERE t.id IN ({placeholders})""",
                         limited_ids,
                     ).fetchall()
-                    nodes = [{"id": r[0], "label": r[1], "value": r[2]} for r in tag_rows]
+                    nodes = [{"id": r[0], "label": r[1], "type": r[2] or "keyword", "value": r[3]} for r in tag_rows]
 
                 return {"nodes": nodes, "edges": edges, "directed": True}
             else:
@@ -575,6 +834,154 @@ class WaveMemoryWebUI:
                 ],
                 "total": len(rows),
             }
+
+        # ─── Tag 审计工作台 API ───
+
+        @app.post("/api/tags/audit/trigger")
+        async def trigger_audit(request: Request):
+            """触发 LLM Tag 审计任务（SSE 流式返回进度）。"""
+            from fastapi.responses import StreamingResponse
+            from ..services.tag_auditor import TagAuditor
+
+            body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+            batch_size = body.get("batch_size", 50)
+            strategy = body.get("strategy", "mixed")
+
+            if not self.tag_extractor or not self.tag_extractor.provider_id:
+                return {"error": "No LLM provider configured"}
+
+            auditor = TagAuditor(
+                db=self.db,
+                context=self.tag_extractor.context,
+                provider_id=self.tag_extractor.provider_id,
+            )
+
+            async def event_stream():
+                async for event in auditor.run_audit(batch_size=batch_size, strategy=strategy):
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+            return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+        @app.get("/api/tags/audit/suggestions")
+        async def get_audit_suggestions(
+            status: str = Query("pending"),
+            limit: int = Query(50),
+            offset: int = Query(0),
+        ):
+            """获取审计建议列表。"""
+            from ..services.tag_auditor import TagAuditor
+            auditor = TagAuditor(db=self.db)
+            suggestions = auditor.get_suggestions(status=status, limit=limit, offset=offset)
+            counts = auditor.get_suggestion_counts()
+            return {"suggestions": suggestions, "counts": counts}
+
+        @app.post("/api/tags/audit/resolve")
+        async def resolve_audit_suggestion(request: Request):
+            """批准或拒绝审计建议。"""
+            from ..services.tag_auditor import TagAuditor
+            body = await request.json()
+            suggestion_id = body.get("suggestion_id")
+            decision = body.get("decision")  # "approve" or "reject"
+
+            if not suggestion_id or decision not in ("approve", "reject"):
+                return {"error": "suggestion_id and decision (approve/reject) required"}
+
+            auditor = TagAuditor(db=self.db)
+            result = auditor.resolve_suggestion(suggestion_id, decision)
+            return result
+
+        @app.post("/api/tags/audit/resolve-batch")
+        async def resolve_audit_batch(request: Request):
+            """批量处理审计建议。"""
+            from ..services.tag_auditor import TagAuditor
+            body = await request.json()
+            items = body.get("items", [])  # [{"id": 1, "decision": "approve"}, ...]
+
+            if not items:
+                return {"error": "items required"}
+
+            auditor = TagAuditor(db=self.db)
+            results = []
+            for item in items:
+                sid = item.get("id")
+                decision = item.get("decision")
+                if sid and decision in ("approve", "reject"):
+                    r = auditor.resolve_suggestion(sid, decision)
+                    results.append(r)
+
+            return {"processed": len(results), "results": results}
+
+        @app.post("/api/tags/retype")
+        async def retype_tag(request: Request):
+            """手动修改 Tag 类型。"""
+            body = await request.json()
+            tag_id = body.get("tag_id")
+            new_type = body.get("new_type")
+
+            if not tag_id or not new_type:
+                return {"error": "tag_id and new_type required"}
+
+            valid_types = {"keyword", "topic", "event", "entity", "fact", "emotion", "person", "location", "time"}
+            if new_type not in valid_types:
+                return {"error": f"Invalid type. Valid: {sorted(valid_types)}"}
+
+            self.db.conn.execute("UPDATE tags SET tag_type = ? WHERE id = ?", (new_type, tag_id))
+            self.db.conn.commit()
+            return {"tag_id": tag_id, "new_type": new_type}
+
+        @app.post("/api/tags/batch-delete")
+        async def batch_delete_tags(request: Request):
+            """批量删除 Tag。"""
+            body = await request.json()
+            tag_ids = body.get("tag_ids", [])
+
+            if not tag_ids:
+                return {"error": "tag_ids required"}
+
+            placeholders = ",".join("?" * len(tag_ids))
+            # 删除关联
+            self.db.conn.execute(f"DELETE FROM memory_tags WHERE tag_id IN ({placeholders})", tag_ids)
+            self.db.conn.execute(
+                f"DELETE FROM tag_relations WHERE source_tag_id IN ({placeholders}) OR target_tag_id IN ({placeholders})",
+                tag_ids + tag_ids
+            )
+            # 删除 tag
+            self.db.conn.execute(f"DELETE FROM tags WHERE id IN ({placeholders})", tag_ids)
+            self.db.conn.commit()
+            return {"deleted": len(tag_ids)}
+
+        @app.post("/api/tags/rename")
+        async def rename_tag(request: Request):
+            """重命名 Tag。"""
+            body = await request.json()
+            tag_id = body.get("tag_id")
+            new_name = body.get("new_name", "").strip()
+
+            if not tag_id or not new_name:
+                return {"error": "tag_id and new_name required"}
+
+            # 检查是否已存在同名 tag
+            existing = self.db.conn.execute("SELECT id FROM tags WHERE name = ? AND id != ?", (new_name, tag_id)).fetchone()
+            if existing:
+                return {"error": f"Tag '{new_name}' already exists (id={existing[0]})"}
+
+            old_name = self.db.conn.execute("SELECT name FROM tags WHERE id = ?", (tag_id,)).fetchone()
+            if not old_name:
+                return {"error": f"Tag {tag_id} not found"}
+
+            # 旧名加入 aliases
+            aliases_row = self.db.conn.execute("SELECT aliases FROM tags WHERE id = ?", (tag_id,)).fetchone()
+            old_aliases = (aliases_row[0] or "").split(",") if aliases_row and aliases_row[0] else []
+            if old_name[0] not in old_aliases:
+                old_aliases.append(old_name[0])
+            old_aliases = [a for a in old_aliases if a and a != new_name]
+
+            self.db.conn.execute(
+                "UPDATE tags SET name = ?, aliases = ? WHERE id = ?",
+                (new_name, ",".join(old_aliases), tag_id)
+            )
+            self.db.conn.commit()
+            return {"tag_id": tag_id, "old_name": old_name[0], "new_name": new_name}
 
         # ─── Query Test ───
 
