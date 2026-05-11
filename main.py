@@ -193,6 +193,7 @@ class WaveMemoryPlugin(Star):
                 provider_id=self.tag_llm_provider_id,
                 max_tags=self.max_tags,
                 blacklist=tag_cfg.get("tag_blacklist", ""),
+                db=self.db,
             )
 
         # 异步写入器

@@ -1,4 +1,4 @@
-"""Wave Memory Tag 提取器 V2 — 结构化语义标注，对标 VCP TagMemo"""
+"""Wave Memory Tag 提取器 V3 — 结构化语义标注 + 已有 Tag 复用"""
 
 from __future__ import annotations
 
@@ -35,7 +35,8 @@ TAG_EXTRACTION_PROMPT = """你是一个记忆标注系统。从对话消息中�
 4. 优先提取：人名 > 具体事物 > 话题 > 事件 > 情绪
 5. 避免提取：纯语气词、无意义碎片、过于宽泛的词
 6. 如果消息无实质内容（纯表情、"嗯""哦"），返回空数组 []
-
+7. **优先复用已有标签**：如果消息内容匹配下方已有标签，直接使用已有标签名，不要创建语义重复的新标签
+{reference_section}
 ## 消息
 发送者：{sender}
 内容：{message}
@@ -72,7 +73,8 @@ person(人名/昵称/群友) | topic(话题) | entity(具体事物/作品/游戏
 - score 范围 0.0-1.0，表示标签与该记忆的相关性/置信度
 - 无实质内容、纯表情、纯寒暄返回空 tags: []
 - 只输出 JSON，不要 markdown 代码块，不要解释文字
-"""
+- **优先复用已有标签**：如果内容匹配下方已有标签，直接使用已有标签名，不要创建语义重复的新标签
+{reference_section}"""
 
 
 # 有效的 Tag 类型
@@ -80,20 +82,22 @@ VALID_TAG_TYPES = {"person", "topic", "entity", "event", "emotion", "fact", "loc
 
 
 class TagExtractor:
-    """结构化 Tag 提取服务 V2。
+    """结构化 Tag 提取服务 V3。
 
     核心改进：
     1. 结构化输出：每个 Tag 带 type + confidence
     2. 批量提取：多条消息合并一次 LLM 调用
     3. 核心标签识别：高频 Tag 自动标记为核心
     4. 质量过滤：基于 confidence 和规则过滤低质量 Tag
+    5. 已有 Tag 复用：注入高频 Tag 词表，LLM 优先复用
     """
 
-    def __init__(self, context, provider_id: str, max_tags: int = 10, batch_size: int = 5, blacklist: str = ""):
+    def __init__(self, context, provider_id: str, max_tags: int = 10, batch_size: int = 5, blacklist: str = "", db=None):
         self.context = context
         self.provider_id = provider_id
         self.max_tags = max_tags
         self.batch_size = batch_size
+        self.db = db
 
         # Tag 黑名单
         self._blacklist: set = {
@@ -103,6 +107,107 @@ class TagExtractor:
         # 核心标签缓存（高频 Tag 名称集合）
         self._core_tags: set = set()
         self._tag_freq: dict[str, int] = {}
+
+        # 已有 Tag 参考词表缓存
+        self._reference_text: str = ""
+        self._reference_tags_set: set[str] = set()  # 用于后处理归一化
+        self._reference_call_count: int = 0
+        self._reference_refresh_interval: int = 200
+
+    def _build_reference_section(self) -> str:
+        """构建已有 Tag 参考词表，注入 prompt。
+
+        从 DB 取关联记忆数 >= 2 的高频 tag，按 type 分组，格式化为紧凑字符串。
+        每 200 次调用刷新一次缓存。
+        """
+        self._reference_call_count += 1
+
+        # 有缓存且未到刷新周期
+        if self._reference_text and self._reference_call_count % self._reference_refresh_interval != 0:
+            return self._reference_text
+
+        if not self.db:
+            return ""
+
+        try:
+            conn = self.db.conn if hasattr(self.db, 'conn') else self.db
+
+            # 取关联数 >= 2 的 tag，按关联数降序，每个 type 取 top 30，总计不超过 200
+            rows = conn.execute("""
+                SELECT t.name, t.tag_type, COUNT(mt.memory_id) as mc
+                FROM tags t JOIN memory_tags mt ON t.id = mt.tag_id
+                GROUP BY t.id
+                HAVING mc >= 2
+                ORDER BY mc DESC
+                LIMIT 300
+            """).fetchall()
+
+            if not rows:
+                return ""
+
+            # 按 type 分组
+            by_type: dict[str, list[str]] = {}
+            total = 0
+            for name, tag_type, _mc in rows:
+                if total >= 200:
+                    break
+                by_type.setdefault(tag_type, [])
+                if len(by_type[tag_type]) < 30:
+                    by_type[tag_type].append(name)
+                    total += 1
+
+            # 格式化
+            lines = []
+            type_order = ["person", "entity", "topic", "event", "emotion", "fact", "location", "time"]
+            for t in type_order:
+                if t in by_type and by_type[t]:
+                    lines.append(f"  {t}: {', '.join(by_type[t])}")
+
+            if not lines:
+                return ""
+
+            self._reference_text = "\n## 已有标签（优先复用）\n" + "\n".join(lines) + "\n"
+
+            # 更新归一化用的 set
+            self._reference_tags_set = {name for name, _, _ in rows}
+
+            logger.debug(f"[WaveMemory] Reference tags refreshed: {total} tags")
+            return self._reference_text
+
+        except Exception as e:
+            logger.debug(f"[WaveMemory] Failed to build reference tags: {e}")
+            return ""
+
+    def _normalize_tag_name(self, name: str) -> str:
+        """对提取结果做归一化，尝试匹配已有 tag。
+
+        规则：
+        - 去首尾空格
+        - 如果已有 tag 集合里有完全匹配，直接返回
+        - 如果去掉尾部虚词（的、了、着）后匹配已有 tag，返回已有 tag
+        - 否则返回原名
+        """
+        name = name.strip()
+
+        if not self._reference_tags_set:
+            return name
+
+        # 完全匹配
+        if name in self._reference_tags_set:
+            return name
+
+        # 去尾部虚词
+        stripped = re.sub(r'[的了着]$', '', name)
+        if stripped and stripped != name and stripped in self._reference_tags_set:
+            return stripped
+
+        # 尝试不区分大小写匹配
+        name_lower = name.lower()
+        for ref_tag in self._reference_tags_set:
+            if ref_tag.lower() == name_lower:
+                return ref_tag
+
+        return name
 
     async def extract_tags(self, message: str, sender: str = "") -> list[dict]:
         """从单条消息提取结构化 Tag。
@@ -122,9 +227,11 @@ class TagExtractor:
                 logger.warning(f"[WaveMemory] Tag LLM provider '{self.provider_id}' not found, using fallback")
                 return self._fallback_extract(message)
 
+            reference_section = self._build_reference_section()
             prompt = TAG_EXTRACTION_PROMPT.format(
                 sender=sender or "unknown",
                 message=message[:800],
+                reference_section=reference_section,
             )
 
             response = await provider.text_chat(
@@ -184,7 +291,11 @@ class TagExtractor:
             if not provider:
                 return [self._fallback_extract(m.get("content", "")) for m in messages]
 
-            prompt = BATCH_TAG_PROMPT.format(batch_json=batch_json)
+            reference_section = self._build_reference_section()
+            prompt = BATCH_TAG_PROMPT.format(
+                batch_json=batch_json,
+                reference_section=reference_section,
+            )
             response = await provider.text_chat(
                 prompt=prompt,
                 system_prompt="你是一个记忆标注系统，只输出严格 JSON 对象，不输出 markdown 或解释。",
@@ -239,6 +350,9 @@ class TagExtractor:
             except (ValueError, TypeError):
                 confidence = 0.8
 
+            # 归一化 tag 名
+            name = self._normalize_tag_name(name)
+
             # 质量过滤
             if not self._is_valid_tag(name, tag_type, confidence):
                 continue
@@ -288,6 +402,8 @@ class TagExtractor:
                 except (TypeError, ValueError):
                     confidence = 0.8
                 confidence = min(max(confidence, 0.0), 1.0)
+                # 归一化
+                name = self._normalize_tag_name(name)
                 if self._is_valid_tag(name, tag_type, confidence):
                     if tag_type not in VALID_TAG_TYPES:
                         tag_type = "keyword"
@@ -343,7 +459,8 @@ class TagExtractor:
 
         result = []
         for tag in tags:
-            tag = tag.strip().strip('#"\'- ')
+            tag = tag.strip().strip('"\'')
+            tag = self._normalize_tag_name(tag)
             if self._is_valid_tag(tag, "keyword", 0.7):
                 result.append({"name": tag, "type": "keyword", "confidence": 0.7})
 
@@ -360,6 +477,7 @@ class TagExtractor:
         seen = set()
         result = []
         for w in words:
+            w = self._normalize_tag_name(w)
             if w.lower() not in seen and self._is_valid_tag(w, "keyword", 0.5):
                 seen.add(w.lower())
                 result.append({"name": w, "type": "keyword", "confidence": 0.5})
