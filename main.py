@@ -194,6 +194,8 @@ class WaveMemoryPlugin(Star):
                 max_tags=self.max_tags,
                 blacklist=tag_cfg.get("tag_blacklist", ""),
                 db=self.db,
+                embedding_service=self.embedding_service,
+                tag_index=self.tag_index,
             )
 
         # 异步写入器

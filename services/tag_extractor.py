@@ -92,7 +92,7 @@ class TagExtractor:
     5. 已有 Tag 复用：注入高频 Tag 词表，LLM 优先复用
     """
 
-    def __init__(self, context, provider_id: str, max_tags: int = 10, batch_size: int = 5, blacklist: str = "", db=None):
+    def __init__(self, context, provider_id: str, max_tags: int = 10, batch_size: int = 5, blacklist: str = "", db=None, embedding_service=None, tag_index=None):
         self.context = context
         self.provider_id = provider_id
         self.max_tags = max_tags
@@ -113,6 +113,10 @@ class TagExtractor:
         self._reference_tags_set: set[str] = set()  # 用于后处理归一化
         self._reference_call_count: int = 0
         self._reference_refresh_interval: int = 200
+
+        # Tag RAG（P3）：embedding 搜索已有 tag
+        self.embedding_service = embedding_service
+        self.tag_index = tag_index
 
     def _build_reference_section(self) -> str:
         """构建已有 Tag 参考词表，注入 prompt。
@@ -178,6 +182,84 @@ class TagExtractor:
             logger.debug(f"[WaveMemory] Failed to build reference tags: {e}")
             return ""
 
+    async def _build_rag_reference_section(self, message: str) -> str:
+        """Tag RAG：用消息 embedding 搜索 tag_index，取 top 20 语义相关 tag 注入 prompt。
+
+        如果 embedding 不可用或 tag_index 为空，返回空字符串（调用方会 fallback 到静态词表）。
+        """
+        if not self.embedding_service or not self.tag_index:
+            return ""
+
+        if self.tag_index.count == 0:
+            return ""
+
+        try:
+            # 获取消息的 embedding
+            query_vec = await self.embedding_service.get_embedding(message[:500])
+            if query_vec is None:
+                return ""
+
+            # 搜索 tag_index
+            results = self.tag_index.search(query_vec, k=30)
+            if not results:
+                return ""
+
+            # 获取 tag 详情
+            tag_ids = [int(tid) for tid, _ in results]
+            if not self.db:
+                return ""
+
+            conn = self.db.conn if hasattr(self.db, 'conn') else self.db
+            placeholders = ",".join("?" * len(tag_ids))
+            rows = conn.execute(
+                f"SELECT id, name, tag_type FROM tags WHERE id IN ({placeholders})",
+                tag_ids
+            ).fetchall()
+
+            if not rows:
+                return ""
+
+            # 按 type 分组，取 top 20
+            by_type: dict[str, list[str]] = {}
+            total = 0
+            # 保持搜索结果的相关性排序
+            id_to_info = {r[0]: (r[1], r[2]) for r in rows}
+            for tid, _ in results:
+                tid = int(tid)
+                if tid not in id_to_info:
+                    continue
+                name, tag_type = id_to_info[tid]
+                tag_type = tag_type or "keyword"
+                if total >= 20:
+                    break
+                by_type.setdefault(tag_type, [])
+                if len(by_type[tag_type]) < 8:  # 每类最多 8 个
+                    by_type[tag_type].append(name)
+                    total += 1
+
+            if not by_type:
+                return ""
+
+            # 格式化
+            lines = []
+            type_order = ["person", "entity", "topic", "event", "emotion", "fact", "location", "time"]
+            for t in type_order:
+                if t in by_type and by_type[t]:
+                    lines.append(f"  {t}: {', '.join(by_type[t])}")
+
+            if not lines:
+                return ""
+
+            # 同时更新归一化用的 set
+            rag_names = {name for names in by_type.values() for name in names}
+            self._reference_tags_set.update(rag_names)
+
+            return "\n## 语义相关标签（优先复用）\n" + "\n".join(lines) + "\n"
+
+        except Exception as e:
+            logger.debug(f"[WaveMemory] Tag RAG failed: {e}")
+            return ""
+
     def _normalize_tag_name(self, name: str) -> str:
         """对提取结果做归一化，尝试匹配已有 tag。
 
@@ -228,6 +310,12 @@ class TagExtractor:
                 return self._fallback_extract(message)
 
             reference_section = self._build_reference_section()
+
+            # Tag RAG：如果 embedding 可用，追加语义相关 tag
+            rag_section = await self._build_rag_reference_section(message)
+            if rag_section:
+                reference_section = rag_section + reference_section
+
             prompt = TAG_EXTRACTION_PROMPT.format(
                 sender=sender or "unknown",
                 message=message[:800],
@@ -292,6 +380,13 @@ class TagExtractor:
                 return [self._fallback_extract(m.get("content", "")) for m in messages]
 
             reference_section = self._build_reference_section()
+
+            # Tag RAG：用批量消息的拼接文本搜索语义相关 tag
+            combined_text = " ".join(m.get("content", "")[:200] for m in messages)
+            rag_section = await self._build_rag_reference_section(combined_text[:500])
+            if rag_section:
+                reference_section = rag_section + reference_section
+
             prompt = BATCH_TAG_PROMPT.format(
                 batch_json=batch_json,
                 reference_section=reference_section,
