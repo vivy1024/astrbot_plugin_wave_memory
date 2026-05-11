@@ -14,16 +14,41 @@
 
 ## 核心特性
 
+### 🧠 认知引擎
+
 - **VCP TagMemo V8 浪潮认知引擎**：五阶段级联处理（EPA → 残差金字塔 → 脉冲传播 → 向量融合 → 测地线重排），远超传统 RAG 精度
 - **零 LLM 查询路径**：检索全程本地计算，仅 Embedding API 产生网络延迟（~250ms）
+- **有向共现矩阵**：Tag 间方向性关联建模 + 防抖调度器（双缓冲原子切换，不阻塞查询）
+- **内禀残差计算器**：共现矩阵重建后自动重算，捕获 Tag 间非线性关联
+- **社区检测**：Label Propagation 轻量实现，Tag 聚类分析
+
+### 🏷️ Tag 体系
+
+- **结构化 Tag 体系**：8+ 种语义类型（person/topic/entity/event/emotion/fact/location/time/keyword），支持 LLM 批量提取
+- **Tag RAG 提取**：embedding 搜索已有 Tag 库注入提取 prompt，大幅提升 Tag 复用率（embedding 不可用时 graceful fallback 到静态词表）
+- **Tag 审计系统**：LLM 驱动的 Tag 质量审计（合并/重分类/删除建议），SSE 流式进度，支持批量批准/拒绝
+
+### 🌐 记忆管理
+
+- **跨群记忆共享**：所有群共享同一记忆池，跨群人物画像自动合并
 - **通用数据源导入**：自动扫描所有已安装记忆插件的数据库，已知插件免配置导入，未知插件 LLM 自动分析表结构
-- **结构化 Tag 体系**：8 种语义类型（person/topic/entity/event/emotion/fact/location/time），支持 LLM 批量提取
 - **脉冲传播 + 虫洞路由**：模拟神经网络的联想激活，发现跨域关联
 - **做梦系统 (AgentDream)**：模拟人脑睡眠记忆巩固，三层时间线涟漪浪潮，6 小时周期自动执行
+- **LLM 摘要整合**：定时 4 小时周期，碎片消息 → 结构化知识（summary + topics + facts + relations）
+
+### 🎭 人格与情绪
+
 - **人格进化系统**：多维好感度（熟悉度/信任/趣味/深度/敌意）→ 态度分级 → 动态 prompt 注入
 - **Bot 情绪系统**：根据群消息密度和情感 tag 分布动态生成情绪状态，影响回复风格
 - **事实三元组提取**：LLM 整合时自动提取结构化 facts（subject/predicate/object），构建知识图谱
-- **WebUI 管理面板**：记忆浏览、查询测试台、数据导入（实时进度条 + 互斥锁）、LLM Tag 批量提取、暗色/亮色主题
+
+### 🖥️ WebUI 管理
+
+- **神经云图 /explore**：Sigma.js + Graphology 全新渲染，支持星图/联想/人物/路径四视角
+- **维护工作台 /maintain**：Tag 审计触发、统计卡片、建议列表、批量操作
+- **数据导入面板**：实时进度条 + 互斥锁 + LLM Tag 批量提取
+- **生命周期配置面板**：好感度/人格/情绪/做梦/整合全部可配置
+- **暗色/亮色主题**
 
 ---
 
@@ -54,6 +79,12 @@
 
 启动后访问 `http://<host>:9876`（端口可配置）
 
+| 页面 | 路径 | 功能 |
+|------|------|------|
+| 主面板 | `/` | 记忆浏览、查询测试、数据导入、配置 |
+| 神经云图 | `/explore` | Tag 关系可视化、社区探索 |
+| 维护工作台 | `/maintain` | Tag 审计、质量统计、批量操作 |
+
 ---
 
 ## 算法架构
@@ -79,161 +110,83 @@
     │
     ▼
 ┌─────────────────────────────────────────────────────────┐
-│  Phase 3: 脉冲传播 (Spike Propagation / LIF-Router)       │
-│  ├── 种子注入 → 有向共现矩阵 → 虫洞路由                   │
-│  └── 输出: activated_tags[], energy_field{}               │
+│  Phase 3: 脉冲传播 (Spike Routing)                        │
+│  ├── Tag 共现图 → 有向共现矩阵                            │
+│  ├── 脉冲激活 + 虫洞路由（跨域跳跃）                       │
+│  ├── 动量系统（历史查询加速）                              │
+│  └── 输出: activated_tags[], spike_scores                │
 └─────────────────────────────────────────────────────────┘
     │
     ▼
 ┌─────────────────────────────────────────────────────────┐
 │  Phase 4: 向量融合 (Vector Fusion)                        │
-│  ├── 语义去重 + 核心标签补全                               │
-│  └── 融合: fused = (1-α)·query + α·context               │
+│  ├── 多源向量加权融合（query + EPA + spike）              │
+│  ├── 内禀残差补偿                                         │
+│  └── 输出: fused_vector                                  │
 └─────────────────────────────────────────────────────────┘
     │
     ▼
 ┌─────────────────────────────────────────────────────────┐
 │  Phase 5: 测地线重排 (Geodesic Rerank)                    │
-│  ├── 复用 Phase 3 能量场                                  │
-│  └── finalScore = (1-α)·KNN + α·normalizedGeo           │
+│  ├── 能量场复用 + 三层防御                                │
+│  ├── 语义距离 + 时间衰减 + 关联度综合排序                  │
+│  └── 输出: final_results[]                               │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 生命周期系统
+## 后台服务
 
-### 好感度引擎
-
-多维好感度模型，每个用户独立追踪：
-
-| 维度 | 权重 | 半衰期 | 说明 |
-|------|------|--------|------|
-| familiarity | 25% | 200 天 | 互动频率积累 |
-| trust | 30% | 90 天 | 正面情感 / 深度对话 |
-| fun | 20% | 30 天 | 玩梗整活 |
-| depth | 25% | 150 天 | 深入讨论 |
-| hostility | -50% | 60 天 | 负面行为惩罚 |
-
-好感度 → 态度分级：hostile / cold / neutral / friendly / intimate
-
-### 人格进化
-
-根据好感度和表达模式，为每个用户生成差异化的态度指令注入到 LLM prompt：
-- intimate：轻松随意，主动关心
-- friendly：友好正常，偶尔调侃
-- neutral：礼貌但保持距离
-- cold：简短回复，不延伸
-- hostile：有戒备，不配合无理要求
-
-### Bot 情绪
-
-每 30 分钟 tick 一次，根据群消息密度和情感 tag 分布判断：
-- **energetic**：30 分钟内 > 30 条消息 → "群里很热闹"
-- **cheerful**：正面情感 > 60% → "氛围不错"
-- **concerned**：负面情感 > 40% → "感觉到负面情绪"
-
-情绪持续 2 小时后自动过期。
-
-### 做梦系统
-
-每 6 小时执行一次后台记忆巩固：
-1. **近期涟漪** (0-7天)：随机抽 3 个种子，向量联想 k=5
-2. **中期回音** (7-30天)：抽 2 个种子，联想 k=3
-3. **深渊浪潮** (>30天)：合成浪潮向量，在深远记忆中搜索
-4. **共振桥梁**：被多个种子同时联想到的记忆 → 强化 importance
+| 服务 | 周期 | 功能 |
+|------|------|------|
+| LifecycleService | 30 分钟 | 好感度 flush + 表达模式聚合 + 记忆衰减标记 |
+| ConsolidationService | 4 小时 | LLM 摘要整合 + 事实三元组提取 |
+| DreamService | 6 小时 | 记忆巩固（三层时间线涟漪浪潮 + 共振桥梁发现） |
+| TagJob | 持续 | 新记忆自动 Tag 提取（batch 500，含 RAG 参考） |
+| TagBackfill | 启动时 | 覆盖率 < 90% 时自动补打历史记忆 Tag |
 
 ---
 
-## 通用数据源导入
+## Agent 工具
 
-Wave Memory 的导入系统不硬编码特定插件，而是：
-
-1. **自动扫描** `plugin_data/` 下所有 `.db` 文件
-2. **已知适配器**：LivingMemory、Angel Memory、Self Learning 等免配置直接导入
-3. **未知插件**：启发式分析表结构，或调用 LLM 分析字段映射后导入
-4. **增量导入（rowid 游标）**：每次只处理上次游标之后的新记录，万级数据秒级完成
-5. **自动去重**：基于内容精确匹配，不会重复导入
-6. **安全游标**：失败批次不推进游标（下次重试）；数据库清空时自动重置游标
-
-支持的已知数据源：
-
-| 插件 | 数据类型 | 说明 |
-|------|----------|------|
-| LivingMemory | 对话记录 / 记忆文档 | conversations.db + livingmemory.db |
-| Angel Memory | 结构化记忆 | judgment + reasoning |
-| Self Learning | 原始消息 / 范例库 / 黑话词典 | raw_messages + exemplar + jargon |
-
-其他插件（如 mnemosyne、simple_memory、vector_memory、self_evolution 等）会被自动发现，用户可一键导入或让 LLM 分析后导入。
+| 工具名 | 功能 |
+|--------|------|
+| `wave_memory_search` | 主记忆搜索（五阶段级联） |
+| `wave_memory_deep_search` | 多轮联想深度搜索 |
+| `wave_memory_person_search` | 按人物查询相关记忆 |
 
 ---
 
-## 数据架构
+## 项目结构
 
 ```
-wave_memory.db
-├── memories              原始记忆 (向量 + 元数据 + summary)
-├── tags                  结构化语义节点 (type/aliases/hierarchy/confidence)
-├── tag_relations         Tag 间关系图谱 (is_a/part_of/related_to/causes)
-├── memory_tags           记忆↔Tag 多对多 (position + relevance)
-├── memory_mentions       记忆↔人物提及关系
-├── person_registry       人物注册表 (QQ号/昵称/别名/角色)
-├── user_profiles         用户画像 (好感度/交互统计/人格标签)
-├── expression_patterns   表达模式库 (消息长度/活跃时段/情感偏向)
-├── bot_mood              Bot 情绪状态 (类型/强度/持续时间)
-├── facts                 结构化事实三元组 (subject/predicate/object)
-├── tag_extraction_status Tag 提取进度追踪
-└── kv_store              EPA 缓存 + 导入游标 (import_cursor:*)
-
-memory.hnsw               HNSW 向量索引 (记忆检索)
-tags.hnsw                 HNSW 向量索引 (Tag 检索)
-```
-
----
-
-## 性能指标
-
-| 指标 | 数值 |
-|------|------|
-| 向量检索 (万级 memories) | < 1ms |
-| 脉冲传播 (11000+ nodes) | 0.1ms |
-| 残差金字塔 (缓存命中) | 0.3ms |
-| EPA 分析 | 0.2ms |
-| 测地线重排 | 0.3ms |
-| **本地计算总计** | **< 2ms** |
-| Embedding API (网络) | ~250ms |
-| **端到端总延迟** | **~250ms** |
-
----
-
-## 目录结构
-
-```
-astrbot_plugin_wave_memory/
-├── main.py                    # 插件入口 + 生命周期管理
+├── main.py                    # 插件入口
 ├── metadata.yaml              # AstrBot 插件元数据
-├── _conf_schema.json          # 配置 Schema
-├── requirements.txt           # Python 依赖
-├── engine/                    # 核心算法引擎
-│   ├── database.py            # SQLite 数据层
-│   ├── vector_index.py        # HNSW 向量索引
-│   ├── embedding.py           # Embedding 服务
-│   ├── query_engine.py        # 查询引擎
-│   ├── cooccurrence.py        # 共现矩阵（无向）
-│   ├── directed_cooccurrence.py # 有向共现矩阵 + 防抖调度器
-│   ├── spike_routing.py       # 脉冲传播 + 虫洞路由
-│   ├── residual_pyramid.py    # 残差金字塔
-│   ├── geodesic_rerank.py     # 测地线重排
+├── CHANGELOG.md               # 版本变更记录
+├── CLAUDE.md                  # 开发规则 & 发版流程
+├── engine/                    # 核心算法
 │   ├── epa.py                 # EPA 嵌入投影分析
-│   └── intrinsic_residual.py  # 内禀残差计算
+│   ├── residual_pyramid.py    # 残差金字塔
+│   ├── spike_routing.py       # 脉冲传播 + 虫洞路由
+│   ├── geodesic_rerank.py     # 测地线重排
+│   ├── directed_cooccurrence.py # 有向共现矩阵 + 社区检测
+│   ├── intrinsic_residual.py  # 内禀残差计算器
+│   ├── vector_index.py        # 向量索引（FAISS/NumPy）
+│   ├── embedding.py           # Embedding 接口
+│   ├── database.py            # SQLite 数据层
+│   ├── query_engine.py        # 五阶段查询引擎
+│   └── context_segmenter.py   # 上下文分段
 ├── services/                  # 业务服务
-│   ├── message_writer.py      # 消息写入（异步队列）
-│   ├── tag_extractor.py       # LLM Tag 提取
-│   ├── tag_job.py             # Tag 回填后台任务
-│   ├── lifecycle.py           # 好感度 + 表达模式 + 衰减 + 情绪
-│   ├── consolidation.py       # LLM 摘要整合 + facts 提取
-│   ├── persona_evolution.py   # 人格进化注入
+│   ├── lifecycle.py           # 生命周期（好感度/衰减/表达模式）
+│   ├── consolidation.py       # LLM 摘要整合 + 事实提取
 │   ├── dream.py               # 做梦系统（记忆巩固）
+│   ├── persona_evolution.py   # 人格进化注入
+│   ├── tag_extractor.py       # Tag 提取（含 RAG）
+│   ├── tag_auditor.py         # Tag 审计（LLM 驱动）
+│   ├── tag_job.py             # Tag 后台任务
+│   ├── message_writer.py      # 消息写入
+│   ├── migration.py           # 数据库迁移
 │   └── hot_config.py          # 热配置
 ├── tools/                     # AstrBot Agent 工具
 │   ├── memory_search.py       # 记忆搜索工具
@@ -244,6 +197,9 @@ astrbot_plugin_wave_memory/
     ├── source_discovery.py    # 通用数据源发现 + 导入
     ├── importer.py            # 旧版导入器（兼容）
     └── static/                # 前端静态文件
+        ├── index.html         # 主面板
+        ├── explore.html       # 神经云图
+        └── maintain.html      # 维护工作台
 ```
 
 ---
