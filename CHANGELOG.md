@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.4.3 (2025-07-13)
+
+### 新功能
+
+- **Consolidation topics 回写 memory_tags**：整合服务提取的段落级话题标签自动写回每条消息，零额外 LLM 成本，短消息不再需要单独猜话题
+
+### 改进
+
+- Tag backfill batch_size 500→50，避免 LLM 截断导致 tag 错位
+- 空 tag 结果标记 `skipped` 而非 `done`，不阻塞重新处理
+- Consolidation topic 回写过滤泛化词（日常闲聊/灌水等）
+
 ## v0.4.1 (2025-07-13)
 
 ### 修复
