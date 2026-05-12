@@ -14,41 +14,43 @@
 
 ## 核心特性
 
-### 🧠 认知引擎
+### 认知引擎
 
-- **VCP TagMemo V8 浪潮认知引擎**：五阶段级联处理（EPA → 残差金字塔 → 脉冲传播 → 向量融合 → 测地线重排），远超传统 RAG 精度
-- **零 LLM 查询路径**：检索全程本地计算，仅 Embedding API 产生网络延迟（~250ms）
-- **有向共现矩阵**：Tag 间方向性关联建模 + 防抖调度器（双缓冲原子切换，不阻塞查询）
+- **VCP TagMemo V8 浪潮认知引擎**：五阶段级联处理（EPA → 残差金字塔 → 脉冲传播 → 向量融合 → 测地线重排）
+- **零 LLM 查询路径**：检索全程本地计算，仅 Embedding API 产生网络延迟
+- **有向共现矩阵**：Tag 间方向性关联建模 + 防抖调度器（双缓冲原子切换）
 - **内禀残差计算器**：共现矩阵重建后自动重算，捕获 Tag 间非线性关联
 - **社区检测**：Label Propagation 轻量实现，Tag 聚类分析
 
-### 🏷️ Tag 体系
+### Tag 体系
 
-- **结构化 Tag 体系**：8+ 种语义类型（person/topic/entity/event/emotion/fact/location/time/keyword），支持 LLM 批量提取
-- **Tag RAG 提取**：embedding 搜索已有 Tag 库注入提取 prompt，大幅提升 Tag 复用率（embedding 不可用时 graceful fallback 到静态词表）
-- **Tag 审计系统**：LLM 驱动的 Tag 质量审计（合并/重分类/删除建议），SSE 流式进度，支持批量批准/拒绝
+- **结构化 Tag**：8 种语义类型（person/topic/entity/event/emotion/fact/location/time）
+- **Tag RAG 提取**：embedding 搜索已有 Tag 库注入提取 prompt，提升复用率
+- **Consolidation 话题回写**：整合服务提取的段落级话题自动写回每条消息，零额外成本
+- **Tag 审计系统**：LLM 驱动的质量审计（合并/重分类/删除建议），SSE 流式进度
+- **已有 Tag 参考词表**：高频 Tag 注入 prompt，避免创建语义重复标签
 
-### 🌐 记忆管理
+### 记忆管理
 
 - **跨群记忆共享**：所有群共享同一记忆池，跨群人物画像自动合并
-- **通用数据源导入**：自动扫描所有已安装记忆插件的数据库，已知插件免配置导入，未知插件 LLM 自动分析表结构
-- **脉冲传播 + 虫洞路由**：模拟神经网络的联想激活，发现跨域关联
-- **做梦系统 (AgentDream)**：模拟人脑睡眠记忆巩固，三层时间线涟漪浪潮，6 小时周期自动执行
-- **LLM 摘要整合**：定时 4 小时周期，碎片消息 → 结构化知识（summary + topics + facts + relations）
+- **通用数据源导入**：自动扫描已安装记忆插件数据库，已知插件免配置导入，未知插件 LLM 分析表结构
+- **脉冲传播 + 虫洞路由**：模拟神经网络联想激活，发现跨域关联
+- **做梦系统 (AgentDream)**：6 小时周期后台记忆巩固，三层时间线涟漪浪潮
+- **LLM 摘要整合**：4 小时周期，碎片消息 → 结构化知识（summary + topics + facts + relations）
 
-### 🎭 人格与情绪
+### 人格与情绪
 
 - **人格进化系统**：多维好感度（熟悉度/信任/趣味/深度/敌意）→ 态度分级 → 动态 prompt 注入
-- **Bot 情绪系统**：根据群消息密度和情感 tag 分布动态生成情绪状态，影响回复风格
-- **事实三元组提取**：LLM 整合时自动提取结构化 facts（subject/predicate/object），构建知识图谱
+- **跨群人物画像合并**：同一用户在不同群的好感度、表达模式、personality_tags 自动聚合
+- **Bot 情绪系统**：根据群消息密度和情感 tag 分布动态生成情绪状态
+- **事实三元组提取**：LLM 整合时自动提取 facts（subject/predicate/object）
 
-### 🖥️ WebUI 管理
+### WebUI 管理
 
-- **神经云图 /explore**：Sigma.js + Graphology 全新渲染，支持星图/联想/人物/路径四视角
+- **神经云图 /explore**：Sigma.js + Graphology 渲染，星图/联想/人物/路径四视角
 - **维护工作台 /maintain**：Tag 审计触发、统计卡片、建议列表、批量操作
 - **数据导入面板**：实时进度条 + 互斥锁 + LLM Tag 批量提取
 - **生命周期配置面板**：好感度/人格/情绪/做梦/整合全部可配置
-- **暗色/亮色主题**
 
 ---
 
@@ -62,14 +64,11 @@
 
 在 AstrBot 插件配置页面设置：
 
-**必填**：
-- `embedding_provider_id`：Embedding 模型 Provider ID
-- `tag_llm_provider_id`：Tag 提取用的 LLM Provider ID
-
-**可选**：
-- `embedding_dimension`：向量维度（默认 1024）
-- WebUI 设置（端口、密码等）
-- 查询参数（Top-K、相似度阈值、注入格式等）
+| 配置项 | 说明 | 示例 |
+|--------|------|------|
+| `embedding_provider_id` | Embedding 模型 Provider ID（必填） | `siliconflow/Qwen3-Embedding-0.6B` |
+| `tag_llm_provider_id` | Tag 提取用的 LLM Provider ID（必填） | `xiaomi/mimo-v2.5-pro` |
+| `embedding_dimension` | 向量维度（需与模型匹配） | `1024` |
 
 ### AstrBot 版本要求
 
@@ -84,6 +83,71 @@
 | 主面板 | `/` | 记忆浏览、查询测试、数据导入、配置 |
 | 神经云图 | `/explore` | Tag 关系可视化、社区探索 |
 | 维护工作台 | `/maintain` | Tag 审计、质量统计、批量操作 |
+
+---
+
+## 实测数据
+
+以下数据来自实际生产环境（5 个 QQ 群，持续运行 30+ 天）：
+
+### 规模指标
+
+| 指标 | 数值 |
+|------|------|
+| 总记忆数 | 30,936 |
+| 总 Tag 数 | 25,356 |
+| Tag 覆盖率 | 63.4%（19,620 条有 tag） |
+| 平均 Tag/条 | 2.03 |
+| 人物注册 | 561 人 |
+| 用户画像 | 877 条（跨群合并） |
+| 事实三元组 | 325 条 |
+| 共现图 | 25,031 节点 / 67,980 有向边 |
+| 活跃群数 | 91 |
+
+### Tag 类型分布
+
+| 类型 | 数量 | 说明 |
+|------|------|------|
+| topic | 6,513 | 话题/讨论主题 |
+| event | 5,165 | 事件/行为 |
+| entity | 3,417 | 具体事物（游戏/小说/品牌） |
+| fact | 3,165 | 事实性信息 |
+| keyword | 3,155 | 通用关键词 |
+| emotion | 1,951 | 情绪/态度 |
+| person | 1,476 | 人名/昵称 |
+| location | 289 | 地点 |
+| time | 225 | 时间标记 |
+
+### 性能指标
+
+| 指标 | 数值 |
+|------|------|
+| 向量检索（3 万级 memories） | < 1ms |
+| 脉冲传播（25,000+ nodes） | 0.1ms |
+| 残差金字塔（缓存命中） | 0.3ms |
+| EPA 分析 | 0.2ms |
+| 测地线重排 | 0.3ms |
+| **本地计算总计** | **< 2ms** |
+| Embedding API（网络） | ~250ms |
+| **端到端总延迟** | **~250ms** |
+
+### Tag 提取模型对比
+
+| 模型 | 平均 Tag/条 | 风格 | 适用场景 |
+|------|-------------|------|----------|
+| Claude Opus 4.7 (windsurf) | 2.26 | 覆盖面广，偶有冗余 | 需要高召回率 |
+| Claude Opus 4.6 (kiro-cc) | 1.49 | 精炼精准，无冗余 | 需要高精度 |
+| MiMo v2.5 Pro (xiaomi) | 2.0+ | 均衡，免费无限流 | 日常使用（推荐） |
+
+### 24 小时运行统计
+
+| 指标 | 数值 |
+|------|------|
+| 收到消息 | 2,879 条 |
+| Tag 提取成功 | 1,624 次 |
+| 工具调用（羽书主动搜索记忆） | 27 次 |
+| Lifecycle flush（好感度更新） | 4 次 |
+| 后台服务全部正常 | Dream/Consolidation/Lifecycle/TagJob |
 
 ---
 
@@ -113,8 +177,7 @@
 │  Phase 3: 脉冲传播 (Spike Routing)                        │
 │  ├── Tag 共现图 → 有向共现矩阵                            │
 │  ├── 脉冲激活 + 虫洞路由（跨域跳跃）                       │
-│  ├── 动量系统（历史查询加速）                              │
-│  └── 输出: activated_tags[], spike_scores                │
+│  └── 输出: activated_tags[], energy_field{}               │
 └─────────────────────────────────────────────────────────┘
     │
     ▼
@@ -141,9 +204,9 @@
 | 服务 | 周期 | 功能 |
 |------|------|------|
 | LifecycleService | 30 分钟 | 好感度 flush + 表达模式聚合 + 记忆衰减标记 |
-| ConsolidationService | 4 小时 | LLM 摘要整合 + 事实三元组提取 |
+| ConsolidationService | 4 小时 | LLM 摘要整合 + 事实三元组提取 + topics 回写 memory_tags |
 | DreamService | 6 小时 | 记忆巩固（三层时间线涟漪浪潮 + 共振桥梁发现） |
-| TagJob | 持续 | 新记忆自动 Tag 提取（batch 500，含 RAG 参考） |
+| TagJob | 持续 | 新记忆自动 Tag 提取（batch 50，含 RAG 参考） |
 | TagBackfill | 启动时 | 覆盖率 < 90% 时自动补打历史记忆 Tag |
 
 ---
@@ -153,8 +216,21 @@
 | 工具名 | 功能 |
 |--------|------|
 | `wave_memory_search` | 主记忆搜索（五阶段级联） |
-| `wave_memory_deep_search` | 多轮联想深度搜索 |
-| `wave_memory_person_search` | 按人物查询相关记忆 |
+| `wave_memory_deep_search` | FTS5 全文搜索 + 上下文窗口 |
+| `wave_memory_person_search` | 按人物查询相关记忆和画像 |
+
+---
+
+## 通用数据源导入
+
+Wave Memory 的导入系统不硬编码特定插件：
+
+1. **自动扫描** `plugin_data/` 下所有 `.db` 文件
+2. **已知适配器**：LivingMemory、Angel Memory、Self Learning 等免配置直接导入
+3. **未知插件**：启发式分析表结构，或调用 LLM 分析字段映射后导入
+4. **增量导入（rowid 游标）**：每次只处理上次游标之后的新记录
+5. **自动去重**：基于内容精确匹配
+6. **安全游标**：失败批次不推进游标，数据库清空时自动重置
 
 ---
 
@@ -172,31 +248,28 @@
 │   ├── geodesic_rerank.py     # 测地线重排
 │   ├── directed_cooccurrence.py # 有向共现矩阵 + 社区检测
 │   ├── intrinsic_residual.py  # 内禀残差计算器
-│   ├── vector_index.py        # 向量索引（FAISS/NumPy）
+│   ├── vector_index.py        # HNSW 向量索引
 │   ├── embedding.py           # Embedding 接口
 │   ├── database.py            # SQLite 数据层
-│   ├── query_engine.py        # 五阶段查询引擎
-│   └── context_segmenter.py   # 上下文分段
+│   └── query_engine.py        # 五阶段查询引擎
 ├── services/                  # 业务服务
 │   ├── lifecycle.py           # 生命周期（好感度/衰减/表达模式）
-│   ├── consolidation.py       # LLM 摘要整合 + 事实提取
+│   ├── consolidation.py       # LLM 摘要整合 + topics 回写
 │   ├── dream.py               # 做梦系统（记忆巩固）
-│   ├── persona_evolution.py   # 人格进化注入
-│   ├── tag_extractor.py       # Tag 提取（含 RAG）
+│   ├── persona_evolution.py   # 人格进化（跨群画像合并）
+│   ├── tag_extractor.py       # Tag 提取（含 RAG + 参考词表）
 │   ├── tag_auditor.py         # Tag 审计（LLM 驱动）
 │   ├── tag_job.py             # Tag 后台任务
 │   ├── message_writer.py      # 消息写入
-│   ├── migration.py           # 数据库迁移
 │   └── hot_config.py          # 热配置
 ├── tools/                     # AstrBot Agent 工具
-│   ├── memory_search.py       # 记忆搜索工具
-│   ├── deep_search.py         # 深度搜索工具
-│   └── person_search.py       # 人物搜索工具
+│   ├── memory_search.py       # 记忆搜索
+│   ├── deep_search.py         # 深度搜索（FTS5）
+│   └── person_search.py       # 人物搜索
 └── webui/                     # WebUI 管理面板
     ├── __init__.py            # FastAPI 后端
     ├── source_discovery.py    # 通用数据源发现 + 导入
-    ├── importer.py            # 旧版导入器（兼容）
-    └── static/                # 前端静态文件
+    └── static/                # 前端
         ├── index.html         # 主面板
         ├── explore.html       # 神经云图
         └── maintain.html      # 维护工作台
