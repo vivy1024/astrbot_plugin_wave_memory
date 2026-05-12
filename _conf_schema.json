@@ -15,7 +15,7 @@
   "tag_llm_provider_id": {
     "description": "Tag 提取 LLM",
     "type": "string",
-    "hint": "用于从消息中提取关键标签的 LLM，建议选择快速便宜的模型。留空则禁用 Tag 提取，仅用向量检索",
+    "hint": "用于从消息中提取关键标签的 LLM，建议选择快速便宜的模型（如 mimo-v2.5-pro）。留空则禁用 Tag 提取",
     "_special": "select_provider",
     "default": ""
   },
@@ -93,15 +93,95 @@
       },
       "enable_epa": {
         "description": "启用 EPA 分析",
-        "hint": "根据问题聚焦度动态调整检索策略（实验性）",
+        "hint": "嵌入投影分析，根据问题聚焦度动态调整检索策略",
         "type": "bool",
-        "default": false
+        "default": true
       },
       "enable_geodesic_rerank": {
         "description": "启用测地线重排",
-        "hint": "基于共现拓扑修正向量距离偏差（实验性）",
+        "hint": "基于共现拓扑修正向量距离偏差",
         "type": "bool",
-        "default": false
+        "default": true
+      }
+    }
+  },
+  "Cross_Group_Settings": {
+    "description": "跨群记忆",
+    "hint": "控制不同群之间的记忆共享行为",
+    "type": "object",
+    "items": {
+      "cross_group_enabled": {
+        "description": "启用跨群记忆共享",
+        "hint": "开启后所有群共享同一记忆池。关闭后每个群的记忆互相隔离",
+        "type": "bool",
+        "default": true
+      },
+      "cross_group_persona_merge": {
+        "description": "跨群人物画像合并",
+        "hint": "同一用户在不同群的好感度、表达模式、personality_tags 自动聚合",
+        "type": "bool",
+        "default": true
+      }
+    }
+  },
+  "Affinity_Settings": {
+    "description": "好感度引擎",
+    "hint": "多维好感度参数，影响 Bot 对不同用户的态度",
+    "type": "object",
+    "items": {
+      "familiarity_halflife_days": {
+        "description": "熟悉度半衰期（天）",
+        "hint": "互动频率积累的衰减速度。越短越容易变生疏",
+        "type": "int",
+        "default": 200
+      },
+      "trust_halflife_days": {
+        "description": "信任半衰期（天）",
+        "hint": "正面情感/深度对话积累的衰减速度",
+        "type": "int",
+        "default": 90
+      },
+      "fun_halflife_days": {
+        "description": "趣味半衰期（天）",
+        "hint": "玩梗整活积累的衰减速度",
+        "type": "int",
+        "default": 30
+      },
+      "depth_halflife_days": {
+        "description": "深度半衰期（天）",
+        "hint": "深入讨论积累的衰减速度",
+        "type": "int",
+        "default": 150
+      },
+      "hostility_halflife_days": {
+        "description": "敌意半衰期（天）",
+        "hint": "负面行为惩罚的衰减速度。越短越容易原谅",
+        "type": "int",
+        "default": 60
+      },
+      "flush_interval_minutes": {
+        "description": "好感度刷新间隔（分钟）",
+        "hint": "多久将内存中的好感度变化写入数据库",
+        "type": "int",
+        "default": 30
+      },
+      "intimate_threshold": {
+        "description": "亲密态度阈值",
+        "hint": "好感度 >= 此值时态度为 intimate（轻松随意、主动关心）",
+        "type": "int",
+        "default": 60
+      },
+      "friendly_threshold": {
+        "description": "友好态度阈值",
+        "hint": "好感度 >= 此值时态度为 friendly（友好正常、偶尔调侃）",
+        "type": "int",
+        "default": 30
+      },
+      "neutral_threshold": {
+        "description": "中立态度阈值",
+        "hint": "好感度 >= 此值时态度为 neutral（礼貌但保持距离）",
+        "type": "int",
+        "default": 10
       }
     }
   },
@@ -112,7 +192,7 @@
     "items": {
       "enable_affinity": {
         "description": "启用好感度系统",
-        "hint": "追踪每个用户的多维好感度（熟悉度/信任/趣味/深度/敌意），影响 Bot 态度",
+        "hint": "追踪每个用户的多维好感度，影响 Bot 态度",
         "type": "bool",
         "default": true
       },
@@ -124,7 +204,7 @@
       },
       "enable_mood": {
         "description": "启用 Bot 情绪",
-        "hint": "根据群消息密度和情感分布动态生成情绪状态，影响回复风格",
+        "hint": "根据群消息密度和情感分布动态生成情绪状态",
         "type": "bool",
         "default": true
       },
@@ -140,6 +220,18 @@
         "type": "int",
         "default": 30
       },
+      "positive_emotion_threshold": {
+        "description": "正面情绪触发阈值",
+        "hint": "正面情感 tag 占比超过此值触发 cheerful（0-1）",
+        "type": "string",
+        "default": "0.6"
+      },
+      "negative_emotion_threshold": {
+        "description": "负面情绪触发阈值",
+        "hint": "负面情感 tag 占比超过此值触发 concerned（0-1）",
+        "type": "string",
+        "default": "0.4"
+      },
       "enable_dream": {
         "description": "启用做梦系统",
         "hint": "后台定时记忆巩固：三层时间线涟漪浪潮 + 共振桥梁发现",
@@ -152,9 +244,31 @@
         "type": "string",
         "default": "6.0"
       },
+      "dream_recent_seeds": {
+        "description": "近期种子数",
+        "hint": "做梦时近期涟漪阶段抽取的种子记忆数量",
+        "type": "int",
+        "default": 3
+      },
+      "dream_recent_k": {
+        "description": "近期联想数",
+        "hint": "每个种子联想的相关记忆数量",
+        "type": "int",
+        "default": 5
+      },
+      "dream_mid_seeds": {
+        "description": "中期种子数",
+        "type": "int",
+        "default": 2
+      },
+      "dream_mid_k": {
+        "description": "中期联想数",
+        "type": "int",
+        "default": 3
+      },
       "enable_consolidation": {
         "description": "启用 LLM 摘要整合",
-        "hint": "定时将碎片消息整合为结构化知识（summary + facts + relations）",
+        "hint": "定时将碎片消息整合为结构化知识（summary + facts + relations + topics 回写）",
         "type": "bool",
         "default": true
       },
@@ -163,6 +277,12 @@
         "hint": "每隔多少小时执行一次 LLM 摘要整合",
         "type": "string",
         "default": "4.0"
+      },
+      "consolidation_topic_backfill": {
+        "description": "整合话题回写",
+        "hint": "Consolidation 提取的段落级话题自动写回 memory_tags",
+        "type": "bool",
+        "default": true
       }
     }
   },
@@ -205,31 +325,44 @@
   },
   "Tag_Settings": {
     "description": "Tag 提取参数",
+    "hint": "控制 Tag 提取行为和质量",
     "type": "object",
     "items": {
-      "max_tags_per_message": {
-        "description": "每条消息最大 Tag 数",
-        "hint": "LLM 每次提取的最大标签数量",
-        "type": "int",
-        "default": 10
-      },
       "tag_extraction_enabled": {
         "description": "启用 LLM Tag 提取",
         "hint": "关闭后仅使用向量相似度检索，不提取 Tag，不构建共现图",
         "type": "bool",
         "default": true
       },
+      "max_tags_per_message": {
+        "description": "每条消息最大 Tag 数",
+        "hint": "LLM 每次提取的最大标签数量",
+        "type": "int",
+        "default": 10
+      },
       "tag_batch_size": {
         "description": "Tag 提取批次大小",
-        "hint": "每批提取 Tag 的消息数量，影响 LLM 调用频率",
+        "hint": "每批提取 Tag 的消息数量（实时模式）",
         "type": "int",
         "default": 5
       },
       "tag_backfill_batch_size": {
         "description": "Tag 回填批次大小",
-        "hint": "后台 Tag 回填任务每批处理的记忆数量",
+        "hint": "后台 Tag 回填任务每批处理的记忆数量。过大可能导致 LLM 截断",
         "type": "int",
-        "default": 500
+        "default": 50
+      },
+      "tag_blacklist": {
+        "description": "Tag 黑名单",
+        "hint": "逗号分隔的词，这些词不会被提取为 Tag",
+        "type": "string",
+        "default": ""
+      },
+      "consolidation_skip_topics": {
+        "description": "话题回写过滤词",
+        "hint": "逗号分隔，这些话题不会被回写到 memory_tags",
+        "type": "string",
+        "default": "日常闲聊,日常灌水,闲聊,灌水,群聊,聊天,日常"
       }
     }
   },
