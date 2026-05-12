@@ -412,9 +412,14 @@ class ConsolidationService:
         if not msg_ids or not topics:
             return
 
+        # 过滤掉过于泛化的 topic
+        skip_topics = {"日常闲聊", "日常灌水", "闲聊", "灌水", "群聊", "聊天", "日常"}
+
         topic_tag_ids = []
         for topic in topics:
             if not topic or len(topic.strip()) < 2:
+                continue
+            if topic.strip() in skip_topics:
                 continue
             tag_id = self._ensure_tag(topic.strip(), "topic")
             if tag_id:
