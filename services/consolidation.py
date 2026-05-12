@@ -57,12 +57,16 @@ class ConsolidationService:
         provider_id: str = "",
         interval_hours: float = 4.0,
         batch_size: int = 50,
+        topic_backfill: bool = True,
+        skip_topics: list = None,
     ):
         self.db = db
         self.context = context
         self.provider_id = provider_id
         self.interval = interval_hours * 3600
         self.batch_size = batch_size
+        self.topic_backfill = topic_backfill
+        self.skip_topics = set(skip_topics or ["日常闲聊", "日常灌水", "闲聊", "灌水", "群聊", "聊天", "日常"])
         self._task: Optional[asyncio.Task] = None
         self._running = False
         self._last_consolidated_ts: float = 0
@@ -213,7 +217,8 @@ class ConsolidationService:
         self._write_summary(msg_ids, summary)
 
         # 回写 topics 到 memory_tags（让每条消息获得段落级话题标签）
-        self._backfill_topic_tags(msg_ids, topics)
+        if self.topic_backfill:
+            self._backfill_topic_tags(msg_ids, topics)
 
         return {"messages": len(msg_ids), "relations": relations_written, "facts": facts_written}
 
@@ -412,14 +417,11 @@ class ConsolidationService:
         if not msg_ids or not topics:
             return
 
-        # 过滤掉过于泛化的 topic
-        skip_topics = {"日常闲聊", "日常灌水", "闲聊", "灌水", "群聊", "聊天", "日常"}
-
         topic_tag_ids = []
         for topic in topics:
             if not topic or len(topic.strip()) < 2:
                 continue
-            if topic.strip() in skip_topics:
+            if topic.strip() in self.skip_topics:
                 continue
             tag_id = self._ensure_tag(topic.strip(), "topic")
             if tag_id:

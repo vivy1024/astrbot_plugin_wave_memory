@@ -58,6 +58,8 @@ class WaveMemoryPlugin(Star):
         filter_cfg = self.config.get("Message_Filter", {})
         perf_cfg = self.config.get("Performance_Settings", {})
         lifecycle_cfg = self.config.get("Lifecycle_Settings", {})
+        cross_group_cfg = self.config.get("Cross_Group_Settings", {})
+        affinity_cfg = self.config.get("Affinity_Settings", {})
 
         self.embedding_provider_id = self.config.get("embedding_provider_id", "")
         self.dimension = int(self.config.get("embedding_dimension", 1024))
@@ -70,8 +72,8 @@ class WaveMemoryPlugin(Star):
         self.injection_format = query_cfg.get("injection_format", "[记忆] {sender}({time}): {content}")
         self.enable_spike = query_cfg.get("enable_spike_routing", True)
         self.enable_pyramid = query_cfg.get("enable_residual_pyramid", True)
-        self.enable_epa = query_cfg.get("enable_epa", False)
-        self.enable_geodesic = query_cfg.get("enable_geodesic_rerank", False)
+        self.enable_epa = query_cfg.get("enable_epa", True)
+        self.enable_geodesic = query_cfg.get("enable_geodesic_rerank", True)
         self.enable_shotgun = query_cfg.get("enable_shotgun", False)
         self.max_memories = int(storage_cfg.get("max_memories", 100000))
 
@@ -92,16 +94,31 @@ class WaveMemoryPlugin(Star):
         self.embedding_batch_size = int(perf_cfg.get("embedding_batch_size", 10))
         self.write_flush_interval = int(perf_cfg.get("write_flush_interval", 30))
 
+        # 跨群记忆配置
+        self.cross_group_enabled = cross_group_cfg.get("cross_group_enabled", True)
+        self.cross_group_persona_merge = cross_group_cfg.get("cross_group_persona_merge", True)
+
+        # 好感度引擎配置
+        self.affinity_cfg = affinity_cfg
+
         # 生命周期配置
         self.enable_affinity = lifecycle_cfg.get("enable_affinity", True)
         self.enable_persona = lifecycle_cfg.get("enable_persona_evolution", True)
         self.enable_mood = lifecycle_cfg.get("enable_mood", True)
         self.mood_duration_hours = float(lifecycle_cfg.get("mood_duration_hours", "2.0"))
         self.mood_msg_threshold = int(lifecycle_cfg.get("mood_msg_threshold", 30))
+        self.positive_emotion_threshold = float(lifecycle_cfg.get("positive_emotion_threshold", "0.6"))
+        self.negative_emotion_threshold = float(lifecycle_cfg.get("negative_emotion_threshold", "0.4"))
         self.enable_dream = lifecycle_cfg.get("enable_dream", True)
         self.dream_interval_hours = float(lifecycle_cfg.get("dream_interval_hours", "6.0"))
+        self.dream_recent_seeds = int(lifecycle_cfg.get("dream_recent_seeds", 3))
+        self.dream_recent_k = int(lifecycle_cfg.get("dream_recent_k", 5))
+        self.dream_mid_seeds = int(lifecycle_cfg.get("dream_mid_seeds", 2))
+        self.dream_mid_k = int(lifecycle_cfg.get("dream_mid_k", 3))
         self.enable_consolidation = lifecycle_cfg.get("enable_consolidation", True)
         self.consolidation_interval_hours = float(lifecycle_cfg.get("consolidation_interval_hours", "4.0"))
+        self.consolidation_topic_backfill = lifecycle_cfg.get("consolidation_topic_backfill", True)
+        self.consolidation_skip_topics = [t.strip() for t in tag_cfg.get("consolidation_skip_topics", "日常闲聊,日常灌水,闲聊,灌水,群聊,聊天,日常").split(",") if t.strip()]
 
         # 初始化数据目录
         data_path = get_astrbot_data_path() or os.path.dirname(__file__)
@@ -176,7 +193,7 @@ class WaveMemoryPlugin(Star):
             db=self.db,
             memory_index=self.memory_index,
             embedding_service=self.embedding_service,
-            config=query_cfg,
+            config={**query_cfg, "cross_group_enabled": self.cross_group_enabled},
             tag_index=self.tag_index,
             cooccurrence=self.cooccurrence,
             spike_router=self.spike_router,
@@ -302,13 +319,19 @@ class WaveMemoryPlugin(Star):
                 context=self.context,
                 provider_id=self.tag_llm_provider_id,
                 interval_hours=self.consolidation_interval_hours,
+                topic_backfill=self.consolidation_topic_backfill,
+                skip_topics=self.consolidation_skip_topics,
             )
             self.consolidation.start()
         else:
             self.consolidation = None
 
         # 人格进化引擎
-        self.persona_evolution = PersonaEvolution(db=self.db) if self.enable_persona else None
+        self.persona_evolution = PersonaEvolution(
+            db=self.db,
+            cross_group_merge=self.cross_group_persona_merge,
+            affinity_cfg=self.affinity_cfg,
+        ) if self.enable_persona else None
 
         # 启动做梦系统（后台记忆巩固与联想发现）
         if self.enable_dream:

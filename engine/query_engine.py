@@ -92,7 +92,10 @@ class QueryEngine:
         distances = {r[0]: r[1] for r in results}
         memories = self.db.get_memories_by_ids(memory_ids)
 
-        # 跨群记忆：不再按 group_id 过滤，全局共享
+        # 跨群记忆：根据配置决定是否过滤
+        cross_group_enabled = self.config.get("cross_group_enabled", True)
+        if not cross_group_enabled and group_id:
+            memories = [m for m in memories if m.get("group_id", "") == group_id]
         # 标注来源群以便注入时区分
         for mem in memories:
             mem["_is_cross_group"] = (mem.get("group_id", "") != group_id) if group_id else False

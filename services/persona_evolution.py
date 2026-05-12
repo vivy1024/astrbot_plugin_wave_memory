@@ -49,8 +49,10 @@ DIMENSION_HINTS = {
 class PersonaEvolution:
     """人格进化引擎：根据用户好感度生成态度注入文本。"""
 
-    def __init__(self, db: WaveMemoryDB):
+    def __init__(self, db: WaveMemoryDB, cross_group_merge: bool = True, affinity_cfg: dict = None):
         self.db = db
+        self.cross_group_merge = cross_group_merge
+        self.affinity_cfg = affinity_cfg or {}
 
     def get_persona_injection(self, sender_id: str, group_id: str) -> str:
         """为指定用户生成人格态度注入文本。
@@ -61,11 +63,19 @@ class PersonaEvolution:
         if not sender_id:
             return ""
 
-        # 读取该用户在所有群的 profile
-        rows = self.db.conn.execute(
-            "SELECT group_id, nickname, affection, interaction_count, personality_tags, metadata FROM user_profiles WHERE user_id = ?",
-            (sender_id,),
-        ).fetchall()
+        # 读取 profile
+        if self.cross_group_merge:
+            # 跨群合并：读取所有群的 profile
+            rows = self.db.conn.execute(
+                "SELECT group_id, nickname, affection, interaction_count, personality_tags, metadata FROM user_profiles WHERE user_id = ?",
+                (sender_id,),
+            ).fetchall()
+        else:
+            # 仅当前群
+            rows = self.db.conn.execute(
+                "SELECT group_id, nickname, affection, interaction_count, personality_tags, metadata FROM user_profiles WHERE user_id = ? AND group_id = ?",
+                (sender_id, group_id),
+            ).fetchall()
 
         if not rows:
             return ""
@@ -208,11 +218,15 @@ class PersonaEvolution:
 
     def _affection_to_attitude(self, affection: int) -> str:
         """好感度 → 态度等级。"""
-        if affection >= 60:
+        intimate_th = int(self.affinity_cfg.get("intimate_threshold", 60))
+        friendly_th = int(self.affinity_cfg.get("friendly_threshold", 30))
+        neutral_th = int(self.affinity_cfg.get("neutral_threshold", 10))
+
+        if affection >= intimate_th:
             return "intimate"
-        elif affection >= 30:
+        elif affection >= friendly_th:
             return "friendly"
-        elif affection >= 10:
+        elif affection >= neutral_th:
             return "neutral"
         elif affection >= -10:
             return "cold"
