@@ -212,6 +212,9 @@ class ConsolidationService:
         # 写入 summary
         self._write_summary(msg_ids, summary)
 
+        # 回写 topics 到 memory_tags（让每条消息获得段落级话题标签）
+        self._backfill_topic_tags(msg_ids, topics)
+
         return {"messages": len(msg_ids), "relations": relations_written, "facts": facts_written}
 
     def _parse_response(self, text: str) -> Optional[dict]:
@@ -402,4 +405,30 @@ class ConsolidationService:
             f"UPDATE memories SET summary = ? WHERE id IN ({placeholders})",
             [summary] + msg_ids,
         )
+        self.db.conn.commit()
+
+    def _backfill_topic_tags(self, msg_ids: list[int], topics: list[str]):
+        """将 consolidation 提取的 topics 回写到 memory_tags，让每条消息获得段落级话题标签。"""
+        if not msg_ids or not topics:
+            return
+
+        topic_tag_ids = []
+        for topic in topics:
+            if not topic or len(topic.strip()) < 2:
+                continue
+            tag_id = self._ensure_tag(topic.strip(), "topic")
+            if tag_id:
+                topic_tag_ids.append(tag_id)
+
+        if not topic_tag_ids:
+            return
+
+        # 为每条消息关联这些 topic tag（INSERT OR IGNORE 避免重复）
+        for mem_id in msg_ids:
+            for pos, tag_id in enumerate(topic_tag_ids, 1):
+                self.db.conn.execute(
+                    "INSERT OR IGNORE INTO memory_tags (memory_id, tag_id, position, relevance) VALUES (?, ?, ?, ?)",
+                    (mem_id, tag_id, 100 + pos, 0.6),  # position 100+ 表示来自 consolidation，relevance 0.6 低于实时提取
+                )
+
         self.db.conn.commit()
