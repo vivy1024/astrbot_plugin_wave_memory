@@ -24,7 +24,7 @@ class TagBackfillJob:
         self.extractor = tag_extractor
         self.embedding = embedding_service
         self.tag_index = tag_index
-        self.batch_size = int(config.get("tag_backfill_batch_size", 500))
+        self.batch_size = int(config.get("tag_backfill_batch_size", 50))
         self.max_retries = 3
         self.sleep_between_batches = float(config.get("tag_backfill_sleep", 2.0))
         self._running = False
@@ -121,6 +121,11 @@ class TagBackfillJob:
             success_count = 0
             fail_count = 0
 
+            # 统计本批有多少条 LLM 返回了 tag，用于判断 LLM 是否正常工作
+            has_tag_count = sum(1 for r in results if r)
+            # 只要有至少 1 条消息有 tag，说明 LLM 正常返回了结果
+            llm_working = has_tag_count >= 1
+
             for i, (mem_id, content, sender_name) in enumerate(batch):
                 tags = results[i] if i < len(results) else []
 
@@ -129,10 +134,16 @@ class TagBackfillJob:
                     await self._save_tags(mem_id, tags)
                     self._mark_status(mem_id, "done")
                     success_count += 1
-                else:
-                    # 空结果也算完成（消息确实无实质内容）
-                    self._mark_status(mem_id, "done")
+                elif llm_working:
+                    # LLM 正常工作但判断该消息无需 tag，标记 skipped
+                    self._mark_status(mem_id, "skipped")
                     success_count += 1
+                else:
+                    # LLM 可能截断或异常，重试
+                    if self._increment_attempts(mem_id):
+                        fail_count += 1
+                    else:
+                        success_count += 1
 
             return success_count, fail_count
 
