@@ -339,6 +339,10 @@ class WaveMemoryPlugin(Star):
                 db=self.db,
                 memory_index=self.memory_index,
                 dream_interval_hours=self.dream_interval_hours,
+                recent_seeds=self.dream_recent_seeds,
+                recent_k=self.dream_recent_k,
+                mid_seeds=self.dream_mid_seeds,
+                mid_k=self.dream_mid_k,
             )
             self.dream_service.start()
         else:

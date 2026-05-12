@@ -29,10 +29,18 @@ class DreamService:
         db: WaveMemoryDB,
         memory_index: VectorIndex,
         dream_interval_hours: float = 6.0,
+        recent_seeds: int = 3,
+        recent_k: int = 5,
+        mid_seeds: int = 2,
+        mid_k: int = 3,
     ):
         self.db = db
         self.memory_index = memory_index
         self.dream_interval = dream_interval_hours * 3600
+        self.recent_seeds = recent_seeds
+        self.recent_k = recent_k
+        self.mid_seeds = mid_seeds
+        self.mid_k = mid_k
         self._task: Optional[asyncio.Task] = None
         self._running = False
 
@@ -64,19 +72,19 @@ class DreamService:
         day = 86400
 
         # Phase 1: 近期涟漪 (0-7天)
-        recent_seeds = self._sample_memories(now - 7 * day, now, count=3)
+        recent_seeds = self._sample_memories(now - 7 * day, now, count=self.recent_seeds)
         recent_associations = []
         for seed in recent_seeds:
             if seed["vector"] is not None:
-                results = self.memory_index.search(seed["vector"], k=5)
+                results = self.memory_index.search(seed["vector"], k=self.recent_k)
                 recent_associations.extend([r[0] for r in results if r[0] != seed["id"]])
 
         # Phase 2: 中期回音 (7-30天)
-        mid_seeds = self._sample_memories(now - 30 * day, now - 7 * day, count=2)
+        mid_seeds = self._sample_memories(now - 30 * day, now - 7 * day, count=self.mid_seeds)
         mid_associations = []
         for seed in mid_seeds:
             if seed["vector"] is not None:
-                results = self.memory_index.search(seed["vector"], k=3)
+                results = self.memory_index.search(seed["vector"], k=self.mid_k)
                 mid_associations.extend([r[0] for r in results if r[0] != seed["id"]])
 
         # Phase 3: 深渊浪潮 (>30天)
