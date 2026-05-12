@@ -682,9 +682,37 @@
                 </div>
             </div>
         </div>
-    </div>
 
-</main>
+        <!-- 热调参（运行时生效，无需重启） -->
+        <div class="mt-6">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-medium">⚡ 热调参（实时生效）</h3>
+                <div class="flex gap-2">
+                    <button @click="loadHotConfig()" class="btn btn-muted text-xs">🔄 刷新</button>
+                    <button @click="saveHotConfig()" class="btn btn-ghost text-xs">💾 应用</button>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" x-show="hotParams.length > 0">
+                <template x-for="p in hotParams" :key="p.key">
+                    <div class="card p-3">
+                        <div class="flex items-center justify-between mb-1">
+                            <span class="text-xs font-medium" x-text="p.description"></span>
+                            <span class="text-xs" style="color:var(--muted-fg)" x-text="p.current?.toFixed?.(3) ?? p.current"></span>
+                        </div>
+                        <input type="range" :min="p.min" :max="p.max" :step="p.type==='int'?1:0.01"
+                            x-model.number="p.current" class="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+                            style="accent-color:var(--primary)">
+                        <div class="flex justify-between text-xs mt-1" style="color:var(--muted-fg)">
+                            <span x-text="p.min"></span>
+                            <span x-text="p.key" class="opacity-50"></span>
+                            <span x-text="p.max"></span>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            <div x-show="hotParams.length === 0" class="text-xs text-center py-4" style="color:var(--muted-fg)">加载中...</div>
+        </div>
+    </div>
 
 <script>
 function dashboard() {
@@ -745,6 +773,8 @@ function dashboard() {
         configSaving: false,
         configMsg: '',
         configMsgOk: true,
+        // 热调参
+        hotParams: [],
 
         async init() {
             // 读取主题偏好
@@ -755,6 +785,7 @@ function dashboard() {
             this.loadSenders();
             await this.loadProviders();
             await this.loadConfig();
+            await this.loadHotConfig();
         },
 
         toggleTheme() {
@@ -809,6 +840,40 @@ function dashboard() {
                 this.configMsgOk = false;
             }
             this.configSaving = false;
+            setTimeout(() => this.configMsg = '', 5000);
+        },
+
+        async loadHotConfig() {
+            try {
+                const r = await fetch('/api/config/hot');
+                const d = await r.json();
+                this.hotParams = (d.params || []).map(p => ({...p, current: p.current ?? p.default}));
+            } catch(e) { console.error('loadHotConfig:', e); }
+        },
+
+        async saveHotConfig() {
+            const updates = {};
+            for (const p of this.hotParams) {
+                updates[p.key] = p.current;
+            }
+            try {
+                const r = await fetch('/api/config/hot', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(updates),
+                });
+                const d = await r.json();
+                if (d.ok) {
+                    this.configMsg = '✓ 热调参已应用';
+                    this.configMsgOk = true;
+                } else {
+                    this.configMsg = '✗ ' + (d.errors || []).join('; ');
+                    this.configMsgOk = false;
+                }
+            } catch(e) {
+                this.configMsg = '✗ ' + e.message;
+                this.configMsgOk = false;
+            }
             setTimeout(() => this.configMsg = '', 5000);
         },
 
