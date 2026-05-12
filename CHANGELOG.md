@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.5.0 (2025-07-13)
+
+### 新功能
+
+- **配置完善**：所有硬编码参数暴露到 AstrBot 插件配置界面
+  - 新增 Cross_Group_Settings（跨群记忆开关 + 画像合并开关）
+  - 新增 Affinity_Settings（五维度半衰期 + 态度阈值 + flush 间隔）
+  - Lifecycle 新增情绪阈值、做梦参数、consolidation 话题回写开关
+  - Tag_Settings 新增 tag_blacklist、consolidation_skip_topics
+- **WebUI 热调参面板**：配置 Tab 新增滑块区域，9 个参数实时调节无需重启
+- **README 完整配置文档**：50+ 配置项完整说明表 + 热调参文档
+
+### 改进
+
+- EPA 和测地线重排默认改为启用
+- DreamService 种子数/联想数参数化
+- PersonaEvolution 态度阈值可配置
+- ConsolidationService topic_backfill 开关 + skip_topics 可配置
+- QueryEngine 跨群过滤受配置控制
+
 ## v0.4.3 (2025-07-13)
 
 ### 新功能
