@@ -84,6 +84,74 @@
 | 神经云图 | `/explore` | Tag 关系可视化、社区探索 |
 | 维护工作台 | `/maintain` | Tag 审计、质量统计、批量操作 |
 
+### 完整配置项
+
+所有配置均可在 AstrBot 插件配置页面调整：
+
+| 分组 | 配置项 | 默认值 | 说明 |
+|------|--------|--------|------|
+| **基础** | embedding_provider_id | - | Embedding 模型 ID（必填） |
+| | tag_llm_provider_id | - | Tag 提取 LLM ID（推荐 mimo-v2.5-pro） |
+| | embedding_dimension | 1024 | 向量维度 |
+| **记忆召回** | enable_auto_inject | true | 自动注入记忆到 prompt |
+| | inject_top_k | 5 | 注入记忆条数 |
+| | min_similarity | 0.35 | 最低相似度阈值 |
+| | enable_spike_routing | true | 脉冲传播（联想能力） |
+| | enable_residual_pyramid | true | 残差金字塔（复杂问题） |
+| | enable_epa | true | EPA 嵌入投影分析 |
+| | enable_geodesic_rerank | true | 测地线重排 |
+| **跨群记忆** | cross_group_enabled | true | 所有群共享记忆池 |
+| | cross_group_persona_merge | true | 跨群人物画像合并 |
+| **好感度引擎** | familiarity_halflife_days | 200 | 熟悉度半衰期 |
+| | trust_halflife_days | 90 | 信任半衰期 |
+| | fun_halflife_days | 30 | 趣味半衰期 |
+| | depth_halflife_days | 150 | 深度半衰期 |
+| | hostility_halflife_days | 60 | 敌意半衰期 |
+| | intimate_threshold | 60 | 亲密态度阈值 |
+| | friendly_threshold | 30 | 友好态度阈值 |
+| | neutral_threshold | 10 | 中立态度阈值 |
+| **人格与情绪** | enable_affinity | true | 好感度系统 |
+| | enable_persona_evolution | true | 人格进化 |
+| | enable_mood | true | Bot 情绪 |
+| | positive_emotion_threshold | 0.6 | 正面情绪触发阈值 |
+| | negative_emotion_threshold | 0.4 | 负面情绪触发阈值 |
+| | enable_dream | true | 做梦系统 |
+| | dream_interval_hours | 6.0 | 做梦间隔 |
+| | enable_consolidation | true | LLM 摘要整合 |
+| | consolidation_interval_hours | 4.0 | 整合间隔 |
+| | consolidation_topic_backfill | true | 话题回写 memory_tags |
+| **Tag 提取** | tag_extraction_enabled | true | 启用 LLM Tag 提取 |
+| | max_tags_per_message | 10 | 每条消息最大 Tag 数 |
+| | tag_backfill_batch_size | 50 | 回填批次大小 |
+| | tag_blacklist | - | Tag 黑名单（逗号分隔） |
+| | consolidation_skip_topics | 日常闲聊,灌水... | 话题回写过滤词 |
+| **消息过滤** | min_message_length | 4 | 最小消息长度 |
+| | max_message_length | 2000 | 最大消息长度 |
+| | group_whitelist | - | 群组白名单 |
+| | group_blacklist | - | 群组黑名单 |
+| **存储** | max_memories | 100000 | 最大记忆条数 |
+| | memory_decay_enabled | true | 记忆衰减 |
+| | decay_rate | 0.995 | 每日衰减率 |
+| **性能** | embedding_batch_size | 10 | Embedding 批量大小 |
+| | write_flush_interval | 30 | 写入刷新间隔（秒） |
+| | cooccurrence_rebuild_interval | 3600 | 共现矩阵重建间隔（秒） |
+
+### 热调参（运行时生效）
+
+WebUI 配置 Tab 底部的"热调参"区域，滑块调节后立即生效，无需重启：
+
+| 参数 | 范围 | 默认 | 说明 |
+|------|------|------|------|
+| spike.firing_threshold | 0.01-0.5 | 0.10 | 脉冲发射阈值，越低越容易激活 |
+| spike.base_decay | 0.1-0.5 | 0.25 | 常规传播衰减 |
+| spike.wormhole_decay | 0.3-0.9 | 0.70 | 虫洞传播衰减 |
+| spike.tension_threshold | 0.3-2.0 | 1.0 | 虫洞张力阈值 |
+| spike.max_hops | 1-8 | 4 | 最大传播跳数 |
+| query.min_similarity | 0.1-0.8 | 0.35 | 最低相似度阈值 |
+| query.boost_alpha_base | 0.1-0.6 | 0.3 | 浪潮增强基础因子 |
+| geodesic.energy_weight | 0-1.0 | 0.3 | 测地线能量权重 |
+| residual.boost_range | 0-1.0 | 0.6 | 残差增益范围 |
+
 ---
 
 ## 实测数据
