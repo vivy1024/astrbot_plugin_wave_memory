@@ -21,6 +21,14 @@ _overview_cache: dict = {"version": None, "data": None, "ts": 0}
 _CACHE_TTL = 120  # 2 分钟
 
 
+def _table_exists(conn, table: str) -> bool:
+    """检查表是否存在。"""
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
+    return row is not None
+
+
 @kg_bp.route("/overview")
 @require_auth
 async def overview():
@@ -34,12 +42,21 @@ async def overview():
     - days: 时间范围(7/30/90/0=全部, default 0)
     """
     c = get_container()
-    max_nodes = int(request.args.get("max_nodes", 150))
+    try:
+        max_nodes = int(request.args.get("max_nodes", 150))
+    except (ValueError, TypeError):
+        max_nodes = 150
     max_nodes = max(30, min(500, max_nodes))
-    min_weight = float(request.args.get("min_weight", 0.5))
+    try:
+        min_weight = float(request.args.get("min_weight", 0.5))
+    except (ValueError, TypeError):
+        min_weight = 0.5
     relation_types_raw = request.args.get("relation_types", "")
     node_types_raw = request.args.get("node_types", "")
-    days = int(request.args.get("days", 0))
+    try:
+        days = int(request.args.get("days", 0))
+    except (ValueError, TypeError):
+        days = 0
 
     relation_filter = set(relation_types_raw.split(",")) - {""} if relation_types_raw else None
     node_filter = set(node_types_raw.split(",")) - {""} if node_types_raw else None
@@ -47,6 +64,8 @@ async def overview():
     # 版本缓存 key 包含参数
     now = time.time()
     cache_key = f"{max_nodes}:{min_weight}:{relation_types_raw}:{node_types_raw}:{days}"
+    if not _table_exists(c.db.conn, "facts") or not _table_exists(c.db.conn, "tag_relations"):
+        return jsonify({"nodes": [], "edges": []})
     try:
         version = c.db.conn.execute(
             "SELECT (SELECT COUNT(*) FROM facts) + (SELECT COUNT(*) FROM tag_relations)"
@@ -64,17 +83,6 @@ async def overview():
         cutoff = now - days * 86400
         time_cond = " AND created_at >= ?"
         time_param = [cutoff]
-
-    # 版本缓存
-    now = time.time()
-    try:
-        version = c.db.conn.execute(
-            "SELECT (SELECT COUNT(*) FROM facts) + (SELECT COUNT(*) FROM tag_relations)"
-        ).fetchone()[0]
-    except Exception:
-        version = 0
-    if _overview_cache["version"] == version and _overview_cache["data"] and (now - _overview_cache["ts"]) < _CACHE_TTL:
-        return jsonify(_overview_cache["data"])
 
     # Step 1: 从 facts 提取实体和边
     fact_rows = c.db.conn.execute(
@@ -213,7 +221,7 @@ async def overview():
             edges.append({"source": src_id, "target": tgt_id, "label": label, "weight": round(weight, 2)})
 
     data = {"nodes": nodes, "edges": edges}
-    _overview_cache.update({"version": version, "data": data, "ts": now})
+    _overview_cache.update({"version": full_version, "data": data, "ts": now})
     return jsonify(data)
 
 
@@ -258,7 +266,7 @@ async def entity_detail(entity_name: str):
     facts_all = []
     for n in search_names[:5]:
         rows = c.db.conn.execute(
-            "SELECT subject, predicate, object FROM facts WHERE subject = ? OR object = ? LIMIT ?",
+            "SELECT rowid, subject, predicate, object, confidence FROM facts WHERE subject = ? OR object = ? LIMIT ?",
             (n, n, limit),
         ).fetchall()
         facts_all.extend(rows)
@@ -266,7 +274,7 @@ async def entity_detail(entity_name: str):
     seen = set()
     facts = []
     for r in facts_all:
-        key = (r[0], r[1], r[2])
+        key = (r[1], r[2], r[3])
         if key not in seen:
             seen.add(key)
             facts.append(r)
@@ -303,7 +311,7 @@ async def entity_detail(entity_name: str):
     return jsonify({
         "name": name,
         "person": person,
-        "facts": [{"subject": r[0], "predicate": r[1], "object": r[2]} for r in facts[:limit]],
+        "facts": [{"id": r[0], "subject": r[1], "predicate": r[2], "object": r[3], "confidence": r[4]} for r in facts[:limit]],
         "relations": [{"source": r[0], "type": r[1], "target": r[2], "weight": r[3]} for r in relations[:limit]],
         "memories": [{"id": r[0], "content": r[1], "sender": r[2] or "", "ts": r[3]} for r in memories],
     })
@@ -328,6 +336,7 @@ async def add_fact():
 
 
 @kg_bp.route("/payment", methods=["POST"])
+@require_auth
 async def payment_webhook():
     """好感符 webhook：手机收款通知推送到这里，bot 确认并加好感。
 
@@ -382,13 +391,24 @@ async def payment_webhook():
 async def kg_stats():
     """图谱统计。"""
     c = get_container()
+    conn = c.db.conn
+    def _safe_count(table, cond=""):
+        if not _table_exists(conn, table):
+            return 0
+        try:
+            sql = f"SELECT COUNT(*) FROM {table}"
+            if cond:
+                sql += f" WHERE {cond}"
+            return conn.execute(sql).fetchone()[0]
+        except Exception:
+            return 0
     return jsonify({
-        "facts": c.db.conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0],
-        "tag_relations": c.db.conn.execute("SELECT COUNT(*) FROM tag_relations").fetchone()[0],
-        "beliefs": c.db.conn.execute("SELECT COUNT(*) FROM beliefs").fetchone()[0],
-        "concerns": c.db.conn.execute("SELECT COUNT(*) FROM concerns").fetchone()[0],
-        "jargon": c.db.conn.execute("SELECT COUNT(*) FROM jargon WHERE is_jargon=1").fetchone()[0],
-        "persons": c.db.conn.execute("SELECT COUNT(DISTINCT sender_id) FROM memories WHERE sender_id!=''").fetchone()[0],
+        "facts": _safe_count("facts"),
+        "tag_relations": _safe_count("tag_relations"),
+        "beliefs": _safe_count("beliefs"),
+        "concerns": _safe_count("concerns"),
+        "jargon": _safe_count("jargon", "is_jargon=1"),
+        "persons": conn.execute("SELECT COUNT(DISTINCT sender_id) FROM memories WHERE sender_id!=''").fetchone()[0] if _table_exists(conn, "memories") else 0,
     })
 
 
@@ -660,3 +680,55 @@ async def kg_path():
     nodes = [{"id": i+1, "name": n, "type": "entity", "degree": 1} for i, n in enumerate(path_names)]
 
     return jsonify({"path": path_names, "edges": path_edges, "nodes": nodes})
+
+
+@kg_bp.route("/facts/<int:fact_id>", methods=["DELETE"])
+@require_auth
+async def delete_fact(fact_id: int):
+    """删除事实。"""
+    c = get_container()
+    if not _table_exists(c.db.conn, "facts"):
+        return jsonify({"ok": False, "error": "facts table not found"})
+    c.db.conn.execute("DELETE FROM facts WHERE rowid = ?", (fact_id,))
+    c.db.conn.commit()
+    return jsonify({"ok": True, "deleted": fact_id})
+
+
+@kg_bp.route("/facts/<int:fact_id>", methods=["PUT"])
+@require_auth
+async def update_fact(fact_id: int):
+    """修改事实（subject/predicate/object/confidence）。"""
+    c = get_container()
+    if not _table_exists(c.db.conn, "facts"):
+        return jsonify({"ok": False, "error": "facts table not found"})
+    body = await request.get_json(silent=True) or {}
+    sets = []
+    params = []
+    for field in ("subject", "predicate", "object"):
+        if field in body and body[field] is not None:
+            sets.append(f"{field} = ?")
+            params.append(str(body[field]).strip())
+    if "confidence" in body and body["confidence"] is not None:
+        try:
+            sets.append("confidence = ?")
+            params.append(float(body["confidence"]))
+        except (ValueError, TypeError):
+            pass
+    if not sets:
+        return jsonify({"ok": False, "error": "No valid fields to update"}), 400
+    params.append(fact_id)
+    c.db.conn.execute(f"UPDATE facts SET {', '.join(sets)} WHERE rowid = ?", params)
+    c.db.conn.commit()
+    return jsonify({"ok": True, "fact_id": fact_id})
+
+
+@kg_bp.route("/tag-relations/<int:rel_id>", methods=["DELETE"])
+@require_auth
+async def delete_tag_relation(rel_id: int):
+    """删除 tag 关系。"""
+    c = get_container()
+    if not _table_exists(c.db.conn, "tag_relations"):
+        return jsonify({"ok": False, "error": "tag_relations table not found"})
+    c.db.conn.execute("DELETE FROM tag_relations WHERE id = ?", (rel_id,))
+    c.db.conn.commit()
+    return jsonify({"ok": True, "deleted": rel_id})

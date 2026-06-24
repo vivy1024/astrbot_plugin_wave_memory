@@ -20,6 +20,22 @@ _total_cache: dict = {"value": None, "ts": 0.0}
 _TOTAL_TTL = 30.0
 
 
+def _table_exists(conn, table: str) -> bool:
+    """检查表是否存在。"""
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
+    return row is not None
+
+
+def _safe_int(val, default):
+    """安全 int 转换。"""
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return default
+
+
 @memories_bp.route("/memories", methods=["GET"])
 @require_auth
 async def list_memories():
@@ -30,13 +46,13 @@ async def list_memories():
     page = request.args.get("page")
     size = request.args.get("size")
     if page is not None or size is not None:
-        size_i = max(1, min(200, int(size or 30)))
-        page_i = max(1, int(page or 1))
+        size_i = max(1, min(200, _safe_int(size or 30, 30)))
+        page_i = max(1, _safe_int(page or 1, 1))
         limit = size_i
         offset = (page_i - 1) * size_i
     else:
-        limit = max(1, min(200, int(request.args.get("limit", 50))))
-        offset = max(0, int(request.args.get("offset", 0)))
+        limit = max(1, min(200, _safe_int(request.args.get("limit", 50), 50)))
+        offset = max(0, _safe_int(request.args.get("offset", 0), 0))
 
     source = request.args.get("source")
     sender_id = request.args.get("sender_id")
@@ -46,12 +62,13 @@ async def list_memories():
     has_tags = request.args.get("has_tags")      # 'true'/'false'
     has_vector = request.args.get("has_vector")  # 'true'/'false'
     before_id = request.args.get("before_id")    # keyset 游标：取 id < before_id（深翻页 O(1)）
+    bot_id = request.args.get("bot_id")           # 按 bot 的 QQ 号过滤 sender_id
 
     where = ["1=1"]
     params = []
     real_filter = False  # before_id 是游标翻页，不算"过滤"（无过滤时仍可用 total 缓存）
     if before_id:
-        where.append("id < ?"); params.append(int(before_id))
+        where.append("id < ?"); params.append(_safe_int(before_id, 0))
         offset = 0  # keyset 模式忽略 offset
     if source:
         where.append("source = ?"); params.append(source); real_filter = True
@@ -61,6 +78,8 @@ async def list_memories():
         where.append("sender_name = ?"); params.append(sender); real_filter = True
     if group_id:
         where.append("group_id = ?"); params.append(group_id); real_filter = True
+    if bot_id:
+        where.append("sender_id = ?"); params.append(bot_id); real_filter = True
     if search:
         where.append("content LIKE ?"); params.append(f"%{search}%"); real_filter = True
     if has_vector == "true":
@@ -108,7 +127,7 @@ async def list_memories():
 async def list_senders():
     """发送者列表（按记忆数排序，供筛选下拉）。"""
     c = get_container()
-    limit = max(1, min(500, int(request.args.get("limit", 100))))
+    limit = max(1, min(500, _safe_int(request.args.get("limit", 100), 100)))
     rows = c.db.conn.execute(
         """SELECT sender_name, COUNT(*) AS cnt FROM memories
            WHERE sender_name IS NOT NULL AND sender_name != ''
@@ -176,12 +195,19 @@ async def batch_delete_memories():
     """批量删除记忆。"""
     c = get_container()
     body = await request.get_json(silent=True) or {}
-    ids = [int(x) for x in (body.get("ids") or [])]
+    ids = [_safe_int(x, 0) for x in (body.get("ids") or [])]
+    ids = [i for i in ids if i > 0]
     if not ids:
         return jsonify({"error": "ids required"}), 400
     placeholders = ",".join("?" * len(ids))
     c.db.conn.execute(f"DELETE FROM memory_tags WHERE memory_id IN ({placeholders})", ids)
     c.db.conn.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", ids)
+    # 同时清理 facts 表中 source_memory_id IN (...) 的引用
+    if _table_exists(c.db.conn, "facts"):
+        try:
+            c.db.conn.execute(f"DELETE FROM facts WHERE source_memory_id IN ({placeholders})", ids)
+        except Exception:
+            pass
     c.db.conn.commit()
     return jsonify({"ok": True, "deleted": len(ids)})
 
@@ -192,7 +218,8 @@ async def batch_re_embed():
     """批量重新向量化（SSE 流）。"""
     c = get_container()
     body = await request.get_json(silent=True) or {}
-    ids = [int(x) for x in (body.get("ids") or [])]
+    ids = [_safe_int(x, 0) for x in (body.get("ids") or [])]
+    ids = [i for i in ids if i > 0]
 
     async def stream():
         total = len(ids)
@@ -222,7 +249,8 @@ async def batch_extract_tags_for_ids():
     """对选中记忆批量提取 Tag（SSE 流）。"""
     c = get_container()
     body = await request.get_json(silent=True) or {}
-    ids = [int(x) for x in (body.get("ids") or [])]
+    ids = [_safe_int(x, 0) for x in (body.get("ids") or [])]
+    ids = [i for i in ids if i > 0]
 
     async def stream():
         total = len(ids)
@@ -295,7 +323,7 @@ async def query_test():
     c = get_container()
     body = await request.get_json(silent=True) or {}
     text = body.get("text", "")
-    top_k = int(body.get("top_k", 5))
+    top_k = _safe_int(body.get("top_k", 5), 5)
     enable_spike = body.get("enable_spike", True)
     enable_pyramid = body.get("enable_pyramid", True)
     enable_epa = body.get("enable_epa", False)
@@ -409,7 +437,7 @@ async def import_start():
     source = body.get("source", "")
     re_embed = body.get("re_embed", True)
     extract_tags = body.get("extract_tags", True)
-    batch_size = int(body.get("batch_size", 20))
+    batch_size = _safe_int(body.get("batch_size", 20), 20)
 
     from ..importer import WaveMemoryImporter
     importer = WaveMemoryImporter(
@@ -430,7 +458,7 @@ async def import_from_source():
     """从指定数据源导入（SSE 流）。"""
     c = get_container()
     source_id = request.args.get("source_id", "")
-    limit = int(request.args.get("limit", 5000))
+    limit = _safe_int(request.args.get("limit", 5000), 5000)
 
     if _import_lock.locked():
         async def locked_msg():
