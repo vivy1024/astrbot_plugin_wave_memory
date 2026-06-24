@@ -296,25 +296,59 @@ async def batch_archive():
 @beliefs_bp.route("/batch-approve", methods=["POST"])
 @require_auth
 async def batch_approve_beliefs():
-    """批量审核通过信念。"""
+    """批量审核通过信念（支持 all_matching 跨页全选）。"""
     c = get_container()
     if not _table_exists(c.db.conn, "beliefs"):
         return jsonify({"ok": False, "error": "beliefs table not found"}), 500
 
     body = await request.get_json() or {}
-    ids = body.get("ids", [])
-    if not isinstance(ids, list) or not ids:
-        return jsonify({"ok": False, "error": "ids list is required"}), 400
-
+    all_matching = body.get("all_matching", False)
+    
+    now = int(time.time())
     approved_count = 0
     skipped_ids = []
     
-    placeholders = ",".join("?" * len(ids))
-    rows = c.db.conn.execute(
-        f"SELECT id, sources FROM beliefs WHERE id IN ({placeholders})", ids
-    ).fetchall()
+    if all_matching:
+        # 跨页全选模式：读取前端发过来的过滤条件
+        status = body.get("status")
+        bot_id = body.get("bot_id")
+        belief_type = body.get("type")
+        search_q = body.get("search")
+        
+        where_parts = ["status IN ('pending','challenged','pending_legacy')"]
+        params = []
+        if status:
+            where_parts.append("status = ?")
+            params.append(status)
+        if bot_id:
+            where_parts.append("bot_id = ?")
+            params.append(bot_id)
+        if belief_type:
+            where_parts.append("type = ?")
+            params.append(belief_type)
+        if search_q:
+            where_parts.append("content LIKE ?")
+            params.append(f"%{search_q.strip()}%")
+            
+        reason_excl = ",".join("?" for _ in _EXCLUDED_REASONS)
+        where_parts.append(f"COALESCE(archived_reason, '') NOT IN ({reason_excl})")
+        params.extend(_EXCLUDED_REASONS)
+        
+        where_sql = " AND ".join(where_parts)
+        rows = c.db.conn.execute(
+            f"SELECT id, sources FROM beliefs WHERE {where_sql}", params
+        ).fetchall()
+    else:
+        # 普通勾选模式
+        ids = body.get("ids", [])
+        if not isinstance(ids, list) or not ids:
+            return jsonify({"ok": False, "error": "ids list or all_matching is required"}), 400
+            
+        placeholders = ",".join("?" * len(ids))
+        rows = c.db.conn.execute(
+            f"SELECT id, sources FROM beliefs WHERE id IN ({placeholders})", ids
+        ).fetchall()
 
-    now = int(time.time())
     for r in rows:
         bid = r[0]
         sources = json.loads(r[1] or "[]")
@@ -341,17 +375,48 @@ async def batch_approve_beliefs():
 @beliefs_bp.route("/batch-delete", methods=["POST"])
 @require_auth
 async def batch_delete_beliefs():
-    """批量删除信念。"""
+    """批量删除信念（支持 all_matching 跨页全选）。"""
     c = get_container()
     if not _table_exists(c.db.conn, "beliefs"):
         return jsonify({"ok": False, "error": "beliefs table not found"}), 500
 
     body = await request.get_json() or {}
-    ids = body.get("ids", [])
-    if not isinstance(ids, list) or not ids:
-        return jsonify({"ok": False, "error": "ids list is required"}), 400
-
-    placeholders = ",".join("?" * len(ids))
-    cur = c.db.conn.execute(f"DELETE FROM beliefs WHERE id IN ({placeholders})", ids)
+    all_matching = body.get("all_matching", False)
+    
+    if all_matching:
+        status = body.get("status")
+        bot_id = body.get("bot_id")
+        belief_type = body.get("type")
+        search_q = body.get("search")
+        
+        where_parts = ["1=1"]
+        params = []
+        if status:
+            where_parts.append("status = ?")
+            params.append(status)
+        if bot_id:
+            where_parts.append("bot_id = ?")
+            params.append(bot_id)
+        if belief_type:
+            where_parts.append("type = ?")
+            params.append(belief_type)
+        if search_q:
+            where_parts.append("content LIKE ?")
+            params.append(f"%{search_q.strip()}%")
+            
+        reason_excl = ",".join("?" for _ in _EXCLUDED_REASONS)
+        where_parts.append(f"COALESCE(archived_reason, '') NOT IN ({reason_excl})")
+        params.extend(_EXCLUDED_REASONS)
+        
+        where_sql = " AND ".join(where_parts)
+        cur = c.db.conn.execute(f"DELETE FROM beliefs WHERE {where_sql}", params)
+    else:
+        ids = body.get("ids", [])
+        if not isinstance(ids, list) or not ids:
+            return jsonify({"ok": False, "error": "ids list or all_matching is required"}), 400
+            
+        placeholders = ",".join("?" * len(ids))
+        cur = c.db.conn.execute(f"DELETE FROM beliefs WHERE id IN ({placeholders})", ids)
+        
     c.db.conn.commit()
     return jsonify({"ok": True, "deleted_count": cur.rowcount})

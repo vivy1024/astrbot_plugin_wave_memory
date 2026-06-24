@@ -651,12 +651,19 @@
         </div>
 
         <!-- 批量操作栏 -->
-        <div x-show="selectedBeliefIds.length > 0" class="flex items-center gap-3 mb-3 p-2.5 rounded-lg" style="background:rgba(99,102,241,0.1); border:1px solid var(--primary)">
-            <span class="text-xs font-medium" style="color:var(--primary)" x-text="`已选 ${selectedBeliefIds.length} 条`"></span>
-            <button @click="batchApproveBeliefs()" class="btn btn-primary btn-xs">✓ 批量审核通过</button>
-            <button @click="batchArchiveBeliefsSelected()" class="btn btn-outline btn-xs">📦 批量归档</button>
-            <button @click="batchDeleteBeliefs()" class="btn btn-outline btn-xs" style="color:var(--danger)">🗑 批量删除</button>
-            <button @click="selectedBeliefIds=[]" class="btn btn-muted text-xs ml-auto">取消选择</button>
+        <div x-show="selectedBeliefIds.length > 0" class="flex flex-col gap-2 mb-3 p-2.5 rounded-lg" style="background:rgba(99,102,241,0.1); border:1px solid var(--primary)">
+            <div class="flex items-center gap-3">
+                <span class="text-xs font-medium" style="color:var(--primary)" x-text="beliefAllMatching ? `已选择所有符合条件的 ${beliefTotal} 条信念` : `已选当页 ${selectedBeliefIds.length} 条信念`"></span>
+                <button @click="batchApproveBeliefs()" class="btn btn-primary btn-xs">✓ 批量审核通过</button>
+                <button @click="batchArchiveBeliefsSelected()" class="btn btn-outline btn-xs">📦 批量归档</button>
+                <button @click="batchDeleteBeliefs()" class="btn btn-outline btn-xs" style="color:var(--danger)">🗑 批量删除</button>
+                <button @click="clearBeliefSelection()" class="btn btn-muted text-xs ml-auto">取消选择</button>
+            </div>
+            <!-- 一键选择全部符合条件的提示 (SaaS 2.0 级交互) -->
+            <div x-show="selectedBeliefIds.length === beliefs.length && beliefTotal > beliefs.length" class="text-[11px] text-slate-400 pl-1 border-t border-white/5 pt-1.5 flex items-center gap-1">
+                <span x-show="!beliefAllMatching">已选择当前页的 <span class="font-mono text-white" x-text="beliefs.length"></span> 条记录。想要 <span class="text-primary font-semibold underline cursor-pointer hover:text-white" @click="beliefAllMatching = true">选择全部符合条件的 ${beliefTotal} 条记录</span> 吗？</span>
+                <span x-show="beliefAllMatching" class="text-emerald-400">✓ 已成功锁定全部符合条件的 <span class="font-mono font-bold" x-text="beliefTotal"></span> 条记录，接下来的批量动作将应用到全量数据！ <span class="text-slate-400 underline cursor-pointer ml-1 hover:text-white" @click="beliefAllMatching = false">撤销为仅当页</span></span>
+            </div>
         </div>
 
         <div x-show="beliefs.length === 0" class="empty-state">暂无信念记录</div>
@@ -796,12 +803,19 @@
             </div>
 
             <!-- 批量操作栏 -->
-            <div x-show="selectedJargonIds.length > 0" class="flex items-center gap-3 mb-3 p-2.5 rounded-lg" style="background:rgba(99,102,241,0.1); border:1px solid var(--primary)">
-                <span class="text-xs font-medium" style="color:var(--primary)" x-text="`已选 ${selectedJargonIds.length} 条`"></span>
-                <button @click="batchReviewJargon('approve')" class="btn btn-primary btn-xs">✓ 批量确认黑话</button>
-                <button @click="batchReviewJargon('reject')" class="btn btn-outline btn-xs" style="color:var(--danger)">✕ 批量否决</button>
-                <button @click="batchDeleteJargon()" class="btn btn-outline btn-xs" style="color:var(--danger)">🗑 批量删除</button>
-                <button @click="selectedJargonIds=[]" class="btn btn-muted text-xs ml-auto">取消选择</button>
+            <div x-show="selectedJargonIds.length > 0" class="flex flex-col gap-2 mb-3 p-2.5 rounded-lg" style="background:rgba(99,102,241,0.1); border:1px solid var(--primary)">
+                <div class="flex items-center gap-3">
+                    <span class="text-xs font-medium" style="color:var(--primary)" x-text="jargonAllMatching ? `已选择所有符合条件的 ${jargonTotal} 条黑话` : `已选当页 ${selectedJargonIds.length} 条黑话`"></span>
+                    <button @click="batchReviewJargon('approve')" class="btn btn-primary btn-xs">✓ 批量确认黑话</button>
+                    <button @click="batchReviewJargon('reject')" class="btn btn-outline btn-xs" style="color:var(--danger)">✕ 批量否决</button>
+                    <button @click="batchDeleteJargon()" class="btn btn-outline btn-xs" style="color:var(--danger)">🗑 批量删除</button>
+                    <button @click="clearJargonSelection()" class="btn btn-muted text-xs ml-auto">取消选择</button>
+                </div>
+                <!-- 一键选择全部符合条件的提示 -->
+                <div x-show="selectedJargonIds.length === jargonItems.length && jargonTotal > jargonItems.length" class="text-[11px] text-slate-400 pl-1 border-t border-white/5 pt-1.5 flex items-center gap-1">
+                    <span x-show="!jargonAllMatching">已选择当前页的 <span class="font-mono text-white" x-text="jargonItems.length"></span> 条记录。想要 <span class="text-primary font-semibold underline cursor-pointer hover:text-white" @click="jargonAllMatching = true">选择全部符合条件的 ${jargonTotal} 条记录</span> 吗？</span>
+                    <span x-show="jargonAllMatching" class="text-emerald-400">✓ 已成功锁定全部符合条件的 <span class="font-mono font-bold" x-text="jargonTotal"></span> 条记录，接下来的批量动作将应用到全量数据！ <span class="text-slate-400 underline cursor-pointer ml-1 hover:text-white" @click="jargonAllMatching = false">撤销为仅当页</span></span>
+                </div>
             </div>
 
             <div x-show="jargonItems.length === 0" class="empty-state">暂无黑话记录</div>
@@ -1334,6 +1348,7 @@ function dashboard() {
         memFilterVector: '',
         selectedIds: [],
         selectedBeliefIds: [],
+        beliefAllMatching: false,
         beliefPage: 1,
         beliefPageSize: 15,
         beliefSearch: '',
@@ -1342,6 +1357,7 @@ function dashboard() {
         beliefTotalPages: 1,
         
         selectedJargonIds: [],
+        jargonAllMatching: false,
         jargonPage: 1,
         jargonPageSize: 15,
         jargonSearch: '',
@@ -1673,20 +1689,28 @@ function dashboard() {
                 this.selectedBeliefIds = this.beliefs.map(b => b.id);
             } else {
                 this.selectedBeliefIds = [];
+                this.beliefAllMatching = false;
             }
+        },
+        clearBeliefSelection() {
+            this.selectedBeliefIds = [];
+            this.beliefAllMatching = false;
         },
         async searchBeliefs() {
             this.beliefPage = 1;
+            this.clearBeliefSelection();
             await this.loadBeliefs();
         },
         async beliefPrev() {
             if (this.beliefPage <= 1) return;
             this.beliefPage--;
+            this.clearBeliefSelection();
             await this.loadBeliefs();
         },
         async beliefNext() {
             if (!this.beliefHasMore) return;
             this.beliefPage++;
+            this.clearBeliefSelection();
             await this.loadBeliefs();
         },
         async approveBelief(id) {
@@ -1710,14 +1734,23 @@ function dashboard() {
             await this.loadBeliefs();
         },
         
-        // 批量信念操作 (Batch Belief Actions)
+        // 批量信念操作 (Batch Belief Actions 2.0)
         async batchApproveBeliefs() {
             if (!this.selectedBeliefIds.length) return;
+            const body = {
+                all_matching: this.beliefAllMatching,
+                ids: this.selectedBeliefIds
+            };
+            if (this.beliefAllMatching) {
+                body.status = this.beliefFilter;
+                body.type = this.beliefFilterType;
+                body.search = this.beliefSearch.trim();
+            }
             try {
                 const r = await fetch('/api/beliefs/batch-approve', {
                     method: 'POST',
                     headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({ ids: this.selectedBeliefIds })
+                    body: JSON.stringify(body)
                 });
                 const d = await r.json();
                 if (d.ok) {
@@ -1726,6 +1759,7 @@ function dashboard() {
                         msg += ` 有 ${d.skipped_count} 条信念因为缺乏证据而被安全机制熔断拦截。`;
                     }
                     alert(msg);
+                    this.clearBeliefSelection();
                     await this.loadBeliefs();
                 } else {
                     alert('批量审核失败: ' + (d.error || '未知错误'));
@@ -1734,26 +1768,43 @@ function dashboard() {
         },
         async batchArchiveBeliefsSelected() {
             if (!this.selectedBeliefIds.length) return;
+            if (this.beliefAllMatching) {
+                alert('跨页全选模式下暂不支持批量归档，建议使用“一键归档所有信念”或分勾选操作。');
+                return;
+            }
             if (!confirm(`确认要将选中的 ${this.selectedBeliefIds.length} 条信念进行批量归档吗？`)) return;
             try {
                 for (const bid of this.selectedBeliefIds) {
                     await fetch(`/api/beliefs/${bid}/archive`, { method: 'POST' });
                 }
+                this.clearBeliefSelection();
                 await this.loadBeliefs();
             } catch(e) { console.error(e); }
         },
         async batchDeleteBeliefs() {
             if (!this.selectedBeliefIds.length) return;
-            if (!confirm(`确定要批量物理删除选中的 ${this.selectedBeliefIds.length} 条信念吗？此操作不可撤销！`)) return;
+            const targetCount = this.beliefAllMatching ? this.beliefTotal : this.selectedBeliefIds.length;
+            if (!confirm(`确定要批量物理删除选中的 ${targetCount} 条信念吗？此操作不可撤销！`)) return;
+            
+            const body = {
+                all_matching: this.beliefAllMatching,
+                ids: this.selectedBeliefIds
+            };
+            if (this.beliefAllMatching) {
+                body.status = this.beliefFilter;
+                body.type = this.beliefFilterType;
+                body.search = this.beliefSearch.trim();
+            }
             try {
                 const r = await fetch('/api/beliefs/batch-delete', {
                     method: 'POST',
                     headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({ ids: this.selectedBeliefIds })
+                    body: JSON.stringify(body)
                 });
                 const d = await r.json();
                 if (d.ok) {
                     alert(`✓ 成功批量删除 ${d.deleted_count} 条信念。`);
+                    this.clearBeliefSelection();
                     await this.loadBeliefs();
                 } else {
                     alert('批量删除失败');
@@ -1832,16 +1883,19 @@ function dashboard() {
         },
         async searchJargon() {
             this.jargonPage = 1;
+            this.clearJargonSelection();
             await this.loadJargon();
         },
         async jargonPrev() {
             if (this.jargonPage <= 1) return;
             this.jargonPage--;
+            this.clearJargonSelection();
             await this.loadJargon();
         },
         async jargonNext() {
             if (!this.jargonHasMore) return;
             this.jargonPage++;
+            this.clearJargonSelection();
             await this.loadJargon();
         },
         async reviewJargon(id, action) {
@@ -1853,25 +1907,41 @@ function dashboard() {
             await this.loadJargon();
         },
         
-        // 批量黑话操作 (Batch Jargon Actions)
+        // 批量黑话操作 (Batch Jargon Actions 2.0)
         toggleSelectAllJargon(e) {
             if (e.target.checked) {
                 this.selectedJargonIds = this.jargonItems.map(j => j.id);
             } else {
                 this.selectedJargonIds = [];
+                this.jargonAllMatching = false;
             }
+        },
+        clearJargonSelection() {
+            this.selectedJargonIds = [];
+            this.jargonAllMatching = false;
         },
         async batchReviewJargon(action) {
             if (!this.selectedJargonIds.length) return;
+            const body = {
+                all_matching: this.jargonAllMatching,
+                ids: this.selectedJargonIds,
+                action: action
+            };
+            if (this.jargonAllMatching) {
+                body.group_id = this.jargonGroup.trim();
+                body.status = this.jargonFilter;
+                body.search = this.jargonSearch.trim();
+            }
             try {
                 const r = await fetch('/api/jargon/batch-review', {
                     method: 'POST',
                     headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({ ids: this.selectedJargonIds, action: action })
+                    body: JSON.stringify(body)
                 });
                 const d = await r.json();
                 if (d.ok) {
                     alert(`✓ 成功批量将 ${d.reviewed_count} 条词条置为 ${action==='approve'?'已确认':'已否决'}`);
+                    this.clearJargonSelection();
                     await this.loadJargon();
                 } else {
                     alert('批量流转失败');
@@ -1880,16 +1950,28 @@ function dashboard() {
         },
         async batchDeleteJargon() {
             if (!this.selectedJargonIds.length) return;
-            if (!confirm(`确定要批量物理删除选中的 ${this.selectedJargonIds.length} 条黑话词条吗？此操作不可逆！`)) return;
+            const targetCount = this.jargonAllMatching ? this.jargonTotal : this.selectedJargonIds.length;
+            if (!confirm(`确定要批量物理删除选中的 ${targetCount} 条黑话词条吗？此操作不可逆！`)) return;
+            
+            const body = {
+                all_matching: this.jargonAllMatching,
+                ids: this.selectedJargonIds
+            };
+            if (this.jargonAllMatching) {
+                body.group_id = this.jargonGroup.trim();
+                body.status = this.jargonFilter;
+                body.search = this.jargonSearch.trim();
+            }
             try {
                 const r = await fetch('/api/jargon/batch-delete', {
                     method: 'POST',
                     headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({ ids: this.selectedJargonIds })
+                    body: JSON.stringify(body)
                 });
                 const d = await r.json();
                 if (d.ok) {
                     alert(`✓ 成功批量删除 ${d.deleted_count} 条黑话。`);
+                    this.clearJargonSelection();
                     await this.loadJargon();
                 } else {
                     alert('批量删除失败');

@@ -203,53 +203,110 @@ async def toggle_global(jargon_id: int):
 @jargon_bp.route("/batch-review", methods=["POST"])
 @require_auth
 async def batch_review_jargon():
-    """批量审核确认/否决黑话词条。"""
+    """批量审核确认/否决黑话词条（支持 all_matching 跨页全选）。"""
     c = get_container()
     if not _table_exists(c.db.conn, "jargon"):
         return jsonify({"ok": False, "error": "jargon table not found"}), 500
 
     body = await request.get_json() or {}
-    ids = body.get("ids", [])
+    all_matching = body.get("all_matching", False)
     action = body.get("action", "approve")  # approve 或 reject
-    if not isinstance(ids, list) or not ids:
-        return jsonify({"ok": False, "error": "ids list is required"}), 400
-
     if action not in {"approve", "reject"}:
         return jsonify({"ok": False, "error": "invalid action"}), 400
 
     now = int(time.time())
-    placeholders = ",".join("?" * len(ids))
-    if action == "approve":
-        c.db.conn.execute(
-            f"UPDATE jargon SET is_jargon = 1, status = 'confirmed', updated_at = ? WHERE id IN ({placeholders})",
-            [now] + ids,
-        )
+    
+    if all_matching:
+        group_id = body.get("group_id")
+        status = body.get("status")
+        search_q = body.get("search")
+        
+        where_parts = ["1=1"]
+        params = []
+        if group_id:
+            where_parts.append("group_id = ?")
+            params.append(group_id)
+        if status:
+            where_parts.append("COALESCE(status, 'pending') = ?")
+            params.append(status)
+        if search_q:
+            where_parts.append("(word LIKE ? OR meaning LIKE ?)")
+            sq = f"%{search_q.strip()}%"
+            params.extend([sq, sq])
+            
+        where_sql = " AND ".join(where_parts)
+        if action == "approve":
+            cur = c.db.conn.execute(
+                f"UPDATE jargon SET is_jargon = 1, status = 'confirmed', updated_at = ? WHERE {where_sql}",
+                [now] + params,
+            )
+        else:
+            cur = c.db.conn.execute(
+                f"UPDATE jargon SET is_jargon = 0, status = 'rejected', reject_reason = 'webui_batch_rejected', updated_at = ? WHERE {where_sql}",
+                [now] + params,
+            )
+        reviewed_count = cur.rowcount
     else:
-        # reject 
-        c.db.conn.execute(
-            f"UPDATE jargon SET is_jargon = 0, status = 'rejected', reject_reason = 'webui_batch_rejected', updated_at = ? WHERE id IN ({placeholders})",
-            [now] + ids,
-        )
+        ids = body.get("ids", [])
+        if not isinstance(ids, list) or not ids:
+            return jsonify({"ok": False, "error": "ids list or all_matching is required"}), 400
+            
+        placeholders = ",".join("?" * len(ids))
+        if action == "approve":
+            c.db.conn.execute(
+                f"UPDATE jargon SET is_jargon = 1, status = 'confirmed', updated_at = ? WHERE id IN ({placeholders})",
+                [now] + ids,
+            )
+        else:
+            c.db.conn.execute(
+                f"UPDATE jargon SET is_jargon = 0, status = 'rejected', reject_reason = 'webui_batch_rejected', updated_at = ? WHERE id IN ({placeholders})",
+                [now] + ids,
+            )
+        reviewed_count = len(ids)
 
     c.db.conn.commit()
-    return jsonify({"ok": True, "reviewed_count": len(ids), "action": action})
+    return jsonify({"ok": True, "reviewed_count": reviewed_count, "action": action})
 
 
 @jargon_bp.route("/batch-delete", methods=["POST"])
 @require_auth
 async def batch_delete_jargon():
-    """批量删除黑话词条。"""
+    """批量删除黑话词条（支持 all_matching 跨页全选）。"""
     c = get_container()
     if not _table_exists(c.db.conn, "jargon"):
         return jsonify({"ok": False, "error": "jargon table not found"}), 500
 
     body = await request.get_json() or {}
-    ids = body.get("ids", [])
-    if not isinstance(ids, list) or not ids:
-        return jsonify({"ok": False, "error": "ids list is required"}), 400
-
-    placeholders = ",".join("?" * len(ids))
-    cur = c.db.conn.execute(f"DELETE FROM jargon WHERE id IN ({placeholders})", ids)
+    all_matching = body.get("all_matching", False)
+    
+    if all_matching:
+        group_id = body.get("group_id")
+        status = body.get("status")
+        search_q = body.get("search")
+        
+        where_parts = ["1=1"]
+        params = []
+        if group_id:
+            where_parts.append("group_id = ?")
+            params.append(group_id)
+        if status:
+            where_parts.append("COALESCE(status, 'pending') = ?")
+            params.append(status)
+        if search_q:
+            where_parts.append("(word LIKE ? OR meaning LIKE ?)")
+            sq = f"%{search_q.strip()}%"
+            params.extend([sq, sq])
+            
+        where_sql = " AND ".join(where_parts)
+        cur = c.db.conn.execute(f"DELETE FROM jargon WHERE {where_sql}", params)
+    else:
+        ids = body.get("ids", [])
+        if not isinstance(ids, list) or not ids:
+            return jsonify({"ok": False, "error": "ids list or all_matching is required"}), 400
+            
+        placeholders = ",".join("?" * len(ids))
+        cur = c.db.conn.execute(f"DELETE FROM jargon WHERE id IN ({placeholders})", ids)
+        
     c.db.conn.commit()
     return jsonify({"ok": True, "deleted_count": cur.rowcount})
 
