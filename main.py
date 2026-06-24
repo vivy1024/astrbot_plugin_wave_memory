@@ -712,6 +712,9 @@ class WaveMemoryPlugin(Star):
                     config=jargon_cfg,
                 )
                 logger.info("[WaveMemory] Jargon system initialized")
+                if getattr(self, "webui", None):
+                    from .webui.container import get_container
+                    get_container().jargon_service = self.jargon_service
             except Exception as e:
                 logger.warning(f"[WaveMemory] Jargon init failed: {e}")
                 _record_err("Jargon", e)
@@ -1739,10 +1742,154 @@ class WaveMemoryPlugin(Star):
         if self.group_blacklist and group_id in self.group_blacklist:
             return
 
-        # ─── /teach 命令（管理员灌入知识 → facts + 高权重记忆）───
-        sender_name = ""
+        # ─── 4s 消息合并防抖机制 (Debounce Coalescing) ───
+        from astrbot.core.message.components import Plain
+        
+        # 提取图片组件
+        images = []
+        if hasattr(event, "message_obj") and event.message_obj and event.message_obj.message:
+            for comp in event.message_obj.message:
+                if comp.__class__.__name__ == "Image":
+                    images.append(comp)
+
+        sender_name_val = ""
         if event.message_obj and event.message_obj.sender:
-            sender_name = event.message_obj.sender.nickname or ""
+            sender_name_val = event.message_obj.sender.nickname or ""
+
+        debounce_key = f"{group_id}:{sender_id}"
+        if not hasattr(self, "_semantic_message_buffers"):
+            self._semantic_message_buffers = {}
+
+        now_ms = time.time()
+        buffer = self._semantic_message_buffers.get(debounce_key)
+
+        if buffer:
+            # 已经有活动的防抖协程，将消息追加到缓冲区
+            buffer["updated_ts"] = now_ms
+            buffer["last_event_id"] = id(event)
+            buffer["messages"].append({
+                "sender_name": sender_name_val,
+                "text": message,
+                "images": images
+            })
+            # 挂起拦截
+            event.stop_event()
+            return
+        else:
+            # 本轮消息的起航者（首条消息）
+            buffer = {
+                "first_ts": now_ms,
+                "updated_ts": now_ms,
+                "messages": [{
+                    "sender_name": sender_name_val,
+                    "text": message,
+                    "images": images
+                }],
+                "last_event_id": id(event)
+            }
+            self._semantic_message_buffers[debounce_key] = buffer
+
+            try:
+                while True:
+                    now_time = time.time()
+                    elapsed_since_update = now_time - buffer["updated_ts"]
+                    elapsed_since_start = now_time - buffer["first_ts"]
+
+                    if elapsed_since_start >= 12.0:
+                        # 达到最长 12s 强制截断
+                        break
+
+                    remaining_debounce = 4.0 - elapsed_since_update
+                    if remaining_debounce <= 0:
+                        # 4s 内没有新消息，防抖正常结束
+                        break
+
+                    wait_time = min(remaining_debounce, 12.0 - elapsed_since_start)
+                    await asyncio.sleep(wait_time)
+            finally:
+                # 无论如何，移除 buffer
+                self._semantic_message_buffers.pop(debounce_key, None)
+
+            # 首条协程醒来后，开始整合成大消息并修改当前 event 发送
+            merged_texts = []
+            all_images = []
+            for msg_item in buffer["messages"]:
+                s_name = msg_item["sender_name"] or "用户"
+                txt = msg_item["text"]
+                if txt.strip():
+                    merged_texts.append(f"{s_name}: {txt}")
+                if msg_item.get("images"):
+                    all_images.extend(msg_item["images"])
+
+            if len(buffer["messages"]) > 1:
+                merged_content = "\n".join(merged_texts)
+            else:
+                merged_content = buffer["messages"][0]["text"]
+
+            if not merged_content and all_images:
+                merged_content = "[图片]"
+
+            # 更新当前事件携带的消息内容和组件链
+            event.message_str = merged_content
+            new_chain = []
+            if merged_content and merged_content != "[图片]":
+                new_chain.append(Plain(merged_content))
+            elif merged_content == "[图片]" and not all_images:
+                new_chain.append(Plain("[图片]"))
+
+            for img_comp in all_images:
+                new_chain.append(img_comp)
+
+            event.message_obj.message = new_chain
+            
+            # 放行给后面的逻辑使用
+            message = merged_content
+
+        # ─── 抢词被打断检测 (Hesitation Memory Capture) ───
+        if hasattr(self, "_pending_proactive_plans") and self._pending_proactive_plans.get(group_id):
+            active_plan = self._pending_proactive_plans[group_id]
+            self._pending_proactive_plans[group_id] = None
+            try:
+                bot_id_temp = event.get_self_id() or ""
+                bot_prof_temp = self._get_bot(bot_id_temp)
+                pe_bot_id_temp = bot_prof_temp.db_id if bot_prof_temp else "bot"
+                
+                user_prof_row = self.db.conn.execute(
+                    "SELECT metadata FROM user_profiles WHERE user_id = ? AND group_id = ? AND bot_id = ?",
+                    (sender_id, group_id, pe_bot_id_temp)
+                ).fetchone()
+                
+                meta_to_write = {}
+                if user_prof_row and user_prof_row[0]:
+                    meta_to_write = json.loads(user_prof_row[0])
+                
+                hesitations_list = meta_to_write.setdefault("recent_hesitations", [])
+                hesitations_list.append({
+                    "ts": time.time(),
+                    "topic": active_plan.get("topic", "闲聊"),
+                    "motive": active_plan.get("motive", "想和你交谈"),
+                })
+                del hesitations_list[:-5]
+                
+                self.db.conn.execute(
+                    "UPDATE user_profiles SET metadata = ? WHERE user_id = ? AND group_id = ? AND bot_id = ?",
+                    (json.dumps(meta_to_write, ensure_ascii=False), sender_id, group_id, pe_bot_id_temp)
+                )
+                self.db.conn.commit()
+                logger.info(f"[MetaThinking] 抢词咽回成功：用户 {sender_id} 在群组 {group_id} 抢答，原计划的主动插话“{active_plan.get('topic', '闲聊')}”已被咽回，写为犹豫记忆。")
+            except Exception as e:
+                logger.debug(f"[MetaThinking] 咽回犹豫记忆写入失败: {e}")
+
+        # 获取群组并发锁，实现单线排队，拒绝高并发抢答
+        if not hasattr(self, "_group_concurrency_locks"):
+            self._group_concurrency_locks = {}
+        group_lock = self._group_concurrency_locks.setdefault(group_id, asyncio.Lock())
+
+        async def _process_in_lock():
+            # ─── /teach 命令（管理员灌入知识 → facts + 高权重记忆）───
+            sender_name = ""
+            if event.message_obj and event.message_obj.sender:
+                sender_name = event.message_obj.sender.nickname or ""
         msg_stripped = message.strip()
         if msg_stripped.startswith("/teach ") or msg_stripped.startswith("/teach:"):
             # 只有管理员能用
@@ -1886,6 +2033,10 @@ class WaveMemoryPlugin(Star):
             except Exception as e:
                 logger.debug(f"[MetaThinking] Proactive failed: {e}")
                 _record_err("Proactive", e)
+
+        # 锁保护下唤醒执行整个事件流
+        async with group_lock:
+            await _process_in_lock()
 
     @filter.after_message_sent()
     async def on_bot_sent(self, event: AstrMessageEvent):

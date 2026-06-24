@@ -10,6 +10,7 @@ from astrbot.api import logger
 
 from .statistical_filter import JargonStatisticalFilter
 from .inference import JargonInferenceEngine, JargonInjector
+from .holyman_reference import HolymanReference
 
 
 class JargonService:
@@ -31,7 +32,10 @@ class JargonService:
         self._context_keep = int(self._config.get("context_keep", 10))
         self._window_days = int(self._config.get("window_days", 7))
         self._jieba_threshold = int(self._config.get("jieba_threshold", 100))
-        self._llm_validate = bool(self._config.get("llm_validate", False))
+        _llm_validate_cfg = self._config.get("llm_validate", True)
+        self._llm_validate = True if _llm_validate_cfg is None else bool(_llm_validate_cfg)
+        self._confidence_threshold = float(self._config.get("confidence_threshold", 0.5))
+        self._holyman = HolymanReference(self._config.get("holyman_path") or None) if self._config.get("holyman_enabled", True) else None
 
         # 递进推断阈值（改动1）
         thresholds_str = str(self._config.get("inference_thresholds", "3,6,10,20,40,60,100"))
@@ -98,9 +102,24 @@ class JargonService:
                     contexts TEXT DEFAULT '[]',
                     created_at INTEGER,
                     updated_at INTEGER,
+                    status TEXT DEFAULT 'pending',
+                    scope TEXT DEFAULT 'local',
+                    source TEXT DEFAULT 'wave_memory',
+                    last_infer_freq INTEGER DEFAULT 0,
+                    reject_reason TEXT,
                     UNIQUE(group_id, word)
                 )
             """)
+            cols = {r[1] for r in self._db.conn.execute("PRAGMA table_info(jargon)").fetchall()}
+            for col, ddl in {
+                "status": "TEXT DEFAULT 'pending'",
+                "scope": "TEXT DEFAULT 'local'",
+                "source": "TEXT DEFAULT 'wave_memory'",
+                "last_infer_freq": "INTEGER DEFAULT 0",
+                "reject_reason": "TEXT",
+            }.items():
+                if col not in cols:
+                    self._db.conn.execute(f"ALTER TABLE jargon ADD COLUMN {col} {ddl}")
             self._db.conn.commit()
         except Exception as e:
             logger.debug(f"[Jargon] table ensure: {e}")
@@ -187,12 +206,21 @@ class JargonService:
                         except Exception as e:
                             logger.debug(f"[Jargon] reinfer error for '{word}': {e}")
 
-                    # 更新 DB：frequency + meaning + is_jargon + last_infer_freq
-                    self._db.conn.execute(
-                        """UPDATE jargon SET frequency = ?, meaning = ?, is_jargon = ?,
-                           confidence = ?, last_infer_freq = ?, updated_at = ? WHERE id = ?""",
-                        (current_freq, meaning, is_jargon, confidence, current_freq, now, row_id),
-                    )
+                    status = "confirmed" if is_jargon is True and meaning and confidence >= self._confidence_threshold else ("rejected" if is_jargon is False else "pending")
+                    reject_reason = "llm_inference_rejected" if status == "rejected" else None
+                    # 更新 DB：frequency + meaning + is_jargon + status + last_infer_freq + reject_reason
+                    if reject_reason:
+                        self._db.conn.execute(
+                            """UPDATE jargon SET frequency = ?, meaning = ?, is_jargon = ?,
+                               confidence = ?, status = ?, reject_reason = ?, last_infer_freq = ?, updated_at = ? WHERE id = ?""",
+                            (current_freq, meaning, is_jargon, confidence, status, reject_reason, current_freq, now, row_id),
+                        )
+                    else:
+                        self._db.conn.execute(
+                            """UPDATE jargon SET frequency = ?, meaning = ?, is_jargon = ?,
+                               confidence = ?, status = ?, reject_reason = NULL, last_infer_freq = ?, updated_at = ? WHERE id = ?""",
+                            (current_freq, meaning, is_jargon, confidence, status, current_freq, now, row_id),
+                        )
 
                     if is_jargon:
                         results.append({"word": word, "meaning": meaning, "confidence": confidence})
@@ -204,27 +232,48 @@ class JargonService:
                     )
                 continue
 
-            # 新候选：尝试 LLM 推断
+            # 新候选：先尝试 holyman 广域抽象文化参考，再尝试 LLM 推断
             is_jargon = None
             meaning = ""
             confidence = 0.0
+            status = "pending"
+            scope = "local"
+            source = "wave_memory"
 
-            if self._inference and contexts:
+            holyman_match = self._holyman.match(word, "\n".join(contexts)) if self._holyman else {"matched": False}
+            if holyman_match.get("matched"):
+                is_jargon = 1
+                meaning = holyman_match.get("explanation", "")
+                confidence = float(holyman_match.get("confidence", 0.0))
+                status = "confirmed"
+                scope = "global"
+                source = "holyman_skills"
+
+            if is_jargon is None and self._inference and contexts:
                 try:
                     result = await self._inference.infer(word, contexts)
                     is_jargon = result.get("is_jargon")
                     meaning = result.get("meaning", "")
                     confidence = result.get("confidence", 0.0)
+                    if is_jargon is True and meaning and confidence >= self._confidence_threshold:
+                        status = "confirmed"
+                    elif is_jargon is False:
+                        status = "rejected"
+                    else:
+                        status = "pending"
                 except Exception as e:
                     logger.debug(f"[Jargon] inference error for '{word}': {e}")
+
+            reject_reason = "llm_inference_rejected" if status == "rejected" else None
 
             # 写入 DB（last_infer_freq = 当前频次）
             self._db.conn.execute(
                 """INSERT OR IGNORE INTO jargon
-                   (word, meaning, is_jargon, frequency, confidence, group_id, contexts, last_infer_freq, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (word, meaning, is_jargon, frequency, confidence, group_id, contexts,
+                    last_infer_freq, created_at, updated_at, status, scope, source, reject_reason)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (word, meaning, is_jargon, cand["frequency"], confidence, group_id,
-                 json.dumps(contexts, ensure_ascii=False), cand["frequency"], now, now),
+                 json.dumps(contexts, ensure_ascii=False), cand["frequency"], now, now, status, scope, source, reject_reason),
             )
 
             if is_jargon:
@@ -274,7 +323,7 @@ class JargonService:
             import re
             response = await self._llm.text_chat(prompt=validate_prompt)
             if not response or not response.completion_text:
-                return candidates  # LLM 失败则不过滤
+                return []  # fail-closed：LLM 失败不新增候选
             text = response.completion_text.strip()
             # 提取 JSON 数组
             text = re.sub(r'^```(?:json)?\s*', '', text, flags=re.MULTILINE)
@@ -286,7 +335,7 @@ class JargonService:
         except Exception as e:
             logger.debug(f"[Jargon] LLM validate error: {e}")
 
-        return candidates  # 解析失败则不过滤
+        return []  # fail-closed：解析失败不新增候选
 
     def get_injection(self, text: str, group_id: str) -> str:
         """获取黑话注入文本 (US-4.3)。"""
@@ -301,6 +350,7 @@ class JargonService:
             rows = self._db.conn.execute(
                 f"""SELECT word, COUNT(DISTINCT group_id) as cnt
                    FROM jargon WHERE is_jargon = 1 AND is_global = 0
+                   AND COALESCE(status, 'pending') = 'confirmed'
                    GROUP BY word HAVING cnt >= ?""",
                 (threshold,),
             ).fetchall()
@@ -308,7 +358,7 @@ class JargonService:
                 now = int(time.time())
                 for word, cnt in rows:
                     self._db.conn.execute(
-                        "UPDATE jargon SET is_global = 1, updated_at = ? WHERE word = ? AND is_jargon = 1",
+                        "UPDATE jargon SET is_global = 1, updated_at = ? WHERE word = ? AND is_jargon = 1 AND COALESCE(status, 'pending') = 'confirmed'",
                         (now, word),
                     )
                     logger.info(f"[Jargon] 全局化: '{word}' (确认群数: {cnt})")

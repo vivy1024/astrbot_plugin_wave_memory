@@ -94,10 +94,19 @@ def _get_attitude_level(affection: int) -> str:
 class AffinityEngine:
     """多维好感度引擎。内存缓冲 + 定时持久化。"""
 
-    def __init__(self, db: WaveMemoryDB, bot_qq_id: str = "", bot_db_id: str = "yushu"):
+    def __init__(
+        self,
+        db: WaveMemoryDB,
+        bot_qq_id: str = "",
+        bot_db_id: str = "yushu",
+        record_relationship_events: bool = True,
+        target_profiles: dict[str, dict[str, str]] | None = None,
+    ):
         self.db = db
         self.bot_qq_id = bot_qq_id
         self.bot_db_id = bot_db_id  # 写 user_profiles 时用的 bot_id 值
+        self.record_relationship_events = record_relationship_events
+        self.target_profiles = target_profiles or {}
         self._buffer: dict[tuple[str, str], dict[str, float]] = defaultdict(
             lambda: defaultdict(float)
         )
@@ -137,29 +146,40 @@ class AffinityEngine:
 
         key = (sender_id, group_id)
         buf = self._buffer[key]
+        before = dict(buf)
+        event_reasons: dict[str, list[str]] = defaultdict(list)
 
         # 基础：每条消息 familiarity +0.5
         buf["familiarity"] += 0.5
+        event_reasons["familiarity"].append("看见一条群友消息")
 
         # 主动@bot
         if is_at_bot:
             buf["trust"] += 2.0
             buf["familiarity"] += 1.0
+            event_reasons["trust"].append("主动@或唤醒 bot")
+            event_reasons["familiarity"].append("主动@或唤醒 bot")
 
         # 回复bot
         if is_reply_to_bot:
             buf["trust"] += 1.5
             buf["familiarity"] += 0.5
+            event_reasons["trust"].append("回复 bot 消息")
+            event_reasons["familiarity"].append("回复 bot 消息")
 
         # 对话深度（连续 >=3 轮）
         if conversation_depth >= 3:
             buf["depth"] += 2.0 + min(conversation_depth - 3, 5) * 0.5
             buf["trust"] += 1.0
+            event_reasons["depth"].append("连续多轮深入对话")
+            event_reasons["trust"].append("连续多轮深入对话")
 
         # 分享链接/长文
         if len(content) > 200 or re.search(r'https?://', content):
             buf["trust"] += 1.5
             buf["depth"] += 1.0
+            event_reasons["trust"].append("分享长文或链接")
+            event_reasons["depth"].append("分享长文或链接")
 
         # 情感标签（tag 或 关键词 fallback）
         if emotion_tag_ids:
@@ -168,15 +188,19 @@ class AffinityEngine:
                 cls = classification.get(tid)
                 if cls == 'positive':
                     buf["trust"] += 0.5
+                    event_reasons["trust"].append("消息情绪偏正面")
                 elif cls == 'fun':
                     buf["fun"] += 2.0
+                    event_reasons["fun"].append("消息带来趣味感")
         else:
             # Fallback: 消息内容关键词匹配情感（tag 异步提取尚未完成时）
             msg_sample = content[:200]
             if any(kw in msg_sample for kw in POSITIVE_EMOTION_KW):
                 buf["trust"] += 0.3
+                event_reasons["trust"].append("关键词显示正面态度")
             if any(kw in msg_sample for kw in FUN_EMOTION_KW):
                 buf["fun"] += 1.0
+                event_reasons["fun"].append("关键词显示玩梗/趣味")
 
         # 对bot正面评价
         if BOT_PRAISE_KW.search(content) and (
@@ -184,6 +208,8 @@ class AffinityEngine:
         ):
             buf["trust"] += 3.0
             buf["fun"] += 2.0
+            event_reasons["trust"].append("正面评价 bot")
+            event_reasons["fun"].append("正面评价带来愉快互动")
 
         # 对bot攻击
         if BOT_ATTACK_KW.search(content) and (
@@ -191,11 +217,39 @@ class AffinityEngine:
         ):
             buf["hostility"] += 8.0
             buf["trust"] -= 3.0
+            event_reasons["hostility"].append("攻击或辱骂 bot")
+            event_reasons["trust"].append("攻击或辱骂 bot")
 
         # 深夜陪聊 (0-4点)
         if 0 <= hour <= 4:
             buf["familiarity"] += 1.5
             buf["depth"] += 1.0
+            event_reasons["familiarity"].append("深夜陪聊")
+            event_reasons["depth"].append("深夜陪聊")
+
+        self._record_relationship_events(sender_id, group_id, before, buf, event_reasons)
+
+    def _record_relationship_events(self, user_id: str, group_id: str, before: dict, after: dict, reasons: dict):
+        """记录关系事件日志；当前状态仍由 flush 聚合写入，避免重复计算。"""
+        if not self.record_relationship_events:
+            return
+        now = time.time()
+        try:
+            for dim_name, after_value in after.items():
+                delta = float(after_value) - float(before.get(dim_name, 0))
+                if abs(delta) < 1e-9:
+                    continue
+                reason = "；".join(reasons.get(dim_name, [])[:3]) or "行为统计关系变化"
+                event_type = "bot_attacked" if dim_name == "hostility" and delta > 0 else "direct_reply"
+                self.db.conn.execute(
+                    """INSERT INTO relationship_events
+                       (bot_id, group_id, user_id, event_type, dimension, delta, reason, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (self.bot_db_id, group_id, user_id, event_type, dim_name, round(delta, 2), reason, now),
+                )
+            self.db.conn.commit()
+        except Exception as e:
+            logger.debug(f"[WaveMemory] relationship event log skipped: {e}")
 
     def flush(self):
         """将缓冲增量持久化到数据库，并执行衰减。"""
@@ -208,8 +262,8 @@ class AffinityEngine:
         for (user_id, group_id), deltas in self._buffer.items():
             # 读取当前维度
             row = self.db.conn.execute(
-                "SELECT affection, metadata, last_seen FROM user_profiles WHERE user_id = ? AND group_id = ?",
-                (user_id, group_id),
+                "SELECT affection, metadata, last_seen FROM user_profiles WHERE user_id = ? AND group_id = ? AND bot_id = ?",
+                (user_id, group_id, self.bot_db_id),
             ).fetchone()
 
             if not row:
@@ -265,6 +319,13 @@ class AffinityEngine:
             existing_meta["dimensions"] = {k: round(v, 2) for k, v in dims.items()}
             existing_meta["last_decay_at"] = now
             existing_meta["attitude_level"] = attitude
+            target_profile = self.target_profiles.get(user_id)
+            if target_profile:
+                existing_meta["target_type"] = "bot"
+                existing_meta["target_bot_id"] = target_profile.get("db_id") or user_id
+                existing_meta["target_name"] = target_profile.get("name") or target_profile.get("db_id") or user_id
+            else:
+                existing_meta.setdefault("target_type", "user")
             meta = existing_meta
 
             # 写入（affection 取 MetaThinking 和 dimensions 的较高者，避免被行为积累降级）
@@ -496,9 +557,11 @@ class LifecycleService:
         mood_msg_threshold: int = 30,
         positive_emotion_threshold: float = 0.6,
         negative_emotion_threshold: float = 0.4,
+        run_global_jobs: bool = True,
+        target_profiles: dict[str, dict[str, str]] | None = None,
     ):
         self.db = db
-        self.affinity = AffinityEngine(db, bot_qq_id=bot_qq_id, bot_db_id=bot_db_id)
+        self.affinity = AffinityEngine(db, bot_qq_id=bot_qq_id, bot_db_id=bot_db_id, target_profiles=target_profiles)
         self.patterns = PatternAggregator(db)
         self._task: Optional[asyncio.Task] = None
         self._running = False
@@ -509,11 +572,14 @@ class LifecycleService:
         self.mood_msg_threshold = mood_msg_threshold
         self.positive_emotion_threshold = positive_emotion_threshold
         self.negative_emotion_threshold = negative_emotion_threshold
+        self.run_global_jobs = run_global_jobs
 
     def start(self):
+        if self._running:
+            return
         self._running = True
         self._task = asyncio.create_task(self._loop())
-        logger.info("[WaveMemory] LifecycleService started")
+        logger.info(f"[WaveMemory] LifecycleService started bot={self.affinity.bot_db_id} global_jobs={self.run_global_jobs}")
 
     def stop(self):
         self._running = False
@@ -545,7 +611,10 @@ class LifecycleService:
         #    MetaThinking 只在@bot 时更新好感度，日常聊天的 familiarity/depth 靠这里
         flushed = self.affinity.flush()
         if flushed > 0:
-            logger.info(f"[WaveMemory] Affinity flushed: {flushed} users")
+            logger.info(f"[WaveMemory] Affinity flushed bot={self.affinity.bot_db_id}: {flushed} users")
+
+        if not self.run_global_jobs:
+            return
 
         # 2. 表达模式聚合（每 6 小时）
         if now - self._last_pattern_update > 21600:
@@ -573,10 +642,7 @@ class LifecycleService:
             logger.debug(f"[WaveMemory] Mood update failed: {e}")
 
     def _run_decay(self) -> int:
-        """标记过期记忆为 archived。
-
-        条件：importance < 0.15 且 > 180 天未访问且 access_count = 0
-        """
+        """标记过期记忆为 archived 并且对 user_profiles 执行多维情感衰减。"""
         now = time.time()
         threshold_time = now - 180 * 86400  # 180 天前
 
@@ -589,14 +655,87 @@ class LifecycleService:
                  AND (last_accessed IS NULL OR last_accessed < ?)""",
             (threshold_time, threshold_time),
         )
-        self.db.conn.commit()
-        return result.rowcount
+        archived_count = result.rowcount
 
-    def get_user_affinity(self, user_id: str, group_id: str) -> dict:
+        try:
+            rows = self.db.conn.execute(
+                "SELECT user_id, group_id, bot_id, affection, metadata, last_seen FROM user_profiles"
+            ).fetchall()
+            
+            ATTITUDE_ORDER = {
+                "intimate": 4,
+                "friendly": 3,
+                "neutral": 2,
+                "cold": 1,
+                "hostile": 0
+            }
+            
+            decay_dims = ["trust", "familiarity", "fun", "depth"]
+            
+            for user_id, group_id, bot_id, old_affection, meta_str, last_seen in rows:
+                meta = {}
+                if meta_str:
+                    try:
+                        meta = json.loads(meta_str)
+                    except Exception:
+                        pass
+                
+                dims = meta.get("dimensions", {"familiarity": 0.0, "trust": 0.0, "fun": 0.0, "hostility": 0.0, "depth": 0.0})
+                
+                # 如果没有 valid 的 last_seen，取当前时间
+                last_seen_val = last_seen or now
+                days_passed = max(0.0, (now - last_seen_val) / 86400.0)
+                decay_factor = min(0.01, (0.01 / 225.0) * (days_passed ** 2))
+                
+                # 获取原有的态度等级
+                old_attitude = meta.get("attitude_level") or _get_attitude_level(old_affection)
+                
+                # 衰减指定的维度（如果存在）
+                dims_changed = False
+                for d in decay_dims:
+                    if d in dims:
+                        old_v = dims[d]
+                        new_v = max(0.0, old_v - old_v * decay_factor - decay_factor)
+                        dims[d] = round(new_v, 2)
+                        dims_changed = True
+                
+                if dims_changed:
+                    # 重新计算好感分值和态度等级
+                    new_affection = _compute_affection(dims)
+                    new_attitude = _get_attitude_level(new_affection)
+                    
+                    # 检查是否降级
+                    old_order = ATTITUDE_ORDER.get(old_attitude, 2)
+                    new_order = ATTITUDE_ORDER.get(new_attitude, 2)
+                    
+                    if new_order < old_order:
+                        meta["decay_downgrade_noted"] = True
+                        meta["last_attitude_before_decay"] = old_attitude
+                    
+                    meta["dimensions"] = dims
+                    meta["attitude_level"] = new_attitude
+                    meta["last_decay_at"] = now
+                    
+                    # 写回 user_profiles
+                    self.db.conn.execute(
+                        """UPDATE user_profiles 
+                           SET affection = ?, metadata = ? 
+                           WHERE user_id = ? AND group_id = ? AND bot_id = ?""",
+                        (new_affection, json.dumps(meta, ensure_ascii=False), user_id, group_id, bot_id)
+                    )
+            
+            self.db.conn.commit()
+        except Exception as e:
+            logger.warning(f"[WaveMemory] User profile decay processing failed: {e}")
+            
+        return archived_count
+
+    def get_user_affinity(self, user_id: str, group_id: str, bot_id: str = None) -> dict:
         """获取用户好感度信息（含缓冲中的未持久化增量）。"""
+        db_bot_id = bot_id or self.affinity.bot_db_id
         row = self.db.conn.execute(
-            "SELECT affection, metadata FROM user_profiles WHERE user_id = ? AND group_id = ?",
-            (user_id, group_id),
+            "SELECT affection, metadata FROM user_profiles WHERE user_id = ? AND group_id = ? AND bot_id = ?",
+            (user_id, group_id, db_bot_id),
         ).fetchone()
 
         if not row:

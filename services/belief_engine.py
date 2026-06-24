@@ -14,6 +14,7 @@ from astrbot.api import logger
 
 from ..engine.database import WaveMemoryDB
 from .llm_fallback import LLMFallbackClient
+from .identity_safety import is_identity_contamination
 
 
 EXTRACT_PROMPT = """分析以下记忆摘要，提取 0-2 条**高质量**稳定判断（宁缺毋滥，没有就返回 []）。
@@ -71,6 +72,9 @@ class BeliefEngine:
         """从 consolidation 摘要中提取信念。返回新增的信念列表。"""
         if not summary or len(summary) < 20:
             return []
+        if is_identity_contamination(summary):
+            logger.info("[BeliefEngine] Skip identity roleplay contaminated summary")
+            return []
 
         # 获取已有信念作为去重参考
         existing = self.db.get_beliefs(bot_id=self.bot_id, limit=30)
@@ -103,6 +107,8 @@ class BeliefEngine:
 
                 if not content or len(content) < 5:
                     continue
+                if is_identity_contamination(content):
+                    continue
                 if belief_type not in ("person_judgment", "world_view", "self_identity", "preference"):
                     belief_type = "world_view"
 
@@ -117,14 +123,14 @@ class BeliefEngine:
                                 self.db.add_belief_source(similar["id"], mid)
                     continue
 
-                # 新增信念（进入待审，避免低质/误判直接生效注入；在 WebUI 信念页批准后才 active）
+                # consolidation 摘要只能产生 legacy 待审信念；active 信念必须来自经历/关系事件涌现
                 belief_id = self.db.add_belief(
                     content=content,
                     belief_type=belief_type,
                     bot_id=self.bot_id,
                     strength=0.4,  # 初始强度较低，需要多次强化
                     sources=source_memory_ids[:10] if source_memory_ids else [],
-                    status="pending",
+                    status="pending_legacy",
                 )
                 new_beliefs.append({"id": belief_id, "content": content, "type": belief_type})
 
@@ -145,10 +151,13 @@ class BeliefEngine:
             return []
 
     def get_injection(self, sender_id: str = None, keywords: list[str] = None) -> str:
-        """获取与当前对话相关的信念注入文本。"""
+        """获取与当前对话相关的信念注入文本。
+
+        只注入 status='active' 的信念，排除 pending_legacy（LLM 摘要提取的待审信念）。
+        """
         beliefs = []
 
-        # 1. 自我认知（始终注入）
+        # 1. 自我认知（始终注入）— get_beliefs 默认 status='active'，排除 pending_legacy
         beliefs += self.db.get_beliefs(bot_id=self.bot_id, belief_type="self_identity", limit=3)
 
         # 2. 对特定人的判断
@@ -161,12 +170,15 @@ class BeliefEngine:
             topic_beliefs = self.db.search_beliefs(keywords[:3], bot_id=self.bot_id, limit=3)
             beliefs += topic_beliefs
 
-        # 去重
+        # 去重 + 排除 pending_legacy（防御层：DB 层已过滤 status='active'）
         seen_ids = set()
         unique_beliefs = []
         for b in beliefs:
             if b["id"] not in seen_ids:
                 seen_ids.add(b["id"])
+                # 只注入 active 信念，pending_legacy 不注入
+                if b.get("status") == "pending_legacy":
+                    continue
                 unique_beliefs.append(b)
 
         # 按 strength 阈值过滤：挡掉被动摇到很低的低质信念（已批准 active 默认 0.4 仍通过）
