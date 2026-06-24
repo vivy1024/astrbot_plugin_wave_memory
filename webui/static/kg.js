@@ -22,6 +22,7 @@ let selectedNode = null;
 let activeFilter = null;
 let hoveredNode = null;
 let hoveredNeighbors = new Set();
+let selectedFact = null;
 
 // ─── Custom Label Renderer ───
 function drawLabel(context, data, settings) {
@@ -235,8 +236,47 @@ function initGraph() {
 
     renderer.on('clickNode', ({ node }) => {
         selectedNode = node;
+        selectedFact = null; // 重置事实选中状态
         showDetail(node);
         tooltip.classList.remove('visible');
+
+        // ─── 引力平移：相机平滑缩放移动到目标节点 (WebGL 硬件自适应) ───
+        const nodeDisplay = renderer.getNodeDisplayData(node);
+        if (nodeDisplay) {
+            renderer.getCamera().animate(
+                { x: nodeDisplay.x, y: nodeDisplay.y, ratio: 0.55 },
+                { duration: 800, ease: 'sine.inOut' }
+            );
+
+            // 在屏幕上创造一个精美的“脑电波扩散 ripple”动画
+            const containerRect = container.getBoundingClientRect();
+            // 换算成屏幕坐标
+            const screenPos = renderer.nodeToViewport(node);
+            if (screenPos) {
+                const ripple = document.createElement('div');
+                ripple.style.position = 'fixed';
+                ripple.style.left = (screenPos.x + containerRect.left) + 'px';
+                ripple.style.top = (screenPos.y + containerRect.top) + 'px';
+                ripple.style.width = '10px';
+                ripple.style.height = '10px';
+                ripple.style.transform = 'translate(-50%, -50%)';
+                ripple.style.borderRadius = '50%';
+                ripple.style.border = '2px solid rgba(139, 92, 246, 0.7)';
+                ripple.style.boxShadow = '0 0 16px rgba(139, 92, 246, 0.5)';
+                ripple.style.pointerEvents = 'none';
+                ripple.style.zIndex = '99';
+                document.body.appendChild(ripple);
+
+                if (typeof gsap !== 'undefined') {
+                    gsap.fromTo(ripple, 
+                        { width: '10px', height: '10px', opacity: 1 },
+                        { width: '120px', height: '120px', opacity: 0, duration: 1.0, ease: 'power2.out', onComplete: () => ripple.remove() }
+                    );
+                } else {
+                    setTimeout(() => ripple.remove(), 1000);
+                }
+            }
+        }
     });
 
     // 双击节点展开 KG 邻居（焦点探索模式 v1.1.0 #1.3）
@@ -647,57 +687,146 @@ async function loadTimeline() {
     }
 }
 
-// ─── Edit Entity (内容编辑) ───
-function editEntity() {
-    if (!selectedNode) return;
-    const attrs = graph.getNodeAttributes(selectedNode);
-    const name = attrs.label || '';
-    const memList = document.getElementById('detail-memory-list');
-    memList.innerHTML = `
-        <div class="space-y-3">
-            <div>
-                <label class="text-[9px] text-slate-500 uppercase tracking-wider">实体名称</label>
-                <input type="text" id="edit-name" value="${name}" class="w-full px-2 py-1.5 bg-nebula-700 border border-white/10 rounded-md text-[11px] text-slate-200 mt-1">
-            </div>
-            <div>
-                <label class="text-[9px] text-slate-500 uppercase tracking-wider">添加新事实 (subject→predicate→object)</label>
-                <input type="text" id="edit-fact-subj" value="${name}" class="w-full px-2 py-1 bg-nebula-700 border border-white/10 rounded-md text-[10px] text-slate-300 mt-1" placeholder="主语">
-                <input type="text" id="edit-fact-pred" class="w-full px-2 py-1 bg-nebula-700 border border-white/10 rounded-md text-[10px] text-slate-300 mt-1" placeholder="谓语(如:喜欢/认为/使用)">
-                <input type="text" id="edit-fact-obj" class="w-full px-2 py-1 bg-nebula-700 border border-white/10 rounded-md text-[10px] text-slate-300 mt-1" placeholder="宾语">
-            </div>
-            <div class="flex gap-2">
-                <button onclick="saveNewFact()" class="px-3 py-1.5 bg-green-500/80 hover:bg-green-500 rounded-lg text-white text-[10px] transition">保存事实</button>
-                <button onclick="showDetail(selectedNode)" class="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-slate-400 text-[10px] transition">取消</button>
-            </div>
-            <p id="edit-status" class="text-[9px] text-slate-600"></p>
-        </div>`;
+// ─── 事实选择、斩断与弹窗编辑 (WaveMemory 2.0 终极进化交互) ───
+
+function selectFact(el) {
+    // 清空其他事实卡片的高亮
+    document.querySelectorAll('.fact-item').forEach(item => {
+        item.style.borderColor = 'transparent';
+        item.style.boxShadow = 'none';
+        item.style.background = 'rgba(255, 255, 255, 0.02)';
+    });
+    
+    // 高亮当前选中的事实
+    el.style.borderColor = 'rgba(139, 92, 246, 0.7)';
+    el.style.boxShadow = '0 0 10px rgba(139, 92, 246, 0.35)';
+    el.style.background = 'rgba(139, 92, 246, 0.06)';
+    
+    selectedFact = {
+        id: el.dataset.id,
+        subject: el.dataset.sub,
+        predicate: el.dataset.pred,
+        object: el.dataset.obj,
+        confidence: el.dataset.conf
+    };
+    console.log("[WaveMemory] 选中事实:", selectedFact);
 }
 
-async function saveNewFact() {
-    const subj = document.getElementById('edit-fact-subj')?.value?.trim();
-    const pred = document.getElementById('edit-fact-pred')?.value?.trim();
-    const obj = document.getElementById('edit-fact-obj')?.value?.trim();
-    if (!subj || !pred || !obj) {
-        document.getElementById('edit-status').textContent = '请填写完整三元组';
+async function severFactRelation() {
+    if (!selectedFact) {
+        alert('请先在上方的事实列表中，点击选择要斩断的那条事实。');
         return;
     }
+    if (!confirm(`确认要斩断并彻底物理删除这一事实关联吗？\n【${selectedFact.subject} → ${selectedFact.predicate} → ${selectedFact.object}】\n此操作不可逆！`)) {
+        return;
+    }
+    
+    const btn = document.getElementById('btn-sever-fact');
+    const oldText = btn.textContent;
+    btn.textContent = '斩断中...';
+    btn.disabled = true;
+    
     try {
-        // 调后端插入 fact
-        const r = await fetch('/api/kg/add-fact', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({subject: subj, predicate: pred, object: obj}),
-        });
+        const r = await fetch(`/api/kg/facts/${selectedFact.id}`, { method: 'DELETE' });
         const d = await r.json();
         if (d.ok) {
-            document.getElementById('edit-status').textContent = '✓ 已保存，刷新图谱可见';
-            document.getElementById('edit-status').style.color = '#34d399';
-            _kgFullEdges = null; // 清缓存，下次 loadGalaxy 重新拉
+            // 清理缓存
+            _kgFullEdges = null;
+            selectedFact = null;
+            alert('✓ 事实已成功物理斩断！该认知已从灵魂中抹去。');
+            // 刷新详情和图谱
+            await showDetail(selectedNode);
+            initGraph();
         } else {
-            document.getElementById('edit-status').textContent = '✗ ' + (d.error || '保存失败');
+            alert('✗ 斩断失败: ' + (d.error || '未知错误'));
         }
     } catch(e) {
-        document.getElementById('edit-status').textContent = '✗ 网络错误';
+        alert('✗ 网络错误，斩断失败');
+    } finally {
+        btn.textContent = oldText;
+        btn.disabled = false;
+    }
+}
+
+function editEntity() {
+    const dialog = document.getElementById('fact-edit-dialog');
+    const inputSub = document.getElementById('edit-fact-subject');
+    const inputPred = document.getElementById('edit-fact-predicate');
+    const inputObj = document.getElementById('edit-fact-object');
+    const inputConf = document.getElementById('edit-fact-confidence');
+    
+    if (selectedFact) {
+        // 如果选中了具体事实，进入修正模式
+        inputSub.value = selectedFact.subject || '';
+        inputPred.value = selectedFact.predicate || '';
+        inputObj.value = selectedFact.object || '';
+        inputConf.value = selectedFact.confidence || 0.8;
+    } else {
+        // 如果没选中具体事实，预填当前节点名称，进入快速创建模式
+        const attrs = graph.getNodeAttributes(selectedNode);
+        inputSub.value = attrs.label || selectedNode;
+        inputPred.value = '';
+        inputObj.value = '';
+        inputConf.value = 0.8;
+    }
+    
+    dialog.classList.remove('hidden');
+    if (typeof gsap !== 'undefined') {
+        gsap.fromTo(dialog.querySelector('.glass'), { scale: 0.9, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.35, ease: 'back.out(1.5)' });
+    }
+}
+
+function closeFactEdit() {
+    const dialog = document.getElementById('fact-edit-dialog');
+    if (typeof gsap !== 'undefined') {
+        gsap.to(dialog.querySelector('.glass'), { scale: 0.9, opacity: 0, duration: 0.2, ease: 'power2.in', onComplete: () => dialog.classList.add('hidden') });
+    } else {
+        dialog.classList.add('hidden');
+    }
+}
+
+async function saveFactEdit() {
+    const subj = document.getElementById('edit-fact-subject').value.trim();
+    const pred = document.getElementById('edit-fact-predicate').value.trim();
+    const obj = document.getElementById('edit-fact-object').value.trim();
+    const conf = parseFloat(document.getElementById('edit-fact-confidence').value) || 0.8;
+    
+    if (!subj || !pred || !obj) {
+        alert('请填写完整的三元组内容');
+        return;
+    }
+    
+    try {
+        let r, d;
+        if (selectedFact) {
+            // 修正模式：PUT /api/kg/facts/<id>
+            r = await fetch(`/api/kg/facts/${selectedFact.id}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ subject: subj, predicate: pred, object: obj, confidence: conf })
+            });
+        } else {
+            // 创建模式：POST /api/kg/add-fact
+            r = await fetch('/api/kg/add-fact', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ subject: subj, predicate: pred, object: obj, confidence: conf })
+            });
+        }
+        
+        d = await r.json();
+        if (d.ok) {
+            _kgFullEdges = null; // 清缓存
+            closeFactEdit();
+            selectedFact = null;
+            // 重新刷新
+            await showDetail(selectedNode);
+            initGraph();
+        } else {
+            alert('保存失败: ' + (d.error || '未知错误'));
+        }
+    } catch(e) {
+        alert('网络错误，保存失败');
     }
 }
 
@@ -794,10 +923,18 @@ async function showDetail(nodeId) {
 
             // Facts 三元组
             if (d.facts && d.facts.length) {
-                html += '<p class="text-slate-500 text-[9px] uppercase tracking-wider mb-1.5">事实</p>';
-                html += d.facts.slice(0, 6).map(f =>
-                    `<div class="px-2 py-1.5 rounded bg-white/[.02] text-[10px] text-slate-400 mb-1"><span class="text-purple-300">${f.subject}</span> <span class="text-slate-600">→${f.predicate}→</span> <span class="text-blue-300">${f.object}</span></div>`
-                ).join('');
+                html += '<p class="text-slate-500 text-[9px] uppercase tracking-wider mb-1.5">事实 (点击卡片选中后可进行斩断或修正)</p>';
+                html += d.facts.slice(0, 6).map((f, idx) => {
+                    const isSelected = selectedFact && selectedFact.id === f.id;
+                    return `<div class="fact-item px-2 py-1.5 rounded bg-white/[.02] text-[10px] text-slate-400 mb-1 border border-transparent hover:border-purple-500/30 cursor-pointer transition" 
+                        data-id="${f.id}" data-sub="${f.subject}" data-pred="${f.predicate}" data-obj="${f.object}" data-conf="${f.confidence}"
+                        onclick="selectFact(this)">
+                        <span class="text-purple-300">${f.subject}</span> 
+                        <span class="text-slate-600">→${f.predicate}→</span> 
+                        <span class="text-blue-300">${f.object}</span>
+                        ${f.confidence ? `<span class="text-[9px] text-slate-600 ml-1 font-mono">(${Math.round(f.confidence*100)}%)</span>` : ''}
+                    </div>`;
+                }).join('');
             }
             // Relations
             if (d.relations && d.relations.length) {

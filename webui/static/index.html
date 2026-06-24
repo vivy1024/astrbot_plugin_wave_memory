@@ -622,31 +622,58 @@
     <!-- ═══ 信念审核 Tab ═══ -->
     <div x-show="tab==='beliefs'" x-cloak>
         <div class="flex flex-wrap items-center gap-2 mt-4 mb-3">
-            <select x-model="beliefFilter" @change="loadBeliefs()" class="select w-32">
+            <input type="text" x-model="beliefSearch" @keyup.enter="searchBeliefs()" placeholder="搜索信念内容..." class="input w-44">
+            <select x-model="beliefFilterType" @change="searchBeliefs()" class="select w-28">
+                <option value="">全部类型</option>
+                <option value="self">self</option>
+                <option value="other">other</option>
+                <option value="world">world</option>
+                <option value="value">value</option>
+            </select>
+            <select x-model="beliefFilter" @change="searchBeliefs()" class="select w-28">
                 <option value="">全部状态</option>
                 <option value="pending">待审核</option>
                 <option value="active">已生效</option>
                 <option value="archived">已归档</option>
+                <option value="pending_legacy">旧遗产</option>
             </select>
-            <button @click="loadBeliefs()" class="btn btn-outline btn-xs">🔄 刷新</button>
-            <button @click="batchArchiveBeliefs()" class="btn btn-outline btn-xs" style="border-color:var(--warning);color:var(--warning)">📦 一键归档全部旧信念</button>
+            <button @click="searchBeliefs()" class="btn btn-primary btn-xs">🔍 搜索</button>
+            <button @click="openBeliefCreate()" class="btn btn-outline btn-xs">➕ 新建</button>
+            <button @click="batchArchiveBeliefs()" class="btn btn-outline btn-xs" style="border-color:var(--warning);color:var(--warning)">📦 一键归档旧信念</button>
+            <label class="flex items-center gap-1.5 cursor-pointer select-none ml-2 bg-white/5 px-2 py-1 rounded border border-white/5 hover:bg-white/10 transition">
+                <input type="checkbox" @change="toggleSelectAllBeliefs($event)" :checked="selectedBeliefIds.length === beliefs.length && beliefs.length > 0">
+                <span class="text-xs" style="color:var(--muted-fg)">全选</span>
+            </label>
             <div class="ml-auto text-xs" style="color:var(--muted-fg)">
                 待审 <span class="font-mono" style="color:var(--warning)" x-text="beliefPending"></span> ·
                 共 <span class="font-mono" x-text="beliefTotal"></span> 条
             </div>
         </div>
 
+        <!-- 批量操作栏 -->
+        <div x-show="selectedBeliefIds.length > 0" class="flex items-center gap-3 mb-3 p-2.5 rounded-lg" style="background:rgba(99,102,241,0.1); border:1px solid var(--primary)">
+            <span class="text-xs font-medium" style="color:var(--primary)" x-text="`已选 ${selectedBeliefIds.length} 条`"></span>
+            <button @click="batchApproveBeliefs()" class="btn btn-primary btn-xs">✓ 批量审核通过</button>
+            <button @click="batchArchiveBeliefsSelected()" class="btn btn-outline btn-xs">📦 批量归档</button>
+            <button @click="batchDeleteBeliefs()" class="btn btn-outline btn-xs" style="color:var(--danger)">🗑 批量删除</button>
+            <button @click="selectedBeliefIds=[]" class="btn btn-muted text-xs ml-auto">取消选择</button>
+        </div>
+
         <div x-show="beliefs.length === 0" class="empty-state">暂无信念记录</div>
 
         <div class="space-y-2.5" x-show="beliefs.length > 0">
             <template x-for="b in beliefs" :key="b.id">
-                <div class="card !p-3.5">
+                <div class="card !p-3.5 hover:shadow-lg transition-all duration-200" style="border-left: 3px solid var(--primary)" :style="`border-left-color: ${b.type==='self'?'#8b5cf6':b.type==='world'?'#3b82f6':b.type==='value'?'#ec4899':'#fbbf24'}`">
                     <div class="flex items-start gap-3">
+                        <input type="checkbox" :value="b.id" x-model.number="selectedBeliefIds" class="mt-1">
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2 mb-1.5">
-                                <span class="pill" :class="`pill-${b.status}`" x-text="{pending:'待审核',active:'已生效',archived:'已归档'}[b.status]||b.status"></span>
+                                <span class="pill" :class="`pill-${b.status}`" x-text="{pending:'待审核',active:'已生效',archived:'已归档',pending_legacy:'旧遗产'}[b.status]||b.status"></span>
+                                <span class="badge badge-entity" x-text="b.type || 'self'"></span>
                                 <span class="text-xs font-mono" style="color:var(--muted-fg)">#<span x-text="b.id"></span></span>
                                 <span x-show="b.source" class="text-xs" style="color:var(--muted-fg)" x-text="'来源: '+b.source"></span>
+                                <span x-show="b.sources && b.sources.length" class="text-xs font-mono" style="color:var(--success)" x-text="'证据 '+b.sources.length"></span>
+                                <span x-show="!b.sources || !b.sources.length" class="text-xs" style="color:var(--danger)">无证据</span>
                                 <span x-show="b.confidence!=null" class="text-xs font-mono ml-auto" style="color:var(--primary)" x-text="'置信 '+Math.round((b.confidence||0)*100)+'%'"></span>
                             </div>
                             <div class="text-xs leading-relaxed" x-text="b.content"></div>
@@ -654,104 +681,338 @@
                     </div>
                     <div class="flex items-center gap-2 mt-3 pt-3" style="border-top:1px solid var(--border)">
                         <button x-show="b.status==='pending'" @click="approveBelief(b.id)" class="btn btn-success btn-xs">✓ 通过</button>
+                        <button @click="openBeliefEdit(b)" class="btn btn-outline btn-xs">✎ 编辑</button>
+                        <button @click="viewBeliefEvidence(b)" class="btn btn-outline btn-xs">📋 证据</button>
                         <button x-show="b.status!=='archived'" @click="archiveBelief(b.id)" class="btn btn-outline btn-xs">📥 归档</button>
                         <button @click="deleteBelief(b.id)" class="btn btn-outline btn-xs ml-auto" style="color:var(--danger)">🗑 删除</button>
                     </div>
                 </div>
             </template>
         </div>
+
+        <!-- 信念 Pagination 分页栏 -->
+        <div x-show="beliefs.length > 0" class="flex justify-center items-center gap-3 mt-4">
+            <button @click="beliefPrev()" class="btn btn-muted btn-xs" :disabled="beliefPage<=1">← 上一页</button>
+            <span class="text-xs font-mono" style="color:var(--muted-fg)" x-text="`${beliefPage} / ${beliefTotalPages}`"></span>
+            <button @click="beliefNext()" class="btn btn-muted btn-xs" :disabled="!beliefHasMore">下一页 →</button>
+        </div>
+
+        <!-- 新建/编辑信念弹窗 -->
+        <div x-show="beliefEdit" x-cloak class="dialog-overlay" @click.self="beliefEdit=null">
+            <div class="dialog-content" x-show="beliefEdit">
+                <div class="px-5 py-4" style="border-bottom:1px solid var(--border)">
+                    <h3 class="text-sm font-semibold"><span x-text="beliefEditIsNew ? '新建信念' : '编辑信念 #'+beliefEdit.id"></span></h3>
+                </div>
+                <div class="px-5 py-4 space-y-3">
+                    <div>
+                        <label class="field-label">内容</label>
+                        <textarea x-model="beliefEditForm.content" rows="3" class="input w-full" style="resize:vertical" placeholder="信念描述..."></textarea>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="field-label">类型</label>
+                            <select x-model="beliefEditForm.type" class="select w-full">
+                                <option value="self">self</option>
+                                <option value="other">other</option>
+                                <option value="world">world</option>
+                                <option value="value">value</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="field-label">置信度 (0-1)</label>
+                            <input type="number" step="0.1" min="0" max="1" x-model="beliefEditForm.confidence" class="input w-full">
+                        </div>
+                    </div>
+                    <div x-show="beliefEditIsNew">
+                        <label class="field-label">Bot ID（可空，默认全局）</label>
+                        <input type="text" x-model="beliefEditForm.bot_id" class="input w-full" placeholder="如 yushu">
+                    </div>
+                </div>
+                <div class="px-5 py-4 flex justify-end gap-2" style="border-top:1px solid var(--border)">
+                    <button @click="beliefEdit=null" class="btn btn-outline btn-xs">取消</button>
+                    <button @click="saveBeliefEdit()" class="btn btn-primary btn-xs">保存</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 证据查看弹窗 -->
+        <div x-show="beliefEvidence" x-cloak class="dialog-overlay" @click.self="beliefEvidence=null">
+            <div class="dialog-content" x-show="beliefEvidence" style="max-width:640px">
+                <div class="px-5 py-4" style="border-bottom:1px solid var(--border)">
+                    <h3 class="text-sm font-semibold">信念 #<span x-text="beliefEvidence?.id"></span> 证据</h3>
+                </div>
+                <div class="px-5 py-4">
+                    <div class="text-xs mb-3" style="color:var(--muted-fg)" x-text="beliefEvidence?.content"></div>
+                    <div x-show="!beliefEvidenceItems.length" class="empty-state">无证据记录</div>
+                    <div class="space-y-2" x-show="beliefEvidenceItems.length">
+                        <template x-for="ev in beliefEvidenceItems" :key="ev.type+'-'+ev.id">
+                            <div class="p-2.5 rounded-lg" style="background:var(--muted)">
+                                <div class="flex items-center gap-2 mb-1">
+                                    <span class="pill" :class="ev.type==='memory'?'pill-active':'pill-pending'" x-text="ev.type"></span>
+                                    <span class="font-mono text-xs" style="color:var(--muted-fg)">#<span x-text="ev.id"></span></span>
+                                    <span class="text-xs ml-auto" style="color:var(--muted-fg)" x-text="fmtTime(ev.timestamp)"></span>
+                                </div>
+                                <div class="text-xs leading-relaxed" x-text="ev.content || ev.summary"></div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+                <div class="px-5 py-4 flex justify-end" style="border-top:1px solid var(--border)">
+                    <button @click="beliefEvidence=null" class="btn btn-outline btn-xs">关闭</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- ═══ 黑话审核 Tab ═══ -->
     <div x-show="tab==='jargon'" x-cloak>
-        <div class="flex flex-wrap items-center gap-2 mt-4 mb-3">
-            <input type="text" x-model="jargonGroup" @keyup.enter="loadJargon()" placeholder="按群号筛选..." class="input w-36">
-            <select x-model="jargonFilter" @change="loadJargon()" class="select w-32">
-                <option value="">全部状态</option>
-                <option value="pending">待确认</option>
-                <option value="confirmed">已确认</option>
-                <option value="rejected">已否决</option>
-            </select>
-            <button @click="loadJargon()" class="btn btn-outline btn-xs">🔄 刷新</button>
-            <div class="ml-auto text-xs" style="color:var(--muted-fg)">
-                待确认 <span class="font-mono" style="color:var(--warning)" x-text="jargonPending"></span> ·
-                共 <span class="font-mono" x-text="jargonTotal"></span> 条
+        <!-- Sub-tabs Toggle -->
+        <div class="flex border-b border-gray-700 mb-4 gap-4 text-xs">
+            <button @click="jargonSubTab='local'; loadJargon()" class="pb-2 font-medium transition" :class="jargonSubTab==='local' ? 'border-b-2 border-primary text-white' : 'text-muted-fg hover:text-white'">群聊本地黑话</button>
+            <button @click="jargonSubTab='global'; loadJargonHolyman()" class="pb-2 font-medium transition" :class="jargonSubTab==='global' ? 'border-b-2 border-primary text-white' : 'text-muted-fg hover:text-white'">广域抽象黑话 (Holyman)</button>
+        </div>
+
+        <!-- Sub-Tab 1: Local Jargon -->
+        <div x-show="jargonSubTab==='local'">
+            <div class="flex flex-wrap items-center gap-2 mt-4 mb-3">
+                <input type="text" x-model="jargonSearch" @keyup.enter="searchJargon()" placeholder="搜索词条/释义..." class="input w-44">
+                <input type="text" x-model="jargonGroup" @keyup.enter="searchJargon()" placeholder="按群号筛选..." class="input w-36">
+                <select x-model="jargonFilter" @change="searchJargon()" class="select w-32">
+                    <option value="">全部状态</option>
+                    <option value="pending">待确认</option>
+                    <option value="confirmed">已确认</option>
+                    <option value="rejected">已否决</option>
+                </select>
+                <button @click="searchJargon()" class="btn btn-primary btn-xs">🔍 搜索</button>
+                <button @click="openJargonCreate()" class="btn btn-outline btn-xs">➕ 新建</button>
+                <label class="flex items-center gap-1.5 cursor-pointer select-none ml-2 bg-white/5 px-2 py-1 rounded border border-white/5 hover:bg-white/10 transition">
+                    <input type="checkbox" @change="toggleSelectAllJargon($event)" :checked="selectedJargonIds.length === jargonItems.length && jargonItems.length > 0">
+                    <span class="text-xs" style="color:var(--muted-fg)">全选</span>
+                </label>
+                <div class="ml-auto text-xs" style="color:var(--muted-fg)">
+                    待确认 <span class="font-mono" style="color:var(--warning)" x-text="jargonPending"></span> ·
+                    共 <span class="font-mono" x-text="jargonTotal"></span> 条
+                </div>
+            </div>
+
+            <!-- 批量操作栏 -->
+            <div x-show="selectedJargonIds.length > 0" class="flex items-center gap-3 mb-3 p-2.5 rounded-lg" style="background:rgba(99,102,241,0.1); border:1px solid var(--primary)">
+                <span class="text-xs font-medium" style="color:var(--primary)" x-text="`已选 ${selectedJargonIds.length} 条`"></span>
+                <button @click="batchReviewJargon('approve')" class="btn btn-primary btn-xs">✓ 批量确认黑话</button>
+                <button @click="batchReviewJargon('reject')" class="btn btn-outline btn-xs" style="color:var(--danger)">✕ 批量否决</button>
+                <button @click="batchDeleteJargon()" class="btn btn-outline btn-xs" style="color:var(--danger)">🗑 批量删除</button>
+                <button @click="selectedJargonIds=[]" class="btn btn-muted text-xs ml-auto">取消选择</button>
+            </div>
+
+            <div x-show="jargonItems.length === 0" class="empty-state">暂无黑话记录</div>
+
+            <div class="card !p-0 overflow-hidden" x-show="jargonItems.length > 0">
+                <table class="w-full text-xs">
+                    <thead>
+                        <tr style="border-bottom:1px solid var(--border); color:var(--muted-fg)">
+                            <th class="px-3 py-2.5 w-8"><input type="checkbox" @change="toggleSelectAllJargon($event)" :checked="selectedJargonIds.length === jargonItems.length && jargonItems.length > 0"></th>
+                            <th class="px-3 py-2.5 text-left font-medium">词条</th>
+                            <th class="px-3 py-2.5 text-left font-medium">释义</th>
+                            <th class="px-3 py-2.5 text-left font-medium w-16">频次</th>
+                            <th class="px-3 py-2.5 text-left font-medium w-20">状态</th>
+                            <th class="px-3 py-2.5 text-left font-medium w-16">群</th>
+                            <th class="px-3 py-2.5 text-right font-medium w-56">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="j in jargonItems" :key="j.id">
+                            <tr class="table-row" style="border-bottom:1px solid var(--border)">
+                                <td class="px-3 py-2.5"><input type="checkbox" :value="j.id" x-model.number="selectedJargonIds"></td>
+                                <td class="px-3 py-2.5 font-medium" x-text="j.word"></td>
+                                <td class="px-3 py-2.5" style="color:var(--muted-fg); max-width:240px; cursor:pointer" @dblclick="$el.querySelector('span').style.display='none'; $el.querySelector('input').style.display=''; $el.querySelector('input').focus()" :title="'双击编辑释义'">
+                                    <span x-text="j.meaning || '—'"></span>
+                                    <input type="text" :value="j.meaning||''" style="display:none; width:100%" class="input text-xs" @blur="quickEditMeaning(j.id, $el.value); $el.style.display='none'; $el.previousElementSibling.style.display=''" @keyup.enter="$el.blur()" @keyup.escape="$el.style.display='none'; $el.previousElementSibling.style.display=''">
+                                </td>
+                                <td class="px-3 py-2.5 font-mono" x-text="j.frequency"></td>
+                                <td class="px-3 py-2.5">
+                                    <span class="pill" :class="{'confirmed':'pill-active','rejected':'pill-rejected','pending':'pill-pending'}[j.status]||'pill-pending'"
+                                        x-text="{'confirmed':'已确认','rejected':'已否决','pending':'待确认'}[j.status]||j.status||'待确认'"></span>
+                                    <div x-show="j.status==='rejected' && j.reject_reason" class="text-xs mt-0.5" style="color:var(--danger)" x-text="j.reject_reason"></div>
+                                </td>
+                                <td class="px-3 py-2.5">
+                                    <span x-show="j.is_global" class="pill pill-global">全局</span>
+                                    <span x-show="!j.is_global" class="font-mono" style="color:var(--muted-fg)" x-text="j.group_id || '—'"></span>
+                                </td>
+                                <td class="px-3 py-2.5 text-right whitespace-nowrap">
+                                    <button @click="reviewJargon(j.id,'approve')" class="btn btn-success btn-xs">✓</button>
+                                    <button @click="reviewJargon(j.id,'reject')" class="btn btn-outline btn-xs" style="color:var(--danger)">✕</button>
+                                    <button @click="openJargonEdit(j)" class="btn btn-outline btn-xs">✎</button>
+                                    <button @click="toggleJargonGlobal(j.id)" class="btn btn-outline btn-xs" :title="j.is_global?'取消全局':'设为全局'">🌐</button>
+                                    <button @click="deleteJargon(j.id)" class="btn btn-outline btn-xs" style="color:var(--danger)">🗑</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 黑话 Pagination 分页栏 -->
+            <div x-show="jargonItems.length > 0" class="flex justify-center items-center gap-3 mt-4">
+                <button @click="jargonPrev()" class="btn btn-muted btn-xs" :disabled="jargonPage<=1">← 上一页</button>
+                <span class="text-xs font-mono" style="color:var(--muted-fg)" x-text="`${jargonPage} / ${jargonTotalPages}`"></span>
+                <button @click="jargonNext()" class="btn btn-muted btn-xs" :disabled="!jargonHasMore">下一页 →</button>
+            </div>
+
+            <!-- 编辑黑话弹窗 -->
+            <div x-show="jargonEdit" x-cloak class="dialog-overlay" @click.self="jargonEdit=null">
+                <div class="dialog-content" x-show="jargonEdit">
+                    <div class="px-5 py-4" style="border-bottom:1px solid var(--border)">
+                        <h3 class="text-sm font-semibold">编辑黑话 #<span x-text="jargonEdit?.id"></span></h3>
+                    </div>
+                    <div class="px-5 py-4 space-y-3">
+                        <div>
+                            <label class="field-label">词条</label>
+                            <input type="text" x-model="jargonEditForm.word" class="input w-full">
+                        </div>
+                        <div>
+                            <label class="field-label">释义</label>
+                            <textarea x-model="jargonEditForm.meaning" rows="3" class="input w-full" style="resize:vertical"></textarea>
+                        </div>
+                    </div>
+                    <div class="px-5 py-4 flex justify-end gap-2" style="border-top:1px solid var(--border)">
+                        <button @click="jargonEdit=null" class="btn btn-outline btn-xs">取消</button>
+                        <button @click="saveJargonEdit()" class="btn btn-primary btn-xs">保存</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 新建黑话弹窗 -->
+            <div x-show="jargonCreate" x-cloak class="dialog-overlay" @click.self="jargonCreate=null">
+                <div class="dialog-content" x-show="jargonCreate">
+                    <div class="px-5 py-4" style="border-bottom:1px solid var(--border)">
+                        <h3 class="text-sm font-semibold">新建黑话</h3>
+                    </div>
+                    <div class="px-5 py-4 space-y-3">
+                        <div>
+                            <label class="field-label">词条</label>
+                            <input type="text" x-model="jargonCreateForm.word" class="input w-full" placeholder="如 v我50">
+                        </div>
+                        <div>
+                            <label class="field-label">释义</label>
+                            <textarea x-model="jargonCreateForm.meaning" rows="3" class="input w-full" style="resize:vertical" placeholder="黑话含义..."></textarea>
+                        </div>
+                        <div>
+                            <label class="field-label">群号（可空，留空则全局）</label>
+                            <input type="text" x-model="jargonCreateForm.group_id" class="input w-full" placeholder="如 123456789">
+                        </div>
+                    </div>
+                    <div class="px-5 py-4 flex justify-end gap-2" style="border-top:1px solid var(--border)">
+                        <button @click="jargonCreate=null" class="btn btn-outline btn-xs">取消</button>
+                        <button @click="saveJargonCreate()" class="btn btn-primary btn-xs">保存</button>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <div x-show="jargonItems.length === 0" class="empty-state">暂无黑话记录</div>
+        <!-- Sub-Tab 2: Global Holyman Jargon -->
+        <div x-show="jargonSubTab==='global'" class="space-y-4">
+            <!-- Control Panel -->
+            <div class="flex flex-wrap items-center gap-3 bg-[var(--muted)] p-3 rounded-lg border border-[var(--border)] text-xs justify-between">
+                <div class="flex flex-wrap items-center gap-3">
+                    <input type="text" x-model="holymanSearch" placeholder="过滤广域黑话..." class="input w-48">
+                    <label class="flex items-center gap-1.5 cursor-pointer text-[var(--muted-fg)] hover:text-white select-none">
+                        <input type="checkbox" x-model="holymanUseProxy" class="rounded border-gray-700 text-primary focus:ring-primary bg-transparent">
+                        <span>使用 Ghproxy 国内加速</span>
+                    </label>
+                </div>
+                <button @click="syncJargonHolyman()" class="btn btn-primary btn-xs">🔄 在线同步 (GitHub)</button>
+            </div>
+            
+            <div class="text-xs px-1 text-[var(--muted-fg)] leading-relaxed">
+                “开箱即用，点击一键在线同步最新互联网抽象梗。启用/激活后的梗，才会在群聊命中时注入到 AI 的 Prompt 里（免爆 Token）”
+            </div>
 
-        <div class="card !p-0 overflow-hidden" x-show="jargonItems.length > 0">
-            <table class="w-full text-xs">
-                <thead>
-                    <tr style="border-bottom:1px solid var(--border); color:var(--muted-fg)">
-                        <th class="px-3 py-2.5 text-left font-medium">词条</th>
-                        <th class="px-3 py-2.5 text-left font-medium">释义</th>
-                        <th class="px-3 py-2.5 text-left font-medium w-16">频次</th>
-                        <th class="px-3 py-2.5 text-left font-medium w-20">状态</th>
-                        <th class="px-3 py-2.5 text-left font-medium w-16">群</th>
-                        <th class="px-3 py-2.5 text-right font-medium w-56">操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <template x-for="j in jargonItems" :key="j.id">
-                        <tr class="table-row" style="border-bottom:1px solid var(--border)">
-                            <td class="px-3 py-2.5 font-medium" x-text="j.word"></td>
-                            <td class="px-3 py-2.5" style="color:var(--muted-fg); max-width:240px; cursor:pointer" @dblclick="$el.querySelector('span').style.display='none'; $el.querySelector('input').style.display=''; $el.querySelector('input').focus()" :title="'双击编辑释义'">
-                                <span x-text="j.meaning || '—'"></span>
-                                <input type="text" :value="j.meaning||''" style="display:none; width:100%" class="input text-xs" @blur="quickEditMeaning(j.id, $el.value); $el.style.display='none'; $el.previousElementSibling.style.display=''" @keyup.enter="$el.blur()" @keyup.escape="$el.style.display='none'; $el.previousElementSibling.style.display=''">
-                            </td>
-                            <td class="px-3 py-2.5 font-mono" x-text="j.frequency"></td>
-                            <td class="px-3 py-2.5">
-                                <span class="pill" :class="j.is_jargon===1?'pill-active':(j.is_jargon===0?'pill-rejected':'pill-pending')"
-                                    x-text="j.is_jargon===1?'已确认':(j.is_jargon===0?'已否决':'待确认')"></span>
-                            </td>
-                            <td class="px-3 py-2.5">
-                                <span x-show="j.is_global" class="pill pill-global">全局</span>
-                                <span x-show="!j.is_global" class="font-mono" style="color:var(--muted-fg)" x-text="j.group_id || '—'"></span>
-                            </td>
-                            <td class="px-3 py-2.5 text-right whitespace-nowrap">
-                                <button @click="reviewJargon(j.id,'approve')" class="btn btn-success btn-xs">✓</button>
-                                <button @click="reviewJargon(j.id,'reject')" class="btn btn-outline btn-xs" style="color:var(--danger)">✕</button>
-                                <button @click="openJargonEdit(j)" class="btn btn-outline btn-xs">✎</button>
-                                <button @click="toggleJargonGlobal(j.id)" class="btn btn-outline btn-xs" :title="j.is_global?'取消全局':'设为全局'">🌐</button>
-                                <button @click="deleteJargon(j.id)" class="btn btn-outline btn-xs" style="color:var(--danger)">🗑</button>
-                            </td>
-                        </tr>
-                    </template>
-                </tbody>
-            </table>
-        </div>
+            <!-- Empty State -->
+            <div x-show="holymanItems.length === 0" class="empty-state">未加载到广域黑话，请点击右上角在线同步</div>
 
-        <!-- 编辑黑话弹窗 -->
-        <div x-show="jargonEdit" x-cloak class="dialog-overlay" @click.self="jargonEdit=null">
-            <div class="dialog-content" x-show="jargonEdit">
-                <div class="px-5 py-4" style="border-bottom:1px solid var(--border)">
-                    <h3 class="text-sm font-semibold">编辑黑话 #<span x-text="jargonEdit?.id"></span></h3>
-                </div>
-                <div class="px-5 py-4 space-y-3">
-                    <div>
-                        <label class="field-label">词条</label>
-                        <input type="text" x-model="jargonEditForm.word" class="input w-full">
+            <!-- Grid Card List -->
+            <div x-show="holymanItems.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mt-3">
+                <template x-for="h in filteredHolymanItems()" :key="h.word">
+                    <div class="card p-3 flex flex-col justify-between border transition duration-200" 
+                         :class="h.is_activated ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-[var(--border)] hover:border-gray-600'">
+                        
+                        <div class="flex items-start justify-between gap-2 mb-2">
+                            <span class="font-bold text-xs bg-gray-800 px-2 py-0.5 rounded text-white" x-text="h.word"></span>
+                            
+                            <!-- Activation Switch -->
+                            <input type="checkbox" class="toggle shrink-0" :checked="h.is_activated" x-model="h.is_activated" @change="toggleJargonHolyman(h)" :style="h.is_activated ? 'background: var(--success)' : ''">
+                        </div>
+
+                        <!-- Meaning (Double-clickable edit) -->
+                        <div class="cursor-pointer bg-black/10 hover:bg-black/20 p-2 rounded text-xs mt-1" 
+                             @dblclick="$el.querySelector('span').style.display='none'; $el.querySelector('input').style.display=''; $el.querySelector('input').focus()" 
+                             title="双击自定义释义">
+                            <span x-text="h.custom_meaning || h.meaning || '—'"></span>
+                            <input type="text" :value="h.custom_meaning || h.meaning || ''" style="display:none; width:100%" class="input text-xs" 
+                                   @blur="quickEditHolyman(h, $el.value); $el.style.display='none'; $el.previousElementSibling.style.display=''" 
+                                   @keyup.enter="$el.blur()" 
+                                   @keyup.escape="$el.style.display='none'; $el.previousElementSibling.style.display=''">
+                        </div>
                     </div>
-                    <div>
-                        <label class="field-label">释义</label>
-                        <textarea x-model="jargonEditForm.meaning" rows="3" class="input w-full" style="resize:vertical"></textarea>
-                    </div>
-                </div>
-                <div class="px-5 py-4 flex justify-end gap-2" style="border-top:1px solid var(--border)">
-                    <button @click="jargonEdit=null" class="btn btn-outline btn-xs">取消</button>
-                    <button @click="saveJargonEdit()" class="btn btn-primary btn-xs">保存</button>
-                </div>
+                </template>
             </div>
         </div>
     </div>
 
     <!-- ═══ 灵魂状态 Tab ═══ -->
     <div x-show="tab==='soul'" x-cloak>
-        <div class="flex items-center justify-between mt-4 mb-3">
-            <span class="text-xs" style="color:var(--muted-fg)">BDI 心智状态：关切焦点 · 情绪轨迹 · 时间锚点（情感记忆）</span>
-            <button @click="loadSoul()" class="btn btn-outline btn-xs">🔄 刷新</button>
+        <!-- 生物钟呼吸光圈与心里话面板 -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 mb-4">
+            <!-- 呼吸时区卡片 -->
+            <div class="card md:col-span-2 flex items-center gap-5 p-4.5 bg-gradient-to-r from-nebula-800 to-nebula-900 relative overflow-hidden" style="border:1px solid rgba(139,92,246,0.15)">
+                <!-- SVG 生物钟呼吸圈 -->
+                <div class="relative shrink-0 w-16 h-16 flex items-center justify-center">
+                    <svg class="absolute inset-0 w-full h-full transform -rotate-90">
+                        <circle cx="32" cy="32" r="28" stroke="rgba(255,255,255,0.03)" stroke-width="4" fill="transparent" />
+                        <circle cx="32" cy="32" r="28" stroke="var(--primary)" stroke-width="4" fill="transparent"
+                            stroke-dasharray="176" :stroke-dashoffset="176 - (176 * getCircadianEnergy() / 100)"
+                            style="transition: stroke-dashoffset 1s ease; animation: pulse-glow 3s infinite" />
+                    </svg>
+                    <div class="text-[11px] font-bold font-mono text-white" x-text="getCircadianEnergy() + '%'"></div>
+                </div>
+                <div>
+                    <h4 class="text-xs font-semibold text-white flex items-center gap-1.5">
+                        <span x-text="getCircadianIcon()"></span>
+                        <span x-text="getCircadianName()"></span>
+                        <span class="text-[10px] font-normal" style="color:var(--muted-fg)" x-text="`时钟: ${new Date().getHours()}:00`"></span>
+                    </h4>
+                    <p class="text-[11px] leading-relaxed mt-1" style="color:var(--muted-fg)" x-text="getCircadianDesc()"></p>
+                </div>
+            </div>
+
+            <!-- 咽回去的心里话 (Unspoken Desire) -->
+            <div class="card p-4.5 bg-gradient-to-br from-nebula-800 to-nebula-900" style="border:1px solid rgba(236,72,153,0.15)">
+                <h4 class="text-xs font-semibold text-pink-400 flex items-center gap-1.5 mb-1.5">
+                    <span>💭 咽回去的心里话</span>
+                    <span class="text-[9px] font-normal bg-pink-500/10 text-pink-300 border border-pink-500/20 px-1.5 rounded-full">30m内有效</span>
+                </h4>
+                <div x-show="!sys.lifecycle?.unspoken_desire" class="text-[11px]" style="color:var(--muted-fg)">最近没有被打断或咽回去的念头。聊天中她能保持连贯思考。</div>
+                <div x-show="sys.lifecycle?.unspoken_desire" class="text-[11px] leading-relaxed">
+                    <div class="font-mono text-pink-300 mb-1" x-text="`关于主题: ${sys.lifecycle?.unspoken_desire?.topic}`"></div>
+                    <div style="color:var(--muted-fg)" x-text="`动机: ${sys.lifecycle?.unspoken_desire?.motive}`"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <div class="flex items-center gap-2">
+                <span class="text-xs" style="color:var(--muted-fg)">筛选 Bot</span>
+                <select x-model="soulBotFilter" @change="loadSoul()" class="select w-32">
+                    <option value="">全部 Bot</option>
+                    <option value="yushu">羽书 (yushu)</option>
+                    <option value="baizz">白真真 (baizz)</option>
+                </select>
+            </div>
+            <div class="flex items-center gap-2">
+                <button @click="openConcernCreate()" class="btn btn-primary btn-xs">➕ 新建关切</button>
+                <button @click="openAnchorCreate()" class="btn btn-primary btn-xs">➕ 新建锚点</button>
+                <button @click="loadSoul()" class="btn btn-outline btn-xs">🔄 刷新</button>
+            </div>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -773,6 +1034,12 @@
                                 <span x-show="c.bot_id" x-text="c.bot_id"></span>
                                 <span x-show="c.last_triggered" x-text="'最近触发 '+fmtTime(c.last_triggered)"></span>
                             </div>
+                            <div class="flex items-center gap-1.5 mt-2">
+                                <button @click="openConcernEdit(c)" class="btn btn-outline btn-xs" style="padding:2px 8px">✎</button>
+                                <button @click="approveConcern(c.id)" class="btn btn-outline btn-xs" style="padding:2px 8px;color:var(--success)" title="通过">✓</button>
+                                <button @click="rejectConcern(c.id)" class="btn btn-outline btn-xs" style="padding:2px 8px;color:var(--warning)" title="降级">↓</button>
+                                <button @click="deleteConcern(c.id)" class="btn btn-outline btn-xs ml-auto" style="padding:2px 8px;color:var(--danger)">🗑</button>
+                            </div>
                         </div>
                     </template>
                 </div>
@@ -791,6 +1058,12 @@
                                 <div class="flex items-center gap-2 mt-1 text-xs" style="color:var(--muted-fg)">
                                     <span x-text="fmtTime(a.timestamp)"></span>
                                     <span class="font-mono" x-text="'情感权重 '+Math.round((a.emotional_weight||0)*100)+'%'"></span>
+                                </div>
+                                <div class="flex items-center gap-1.5 mt-1.5">
+                                    <button @click="openAnchorEdit(a)" class="btn btn-outline btn-xs" style="padding:2px 8px">✎</button>
+                                    <button @click="approveAnchor(a.id)" class="btn btn-outline btn-xs" style="padding:2px 8px;color:var(--success)">✓</button>
+                                    <button @click="rejectAnchor(a.id)" class="btn btn-outline btn-xs" style="padding:2px 8px;color:var(--warning)">↓</button>
+                                    <button @click="deleteAnchor(a.id)" class="btn btn-outline btn-xs ml-auto" style="padding:2px 8px;color:var(--danger)">🗑</button>
                                 </div>
                             </div>
                         </div>
@@ -818,8 +1091,91 @@
                             <span class="badge badge-emotion" x-text="m.type"></span>
                             <span class="text-xs font-mono" style="color:var(--muted-fg)" x-text="Math.round((m.intensity||0)*100)+'%'"></span>
                             <span x-show="m.is_active" class="pill pill-active">活跃</span>
+                            <button @click="editMood(m)" class="btn btn-outline btn-xs" style="padding:1px 6px">✎</button>
+                            <button @click="deleteMood(m.id)" class="btn btn-outline btn-xs" style="padding:1px 6px;color:var(--danger)">🗑</button>
                         </div>
                     </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- 新建/编辑关切弹窗 -->
+        <div x-show="concernEdit" x-cloak class="dialog-overlay" @click.self="concernEdit=null">
+            <div class="dialog-content" x-show="concernEdit">
+                <div class="px-5 py-4" style="border-bottom:1px solid var(--border)">
+                    <h3 class="text-sm font-semibold"><span x-text="concernEditIsNew ? '新建关切' : '编辑关切 #'+concernEdit.id"></span></h3>
+                </div>
+                <div class="px-5 py-4 space-y-3">
+                    <div>
+                        <label class="field-label">主题</label>
+                        <input type="text" x-model="concernEditForm.topic" class="input w-full" placeholder="如 用户的健康状况">
+                    </div>
+                    <div>
+                        <label class="field-label">强度 (0-1)</label>
+                        <input type="number" step="0.1" min="0" max="1" x-model="concernEditForm.intensity" class="input w-full">
+                    </div>
+                    <div x-show="concernEditIsNew">
+                        <label class="field-label">Bot ID（可空）</label>
+                        <input type="text" x-model="concernEditForm.bot_id" class="input w-full" placeholder="如 yushu">
+                    </div>
+                </div>
+                <div class="px-5 py-4 flex justify-end gap-2" style="border-top:1px solid var(--border)">
+                    <button @click="concernEdit=null" class="btn btn-outline btn-xs">取消</button>
+                    <button @click="saveConcernEdit()" class="btn btn-primary btn-xs">保存</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 新建/编辑时间锚点弹窗 -->
+        <div x-show="anchorEdit" x-cloak class="dialog-overlay" @click.self="anchorEdit=null">
+            <div class="dialog-content" x-show="anchorEdit">
+                <div class="px-5 py-4" style="border-bottom:1px solid var(--border)">
+                    <h3 class="text-sm font-semibold"><span x-text="anchorEditIsNew ? '新建时间锚点' : '编辑时间锚点 #'+anchorEdit.id"></span></h3>
+                </div>
+                <div class="px-5 py-4 space-y-3">
+                    <div>
+                        <label class="field-label">事件摘要</label>
+                        <textarea x-model="anchorEditForm.event_summary" rows="3" class="input w-full" style="resize:vertical" placeholder="如 用户第一次提到生病"></textarea>
+                    </div>
+                    <div>
+                        <label class="field-label">情感权重 (0-1)</label>
+                        <input type="number" step="0.1" min="0" max="1" x-model="anchorEditForm.emotional_weight" class="input w-full">
+                    </div>
+                    <div x-show="anchorEditIsNew">
+                        <label class="field-label">Bot ID（可空）</label>
+                        <input type="text" x-model="anchorEditForm.bot_id" class="input w-full" placeholder="如 yushu">
+                    </div>
+                </div>
+                <div class="px-5 py-4 flex justify-end gap-2" style="border-top:1px solid var(--border)">
+                    <button @click="anchorEdit=null" class="btn btn-outline btn-xs">取消</button>
+                    <button @click="saveAnchorEdit()" class="btn btn-primary btn-xs">保存</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 编辑情绪弹窗 -->
+        <div x-show="moodEdit" x-cloak class="dialog-overlay" @click.self="moodEdit=null">
+            <div class="dialog-content" x-show="moodEdit">
+                <div class="px-5 py-4" style="border-bottom:1px solid var(--border)">
+                    <h3 class="text-sm font-semibold">编辑情绪 #<span x-text="moodEdit.id"></span></h3>
+                </div>
+                <div class="px-5 py-4 space-y-3">
+                    <div>
+                        <label class="field-label">类型</label>
+                        <input type="text" x-model="moodEditForm.mood_type" class="input w-full" placeholder="如 cheerful">
+                    </div>
+                    <div>
+                        <label class="field-label">描述</label>
+                        <textarea x-model="moodEditForm.description" rows="2" class="input w-full" style="resize:vertical"></textarea>
+                    </div>
+                    <div>
+                        <label class="field-label">强度 (0-1)</label>
+                        <input type="number" step="0.1" min="0" max="1" x-model="moodEditForm.intensity" class="input w-full">
+                    </div>
+                </div>
+                <div class="px-5 py-4 flex justify-end gap-2" style="border-top:1px solid var(--border)">
+                    <button @click="moodEdit=null" class="btn btn-outline btn-xs">取消</button>
+                    <button @click="saveMoodEdit()" class="btn btn-primary btn-xs">保存</button>
                 </div>
             </div>
         </div>
@@ -977,6 +1333,22 @@ function dashboard() {
         memFilterTags: '',
         memFilterVector: '',
         selectedIds: [],
+        selectedBeliefIds: [],
+        beliefPage: 1,
+        beliefPageSize: 15,
+        beliefSearch: '',
+        beliefFilterType: '',
+        beliefHasMore: false,
+        beliefTotalPages: 1,
+        
+        selectedJargonIds: [],
+        jargonPage: 1,
+        jargonPageSize: 15,
+        jargonSearch: '',
+        jargonHasMore: false,
+        jargonTotalPages: 1,
+        
+        soulBotFilter: '',
         senderList: [],
         // 详情弹窗
         detailOpen: false,
@@ -1044,8 +1416,14 @@ function dashboard() {
         beliefFilter: '',
         beliefTotal: 0,
         beliefPending: 0,
+        beliefEdit: null,
+        beliefEditIsNew: false,
+        beliefEditForm: { content: '', type: 'self', confidence: 0.7, bot_id: '' },
+        beliefEvidence: null,
+        beliefEvidenceItems: [],
 
         // ─── 黑话审核 ───
+        jargonSubTab: 'local',
         jargonItems: [],
         jargonFilter: '',
         jargonGroup: '',
@@ -1053,12 +1431,26 @@ function dashboard() {
         jargonPending: 0,
         jargonEdit: null,
         jargonEditForm: { word: '', meaning: '' },
+        jargonCreate: false,
+        jargonCreateForm: { word: '', meaning: '', group_id: '' },
+
+        holymanItems: [],
+        holymanSearch: '',
+        holymanUseProxy: true,
 
         // ─── 灵魂状态 ───
         concerns: [],
         timeAnchors: [],
         moodTrajectory: [],
         moodGroup: '',
+        concernEdit: null,
+        concernEditIsNew: false,
+        concernEditForm: { topic: '', intensity: 0.5, bot_id: '' },
+        anchorEdit: null,
+        anchorEditIsNew: false,
+        anchorEditForm: { event_summary: '', emotional_weight: 0.5, bot_id: '' },
+        moodEdit: null,
+        moodEditForm: { mood_type: '', description: '', intensity: 0.5 },
         get moodChart() {
             const data = this.moodTrajectory;
             const w = 600, h = 100, pad = 6;
@@ -1256,14 +1648,46 @@ function dashboard() {
         // ─── 信念审核 ───
         async loadBeliefs() {
             try {
-                const params = new URLSearchParams({ limit: 100 });
+                this.selectedBeliefIds = []; // 刷新时重置勾选
+                const params = new URLSearchParams({
+                    limit: this.beliefPageSize,
+                    offset: (this.beliefPage - 1) * this.beliefPageSize
+                });
                 if (this.beliefFilter) params.set('status', this.beliefFilter);
+                if (this.beliefFilterType) params.set('type', this.beliefFilterType);
+                if (this.beliefSearch) params.set('search', this.beliefSearch.trim());
+                
                 const r = await fetch('/api/beliefs/?' + params);
                 const d = await r.json();
                 this.beliefs = d.items || [];
                 this.beliefTotal = d.total || 0;
                 this.beliefPending = d.pending_count || 0;
+                
+                // 重算总页数
+                this.beliefTotalPages = Math.ceil(this.beliefTotal / this.beliefPageSize) || 1;
+                this.beliefHasMore = this.beliefs.length >= this.beliefPageSize;
             } catch(e) { console.error('loadBeliefs:', e); }
+        },
+        toggleSelectAllBeliefs(e) {
+            if (e.target.checked) {
+                this.selectedBeliefIds = this.beliefs.map(b => b.id);
+            } else {
+                this.selectedBeliefIds = [];
+            }
+        },
+        async searchBeliefs() {
+            this.beliefPage = 1;
+            await this.loadBeliefs();
+        },
+        async beliefPrev() {
+            if (this.beliefPage <= 1) return;
+            this.beliefPage--;
+            await this.loadBeliefs();
+        },
+        async beliefNext() {
+            if (!this.beliefHasMore) return;
+            this.beliefPage++;
+            await this.loadBeliefs();
         },
         async approveBelief(id) {
             await fetch(`/api/beliefs/${id}/approve`, { method: 'POST' });
@@ -1285,19 +1709,140 @@ function dashboard() {
             await fetch(`/api/beliefs/${id}`, { method: 'DELETE' });
             await this.loadBeliefs();
         },
+        
+        // 批量信念操作 (Batch Belief Actions)
+        async batchApproveBeliefs() {
+            if (!this.selectedBeliefIds.length) return;
+            try {
+                const r = await fetch('/api/beliefs/batch-approve', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ ids: this.selectedBeliefIds })
+                });
+                const d = await r.json();
+                if (d.ok) {
+                    let msg = `✓ 成功批量审核通过 ${d.approved_count} 条信念。`;
+                    if (d.skipped_count > 0) {
+                        msg += ` 有 ${d.skipped_count} 条信念因为缺乏证据而被安全机制熔断拦截。`;
+                    }
+                    alert(msg);
+                    await this.loadBeliefs();
+                } else {
+                    alert('批量审核失败: ' + (d.error || '未知错误'));
+                }
+            } catch(e) { alert('网络错误，批量审核失败'); }
+        },
+        async batchArchiveBeliefsSelected() {
+            if (!this.selectedBeliefIds.length) return;
+            if (!confirm(`确认要将选中的 ${this.selectedBeliefIds.length} 条信念进行批量归档吗？`)) return;
+            try {
+                for (const bid of this.selectedBeliefIds) {
+                    await fetch(`/api/beliefs/${bid}/archive`, { method: 'POST' });
+                }
+                await this.loadBeliefs();
+            } catch(e) { console.error(e); }
+        },
+        async batchDeleteBeliefs() {
+            if (!this.selectedBeliefIds.length) return;
+            if (!confirm(`确定要批量物理删除选中的 ${this.selectedBeliefIds.length} 条信念吗？此操作不可撤销！`)) return;
+            try {
+                const r = await fetch('/api/beliefs/batch-delete', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ ids: this.selectedBeliefIds })
+                });
+                const d = await r.json();
+                if (d.ok) {
+                    alert(`✓ 成功批量删除 ${d.deleted_count} 条信念。`);
+                    await this.loadBeliefs();
+                } else {
+                    alert('批量删除失败');
+                }
+            } catch(e) { alert('网络错误，批量删除失败'); }
+        },
+
+        openBeliefCreate() {
+            this.beliefEditIsNew = true;
+            this.beliefEdit = { id: null };
+            this.beliefEditForm = { content: '', type: 'self', confidence: 0.7, bot_id: '' };
+        },
+        openBeliefEdit(b) {
+            this.beliefEditIsNew = false;
+            this.beliefEdit = b;
+            this.beliefEditForm = { content: b.content || '', type: b.type || 'self', confidence: b.confidence ?? 0.7, bot_id: b.bot_id || '' };
+        },
+        async saveBeliefEdit() {
+            if (!this.beliefEditForm.content.trim()) { alert('信念内容不能为空'); return; }
+            const body = {
+                content: this.beliefEditForm.content.trim(),
+                type: this.beliefEditForm.type,
+                confidence: parseFloat(this.beliefEditForm.confidence) || 0.7,
+                bot_id: this.beliefEditForm.bot_id.trim() || null,
+            };
+            try {
+                if (this.beliefEditIsNew) {
+                    await fetch('/api/beliefs/', {
+                        method: 'POST',
+                        headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify(body),
+                    });
+                } else {
+                    await fetch(`/api/beliefs/${this.beliefEdit.id}`, {
+                        method: 'PUT',
+                        headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({ content: body.content, type: body.type, confidence: body.confidence }),
+                    });
+                }
+                this.beliefEdit = null;
+                await this.loadBeliefs();
+            } catch(e) { console.error(e); alert('保存失败: '+e.message); }
+        },
+        async viewBeliefEvidence(b) {
+            this.beliefEvidence = b;
+            this.beliefEvidenceItems = [];
+            try {
+                const r = await fetch(`/api/beliefs/${b.id}/evidence`);
+                const d = await r.json();
+                this.beliefEvidenceItems = d.items || [];
+            } catch(e) { console.error(e); }
+        },
 
         // ─── 黑话审核 ───
         async loadJargon() {
             try {
-                const params = new URLSearchParams({ limit: 100 });
+                this.selectedJargonIds = []; // 重置批量勾选
+                const params = new URLSearchParams({
+                    limit: this.jargonPageSize,
+                    offset: (this.jargonPage - 1) * this.jargonPageSize
+                });
                 if (this.jargonFilter) params.set('status', this.jargonFilter);
                 if (this.jargonGroup) params.set('group_id', this.jargonGroup.trim());
+                if (this.jargonSearch) params.set('search', this.jargonSearch.trim());
+                
                 const r = await fetch('/api/jargon/?' + params);
                 const d = await r.json();
                 this.jargonItems = d.items || [];
                 this.jargonTotal = d.total || 0;
-                this.jargonPending = this.jargonItems.filter(j => j.is_jargon == null).length;
+                this.jargonPending = this.jargonItems.filter(j => (j.status || 'pending') === 'pending').length;
+                
+                // 重算页数
+                this.jargonTotalPages = Math.ceil(this.jargonTotal / this.jargonPageSize) || 1;
+                this.jargonHasMore = this.jargonItems.length >= this.jargonPageSize;
             } catch(e) { console.error('loadJargon:', e); }
+        },
+        async searchJargon() {
+            this.jargonPage = 1;
+            await this.loadJargon();
+        },
+        async jargonPrev() {
+            if (this.jargonPage <= 1) return;
+            this.jargonPage--;
+            await this.loadJargon();
+        },
+        async jargonNext() {
+            if (!this.jargonHasMore) return;
+            this.jargonPage++;
+            await this.loadJargon();
         },
         async reviewJargon(id, action) {
             await fetch(`/api/jargon/${id}/review`, {
@@ -1307,6 +1852,51 @@ function dashboard() {
             });
             await this.loadJargon();
         },
+        
+        // 批量黑话操作 (Batch Jargon Actions)
+        toggleSelectAllJargon(e) {
+            if (e.target.checked) {
+                this.selectedJargonIds = this.jargonItems.map(j => j.id);
+            } else {
+                this.selectedJargonIds = [];
+            }
+        },
+        async batchReviewJargon(action) {
+            if (!this.selectedJargonIds.length) return;
+            try {
+                const r = await fetch('/api/jargon/batch-review', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ ids: this.selectedJargonIds, action: action })
+                });
+                const d = await r.json();
+                if (d.ok) {
+                    alert(`✓ 成功批量将 ${d.reviewed_count} 条词条置为 ${action==='approve'?'已确认':'已否决'}`);
+                    await this.loadJargon();
+                } else {
+                    alert('批量流转失败');
+                }
+            } catch(e) { alert('网络错误，批量流转失败'); }
+        },
+        async batchDeleteJargon() {
+            if (!this.selectedJargonIds.length) return;
+            if (!confirm(`确定要批量物理删除选中的 ${this.selectedJargonIds.length} 条黑话词条吗？此操作不可逆！`)) return;
+            try {
+                const r = await fetch('/api/jargon/batch-delete', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ ids: this.selectedJargonIds })
+                });
+                const d = await r.json();
+                if (d.ok) {
+                    alert(`✓ 成功批量删除 ${d.deleted_count} 条黑话。`);
+                    await this.loadJargon();
+                } else {
+                    alert('批量删除失败');
+                }
+            } catch(e) { alert('网络错误，批量删除失败'); }
+        },
+
         openJargonEdit(j) {
             this.jargonEdit = j;
             this.jargonEditForm = { word: j.word, meaning: j.meaning || '' };
@@ -1339,6 +1929,101 @@ function dashboard() {
             await fetch(`/api/jargon/${id}`, { method: 'DELETE' });
             await this.loadJargon();
         },
+        openJargonCreate() {
+            this.jargonCreate = true;
+            this.jargonCreateForm = { word: '', meaning: '', group_id: '' };
+        },
+        async saveJargonCreate() {
+            if (!this.jargonCreateForm.word.trim()) { alert('词条不能为空'); return; }
+            try {
+                await fetch('/api/jargon/', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({
+                        word: this.jargonCreateForm.word.trim(),
+                        meaning: this.jargonCreateForm.meaning.trim(),
+                        group_id: this.jargonCreateForm.group_id.trim() || null,
+                    }),
+                });
+                this.jargonCreate = false;
+                await this.loadJargon();
+            } catch(e) { console.error(e); alert('保存失败: '+e.message); }
+        },
+
+        async loadJargonHolyman() {
+            try {
+                const r = await fetch('/api/jargon/holyman');
+                const d = await r.json();
+                this.holymanItems = d.items || [];
+            } catch(e) { console.error('loadJargonHolyman:', e); }
+        },
+        async syncJargonHolyman() {
+            if (!confirm('确定要在在线同步最新的广域黑话词库吗？')) return;
+            try {
+                const r = await fetch('/api/jargon/holyman/sync', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ use_proxy: this.holymanUseProxy })
+                });
+                const d = await r.json();
+                if (d.ok) {
+                    alert('✓ 在线同步成功！');
+                    await this.loadJargonHolyman();
+                } else {
+                    alert('同步失败: ' + (d.error || '未知错误'));
+                }
+            } catch(e) { console.error(e); alert('网络错误，在线同步失败'); }
+        },
+        async toggleJargonHolyman(h, customMeaning = null) {
+            try {
+                const meaningToUse = customMeaning !== null ? customMeaning : (h.custom_meaning || h.meaning);
+                const r = await fetch('/api/jargon/holyman/toggle', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        word: h.word,
+                        meaning: meaningToUse,
+                        activate: h.is_activated
+                    })
+                });
+                const d = await r.json();
+                if (d.ok) {
+                    if (h.is_activated && d.db_id) {
+                        h.db_id = d.db_id;
+                    }
+                    if (customMeaning !== null) {
+                        h.custom_meaning = customMeaning;
+                    }
+                    await this.loadJargonHolyman();
+                } else {
+                    alert('切换失败: ' + (d.error || '未知错误'));
+                    h.is_activated = !h.is_activated;
+                }
+            } catch(e) {
+                console.error(e);
+                alert('网络错误');
+                h.is_activated = !h.is_activated;
+            }
+        },
+        async quickEditHolyman(h, newMeaning) {
+            if (!newMeaning && newMeaning !== '') return;
+            if (h.is_activated && h.db_id) {
+                await this.quickEditMeaning(h.db_id, newMeaning);
+                await this.loadJargonHolyman();
+            } else {
+                h.is_activated = true;
+                await this.toggleJargonHolyman(h, newMeaning);
+            }
+        },
+        filteredHolymanItems() {
+            const q = (this.holymanSearch || '').trim().toLowerCase();
+            if (!q) return this.holymanItems;
+            return this.holymanItems.filter(h => {
+                return h.word.toLowerCase().includes(q) || 
+                       (h.meaning || '').toLowerCase().includes(q) || 
+                       (h.custom_meaning || '').toLowerCase().includes(q);
+            });
+        },
 
         // ─── 灵魂状态 ───
         fmtTime(ts) {
@@ -1353,17 +2038,62 @@ function dashboard() {
         },
         async loadConcerns() {
             try {
-                const r = await fetch('/api/concerns');
+                const params = new URLSearchParams();
+                if (this.soulBotFilter) params.set('bot_id', this.soulBotFilter);
+                const r = await fetch('/api/concerns?' + params);
                 const d = await r.json();
                 this.concerns = d.items || [];
             } catch(e) { console.error('loadConcerns:', e); }
         },
         async loadAnchors() {
             try {
-                const r = await fetch('/api/time-anchors?limit=30');
+                const params = new URLSearchParams({ limit: '30' });
+                if (this.soulBotFilter) params.set('bot_id', this.soulBotFilter);
+                const r = await fetch('/api/time-anchors?' + params);
                 const d = await r.json();
                 this.timeAnchors = d.items || [];
             } catch(e) { console.error('loadAnchors:', e); }
+        },
+        
+        // 生物钟前端心境解析 (Circadian Analytical Rules)
+        getCircadianHour() {
+            return new Date().getHours();
+        },
+        getCircadianEnergy() {
+            const h = this.getCircadianHour();
+            if (0 <= h && h < 5) return 15;
+            if (5 <= h && h < 8) return 40;
+            if (9 <= h && h < 12) return 95;
+            if (14 <= h && h < 17) return 90;
+            if (22 <= h && h <= 23) return 45;
+            return 70;
+        },
+        getCircadianName() {
+            const h = this.getCircadianHour();
+            if (0 <= h && h < 5) return "深夜困倦";
+            if (5 <= h && h < 8) return "晨曦刚醒";
+            if (9 <= h && h < 12) return "精力充沛 (工作段)";
+            if (14 <= h && h < 17) return "精力充沛 (下午时段)";
+            if (22 <= h && h <= 23) return "夜色感性";
+            return "状态平稳";
+        },
+        getCircadianDesc() {
+            const h = this.getCircadianHour();
+            if (0 <= h && h < 5) return "身体感到非常困意，注意力散。对话中本能地精简字数，情绪归于平静，更倾向于互道晚安下线休息。";
+            if (5 <= h && h < 8) return "处于刚醒来的朦胧期，大脑和精神状态在缓慢复苏中。语气极其温和、慵懒、平静。";
+            if (9 <= h && h < 12) return "白昼黄金高能期。你精神焕发，注意力高度集中。对社交充满干劲和好奇心，工作探索欲望极强。";
+            if (14 <= h && h < 17) return "午后精力依然充沛，状态良好，注意力稳定集中，适合日常高效率社交。";
+            if (22 <= h && h <= 23) return "夜色温柔，你感到一丝自然的生理疲惫。防备值最低，多愁善感和依恋心理大幅增加，适合交心和情感共鸣。";
+            return "正常的作息时间，各项生理和情绪心境指标处于平稳状态。";
+        },
+        getCircadianIcon() {
+            const h = this.getCircadianHour();
+            if (0 <= h && h < 5) return "🌙";
+            if (5 <= h && h < 8) return "🌅";
+            if (9 <= h && h < 12) return "☀️";
+            if (14 <= h && h < 17) return "🌤️";
+            if (22 <= h && h <= 23) return "🌌";
+            return "☕";
         },
         async loadMood() {
             try {
@@ -1373,6 +2103,125 @@ function dashboard() {
                 const d = await r.json();
                 this.moodTrajectory = d.items || [];
             } catch(e) { console.error('loadMood:', e); }
+        },
+
+        // ─── 灵魂 CRUD ───
+        openConcernCreate() {
+            this.concernEditIsNew = true;
+            this.concernEdit = { id: null };
+            this.concernEditForm = { topic: '', intensity: 0.5, bot_id: '' };
+        },
+        openConcernEdit(c) {
+            this.concernEditIsNew = false;
+            this.concernEdit = c;
+            this.concernEditForm = { topic: c.topic || '', intensity: c.intensity ?? 0.5, bot_id: c.bot_id || '' };
+        },
+        async saveConcernEdit() {
+            if (!this.concernEditForm.topic.trim()) { alert('主题不能为空'); return; }
+            const body = {
+                topic: this.concernEditForm.topic.trim(),
+                intensity: parseFloat(this.concernEditForm.intensity) || 0.5,
+                bot_id: this.concernEditForm.bot_id.trim() || null,
+            };
+            try {
+                if (this.concernEditIsNew) {
+                    await fetch('/api/concerns', {
+                        method: 'POST', headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify(body),
+                    });
+                } else {
+                    await fetch(`/api/concerns/${this.concernEdit.id}`, {
+                        method: 'PUT', headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({ topic: body.topic, intensity: body.intensity }),
+                    });
+                }
+                this.concernEdit = null;
+                await this.loadConcerns();
+            } catch(e) { console.error(e); alert('保存失败: '+e.message); }
+        },
+        async approveConcern(id) {
+            await fetch(`/api/concerns/${id}/approve`, { method: 'POST' });
+            await this.loadConcerns();
+        },
+        async rejectConcern(id) {
+            await fetch(`/api/concerns/${id}/reject`, { method: 'POST' });
+            await this.loadConcerns();
+        },
+        async deleteConcern(id) {
+            if (!confirm('确认删除该关切？')) return;
+            await fetch(`/api/concerns/${id}`, { method: 'DELETE' });
+            await this.loadConcerns();
+        },
+
+        openAnchorCreate() {
+            this.anchorEditIsNew = true;
+            this.anchorEdit = { id: null };
+            this.anchorEditForm = { event_summary: '', emotional_weight: 0.5, bot_id: '' };
+        },
+        openAnchorEdit(a) {
+            this.anchorEditIsNew = false;
+            this.anchorEdit = a;
+            this.anchorEditForm = { event_summary: a.event_summary || '', emotional_weight: a.emotional_weight ?? 0.5, bot_id: a.bot_id || '' };
+        },
+        async saveAnchorEdit() {
+            if (!this.anchorEditForm.event_summary.trim()) { alert('事件摘要不能为空'); return; }
+            const body = {
+                event_summary: this.anchorEditForm.event_summary.trim(),
+                emotional_weight: parseFloat(this.anchorEditForm.emotional_weight) || 0.5,
+                bot_id: this.anchorEditForm.bot_id.trim() || null,
+            };
+            try {
+                if (this.anchorEditIsNew) {
+                    await fetch('/api/time-anchors', {
+                        method: 'POST', headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify(body),
+                    });
+                } else {
+                    await fetch(`/api/time-anchors/${this.anchorEdit.id}`, {
+                        method: 'PUT', headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({ event_summary: body.event_summary, emotional_weight: body.emotional_weight }),
+                    });
+                }
+                this.anchorEdit = null;
+                await this.loadAnchors();
+            } catch(e) { console.error(e); alert('保存失败: '+e.message); }
+        },
+        async approveAnchor(id) {
+            await fetch(`/api/time-anchors/${id}/approve`, { method: 'POST' });
+            await this.loadAnchors();
+        },
+        async rejectAnchor(id) {
+            await fetch(`/api/time-anchors/${id}/reject`, { method: 'POST' });
+            await this.loadAnchors();
+        },
+        async deleteAnchor(id) {
+            if (!confirm('确认删除该时间锚点？')) return;
+            await fetch(`/api/time-anchors/${id}`, { method: 'DELETE' });
+            await this.loadAnchors();
+        },
+
+        editMood(m) {
+            this.moodEdit = m;
+            this.moodEditForm = { mood_type: m.type || '', description: m.description || '', intensity: m.intensity ?? 0.5 };
+        },
+        async saveMoodEdit() {
+            try {
+                await fetch(`/api/mood/${this.moodEdit.id}`, {
+                    method: 'PUT', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({
+                        mood_type: this.moodEditForm.mood_type,
+                        description: this.moodEditForm.description,
+                        intensity: parseFloat(this.moodEditForm.intensity) || 0.5,
+                    }),
+                });
+                this.moodEdit = null;
+                await this.loadMood();
+            } catch(e) { console.error(e); alert('保存失败: '+e.message); }
+        },
+        async deleteMood(id) {
+            if (!confirm('确认删除该情绪记录？')) return;
+            await fetch(`/api/mood/${id}`, { method: 'DELETE' });
+            await this.loadMood();
         },
 
         async loadSenders() {
