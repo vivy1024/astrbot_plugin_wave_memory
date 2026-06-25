@@ -2,7 +2,7 @@
 
 # Wave Memory
 
-[![Version](https://img.shields.io/badge/version-v2.0.0-blue.svg)](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
+[![Version](https://img.shields.io/badge/version-v2.1.0-blue.svg)](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![AstrBot](https://img.shields.io/badge/AstrBot-≥4.14-green.svg)](https://github.com/AstrBotDevs/AstrBot)
@@ -34,11 +34,11 @@
 
 | 版本 | 日期 | 重点 |
 |------|------|------|
+| **v2.1.0** | 2026-06-25 | 灵魂系统升级 · WebUI 管理面板 · soul/beliefs/jargon/kg API · 全选 2.0 |
+| **v2.0.1** | 2026-06-21 | bot_id 统一 · 黑话学习升级 · facts 时间衰减 · 启动自动备份 |
+| **v2.0.0** | 2026-06-19 | 认知架构升级 · 时间线记忆通道 · QQ 号统一身份 · /teach 命令 |
 | **v1.5.2** | 2026-06-19 | 废弃代码清理 + 索引性能修复 + 配置项清理 |
 | **v1.5.1** | 2026-06-18 | 社交认知优化 · facts 驱动画像 · 配置统一 · 热调参持久化 |
-| **v1.5.0** | 2026-06-18 | 好感度系统重设计 · 防骚扰冷却 · 互动积累 |
-| **v1.4.0** | 2026-06-17 | MetaThinking 合并主对话 · 检索群隔离+时间感知 · 事件循环阻塞修复 · 配置自愈 · 数据清理 |
-| **v1.3.0** | 2026-06-16 | FTS5 精确召回 · 脉冲传播 · facts 1-跳扩展 · 黑话格式改造 · 绰号提取 |
 
 <details>
 <summary>更早版本</summary>
