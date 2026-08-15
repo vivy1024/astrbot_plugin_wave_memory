@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
+import logging
 import os
 import queue
 import sqlite3
@@ -12,6 +13,8 @@ import threading
 import uuid
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Mapping
+
+logger = logging.getLogger(__name__)
 
 try:
     from ..domain.commands import (
@@ -84,6 +87,7 @@ class WriteCoordinator:
         self._accept_lock = threading.Lock()
         self._accepting = True
         self._stopped = False
+        self._failure: BaseException | None = None
         self._ready: concurrent.futures.Future[None] = concurrent.futures.Future()
         self._thread = threading.Thread(
             target=self._writer_main, name="wave-memory-writer", daemon=True
@@ -101,6 +105,31 @@ class WriteCoordinator:
         lease = getattr(self, "_writer_lease", None)
         if lease is not None:
             lease.release()
+
+    @staticmethod
+    def _set_result_if_pending(
+        future: concurrent.futures.Future[Any], result: Any
+    ) -> None:
+        """Complete a caller future without letting cancellation kill the writer."""
+        if future.done():
+            return
+        try:
+            future.set_result(result)
+        except concurrent.futures.InvalidStateError:
+            # Cancellation can race with completion after the database work commits.
+            pass
+
+    @staticmethod
+    def _set_exception_if_pending(
+        future: concurrent.futures.Future[Any], exc: BaseException
+    ) -> None:
+        """Fail a caller future unless it was already cancelled or completed."""
+        if future.done():
+            return
+        try:
+            future.set_exception(exc)
+        except concurrent.futures.InvalidStateError:
+            pass
 
     def _writer_main(self) -> None:
         connection: sqlite3.Connection | None = None
@@ -143,21 +172,26 @@ class WriteCoordinator:
                                 connection.rollback()
                             except BaseException:
                                 pass
-                        future.set_exception(exc)
+                        self._set_exception_if_pending(future, exc)
                     else:
-                        future.set_result(result)
+                        self._set_result_if_pending(future, result)
                 finally:
                     self._queue.task_done()
         except BaseException as exc:
-            if not self._ready.done():
-                self._ready.set_exception(exc)
+            with self._accept_lock:
+                self._accepting = False
+                with self._state_lock:
+                    self._failure = exc
+                    self._stopped = True
+            self._set_exception_if_pending(self._ready, exc)
+            logger.exception("[WriteCoordinator] writer thread stopped unexpectedly")
             while True:
                 try:
                     item = self._queue.get_nowait()
                 except queue.Empty:
                     break
                 if item is not None:
-                    item[2].set_exception(exc)
+                    self._set_exception_if_pending(item[2], exc)
                 self._queue.task_done()
         finally:
             if connection is not None:
@@ -169,11 +203,18 @@ class WriteCoordinator:
         transactional: bool,
         future: concurrent.futures.Future[Any],
     ) -> None:
-        # Keep the stopped check and enqueue on the same side of the shutdown sentinel.
+        # Keep the health check and enqueue on the same side of the shutdown sentinel.
+        # Never block a caller (especially AstrBot's asyncio loop) on a full queue.
         with self._state_lock:
             if self._stopped:
                 raise RuntimeError("write coordinator is stopped")
-            self._queue.put((function, transactional, future))
+            if not self._thread.is_alive():
+                self._stopped = True
+                raise RuntimeError("write coordinator writer thread is unavailable")
+            try:
+                self._queue.put_nowait((function, transactional, future))
+            except queue.Full as exc:
+                raise CommandRejectedError("writer_queue_full") from exc
 
     async def _dispatch(self, function: Callable[[sqlite3.Connection], Any], transactional: bool) -> Any:
         future: concurrent.futures.Future[Any] = concurrent.futures.Future()
@@ -194,23 +235,34 @@ class WriteCoordinator:
         """Submit a short synchronous caller operation to the writer-owned transaction."""
         if threading.current_thread() is self._thread:
             raise RuntimeError("writer thread cannot synchronously dispatch to itself")
-        future: concurrent.futures.Future[Any] = concurrent.futures.Future()
-        self._enqueue(function, True, future)
-
-        # 防死锁守卫：如果在运行中的 asyncio 事件循环线程内调用，
-        # 同步 future.result(30) 会让整个事件循环挂起并触发 Watchdog！
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             loop = None
+        in_event_loop = loop is not None and loop.is_running()
 
-        if loop is not None and loop.is_running():
+        future: concurrent.futures.Future[Any] = concurrent.futures.Future()
+        try:
+            self._enqueue(function, True, future)
+        except (CommandRejectedError, RuntimeError):
+            if not in_event_loop:
+                raise
+            logger.warning(
+                "[WriteCoordinator] synchronous write rejected inside active event loop; "
+                "best-effort mutation was skipped.",
+                exc_info=True,
+            )
+            return None
+
+        # A synchronous caller on the asyncio thread may only consume an already-fast
+        # result. Slow work remains queued and must never freeze the event loop.
+        if in_event_loop:
             try:
                 return future.result(timeout=0.05)
             except concurrent.futures.TimeoutError:
                 logger.warning(
-                    "[WriteCoordinator] transaction_blocking called inside active event loop! "
-                    "Non-blocking fallback applied to prevent event loop freeze."
+                    "[WriteCoordinator] transaction_blocking called inside active event loop; "
+                    "returning without waiting for the queued mutation."
                 )
                 return None
 

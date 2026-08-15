@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import sys
+import threading
 import types
 from types import SimpleNamespace
 
@@ -23,6 +25,7 @@ if "astrbot.api" not in sys.modules:
 from domain.commands import CommandRejectedError
 from domain.scope import RuntimeScope, SessionRef
 from engine.database import WaveMemoryDB
+from engine.write_coordinator import WriteCoordinator
 from services.quality_gate import QualityGate
 from services.system_convergence_runtime import ProductionWriteGateway
 
@@ -241,3 +244,74 @@ async def test_transaction_blocking_does_not_deadlock_inside_asyncio_event_loop(
         assert result is None or result[0] == 1
     finally:
         await gateway.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_caller_does_not_stop_writer_thread(tmp_path):
+    path = str(tmp_path / "cancelled-caller.sqlite3")
+    gateway = ProductionWriteGateway(path)
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_transaction(conn):
+        started.set()
+        assert release.wait(timeout=2.0)
+        return conn.execute("SELECT 1").fetchone()
+
+    try:
+        task = asyncio.create_task(gateway.coordinator.transaction(slow_transaction))
+        assert await asyncio.to_thread(started.wait, 1.0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        release.set()
+
+        result = await asyncio.wait_for(
+            gateway.coordinator.transaction(lambda conn: conn.execute("SELECT 2").fetchone()),
+            timeout=2.0,
+        )
+        assert result[0] == 2
+        assert gateway.coordinator._thread.is_alive()
+    finally:
+        release.set()
+        await gateway.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_full_writer_queue_rejects_without_blocking_event_loop(tmp_path):
+    coordinator = WriteCoordinator(
+        str(tmp_path / "full-queue.sqlite3"),
+        command_handlers={},
+        consumer_names=(),
+        clock=SimpleNamespace(now=lambda: 0.0),
+        queue_capacity=1,
+    )
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_transaction(conn):
+        started.set()
+        assert release.wait(timeout=2.0)
+        return conn.execute("SELECT 1").fetchone()
+
+    try:
+        first = asyncio.create_task(coordinator.transaction(slow_transaction))
+        assert await asyncio.to_thread(started.wait, 1.0)
+        second = asyncio.create_task(
+            coordinator.transaction(lambda conn: conn.execute("SELECT 2").fetchone())
+        )
+        await asyncio.sleep(0)
+
+        with pytest.raises(CommandRejectedError) as error:
+            await asyncio.wait_for(
+                coordinator.transaction(lambda conn: conn.execute("SELECT 3").fetchone()),
+                timeout=0.5,
+            )
+        assert error.value.reason_code == "writer_queue_full"
+
+        release.set()
+        assert (await asyncio.wait_for(first, timeout=2.0))[0] == 1
+        assert (await asyncio.wait_for(second, timeout=2.0))[0] == 2
+    finally:
+        release.set()
+        await coordinator.shutdown()

@@ -2,14 +2,30 @@
 // Wave Memory 神经云图 v4.0.0-final — NeuroGalaxy Cosmic 3D Engine
 // ═══════════════════════════════════════════════════════════
 
+// ─── 统一太空赛博高雅调色盘 (Obsidian & Starlight Palette) ───
 const TYPE_COLORS = {
-    bot:'#f8fafc', person:'#f472b6', topic:'#60a5fa', event:'#34d399',
-    emotion:'#fbbf24', entity:'#fb923c', keyword:'#94a3b8',
-    fact:'#a78bfa', location:'#2dd4bf', time:'#e879f9',
-    memory:'#6366f1', source:'#ffd700', belief:'#c084fc',
-    concern:'#38bdf8', jargon:'#fb7185', mood:'#f59e0b',
-    timeline:'#2dd4bf', relationship_event:'#f43f5e', few_shot:'#818cf8',
-    trait:'#a3e635', book_lore:'#d8b4fe', community:'#22d3ee',
+    bot: '#ffffff',             // 超亮恒星白
+    person: '#f472b6',          // 温暖粉晶
+    topic: '#38bdf8',           // 冰青
+    event: '#34d399',           // 极光翡翠
+    emotion: '#fbbf24',         // 恒星金
+    entity: '#60a5fa',          // 钛蓝
+    keyword: '#94a3b8',         // 陨石灰
+    fact: '#c084fc',            // 量子紫
+    location: '#2dd4bf',        // 青绿
+    time: '#e879f9',            // 脉冲紫
+    memory: '#818cf8',          // 神经靛蓝
+    source: '#fbbf24',          // 金色探针
+    belief: '#d8b4fe',          // 星云紫
+    concern: '#38bdf8',         // 苍穹蓝
+    jargon: '#fb7185',          // 珊瑚红
+    mood: '#f59e0b',            // 琥珀金
+    timeline: '#2dd4bf',        // 航迹青
+    relationship_event: '#f43f5e', // 跃迁红
+    few_shot: '#818cf8',        // 知识晶格
+    trait: '#a3e635',           // 荧光绿
+    book_lore: '#d8b4fe',       // 古籍紫
+    community: '#38bdf8',       // 星团蓝
 };
 const TYPE_LABELS = {
     bot:'Bot', person:'人物', topic:'话题', event:'事件',
@@ -97,7 +113,57 @@ const graphState = {
     labelIndex: new Map(),
 };
 
-const NODE_GEOMETRY = typeof THREE !== 'undefined' ? new THREE.SphereGeometry(1, 24, 16) : null;
+// ─── takram & Cosmograph 级光学镜头星尘光晕贴图生成器 ───
+let _glowTextureCache = null;
+function getStardustGlowTexture() {
+    if (_glowTextureCache) return _glowTextureCache;
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    const cx = 128, cy = 128;
+
+    // 1. 径向核心光晕 (Radial Core Flare)
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 128);
+    grad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+    grad.addColorStop(0.12, 'rgba(255, 255, 255, 0.9)');
+    grad.addColorStop(0.35, 'rgba(255, 255, 255, 0.35)');
+    grad.addColorStop(0.7, 'rgba(255, 255, 255, 0.08)');
+    grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 256, 256);
+
+    // 2. 细微十字光学衍射芒刺 (Subtle Lens Flare Spikes)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx, 16); ctx.lineTo(cx, 240);
+    ctx.moveTo(16, cy); ctx.lineTo(240, cy);
+    ctx.stroke();
+
+    _glowTextureCache = new THREE.CanvasTexture(canvas);
+    return _glowTextureCache;
+}
+
+const NODE_GEOMETRIES = typeof THREE !== 'undefined' ? {
+    sphere: new THREE.SphereGeometry(1, 24, 16),
+    icosahedron: new THREE.IcosahedronGeometry(1, 1),
+    octahedron: new THREE.OctahedronGeometry(1, 0),
+    dodecahedron: new THREE.DodecahedronGeometry(1, 0),
+    torus: new THREE.TorusGeometry(0.8, 0.28, 12, 24),
+    box: new THREE.BoxGeometry(1.2, 1.2, 1.2),
+} : null;
+const NODE_GEOMETRY = NODE_GEOMETRIES?.sphere || null;
+
+function geometryForNodeType(type) {
+    if (!NODE_GEOMETRIES) return null;
+    if (type === 'bot') return NODE_GEOMETRIES.icosahedron;
+    if (type === 'person') return NODE_GEOMETRIES.octahedron;
+    if (type === 'memory') return NODE_GEOMETRIES.dodecahedron;
+    if (type === 'fact' || type === 'relationship_event') return NODE_GEOMETRIES.torus;
+    if (type === 'entity' || type === 'source') return NODE_GEOMETRIES.box;
+    return NODE_GEOMETRIES.sphere;
+}
 const DEG2RAD = Math.PI / 180;
 
 // ─── 基础工具与自愈映射 ───
@@ -381,9 +447,9 @@ function initGraph() {
     }
 
     scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x06080d, 0.012); // 轻度软雾
-    camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 2000);
-    camera.position.set(0, 30, 88);
+    scene.fog = new THREE.FogExp2(0x020408, 0.0035); // takram 风格深空透镜软雾
+    camera = new THREE.PerspectiveCamera(54, window.innerWidth / window.innerHeight, 0.1, 2500);
+    camera.position.set(0, 25, 75);
 
     try {
         webglRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
@@ -397,7 +463,7 @@ function initGraph() {
     }
     webglRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     webglRenderer.setSize(window.innerWidth, window.innerHeight);
-    webglRenderer.setClearColor(0x06080d, 1);
+    webglRenderer.setClearColor(0x020408, 1);
     galaxyContainer.appendChild(webglRenderer.domElement);
 
     controls = new THREE.OrbitControls(camera, webglRenderer.domElement);
@@ -445,8 +511,8 @@ function setupBloom() {
         if (THREE.EffectComposer && THREE.RenderPass && THREE.UnrealBloomPass) {
             composer = new THREE.EffectComposer(webglRenderer);
             composer.addPass(new THREE.RenderPass(scene, camera));
-            // 极致赛博朋克霓虹光：强度1.1，平滑过渡0.4
-            const bloom = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.1, 0.4, 0.15);
+            // 优雅的太空发光后处理：通透微光，不糊镜
+            const bloom = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.95, 0.65, 0.18);
             composer.addPass(bloom);
         }
     } catch (e) {
@@ -455,20 +521,26 @@ function setupBloom() {
     }
 }
 
-// 极致美化 C：双图层视差星空背景 (Cosmic Nebula Background)
+// 借鉴顶级 3D 图谱：三层视差深空星云与星尘粒子流
 function buildNebulaField() {
-    const palette = [new THREE.Color('#8b5cf6'), new THREE.Color('#3b82f6'), new THREE.Color('#f472b6'), new THREE.Color('#94a3b8')];
+    const palette = [
+        new THREE.Color('#7de1ff'), // 冰青
+        new THREE.Color('#a78bfa'), // 柔紫
+        new THREE.Color('#f472b6'), // 粉红
+        new THREE.Color('#ffffff'), // 纯白恒星
+        new THREE.Color('#38bdf8')  // 天蓝
+    ];
     
-    // 内星野
-    const count = 600;
+    // 1. 近景星尘 (1800 颗微晶粒子)
+    const count = 1800;
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
-        const r = 100 + Math.random() * 150;
+        const r = 80 + Math.random() * 180;
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(2 * Math.random() - 1);
         positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-        positions[i * 3 + 1] = r * Math.cos(phi) * 0.72;
+        positions[i * 3 + 1] = r * Math.cos(phi) * 0.65;
         positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
         const c = palette[i % palette.length];
         colors[i * 3] = c.r;
@@ -478,30 +550,30 @@ function buildNebulaField() {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    const mat = new THREE.PointsMaterial({ size: 0.65, vertexColors: true, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending });
+    const mat = new THREE.PointsMaterial({ size: 0.85, vertexColors: true, transparent: true, opacity: 0.65, depthWrite: false, blending: THREE.AdditiveBlending });
     starField = new THREE.Points(geo, mat);
     scene.add(starField);
 
-    // 外星野 (产生拉远视差)
-    const countOuter = 400;
+    // 2. 远景深空星团 (1600 颗产生视差与空间深度)
+    const countOuter = 1600;
     const positionsOuter = new Float32Array(countOuter * 3);
     const colorsOuter = new Float32Array(countOuter * 3);
     for (let i = 0; i < countOuter; i++) {
-        const r = 260 + Math.random() * 200;
+        const r = 240 + Math.random() * 320;
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(2 * Math.random() - 1);
         positionsOuter[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-        positionsOuter[i * 3 + 1] = r * Math.cos(phi) * 0.6;
+        positionsOuter[i * 3 + 1] = r * Math.cos(phi) * 0.55;
         positionsOuter[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
-        const c = palette[(i + 2) % palette.length];
-        colorsOuter[i * 3] = c.r * 0.7;
-        colorsOuter[i * 3 + 1] = c.g * 0.7;
-        colorsOuter[i * 3 + 2] = c.b * 0.7;
+        const c = palette[(i + 1) % palette.length];
+        colorsOuter[i * 3] = c.r * 0.75;
+        colorsOuter[i * 3 + 1] = c.g * 0.75;
+        colorsOuter[i * 3 + 2] = c.b * 0.75;
     }
     const geoOuter = new THREE.BufferGeometry();
     geoOuter.setAttribute('position', new THREE.BufferAttribute(positionsOuter, 3));
     geoOuter.setAttribute('color', new THREE.BufferAttribute(colorsOuter, 3));
-    const matOuter = new THREE.PointsMaterial({ size: 1.1, vertexColors: true, transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending });
+    const matOuter = new THREE.PointsMaterial({ size: 1.35, vertexColors: true, transparent: true, opacity: 0.45, depthWrite: false, blending: THREE.AdditiveBlending });
     starFieldOuter = new THREE.Points(geoOuter, matOuter);
     scene.add(starFieldOuter);
 }
@@ -680,12 +752,19 @@ function animate() {
         }
     });
 
-    // 节点微弱呼吸动画：±4% 正弦脉动，相位按位置错开
+    // 节点呼吸与多面体微自转（让晶体、八面体与 Torus 环拥有生命感）
     if (graphGroup) {
         graphState.nodes.forEach(record => {
             if (!record.object || !record.visible) return;
-            if (record.id === hoveredNode || record.id === selectedNode) return; // hover/select 已有独立 scale
-            const breathe = 1 + Math.sin(t * 1.2 + record.position.x * 0.1 + record.position.z * 0.07) * 0.04;
+            // 多态晶体原地微自旋
+            if (record.type === 'memory' || record.type === 'person' || record.type === 'bot') {
+                record.object.rotation.y += 0.008;
+                record.object.rotation.x += 0.004;
+            } else if (record.type === 'fact' || record.type === 'relationship_event') {
+                record.object.rotation.z += 0.012;
+            }
+            if (record.id === hoveredNode || record.id === selectedNode) return;
+            const breathe = 1 + Math.sin(t * 1.5 + record.position.x * 0.1 + record.position.z * 0.07) * 0.05;
             record.object.scale.setScalar(record.radius * breathe);
         });
     }
@@ -750,8 +829,9 @@ function createFlowParticles() {
         const mat = new THREE.MeshBasicMaterial({
             color: new THREE.Color(colorHex),
             transparent: true,
-            opacity: 0.9,
+            opacity: 0.95,
             blending: THREE.AdditiveBlending,
+            depthWrite: false,
         });
 
         const mesh = new THREE.Mesh(particleGeometry, mat);
@@ -761,7 +841,7 @@ function createFlowParticles() {
             curve,
             mesh,
             progress: Math.random(), // 随机起点避免整齐划一
-            speed: 0.0035 + Math.random() * 0.004, // 随机流速产生灵动感
+            speed: 0.004 + Math.random() * 0.005, // 优雅的光速传递
             sourceId: edge.source,
             targetId: edge.target,
         });
@@ -914,21 +994,58 @@ function updateLayoutMode(value) {
 }
 
 function createNodeObject(record) {
-    // 材质反射与微弱自发光辉光，提高赛博朋克深邃感
+    const isCore = record.raw.isSource || record.type === 'bot' || record.type === 'person' || (record.degree && record.degree >= 6);
+    const nodeGeometry = geometryForNodeType(record.type) || NODE_GEOMETRY;
+
+    // 1. 核心高反光微晶核心 (Crystal Core)
     const material = new THREE.MeshStandardMaterial({
         color: new THREE.Color(record.color),
         emissive: new THREE.Color(record.color),
-        emissiveIntensity: record.raw.isSource ? 1.6 : 0.82,
-        roughness: 0.25,
-        metalness: 0.45,
+        emissiveIntensity: isCore ? 1.8 : 0.8,
+        roughness: 0.1,
+        metalness: 0.85,
         transparent: true,
-        opacity: 0.95,
+        opacity: isCore ? 1.0 : 0.92,
     });
-    const mesh = new THREE.Mesh(NODE_GEOMETRY, material);
+    const mesh = new THREE.Mesh(nodeGeometry, material);
     mesh.position.copy(record.position);
     mesh.scale.setScalar(record.radius);
     mesh.userData.nodeId = record.id;
     mesh.userData.baseScale = record.radius;
+    mesh.userData.nodeType = record.type;
+
+    // 2. Cosmograph 星尘等离子发光外晕 (Stardust Plasma Halo)
+    const glowTex = getStardustGlowTexture();
+    const haloMat = new THREE.SpriteMaterial({
+        map: glowTex,
+        color: new THREE.Color(record.color),
+        transparent: true,
+        opacity: isCore ? 0.85 : 0.45,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+    });
+    const haloSprite = new THREE.Sprite(haloMat);
+    const haloScale = isCore ? 4.2 : 2.6;
+    haloSprite.scale.set(haloScale, haloScale, 1);
+    mesh.add(haloSprite);
+
+    // 3. 核心恒星增加双重旋转轨道环 (Orbital Rings)
+    if (isCore) {
+        const ringGeo = new THREE.RingGeometry(record.radius * 1.5, record.radius * 1.62, 32);
+        const ringMat = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(record.color),
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.75,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+        });
+        const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+        ringMesh.rotation.x = Math.PI / 3;
+        ringMesh.userData.isRing = true;
+        mesh.add(ringMesh);
+    }
+
     graphGroup.add(mesh);
     record.object = mesh;
 }
@@ -938,23 +1055,38 @@ function createEdgeObject(record) {
     const b = getNodeRecord(record.target);
     if (!a || !b) return;
 
-    // 二次样条线作为连线，避让节点几何重叠，更带曲线科技感
+    // 二次样条线作为连线，避让节点几何重叠，带 8% 微弱起伏
     const midPoint = a.position.clone().lerp(b.position, 0.5);
-    midPoint.y += a.position.distanceTo(b.position) * 0.12;
+    midPoint.y += a.position.distanceTo(b.position) * 0.08;
     const curve = new THREE.QuadraticBezierCurve3(a.position, midPoint, b.position);
-    const geo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(12));
+    const points = curve.getPoints(16);
+    const geo = new THREE.BufferGeometry().setFromPoints(points);
 
-    const color = record.isPath ? '#fbbf24' : (record.raw.kind === 'fact' ? '#a78bfa' : (a.color || '#8b5cf6'));
+    // 顶点渐变色：从 Source 颜色自然流向 Target 颜色
+    const colorA = new THREE.Color(record.isPath ? '#fbbf24' : (a.color || '#38bdf8'));
+    const colorB = new THREE.Color(record.isPath ? '#f59e0b' : (b.color || '#a855f7'));
+    const colors = new Float32Array(points.length * 3);
+    for (let i = 0; i < points.length; i++) {
+        const ratio = i / (points.length - 1);
+        const c = colorA.clone().lerp(colorB, ratio);
+        colors[i * 3] = c.r;
+        colors[i * 3 + 1] = c.g;
+        colors[i * 3 + 2] = c.b;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+    // Cosmograph 级极细微光光纤丝（平时极克制，不遮挡星系）
+    const baseOpacity = record.isPath ? 0.95 : (record.raw.kind === 'fact' ? 0.22 : 0.08);
     const mat = new THREE.LineBasicMaterial({
-        color: new THREE.Color(color),
+        vertexColors: true,
         transparent: true,
-        opacity: record.isPath ? 0.9 : Math.max(0.15, Math.min(0.55, Number(record.weight || 1) / 3)),
+        opacity: baseOpacity,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
     });
     const line = new THREE.Line(geo, mat);
     line.userData.edgeKey = record.key;
-    line.userData.baseOpacity = mat.opacity;
+    line.userData.baseOpacity = baseOpacity;
     edgeGroup.add(line);
     record.object = line;
 }
@@ -979,23 +1111,26 @@ function createAllReadableLabels() {
     while (labelGroup.children.length) disposeSceneObject(labelGroup.children.pop());
     graphState.nodes.forEach(record => { record.labelObject = null; });
     const records = Array.from(graphState.nodes.values()).sort((a, b) => (b.degree || 0) - (a.degree || 0));
-    let selectedRecords = records;
-    if (labelDensity === 'core') selectedRecords = records.slice(0, Math.min(40, records.length));
-    else if (labelDensity === 'focus') {
+    
+    // 借鉴 Cosmograph：默认只展示前 3~5 个核心恒星，其余按需 Hover 浮现，保证星海纯净深邃
+    let selectedRecords = [];
+    if (labelDensity === 'all') {
+        selectedRecords = records.slice(0, Math.min(30, records.length));
+    } else if (labelDensity === 'core') {
+        selectedRecords = records.filter(r => r.raw.isSource || r.type === 'bot' || (r.degree && r.degree >= 12)).slice(0, 6);
+    } else { // focus 模式
         const focusSet = new Set();
         if (selectedNode) {
             focusSet.add(selectedNode);
-            getNeighbors(selectedNode).forEach(n => focusSet.add(n));
+            getNeighbors(selectedNode).slice(0, 6).forEach(n => focusSet.add(n));
         }
-        if (hoveredNode) {
-            focusSet.add(hoveredNode);
-            getNeighbors(hoveredNode).forEach(n => focusSet.add(n));
-        }
-        selectedRecords = records.filter((r, idx) => idx < 36 || focusSet.has(r.id));
+        if (hoveredNode) focusSet.add(hoveredNode);
+        selectedRecords = records.filter(r => r.raw.isSource || r.type === 'bot' || focusSet.has(r.id));
     }
+
     selectedRecords.forEach(record => {
         const sprite = createTextSprite(record.label, record.color, record.radius);
-        sprite.position.copy(record.position).add(new THREE.Vector3(record.radius * 2.2, record.radius * 1.1, 0));
+        sprite.position.copy(record.position).add(new THREE.Vector3(record.radius * 1.8, record.radius * 0.9, 0));
         sprite.userData.nodeId = record.id;
         labelGroup.add(sprite);
         record.labelObject = sprite;
@@ -1058,27 +1193,36 @@ function createEdgeLabelObject(record) {
 function createTextSprite(text, color, radius) {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
-    const fontSize = 34;
+    const fontSize = 32;
     const label = String(text || '').slice(0, 24);
-    ctx.font = `600 ${fontSize}px system-ui, -apple-system, sans-serif`;
-    const width = Math.ceil(ctx.measureText(label).width + 38);
-    canvas.width = Math.max(128, width);
-    canvas.height = 64;
-    ctx.font = `600 ${fontSize}px system-ui, -apple-system, sans-serif`;
-    ctx.fillStyle = 'rgba(6, 8, 13, 0.72)';
-    ctx.strokeStyle = color + '88';
-    roundRect(ctx, 4, 8, canvas.width - 8, 48, 18);
+    ctx.font = `600 ${fontSize}px "Geist Variable", system-ui, -apple-system, sans-serif`;
+    const textWidth = ctx.measureText(label).width;
+    const width = Math.ceil(textWidth + 32);
+    canvas.width = Math.max(96, width);
+    canvas.height = 56;
+    ctx.font = `600 ${fontSize}px "Geist Variable", system-ui, -apple-system, sans-serif`;
+    // 现代太空 HUD 晶体胶囊：超薄毛玻璃背景 + 柔和光晕边缘
+    ctx.fillStyle = 'rgba(10, 14, 23, 0.55)';
+    ctx.strokeStyle = color + '66';
+    ctx.lineWidth = 2;
+    roundRect(ctx, 3, 5, canvas.width - 6, 46, 23);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = '#f8fafc';
+    // 柔和微光发光字
+    ctx.fillStyle = '#ffffff';
     ctx.shadowColor = color;
-    ctx.shadowBlur = 8;
-    ctx.fillText(label, 20, 43);
+    ctx.shadowBlur = 12;
+    ctx.fillText(label, 16, 37);
     const texture = new THREE.CanvasTexture(canvas);
     texture.needsUpdate = true;
-    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
+    const material = new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.NormalBlending,
+    });
     const sprite = new THREE.Sprite(material);
-    const scale = Math.min(3.6, Math.max(2.0, radius * 1.8));
+    const scale = Math.min(3.2, Math.max(1.6, radius * 1.5));
     sprite.scale.set((canvas.width / canvas.height) * scale, scale, 1);
     return sprite;
 }

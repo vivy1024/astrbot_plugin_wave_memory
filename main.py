@@ -202,7 +202,7 @@ def _build_bot_registry(config: dict) -> dict[str, BotProfile]:
     "astrbot_plugin_wave_memory",
     "vivy1024",
     "高性能记忆 + 灵魂引擎 + 知识图谱插件。五阶段零 LLM 检索管线、BDI 心智架构（信念/欲望/关切）、黑话学习、风格范例注入、Three.js 3D 交互式知识图谱可视化。",
-    "4.6.3",
+    "4.7.1",
     "https://github.com/vivy1024/astrbot_plugin_wave_memory",
 )
 class WaveMemoryPlugin(Star):
@@ -2765,6 +2765,77 @@ class WaveMemoryPlugin(Star):
         async with group_lock:
             await _process_in_lock(message)
 
+    # ─── Hook: 发送前清理并提取 impression 标记 ───
+
+    @filter.on_decorating_result()
+    async def on_decorating_result(self, event: AstrMessageEvent):
+        """在发送消息前提取 <<impression:...>> 标记并更新画像，彻底从消息链中剥离标记。"""
+        result = event.get_result()
+        if not result or not result.chain:
+            return
+
+        import re as _re
+        from astrbot.core.message.components import Plain
+
+        _IMPRESSION_RE = r'(?:<<\s*impression\s*[:：](.+?)>>|\[\s*impression\s*[:：](.+?)\])'
+        extracted_impression = None
+
+        # 遍历 Plain 组件，提取并移除标记
+        for comp in result.chain:
+            if isinstance(comp, Plain) and comp.text:
+                matches = list(_re.finditer(_IMPRESSION_RE, comp.text, flags=_re.DOTALL))
+                if matches:
+                    for m in matches:
+                        imp_val = (m.group(1) or m.group(2) or "").strip()
+                        if imp_val and len(imp_val) >= 4:
+                            extracted_impression = imp_val[:120]
+                    # 清除文本中所有 impression 标记（包括前置换行和多余空白）
+                    cleaned_text = _re.sub(r'\s*' + _IMPRESSION_RE + r'\s*', '', comp.text, flags=_re.DOTALL)
+                    comp.text = cleaned_text
+
+        # 如果提取到 impression，更新用户画像
+        if extracted_impression:
+            try:
+                runtime_scope = getattr(event, "_wave_memory_runtime_scope", None)
+                if not isinstance(runtime_scope, RuntimeScope):
+                    resolver = getattr(self, "scope_resolver", None)
+                    if resolver is not None:
+                        resolved_context = resolver.resolve_event(event)
+                        runtime_scope = getattr(resolved_context, "scope", None)
+                
+                if isinstance(runtime_scope, RuntimeScope) and runtime_scope.visibility == "group" and runtime_scope.session:
+                    group_id = runtime_scope.session.conversation_id
+                    principal = runtime_scope.subject_principal_id or ""
+                    principal_prefix = f"{runtime_scope.session.platform_id}:user:"
+                    sender_id = principal[len(principal_prefix):] if principal.startswith(principal_prefix) else ""
+                    bot_db_id = runtime_scope.bot_id
+
+                    if sender_id and group_id and sender_id != "bot":
+                        _row = self.db.conn.execute(
+                            "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
+                            (sender_id, group_id, bot_db_id),
+                        ).fetchone()
+                        if _row is not None:
+                            _meta = json.loads(_row[0]) if _row[0] else {}
+                            _meta["impression"] = extracted_impression
+                            _meta["impression_updated_at"] = time.time()
+                            self.db.conn.execute(
+                                "UPDATE user_profiles SET metadata=? WHERE user_id=? AND group_id=? AND bot_id=?",
+                                (json.dumps(_meta, ensure_ascii=False), sender_id, group_id, bot_db_id),
+                            )
+                        else:
+                            _meta = {
+                                "impression": extracted_impression,
+                                "impression_updated_at": time.time(),
+                            }
+                            self.db.conn.execute(
+                                "INSERT INTO user_profiles (user_id, group_id, bot_id, metadata, interaction_count, last_seen) VALUES (?, ?, ?, ?, 1, ?)",
+                                (sender_id, group_id, bot_db_id, json.dumps(_meta, ensure_ascii=False), time.time()),
+                            )
+                        self.db.conn.commit()
+            except Exception as _e:
+                logger.debug(f"[WaveMemory] impression update in on_decorating_result failed: {_e}")
+
     @filter.after_message_sent()
     async def on_bot_sent(self, event: AstrMessageEvent):
         """捕获 bot 回复，写入记忆 + 异步更新好感度。"""
@@ -2879,41 +2950,29 @@ class WaveMemoryPlugin(Star):
             "event_id": getattr(event, "message_id", None),
         })
 
-        # 解析并提取 <<impression:...>> 标记，写入用户画像。
-        # 不使用 [impression:...]：meme_manager 会把非表情标签的 [xxx] 当作无效
-        # markup 在 on_llm_response 阶段删掉，那时 on_bot_sent 还没执行。
+        # 兜底：若在 on_decorating_result 未能处理（例如非标准生命周期），在此二次提取并记录画像
         import re as _re
-        _IMPRESSION_RE = r'<<\s*impression\s*[:：](.+?)>>'
-        _impression_match = _re.search(_IMPRESSION_RE + r'\s*$', bot_text, _re.DOTALL)
-        if _impression_match and sender_id and group_id:
-            _impression_text = _impression_match.group(1).strip()[:120]
-            if _impression_text and len(_impression_text) >= 4:
-                try:
-                    _row = self.db.conn.execute(
-                        "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
-                        (sender_id, group_id, bot_db_id),
-                    ).fetchone()
-                    _meta = json.loads(_row[0]) if _row and _row[0] else {}
-                    _meta["impression"] = _impression_text
-                    _meta["impression_updated_at"] = time.time()
-                    self.db.conn.execute(
-                        "UPDATE user_profiles SET metadata=? WHERE user_id=? AND group_id=? AND bot_id=?",
-                        (json.dumps(_meta, ensure_ascii=False), sender_id, group_id, bot_db_id),
-                    )
-                    self.db.conn.commit()
-                except Exception as _e:
-                    logger.debug(f"[WaveMemory] impression update failed: {_e}")
-            # 从实际发送的回复中移除 impression 标记（用户不应看到）
-            if result and result.chain:
-                from astrbot.core.message.components import Plain
-                for comp in result.chain:
-                    if isinstance(comp, Plain) and comp.text:
-                        comp.text = _re.sub(
-                            r'\n?' + _IMPRESSION_RE + r'\s*$',
-                            '',
-                            comp.text,
-                            flags=_re.DOTALL,
+        _IMPRESSION_RE = r'(?:<<\s*impression\s*[:：](.+?)>>|\[\s*impression\s*[:：](.+?)\])'
+        _impression_matches = list(_re.finditer(_IMPRESSION_RE, bot_text, _re.DOTALL))
+        if _impression_matches and sender_id and group_id and sender_id != "bot":
+            for _match in _impression_matches:
+                _impression_text = (_match.group(1) or _match.group(2) or "").strip()[:120]
+                if _impression_text and len(_impression_text) >= 4:
+                    try:
+                        _row = self.db.conn.execute(
+                            "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
+                            (sender_id, group_id, bot_db_id),
+                        ).fetchone()
+                        _meta = json.loads(_row[0]) if _row and _row[0] else {}
+                        _meta["impression"] = _impression_text
+                        _meta["impression_updated_at"] = time.time()
+                        self.db.conn.execute(
+                            "UPDATE user_profiles SET metadata=? WHERE user_id=? AND group_id=? AND bot_id=?",
+                            (json.dumps(_meta, ensure_ascii=False), sender_id, group_id, bot_db_id),
                         )
+                        self.db.conn.commit()
+                    except Exception as _e:
+                        logger.debug(f"[WaveMemory] impression update fallback failed: {_e}")
 
         # 自省 read-model 仅支持群聊，private 不记录派生回复状态。
         if runtime_scope.visibility == "group" and self.self_reflect:

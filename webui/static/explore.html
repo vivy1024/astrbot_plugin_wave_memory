@@ -29,12 +29,12 @@
     #galaxy-container { position: fixed; inset: 0; z-index: 1; cursor: grab; }
     #galaxy-container canvas { display: block; width: 100%; height: 100%; }
 
-    /* Ambient nebula background (behind canvas) */
-    #nebula-bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
-    .nebula-orb { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.4; mix-blend-mode: screen; }
-    .orb-1 { width: 600px; height: 600px; background: radial-gradient(circle, #7c3aed, transparent 70%); top: -10%; left: -5%; }
-    .orb-2 { width: 520px; height: 520px; background: radial-gradient(circle, #2563eb, transparent 70%); bottom: -10%; right: -5%; }
-    .orb-3 { width: 440px; height: 440px; background: radial-gradient(circle, #db2777, transparent 70%); top: 40%; left: 55%; opacity: 0.25; }
+    /* Ambient nebula background (behind canvas) - 清冷深空星云 */
+    #nebula-bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; background: #020408; }
+    .nebula-orb { position: absolute; border-radius: 50%; filter: blur(120px); opacity: 0.25; mix-blend-mode: screen; }
+    .orb-1 { width: 700px; height: 700px; background: radial-gradient(circle, #0f172a, #020408 80%); top: -15%; left: -10%; }
+    .orb-2 { width: 650px; height: 650px; background: radial-gradient(circle, #1e1b4b, #020408 80%); bottom: -15%; right: -10%; }
+    .orb-3 { width: 500px; height: 500px; background: radial-gradient(circle, #082f49, #020408 80%); top: 35%; left: 50%; opacity: 0.15; }
     #grid-overlay {
         position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.4;
         background-image: linear-gradient(rgba(139,92,246,0.04) 1px, transparent 1px),
@@ -165,23 +165,28 @@
         50% { box-shadow: 0 0 20px rgba(139,92,246,0.25); }
     }
 
-    /* Embedded by the React shell: reserve the top strip for the parent controls. */
+    /* Embedded by the React shell: 融入外层太空 HUD */
     body.embed-mode #explore-return-link,
-    body.embed-mode #explore-maintenance-link { display: none !important; }
+    body.embed-mode #explore-maintenance-link,
+    body.embed-mode .brand-text { display: none !important; }
     body.embed-mode .topbar {
-        top: 4.25rem !important;
-        left: 1rem !important;
+        top: 1rem !important;
+        left: auto !important;
         right: 1rem !important;
-        border: 1px solid rgba(139, 92, 246, 0.14);
-        border-radius: 0.75rem;
+        background: rgba(10, 14, 23, 0.75) !important;
+        border: 1px solid rgba(139, 92, 246, 0.25) !important;
+        border-radius: 0.75rem !important;
+        padding: 0.25rem 0.5rem !important;
+        width: fit-content !important;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.5) !important;
     }
-    body.embed-mode #toy-controls,
+    body.embed-mode #toy-controls { top: 1rem !important; left: 1rem !important; }
     body.embed-mode #search-box,
-    body.embed-mode #path-input { top: 7.75rem !important; }
+    body.embed-mode #path-input { top: 4.75rem !important; }
     body.embed-mode #kg-config,
-    body.embed-mode #person-panel { top: 7.5rem !important; max-height: calc(100vh - 8.5rem) !important; }
+    body.embed-mode #person-panel { top: 4.5rem !important; max-height: calc(100vh - 6rem) !important; }
     body.embed-mode #detail-panel,
-    body.embed-mode #relation-panel { top: 8rem !important; }
+    body.embed-mode #relation-panel { top: 4.5rem !important; max-height: calc(100vh - 6rem) !important; }
     </style>
 </head>
 <body class="text-slate-200 font-sans">
@@ -241,25 +246,29 @@
         </div>
     </div>
 
-    <!-- Neuro Toy Table Controls -->
-    <div id="toy-controls" class="fixed top-14 left-4 z-20 glass rounded-xl px-3 py-2 flex items-center gap-2 text-[10px] text-slate-400">
-        <span class="text-purple-300 font-medium">玩具台</span>
-        <select id="layout-mode" onchange="updateLayoutMode(this.value)" class="px-2 py-1 bg-nebula-700 border border-white/10 rounded text-slate-300 outline-none">
-            <option value="semantic">语义群岛</option>
-            <option value="type">类型分层</option>
-            <option value="layer">图层分层</option>
-            <option value="time">时间螺旋</option>
-        </select>
-        <select id="label-density" onchange="setLabelDensity(this.value)" class="px-2 py-1 bg-nebula-700 border border-white/10 rounded text-slate-300 outline-none">
-            <option value="focus">邻域标签</option>
-            <option value="core">核心标签</option>
-            <option value="all">全部标签</option>
-        </select>
-        <select id="camera-preset" onchange="applyCameraPreset(this.value)" class="px-2 py-1 bg-nebula-700 border border-white/10 rounded text-slate-300 outline-none">
-            <option value="overview">总览镜头</option>
-            <option value="selected">选中节点</option>
-            <option value="path">路径走廊</option>
-        </select>
+    <!-- Cosmic Lens Controls: 极简折叠透镜栏 (Cosmograph Zero-UI 理念) -->
+    <div class="fixed top-4 left-4 z-20 flex items-center gap-2">
+        <button type="button" onclick="document.getElementById('toy-controls').classList.toggle('hidden')" class="glass rounded-xl px-3 py-1.5 text-xs text-purple-300 hover:text-white border border-purple-500/20 shadow-xl flex items-center gap-1.5 transition">
+            <span>🌌 透镜与视图</span>
+        </button>
+        <div id="toy-controls" class="hidden glass glass-accent rounded-xl px-3 py-1.5 flex items-center gap-2 text-[11px] text-slate-300 shadow-2xl backdrop-blur-xl border border-white/10">
+            <select id="layout-mode" onchange="updateLayoutMode(this.value)" class="px-2 py-1 bg-nebula-700/90 border border-white/10 rounded-lg text-slate-200 outline-none text-[10px]">
+                <option value="semantic">语义群岛</option>
+                <option value="type">类型分层</option>
+                <option value="layer">图层分层</option>
+                <option value="time">时间螺旋</option>
+            </select>
+            <select id="label-density" onchange="setLabelDensity(this.value)" class="px-2 py-1 bg-nebula-700/90 border border-white/10 rounded-lg text-slate-200 outline-none text-[10px]">
+                <option value="focus">焦点邻域</option>
+                <option value="core">核心节点</option>
+                <option value="all">显示全部</option>
+            </select>
+            <select id="camera-preset" onchange="applyCameraPreset(this.value)" class="px-2 py-1 bg-nebula-700/90 border border-white/10 rounded-lg text-slate-200 outline-none text-[10px]">
+                <option value="overview">总览镜头</option>
+                <option value="selected">选中节点</option>
+                <option value="path">路径走廊</option>
+            </select>
+        </div>
     </div>
 
     <!-- KG Config Panel -->
@@ -409,90 +418,102 @@
         <div id="person-list"></div>
     </div>
 
-    <!-- Detail Panel -->
-    <div id="detail-panel" class="fixed right-4 top-16 bottom-4 w-96 z-20 glass glass-accent rounded-2xl overflow-hidden hidden detail-panel">
-        <div class="p-5 h-full overflow-y-auto">
-            <div class="flex items-start justify-between mb-3">
-                <div>
-                    <h3 id="detail-title" class="text-white text-sm font-semibold">-</h3>
-                    <p id="detail-meta" class="text-slate-500 text-[11px] mt-1">-</p>
+    <!-- Detail Panel: 实体雷达详情卡 -->
+    <div id="detail-panel" class="fixed right-4 top-16 bottom-4 w-96 z-20 glass glass-accent rounded-2xl overflow-hidden hidden detail-panel shadow-2xl backdrop-blur-2xl border border-white/10">
+        <div class="p-5 h-full overflow-y-auto space-y-4">
+            <div class="flex items-start justify-between border-b border-white/10 pb-3">
+                <div class="min-w-0 pr-2">
+                    <h3 id="detail-title" class="text-white text-sm font-semibold truncate leading-tight">-</h3>
+                    <p id="detail-meta" class="text-purple-300 font-mono text-[11px] mt-1">-</p>
                 </div>
-                <button onclick="hideDetail()" class="w-7 h-7 flex items-center justify-center rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white text-xs transition">✕</button>
+                <button onclick="hideDetail()" class="w-7 h-7 flex shrink-0 items-center justify-center rounded-lg bg-white/5 hover:bg-white/15 text-slate-400 hover:text-white text-xs transition">✕</button>
             </div>
-            <div id="detail-neighbors" class="mb-3">
-                <p class="text-slate-500 text-[10px] uppercase tracking-wider mb-2">关联节点</p>
-                <div id="detail-neighbor-list" class="flex flex-wrap gap-1"></div>
+            <div id="detail-neighbors" class="space-y-1.5">
+                <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">关联邻域</p>
+                <div id="detail-neighbor-list" class="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto"></div>
             </div>
-            <div id="detail-memories" class="border-t border-white/5 pt-3">
-                <p class="text-slate-500 text-[10px] uppercase tracking-wider mb-2">关联记忆</p>
-                <div id="detail-memory-list" class="space-y-2.5 max-h-[60vh] overflow-y-auto"></div>
+            <div id="detail-memories" class="border-t border-white/10 pt-3 space-y-2">
+                <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">关联记忆与证据</p>
+                <div id="detail-memory-list" class="space-y-2.5 max-h-[50vh] overflow-y-auto pr-1"></div>
             </div>
-            <div class="flex gap-2 mt-4 flex-wrap">
-                <button id="btn-expand" onclick="expandNode()" class="px-3 py-1.5 bg-glow-purple/10 border border-glow-dim rounded-lg text-purple-300 text-[11px] hover:bg-glow-purple/20 transition">展开社区</button>
-                <button id="btn-timeline" onclick="loadTimeline()" class="px-3 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg text-blue-300 text-[11px] hover:bg-blue-500/20 transition">📅 时间线</button>
-                <span class="px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-emerald-300 text-[11px]">只读投影</span>
+            <div class="flex gap-2 pt-2 border-t border-white/10 flex-wrap justify-end">
+                <button id="btn-expand" onclick="expandNode()" class="px-3 py-1.5 bg-purple-500/20 border border-purple-400/30 rounded-lg text-purple-200 text-[11px] font-medium hover:bg-purple-500/30 transition">展开社区</button>
+                <button id="btn-timeline" onclick="loadTimeline()" class="px-3 py-1.5 bg-blue-500/20 border border-blue-400/30 rounded-lg text-blue-200 text-[11px] font-medium hover:bg-blue-500/30 transition">📅 时间线</button>
+                <span class="px-2.5 py-1.5 bg-emerald-500/10 border border-emerald-400/20 rounded-lg text-emerald-300 text-[10px]">只读投影</span>
             </div>
         </div>
     </div>
 
-    <!-- Relation Panel -->
-    <div id="relation-panel" class="fixed right-4 top-16 w-96 z-20 glass glass-accent rounded-2xl overflow-hidden hidden detail-panel">
-        <div class="p-5">
-            <div class="flex items-start justify-between mb-3">
-                <div>
-                    <h3 id="relation-title" class="text-white text-sm font-semibold">-</h3>
-                    <p id="relation-meta" class="text-slate-500 text-[11px] mt-1">-</p>
+    <!-- Relation Panel: 突触关系详情卡 -->
+    <div id="relation-panel" class="fixed right-4 top-16 w-96 z-20 glass glass-accent rounded-2xl overflow-hidden hidden detail-panel shadow-2xl backdrop-blur-2xl border border-white/10">
+        <div class="p-5 space-y-3.5">
+            <div class="flex items-start justify-between border-b border-white/10 pb-3">
+                <div class="min-w-0 pr-2">
+                    <h3 id="relation-title" class="text-white text-sm font-semibold truncate leading-tight">-</h3>
+                    <p id="relation-meta" class="text-purple-300 font-mono text-[11px] mt-1">-</p>
                 </div>
-                <button onclick="hideRelationDetail()" class="w-7 h-7 flex items-center justify-center rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white text-xs transition">✕</button>
+                <button onclick="hideRelationDetail()" class="w-7 h-7 flex shrink-0 items-center justify-center rounded-lg bg-white/5 hover:bg-white/15 text-slate-400 hover:text-white text-xs transition">✕</button>
             </div>
-            <div id="relation-body" class="space-y-2.5 max-h-[52vh] overflow-y-auto"></div>
-            <div class="flex gap-2 mt-4 flex-wrap">
-                <button id="btn-edit-relation" type="button" onclick="openSelectedRelationEditor()" class="hidden px-3 py-1.5 bg-purple-500/10 border border-purple-500/20 rounded-lg text-purple-200 text-[11px] hover:bg-purple-500/20 transition">编辑</button>
-                <button id="btn-delete-relation" type="button" onclick="confirmSelectedRelationDelete()" class="hidden px-3 py-1.5 bg-red-500/10 border border-red-500/20 rounded-lg text-red-200 text-[11px] hover:bg-red-500/20 transition">删除</button>
-                <span id="relation-readonly-badge" class="px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-emerald-300 text-[11px]">只读关系</span>
+            <div id="relation-body" class="space-y-2.5 max-h-[52vh] overflow-y-auto text-xs text-slate-300 leading-relaxed pr-1"></div>
+            <div class="flex gap-2 pt-2 border-t border-white/10 flex-wrap justify-end">
+                <button id="btn-edit-relation" type="button" onclick="openSelectedRelationEditor()" class="hidden px-3 py-1.5 bg-purple-500/20 border border-purple-400/30 rounded-lg text-purple-200 text-[11px] hover:bg-purple-500/30 transition">编辑</button>
+                <button id="btn-delete-relation" type="button" onclick="confirmSelectedRelationDelete()" class="hidden px-3 py-1.5 bg-red-500/20 border border-red-400/30 rounded-lg text-red-200 text-[11px] hover:bg-red-500/30 transition">删除</button>
+                <span id="relation-readonly-badge" class="px-2.5 py-1.5 bg-emerald-500/10 border border-emerald-400/20 rounded-lg text-emerald-300 text-[10px]">只读关系</span>
             </div>
         </div>
     </div>
 
-    <!-- Stats Badge -->
-    <div id="stats-badge" class="fixed bottom-4 left-4 z-20 glass rounded-lg px-3 py-2 text-[11px] text-slate-500">0 节点 · 0 连线</div>
-
-    <!-- Runtime Config Status -->
-    <div id="runtime-config-section" class="fixed bottom-16 left-4 z-20 glass rounded-xl p-3 w-64 text-[10px] text-slate-400 space-y-1.5">
-        <div class="flex items-center justify-between border-b border-white/5 pb-1">
-            <span class="text-emerald-300 font-semibold">运行配置</span>
-            <span class="rounded-full border border-emerald-400/20 px-2 py-0.5 text-[9px] text-emerald-200/70">只读诊断</span>
+    <!-- Bottom Left HUD Dock: 统一收纳，彻底消除重叠冲突 -->
+    <div id="bottom-left-dock" class="fixed bottom-4 left-4 z-20 flex flex-col gap-2 max-w-sm">
+        <!-- 可折叠的交互指引卡片 -->
+        <div id="interactive-guide" class="hidden glass glass-accent rounded-xl p-3.5 w-64 text-[10px] text-slate-300 space-y-2 shadow-2xl backdrop-blur-2xl">
+            <div class="text-purple-300 font-bold border-b border-white/10 pb-1.5 flex items-center justify-between">
+                <span class="flex items-center gap-1.5">🎮 空间交互指南</span>
+                <button type="button" onclick="document.getElementById('interactive-guide').classList.add('hidden')" class="text-slate-400 hover:text-white text-xs px-1">✕</button>
+            </div>
+            <div class="space-y-1.5">
+                <div class="flex items-center justify-between"><span>🖱️ 单击星体</span><span class="text-purple-300 font-mono">选中聚焦/激活气泡</span></div>
+                <div class="flex items-center justify-between"><span>🚀 双击星体</span><span class="text-purple-300 font-mono">展开关联脉络</span></div>
+                <div class="flex items-center justify-between"><span>🔍 滚轮/双指</span><span class="text-purple-300 font-mono">无级视野缩放</span></div>
+                <div class="flex items-center justify-between"><span>🧭 点击连线</span><span class="text-purple-300 font-mono">查看/编辑关系</span></div>
+                <div class="flex items-center justify-between"><span>📌 拖拽星空</span><span class="text-purple-300 font-mono">3D 任意平移旋转</span></div>
+            </div>
         </div>
-        <div class="text-[9px] text-slate-600">不修改 AstrBot 静态配置；仅显示当前页面请求和渲染状态。</div>
-        <div class="flex justify-between"><span>当前视图</span><span id="runtime-status-view" class="text-slate-300 font-mono">galaxy</span></div>
-        <div class="flex justify-between"><span>查询链路</span><span id="runtime-status-query" class="text-slate-300 font-mono">EPA/Pyramid/Spike/Geo</span></div>
+
+        <!-- 可折叠的运行状态诊断卡片 -->
+        <div id="runtime-config-section" class="hidden glass rounded-xl p-3 w-64 text-[10px] text-slate-300 space-y-2 shadow-2xl backdrop-blur-2xl">
+            <div class="flex items-center justify-between border-b border-white/10 pb-1.5">
+                <span class="text-emerald-300 font-semibold flex items-center gap-1">🛰️ 运行时诊断</span>
+                <button type="button" onclick="document.getElementById('runtime-config-section').classList.add('hidden')" class="text-slate-400 hover:text-white text-xs px-1">✕</button>
+            </div>
+            <div class="flex justify-between"><span>当前视图</span><span id="runtime-status-view" class="text-emerald-300 font-mono font-medium">galaxy</span></div>
+            <div class="flex justify-between"><span>查询链路</span><span id="runtime-status-query" class="text-slate-300 font-mono">EPA/Pyramid/Spike/Geo</span></div>
+        </div>
+
+        <!-- 底部主状态胶囊栏 -->
+        <div class="flex items-center gap-1.5 glass rounded-xl px-3 py-1.5 text-[11px] text-slate-400 shadow-xl border border-white/10 w-fit">
+            <span id="stats-badge" class="font-mono text-purple-300">0 节点 · 0 连线</span>
+            <span class="text-slate-600">|</span>
+            <button type="button" onclick="document.getElementById('interactive-guide').classList.toggle('hidden')" class="hover:text-purple-200 transition text-[10px] flex items-center gap-1">🎮 指南</button>
+            <span class="text-slate-600">|</span>
+            <button type="button" onclick="document.getElementById('runtime-config-section').classList.toggle('hidden')" class="hover:text-emerald-200 transition text-[10px] flex items-center gap-1">🛰️ 状态</button>
+        </div>
     </div>
 
-    <!-- Event Status -->
-    <div id="event-status-section" class="fixed bottom-20 right-4 z-20 glass rounded-xl p-3 w-72 text-[10px] text-slate-400 space-y-1.5">
-        <div class="flex items-center justify-between border-b border-white/5 pb-1">
-            <span class="text-blue-300 font-semibold">事件状态</span>
-            <span id="event-status-current" class="rounded-full border border-blue-400/20 px-2 py-0.5 text-[9px] text-blue-200/70">idle</span>
+    <!-- Bottom Right HUD Dock: 图例与事件流 -->
+    <div id="bottom-right-dock" class="fixed bottom-4 right-4 z-20 flex flex-col items-end gap-2 max-w-md">
+        <!-- Event Status 微型胶囊 -->
+        <div id="event-status-section" class="glass rounded-xl px-3 py-1.5 text-[10px] text-slate-300 flex items-center gap-2 border border-blue-500/20">
+            <span class="size-1.5 rounded-full bg-blue-400 animate-pulse"></span>
+            <span id="event-status-current" class="text-blue-300 font-mono">idle</span>
+            <span class="text-slate-600">·</span>
+            <span id="event-status-last-action" class="text-slate-400 font-mono truncate max-w-[160px]">等待操作</span>
+            <div id="event-status-warning-list" class="text-[9px] text-amber-300 hidden"></div>
         </div>
-        <div class="flex justify-between"><span>最近动作</span><span id="event-status-last-action" class="text-slate-300 font-mono">等待操作</span></div>
-        <div id="event-status-warning-list" class="text-[9px] text-amber-300 leading-relaxed"></div>
-    </div>
 
-    <!-- 交互指引水晶卡片 -->
-    <div id="interactive-guide" class="fixed bottom-14 left-4 z-20 glass rounded-xl p-3 w-56 text-[10px] text-slate-400 space-y-1.5 animate-in slide-in-from-left duration-200">
-        <div class="text-purple-300 font-bold border-b border-white/5 pb-1 flex items-center justify-between">
-            <span>🎮 神经云图控制台指引</span>
-            <button onclick="this.parentElement.parentElement.remove()" class="text-slate-600 hover:text-slate-300">✕</button>
-        </div>
-        <div class="flex justify-between"><span>🖱️ 单击星体</span><span class="text-slate-300 font-mono">选中聚焦/激活气泡</span></div>
-        <div class="flex justify-between"><span>🚀 双击星体</span><span class="text-slate-300 font-mono">异步展开关联脉络</span></div>
-        <div class="flex justify-between"><span>🔍 滚轮/双指</span><span class="text-slate-300 font-mono">星系无级视野缩放</span></div>
-        <div class="flex justify-between"><span>🧭 点击线段</span><span class="text-slate-300 font-mono">查看关系；有权限时编辑</span></div>
-        <div class="flex justify-between"><span>📌 拖拽星空</span><span class="text-slate-300 font-mono">3D 轨道任意平移旋转</span></div>
+        <!-- 图例 Legend 药丸条 -->
+        <div id="legend" class="glass rounded-xl px-3 py-2 flex flex-wrap gap-1.5 max-w-sm justify-end border border-white/10 shadow-xl"></div>
     </div>
-
-    <!-- Legend -->
-    <div id="legend" class="fixed bottom-4 right-4 z-20 glass rounded-xl px-4 py-3 flex flex-wrap gap-2 max-w-xs"></div>
 
     <!-- Fact / Tag relation editor -->
     <div id="knowledge-editor-dialog" class="fixed inset-0 z-[70] hidden items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-labelledby="knowledge-editor-title">
@@ -667,7 +688,7 @@ function installScopedApiFetch() {
 
             const headers = new Headers(inputRequest?.headers);
             new Headers(init.headers).forEach((value, key) => headers.set(key, value));
-            const token = localStorage.getItem('wavememory.webui.token');
+            const token = sessionStorage.getItem('wavememory.webui.token') || localStorage.getItem('wavememory.webui.token');
             if (token && token !== 'no-auth' && !headers.has('Authorization')) {
                 headers.set('Authorization', `Bearer ${token}`);
             }
