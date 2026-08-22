@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ActivityIcon, AlertCircleIcon, Clock3Icon, CompassIcon, GitBranchIcon, Globe2Icon, HeartHandshakeIcon, MessageSquareQuoteIcon, TargetIcon } from 'lucide-react'
+import { ActivityIcon, AlertCircleIcon, Clock3Icon, CompassIcon, GitBranchIcon, Globe2Icon, HeartHandshakeIcon, MessageSquareQuoteIcon, RefreshCwIcon, TargetIcon } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
 
 import { isRequestCancelled } from '@/api/client'
@@ -11,12 +11,13 @@ import {
   type HistoricalAuditPage,
   type RelationshipItem,
 } from '@/api/people'
-import { getSoulState, type RelationshipHistoryItem, type SoulScopeSelection, type SoulStatePayload } from '@/api/soul'
+import { getSoulState, refreshSoulState, type RelationshipHistoryItem, type SoulScopeSelection, type SoulStatePayload } from '@/api/soul'
 import { RelationshipCalibrationPanel } from '@/components/relationship/RelationshipCalibrationPanel'
 import { TimeAnchorsExplorer } from '@/components/soul/TimeAnchorsExplorer'
 import { EvidenceList, ObjectDeepLink, PaginationControls, QueryState, ScopeSelect } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import { Input } from '@/components/ui/input'
@@ -349,6 +350,23 @@ export function SoulPage() {
     }
   }, [fromTs, pagination.limit, pagination.offset, scope, subjectId, toTs])
 
+  // 强制自省：先走 api 层 refresh 通道触发只读投影重算，再复用原加载链路拉最新数据，避免丢当前页
+  const [refreshing, setRefreshing] = useState(false)
+  const refreshNow = useCallback(async () => {
+    if (!scope) return
+    setRefreshing(true)
+    setError(undefined)
+    try {
+      await refreshSoulState({ ...scope, ...(subjectId ? { subject_principal_id: subjectId } : {}) }, { from_ts: fromTs, to_ts: toTs })
+      await loadFormal()
+    } catch (reason) {
+      setError(reason)
+      setStatus('error')
+    } finally {
+      setRefreshing(false)
+    }
+  }, [scope, subjectId, fromTs, toTs, loadFormal])
+
   useEffect(() => {
     void loadFormal()
     return () => formalRequestRef.current?.abort()
@@ -358,6 +376,23 @@ export function SoulPage() {
 
   return (
     <div data-slot="soul-page" className="flex flex-col gap-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight">Soul 状态与时间线</h1>
+          <p className="text-sm text-muted-foreground">Bot 在当前 canonical 群会话中的 Mood、Concern、关系投影与时间线。</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => void loadFormal()} disabled={!scope || status === 'loading'}>
+            <RefreshCwIcon data-icon="inline-start" aria-hidden="true" />
+            刷新数据
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => void refreshNow()} disabled={!scope || status === 'loading' || refreshing}>
+            <ActivityIcon data-icon="inline-start" aria-hidden="true" />
+            {refreshing ? '自省中…' : '强制自省'}
+          </Button>
+        </div>
+      </div>
+
       <Card>
         <CardHeader className="py-4">
           <CardTitle>Soul 作用域状态</CardTitle>

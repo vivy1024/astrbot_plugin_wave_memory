@@ -83,6 +83,11 @@ def test_repository_returns_real_state_with_exact_scope_and_subject_isolation(tm
         assert state["relationship"]["revision"] == 1
         assert state["revision"] >= 1
         assert repo.get_state(group_scope("g3"), limit=25, offset=0)["mood"]["state"] == "unknown"
+
+        # 强制自省与 get_state 同为只读投影：结果一致、revision 不变（无副作用）
+        refreshed = repo.refresh_state(scope, subject_principal_id="qq:user:u1", limit=25, offset=0)
+        assert refreshed == repo.get_state(scope, subject_principal_id="qq:user:u1", limit=25, offset=0)
+        assert refreshed["revision"] == state["revision"]
     finally:
         manager.close()
 
@@ -212,8 +217,69 @@ def test_soul_state_reads_scoped_repository_and_legacy_mutations_are_410(monkeyp
     assert payload["relationship_history"]["page"]["total"] == 0
     assert payload["soul_context"]["status"] == "unavailable"
     assert payload["capabilities"]["mutate"]["available"] is False
+    # refresh 通道已由 POST /api/soul/state/refresh 提供，GET 必须如实声明可用
+    assert payload["capabilities"]["runtime_refresh"] == {"available": True, "reason_code": None}
+    assert payload["runtime_refresh"]["status"] == "available"
 
     module.request = types.SimpleNamespace(args={}, method="POST", path="/api/concerns")
     rejected, status = asyncio.run(module._reject_unscoped_soul_mutations())
     assert status == 410
     assert rejected == {"error": {"code": "legacy_mutation_disabled"}}
+
+    # 唯一的 POST 白名单：强制自省（只读重算，非 legacy 写路径）
+    module.request = types.SimpleNamespace(args={}, method="POST", path="/api/soul/state/refresh")
+    assert asyncio.run(module._reject_unscoped_soul_mutations()) is None
+
+
+def test_soul_state_refresh_recomputes_projection_without_writes(monkeypatch):
+    from webui.blueprints import soul as module
+
+    calls = {"refresh": 0}
+
+    def _state():
+        return {
+            "revision": 5,
+            "evidence": [],
+            "mood": {"value": 0.5, "state": "known", "components": {"valence": 0.5, "arousal": 0.2}, "policy_version": "mood/v1", "revision": 2, "evidence": []},
+            "concerns": {"items": [], "total": 0},
+            "timeline": {"items": [], "total": 0},
+            "relationship_history": {"items": [], "total": 0, "revision": None},
+            "soul_context": {"status": "unavailable", "reason_code": "formal_soul_context_unavailable", "timezone": None, "circadian": None, "energy": None, "sleepiness": None},
+            "relationship": {"affinity": 42, "state": "friendly", "revision": 5, "evidence": [], "people_ref": "qq:user:u1"},
+        }
+
+    class Repo:
+        def get_state(self, scope, **kwargs):
+            return _state()
+
+        def refresh_state(self, scope, **kwargs):
+            calls["refresh"] += 1
+            assert scope.session.id == "qq:group:g1"
+            assert kwargs["subject_principal_id"] == "qq:user:u1"
+            return _state()
+
+    monkeypatch.setattr(module, "get_container", lambda: types.SimpleNamespace(soul_repository=Repo()))
+    monkeypatch.setattr(module, "jsonify", lambda payload: payload)
+    monkeypatch.setattr(module, "current_runtime_scope", lambda _provider: group_scope(subject="qq:user:u1"))
+    monkeypatch.setattr(module, "current_app", types.SimpleNamespace(extensions={"wave_api_contract": {"request_scope_provider": object(), "object_refs": None}}))
+    monkeypatch.setattr(
+        module,
+        "request",
+        types.SimpleNamespace(args={"limit": "25", "offset": "0"}, method="POST", path="/api/soul/state/refresh"),
+    )
+
+    payload = asyncio.run(module.soul_state_refresh.__wrapped__())
+    assert calls["refresh"] == 1
+    assert payload["revision"] == 5
+    assert payload["mood"]["value"] == 0.5
+    assert payload["relationship"]["affinity"] == 42
+    assert payload["runtime_refresh"]["status"] == "refreshed"
+    assert payload["runtime_refresh"]["refreshed_at"] > 0
+    assert payload["runtime_refresh"]["reason_code"] is None
+    assert payload["capabilities"]["runtime_refresh"] == {"available": True, "reason_code": None}
+
+    # 仓储缺失时 refresh 诚实 503，不伪装
+    monkeypatch.setattr(module, "get_container", lambda: types.SimpleNamespace(soul_repository=None))
+    rejected, status = asyncio.run(module.soul_state_refresh.__wrapped__())
+    assert status == 503
+    assert rejected == {"error": {"code": "soul_scoped_repository_unavailable"}}

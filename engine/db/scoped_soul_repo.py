@@ -1248,5 +1248,30 @@ class ScopedSoulRepository:
             ),
         }
 
+    def refresh_state(
+        self,
+        scope: RuntimeScope,
+        *,
+        subject_principal_id: str | None = None,
+        limit: int = 25,
+        offset: int = 0,
+        from_ts: float | None = None,
+        to_ts: float | None = None,
+    ) -> dict[str, Any]:
+        """显式触发的自省重算入口（WebUI「强制自省」）。
+
+        与 get_state 同为只读投影：不写数据、不调用 LLM、不新增事件，revision 不变。
+        保留独立方法作为刷新语义接缝，未来可在此接入缓存失效或重调度；
+        任何实现都不得把该入口变成写路径。
+        """
+        return self.get_state(
+            scope,
+            subject_principal_id=subject_principal_id,
+            limit=limit,
+            offset=offset,
+            from_ts=from_ts,
+            to_ts=to_ts,
+        )
+
 
 __all__ = ["ScopedSoulRepository", "ScopedSoulScopeError"]

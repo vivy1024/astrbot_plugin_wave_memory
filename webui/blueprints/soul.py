@@ -27,9 +27,12 @@ soul_bp = Blueprint("soul", __name__, url_prefix="/api")
 
 @soul_bp.before_request
 async def _reject_unscoped_soul_mutations():
-    if request.method not in {"GET", "HEAD", "OPTIONS"}:
-        return jsonify({"error": {"code": "legacy_mutation_disabled"}}), 410
-    return None
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return None
+    # 强制自省是唯一允许的 POST：只读重算，不属于 legacy 写路径
+    if request.method == "POST" and request.path == "/api/soul/state/refresh":
+        return None
+    return jsonify({"error": {"code": "legacy_mutation_disabled"}}), 410
 
 
 def _table_exists(conn, table: str) -> bool:
@@ -235,6 +238,85 @@ def _normalize_soul_state_evidence(state: dict[str, Any], *, scope: RuntimeScope
     return normalized
 
 
+def _normalized_state(state: dict[str, Any], scope: RuntimeScope) -> dict[str, Any]:
+    container = get_container()
+    connection = getattr(getattr(container, "db", None), "conn", None)
+    return _normalize_soul_state_evidence(
+        state,
+        scope=scope,
+        connection=connection,
+        refs=_object_refs(),
+    )
+
+
+def _state_success_payload(
+    state: dict[str, Any],
+    scope: RuntimeScope,
+    *,
+    limit: int,
+    offset: int,
+    refreshed_at: float | None = None,
+) -> dict[str, Any]:
+    """把仓储聚合状态呈现为正式 Soul payload；GET 与强制自省（refresh）共用同一组装。"""
+    concerns = state["concerns"]
+    timeline = state["timeline"]
+    relationship_history = state.get("relationship_history", {"items": [], "total": 0, "revision": None})
+    historical_audit = state.get("historical_audit") or {
+        "available": False,
+        "total": 0,
+        "by_type": [],
+        "recent": [],
+        "readonly": True,
+        "affects_affinity": False,
+    }
+    if isinstance(historical_audit, dict):
+        historical_audit = {
+            **historical_audit,
+            "readonly": True,
+            "affects_affinity": False,
+        }
+    relationship = dict(state["relationship"])
+    refs = _object_refs()
+    if relationship.get("revision") is not None and relationship.get("people_ref") and refs is not None:
+        ref = refs.issue(kind="relationship", locator=relationship["people_ref"], scope=scope, revision=int(relationship["revision"]))
+        relationship["people_ref"] = {"ref": ref, "kind": "relationship", "locator": relationship["people_ref"], "scope_key": scope.session.id, "version": int(relationship["revision"])}
+    runtime_refresh: dict[str, Any] = {
+        "status": "refreshed" if refreshed_at is not None else "available",
+        "operation": None,
+        "reason_code": None,
+    }
+    if refreshed_at is not None:
+        runtime_refresh["refreshed_at"] = refreshed_at
+    return {
+        "scope": _scope_payload(scope),
+        "source": {"health": "ready", "reason_code": None},
+        "revision": state.get("revision"),
+        "evidence": state.get("evidence", []),
+        "mood": state["mood"],
+        "concerns": {
+            **page_response(concerns["items"], total=concerns["total"], limit=limit, offset=offset),
+            "revision": concerns.get("revision"),
+        },
+        "timeline": {
+            **page_response(timeline["items"], total=timeline["total"], limit=limit, offset=offset),
+            "revision": timeline.get("revision"),
+        },
+        "relationship_history": {
+            **page_response(relationship_history["items"], total=relationship_history["total"], limit=limit, offset=offset),
+            "revision": relationship_history.get("revision"),
+        },
+        "historical_audit": historical_audit,
+        "relationship": relationship,
+        "soul_context": state.get("soul_context", {"status": "unavailable", "reason_code": "formal_soul_context_unavailable", "timezone": None, "circadian": None, "energy": None, "sleepiness": None}),
+        "capabilities": {
+            "mutate": {"available": bool(relationship.get("calibration", {}).get("available")), "reason_code": None if relationship.get("calibration", {}).get("available") else "relationship_calibration_unavailable"},
+            "calibration": relationship.get("calibration", {"available": False, "reason_code": "relationship_unknown"}),
+            "runtime_refresh": {"available": True, "reason_code": None},
+        },
+        "runtime_refresh": runtime_refresh,
+    }
+
+
 @soul_bp.route("/soul/state", methods=["GET"])
 @require_auth
 async def soul_state():
@@ -304,65 +386,53 @@ async def soul_state():
         code = getattr(exc, "reason_code", None) or getattr(exc, "code", None) or str(exc)
         return jsonify({"error": {"code": code}}), 400
 
-    container = get_container()
-    connection = getattr(getattr(container, "db", None), "conn", None)
-    state = _normalize_soul_state_evidence(
-        state,
-        scope=scope,
-        connection=connection,
-        refs=_object_refs(),
-    )
-    concerns = state["concerns"]
-    timeline = state["timeline"]
-    relationship_history = state.get("relationship_history", {"items": [], "total": 0, "revision": None})
-    historical_audit = state.get("historical_audit") or {
-        "available": False,
-        "total": 0,
-        "by_type": [],
-        "recent": [],
-        "readonly": True,
-        "affects_affinity": False,
-    }
-    if isinstance(historical_audit, dict):
-        historical_audit = {
-            **historical_audit,
-            "readonly": True,
-            "affects_affinity": False,
-        }
-    relationship = dict(state["relationship"])
-    refs = _object_refs()
-    if relationship.get("revision") is not None and relationship.get("people_ref") and refs is not None:
-        ref = refs.issue(kind="relationship", locator=relationship["people_ref"], scope=scope, revision=int(relationship["revision"]))
-        relationship["people_ref"] = {"ref": ref, "kind": "relationship", "locator": relationship["people_ref"], "scope_key": scope.session.id, "version": int(relationship["revision"])}
-    return jsonify({
-        "scope": _scope_payload(scope),
-        "source": {"health": "ready", "reason_code": None},
-        "revision": state.get("revision"),
-        "evidence": state.get("evidence", []),
-        "mood": state["mood"],
-        "concerns": {
-            **page_response(concerns["items"], total=concerns["total"], limit=limit, offset=offset),
-            "revision": concerns.get("revision"),
-        },
-        "timeline": {
-            **page_response(timeline["items"], total=timeline["total"], limit=limit, offset=offset),
-            "revision": timeline.get("revision"),
-        },
-        "relationship_history": {
-            **page_response(relationship_history["items"], total=relationship_history["total"], limit=limit, offset=offset),
-            "revision": relationship_history.get("revision"),
-        },
-        "historical_audit": historical_audit,
-        "relationship": relationship,
-        "soul_context": state.get("soul_context", {"status": "unavailable", "reason_code": "formal_soul_context_unavailable", "timezone": None, "circadian": None, "energy": None, "sleepiness": None}),
-        "capabilities": {
-            "mutate": {"available": bool(relationship.get("calibration", {}).get("available")), "reason_code": None if relationship.get("calibration", {}).get("available") else "relationship_calibration_unavailable"},
-            "calibration": relationship.get("calibration", {"available": False, "reason_code": "relationship_unknown"}),
-            "runtime_refresh": {"available": False, "reason_code": "soul_runtime_refresh_unavailable"},
-        },
-        "runtime_refresh": {"status": "unavailable", "operation": None,
-                            "reason_code": "soul_runtime_refresh_unavailable"},
-    })
+    state = _normalized_state(state, scope)
+    return jsonify(_state_success_payload(state, scope, limit=limit, offset=offset))
+
+
+@soul_bp.route("/soul/state/refresh", methods=["POST"])
+@require_auth
+async def soul_state_refresh():
+    """手动触发当前 Scoped Soul 的立即自省重构。
+
+    与 GET 同为只读投影：不写数据、不调用 LLM、不新增事件，revision 不变；
+    响应携带 refreshed_at 供前端提示本次重算时刻。
+    """
+    try:
+        scope = _formal_group_scope()
+        limit = int(request.args.get("limit", 25))
+        offset = int(request.args.get("offset", 0))
+        from_raw = request.args.get("from_ts")
+        to_raw = request.args.get("to_ts")
+        from_ts = None if from_raw in {None, ""} else float(from_raw)
+        to_ts = None if to_raw in {None, ""} else float(to_raw)
+        if limit not in {25, 50, 100} or offset < 0:
+            raise ValueError("invalid_pagination")
+        if from_ts is not None and to_ts is not None and from_ts > to_ts:
+            raise ValueError("invalid_time_range")
+    except (ScopedSoulScopeError, ScopeValidationError, TypeError, ValueError) as exc:
+        code = getattr(exc, "reason_code", None) or getattr(exc, "code", None) or str(exc)
+        return jsonify({"error": {"code": code}}), 400
+
+    repo = _scoped_repo(get_container())
+    if repo is None:
+        return jsonify({"error": {"code": "soul_scoped_repository_unavailable"}}), 503
+
+    try:
+        state = repo.refresh_state(
+            scope,
+            subject_principal_id=scope.subject_principal_id,
+            limit=limit,
+            offset=offset,
+            from_ts=from_ts,
+            to_ts=to_ts,
+        )
+    except (ScopedSoulScopeError, ScopeValidationError, TypeError, ValueError) as exc:
+        code = getattr(exc, "reason_code", None) or getattr(exc, "code", None) or str(exc)
+        return jsonify({"error": {"code": code}}), 400
+
+    state = _normalized_state(state, scope)
+    return jsonify(_state_success_payload(state, scope, limit=limit, offset=offset, refreshed_at=time.time()))
 
 
 # ═══════════════════════════════════════════

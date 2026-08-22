@@ -118,7 +118,7 @@ export interface SoulStatePayload {
     mutate: { available: boolean; reason_code: string | null }
     runtime_refresh: { available: boolean; reason_code: string | null }
   }
-  runtime_refresh: { status: string; operation: unknown; reason_code: string | null }
+  runtime_refresh: { status: string; operation: unknown; reason_code: string | null; refreshed_at?: number }
 }
 
 function scopeQuery(scope: SoulScopeSelection, extra: Record<string, string> = {}): string {
@@ -139,6 +139,27 @@ export function getSoulState(
     ...(timeRange.to_ts !== undefined ? { to_ts: String(timeRange.to_ts) } : {}),
   }
   return fetchJson<SoulStatePayload>(`/api/soul/state?${scopeQuery(scope, extra)}`, { signal })
+}
+
+/**
+ * 触发 Selves/Mood/Concern 只读重算（自省），不调用 LLM、不写入事件。
+ * 幂等安全，用于 Soul 页「强制自省」入口。
+ */
+export async function refreshSoulState(
+  scope: SoulScopeSelection,
+  timeRange: { from_ts?: number; to_ts?: number } = {},
+  signal?: AbortSignal,
+): Promise<SoulStatePayload> {
+  const extra = {
+    limit: '25',
+    offset: '0',
+    ...(timeRange.from_ts !== undefined ? { from_ts: String(timeRange.from_ts) } : {}),
+    ...(timeRange.to_ts !== undefined ? { to_ts: String(timeRange.to_ts) } : {}),
+  }
+  return fetchJson<SoulStatePayload>(`/api/soul/state/refresh?${scopeQuery(scope, extra)}`, {
+    method: 'POST',
+    signal,
+  })
 }
 
 export interface TimeAnchorItem {

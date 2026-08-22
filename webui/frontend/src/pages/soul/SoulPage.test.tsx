@@ -1,13 +1,13 @@
 import { MemoryRouter } from 'react-router-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SoulPage } from './SoulPage'
 
-const api = vi.hoisted(() => ({ formal: vi.fn(), scopes: vi.fn(), relationships: vi.fn() }))
+const api = vi.hoisted(() => ({ formal: vi.fn(), refresh: vi.fn(), scopes: vi.fn(), relationships: vi.fn() }))
 vi.mock('@/api/soul', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/soul')>()
-  return { ...actual, getSoulState: api.formal }
+  return { ...actual, getSoulState: api.formal, refreshSoulState: api.refresh }
 })
 vi.mock('@/api/options', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/options')>()
@@ -88,5 +88,20 @@ describe('SoulPage 仅加载正式 Scope 数据', () => {
     expect(screen.getByText('memory:101')).toBeVisible()
     expect(screen.getByText('Circadian Soul State')).toBeVisible()
     expect(api.formal).toHaveBeenCalledWith(expect.objectContaining({ bot_id: 'bot-a', session_id: 'session-a', subject_principal_id: 'qq:user:u1' }), 25, 0, expect.anything(), { from_ts: 90, to_ts: 110 })
+  })
+
+  it('强制自省按钮触发只读重算并重新拉取正式数据', async () => {
+    api.refresh.mockResolvedValue({ runtime_refresh: { status: 'refreshed', operation: null, reason_code: null, refreshed_at: 123 } })
+    render(<MemoryRouter initialEntries={['/soul?bot_id=bot-a&session_id=session-a&visibility=group']}><SoulPage /></MemoryRouter>)
+
+    expect(await screen.findByText('平静')).toBeVisible()
+    const loadsBefore = api.formal.mock.calls.length
+    fireEvent.click(screen.getByRole('button', { name: /强制自省/ }))
+
+    await waitFor(() => expect(api.refresh).toHaveBeenCalledWith(
+      expect.objectContaining({ bot_id: 'bot-a', session_id: 'session-a', visibility: 'group' }),
+      { from_ts: undefined, to_ts: undefined },
+    ))
+    await waitFor(() => expect(api.formal.mock.calls.length).toBeGreaterThan(loadsBefore))
   })
 })

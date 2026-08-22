@@ -14,6 +14,8 @@ class TestStage5SoulScopedReadonly:
         page = Path("webui/frontend/src/pages/soul/SoulPage.tsx").read_text(encoding="utf-8")
         for marker in ("QueryState", "未知 / 未记录", "无可信分量"):
             assert marker in page
+        # 自省入口存在，但写动作只允许经由 api 层的只读 refresh 通道，页面本身不得内联写请求
+        assert "强制自省" in page
         assert "fetch(" not in page
         assert "POST" not in page
         assert "PUT" not in page
