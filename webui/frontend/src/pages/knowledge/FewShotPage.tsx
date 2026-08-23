@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { EyeIcon, RefreshCwIcon, SearchIcon } from 'lucide-react'
+import { EyeIcon, RefreshCwIcon } from 'lucide-react'
 
 import { getApprovedFewShot, type ApprovedFewShot } from '@/api/knowledge'
 import { getScopeOptions, scopeOptionsFor } from '@/api/options'
-import { PaginationControls, QueryState, ResponsiveDetail, ResponsiveTable, ScopeSelect, usePaginationSearchParams, type PageResponse } from '@/components/shared'
+import { PaginationControls, QueryState, ResponsiveDetail, DeclarativeDataTable, ScopeSelect, usePaginationSearchParams, type PageResponse } from '@/components/shared'
 import { useCanonicalScopeDefault } from '@/hooks/use-pagination-search-params'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { InputWithIcon } from '@/components/shared/InputWithIcon'
 
 function score(value: number | undefined): string {
   return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : '未评分'
@@ -87,12 +86,29 @@ export function FewShotPage() {
         <div className="pr-1 text-xs"><div className="font-medium">RuntimeScope</div><div className="text-muted-foreground">Bot + canonical 群会话</div></div>
         <ScopeSelect className="[&_[data-slot=field-label]]:sr-only" value={botId || undefined} loadOptions={loadBots} label="Bot" placeholder="选择真实 Bot" required onValueChange={(value) => pagination.setFilters({ bot_id: value, session_id: null })} />
         <ScopeSelect className="[&_[data-slot=field-label]]:sr-only" value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" placeholder="选择 canonical 群会话" disabled={!botId} required onValueChange={(value) => pagination.setFilters({ session_id: value })} />
-        <form className="flex min-w-0 flex-wrap items-center gap-2" onSubmit={submitSearch}><div className="relative min-w-48 flex-1"><SearchIcon className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><Input aria-label="搜索 FewShot" className="h-8 pl-8" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="搜索范例内容、traits" disabled={!botId || !sessionId} /></div><Button type="submit" size="sm" className="h-8" disabled={loading || !botId || !sessionId}>搜索</Button><Button type="button" size="sm" className="h-8" variant="ghost" onClick={clearSearch}>清除</Button><Button type="button" size="sm" className="h-8" variant="outline" disabled={loading || !botId || !sessionId} onClick={() => setReload((value) => value + 1)}><RefreshCwIcon aria-hidden="true" /><span className="sr-only">刷新</span></Button></form>
+        <form className="flex min-w-0 flex-wrap items-center gap-2" onSubmit={submitSearch}>
+          <InputWithIcon value={searchDraft} onValueChange={(v) => setSearchDraft(v)} placeholder="搜索范例内容、traits" containerClassName="min-w-48 flex-1" />
+          <Button type="submit" size="sm" className="h-8" disabled={loading || !botId || !sessionId}>搜索</Button>
+          <Button type="button" size="sm" className="h-8" variant="ghost" onClick={clearSearch}>清除</Button>
+          <Button type="button" size="sm" className="h-8" variant="outline" disabled={loading || !botId || !sessionId} onClick={() => setReload((value) => value + 1)}><RefreshCwIcon aria-hidden="true" /><span className="sr-only">刷新</span></Button>
+        </form>
       </div>
 
-      <QueryState status={status} error={error} title="FewShot 读取失败" description={!botId || !sessionId ? '请选择真实 Bot 与 canonical 群会话；页面禁止跨群或跨 Bot 汇总。' : '当前 RuntimeScope 与搜索条件下没有 approved / healthy 正式范例。'} onRetry={() => setReload((value) => value + 1)}>
-        <ResponsiveTable label="FewShot 正式范例清单" table={<Table><TableHeader><TableRow className="bg-muted/15"><TableHead>范例内容</TableHead><TableHead className="w-24">评分</TableHead><TableHead className="w-64">Traits</TableHead><TableHead className="w-36">正式状态</TableHead><TableHead className="w-14"><span className="sr-only">详情</span></TableHead></TableRow></TableHeader><TableBody>{pageItems.map((item) => <TableRow key={item.id}><TableCell className="max-w-2xl truncate leading-relaxed">{item.content}</TableCell><TableCell className="font-mono text-xs">{score(item.score)}</TableCell><TableCell><div className="flex max-w-64 gap-1 overflow-hidden">{item.traits?.length ? item.traits.slice(0, 3).map((trait) => <Badge key={trait} variant="outline" className="max-w-24 truncate">{trait}</Badge>) : <span className="text-xs text-muted-foreground">未记录</span>}</div></TableCell><TableCell><Badge>approved / healthy</Badge></TableCell><TableCell className="text-right"><ResponsiveDetail title="FewShot 正式范例" description={`Bot ${item.bot_id} 的只读正式范例`} trigger={<Button type="button" variant="ghost" size="icon-sm" aria-label="查看 FewShot 正式范例详情"><EyeIcon aria-hidden="true" /></Button>}><FewShotDetail item={item} /></ResponsiveDetail></TableCell></TableRow>)}</TableBody></Table>} cards={pageItems.map((item) => <article key={item.id} className="flex flex-col gap-3 rounded-lg border bg-card p-4"><div className="flex flex-wrap items-start justify-between gap-2"><Badge>approved / healthy</Badge><span className="font-mono text-xs text-muted-foreground">评分 {score(item.score)}</span></div><p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{item.content}</p><div className="flex flex-wrap gap-1">{item.traits?.length ? item.traits.map((trait) => <Badge key={trait} variant="outline">{trait}</Badge>) : <span className="text-xs text-muted-foreground">未记录 traits</span>}</div><div className="flex justify-end"><ResponsiveDetail title="FewShot 正式范例" description={`Bot ${item.bot_id} 的只读正式范例`} trigger={<Button type="button" variant="outline" size="sm">查看详情</Button>}><FewShotDetail item={item} /></ResponsiveDetail></div></article>)} />
-      </QueryState>
+        <QueryState status={status} error={error} title="FewShot 读取失败" description={!botId || !sessionId ? '请选择真实 Bot 与 canonical 群会话；页面禁止跨群或跨 Bot 汇总。' : '当前 RuntimeScope 与搜索条件下没有 approved / healthy 正式范例。'} onRetry={() => setReload((value) => value + 1)}>
+          <DeclarativeDataTable
+            label="FewShot 正式范例清单"
+            items={pageItems}
+            keyExtractor={(row) => String(row.id)}
+            columns={[
+              { key: 'content', header: '范例内容', isTitle: true, render: (row) => <p className="max-w-2xl truncate leading-relaxed text-sm">{row.content}</p> },
+              { key: 'score', header: '评分', render: (row) => <span className="font-mono text-xs">{score(row.score)}</span> },
+              { key: 'traits', header: 'Traits', render: (row) => <div className="flex max-w-64 gap-1 overflow-hidden">{row.traits?.length ? row.traits.slice(0, 3).map((trait) => <Badge key={trait} variant="outline" className="max-w-24 truncate">{trait}</Badge>) : <span className="text-xs text-muted-foreground">未记录</span>}</div> },
+              { key: 'status', header: '正式状态', render: () => <Badge>approved / healthy</Badge> },
+              { key: 'actions', header: null, render: (row) => <ResponsiveDetail title="FewShot 正式范例" description={`Bot ${row.bot_id} 的只读正式范例`} trigger={<Button type="button" variant="ghost" size="icon-sm" aria-label="查看 FewShot 正式范例详情"><EyeIcon aria-hidden="true" /></Button>}><FewShotDetail item={row} /></ResponsiveDetail> },
+            ]}
+            renderCardActions={(row) => <ResponsiveDetail title="FewShot 正式范例" description={`Bot ${row.bot_id} 的只读正式范例`} trigger={<Button type="button" variant="outline" size="sm">查看详情</Button>}><FewShotDetail item={row} /></ResponsiveDetail>}
+          />
+        </QueryState>
       {data?.page ? <div className="border-t px-4 py-3"><PaginationControls page={data.page} onOffsetChange={pagination.setOffset} onLimitChange={pagination.setLimit} disabled={loading} label="FewShot 分页" /></div> : null}
     </CardContent></Card>
 

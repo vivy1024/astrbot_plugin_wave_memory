@@ -11,7 +11,7 @@ import {
   type RelationshipItem,
 } from '@/api/people'
 import { RelationshipCalibrationPanel } from '@/components/relationship/RelationshipCalibrationPanel'
-import { PaginationControls, QueryState, ResponsiveTable, ScopeSelect, usePaginationSearchParams, type PageResponse } from '@/components/shared'
+import { PaginationControls, QueryState, DeclarativeDataTable, ScopeSelect, usePaginationSearchParams, type PageResponse } from '@/components/shared'
 import { useCanonicalScopeDefault } from '@/hooks/use-pagination-search-params'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -20,7 +20,6 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 function aliasLabels(aliases: unknown[]): string[] {
   return aliases.map((alias) => typeof alias === 'string' ? alias : '').filter(Boolean)
@@ -480,65 +479,21 @@ export function PeoplePage() {
 
         <div className="flex flex-col gap-3 p-3">
           <QueryState status={status} error={error} title="人物画像读取失败" description={!botId || !sessionId ? '请先选择真实 Bot 与 canonical 群会话；页面不会读取跨作用域人物。' : '当前 Scope 与搜索条件下没有正式人物画像。'} onRetry={() => setReload((value) => value + 1)}>
-            <ResponsiveTable
+            <DeclarativeDataTable
               label="人物画像清单"
-              table={<Table>
-                <TableHeader><TableRow className="h-8 bg-muted/15"><TableHead className="py-1 text-[11px]">用户 ID</TableHead><TableHead className="py-1 text-[11px]">显示名称</TableHead><TableHead className="py-1 text-[11px]">登记别名</TableHead><TableHead className="w-36 py-1 text-[11px]">群</TableHead><TableHead className="w-32 py-1 text-[11px]">Bot</TableHead><TableHead className="w-20 py-1 text-center text-[11px]">互动数</TableHead><TableHead className="w-24 py-1 text-[11px]">Affinity</TableHead><TableHead className="w-12 py-1"><span className="sr-only">详情</span></TableHead></TableRow></TableHeader>
-                <TableBody>{people.map((item) => {
-                  const aliases = aliasLabels(item.aliases)
-                  const hasAffinity = item.affinity !== null
-                  return <TableRow key={item.scope_key} className="h-9 cursor-pointer hover:bg-muted/10" onClick={() => openDetail(item)}>
-                    <TableCell className="max-w-44 truncate py-1 font-mono text-[11px]">{item.user_id}</TableCell>
-                    <TableCell className="max-w-44 truncate py-1 text-xs font-medium">{item.display_name}</TableCell>
-                    <TableCell className="max-w-48 truncate py-1 text-xs text-muted-foreground">{aliases.length ? aliases.join('、') : '未登记'}</TableCell>
-                    <TableCell className="max-w-36 truncate py-1 font-mono text-[11px]">{item.group_id}</TableCell>
-                    <TableCell className="max-w-32 truncate py-1"><Badge variant="secondary" className="max-w-full truncate px-1.5 font-mono text-[10px] font-normal">{item.bot_id}</Badge></TableCell>
-                    <TableCell className="py-1 text-center font-mono text-[11px]">{interactionCount(item) ?? '—'}</TableCell>
-                    <TableCell className="py-1">
-                      {hasAffinity ? (
-                        <Badge className={`text-[10px] font-mono font-semibold ${
-                          item.affinity! >= 15 ? 'bg-rose-500 text-white' :
-                          item.affinity! >= 5 ? 'bg-pink-500 text-white' :
-                          item.affinity! > 0 ? 'bg-pink-400/80 text-white' :
-                          item.affinity! < 0 ? 'bg-blue-500 text-white' : 'bg-muted text-muted-foreground'
-                        }`}>
-                          {item.affinity! > 0 ? `+${item.affinity}` : item.affinity}
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-[10px] text-muted-foreground">未激活</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="py-1 text-right" onClick={(event) => event.stopPropagation()}><Button type="button" variant="ghost" size="icon-xs" aria-label={`查看 ${item.display_name} 详情`} onClick={() => openDetail(item)}><EyeIcon aria-hidden="true" /></Button></TableCell>
-                  </TableRow>
-                })}</TableBody>
-              </Table>}
-              cards={people.map((item) => {
-                const aliases = aliasLabels(item.aliases)
-                const hasAffinity = item.affinity !== null
-                return <article key={item.scope_key} className="flex flex-col gap-3 rounded-lg border bg-card p-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="font-medium">{item.display_name}</p>
-                      <p className="break-all font-mono text-xs text-muted-foreground">{item.user_id}</p>
-                    </div>
-                    {hasAffinity ? (
-                      <Badge className={`text-xs font-mono font-semibold ${
-                        item.affinity! >= 15 ? 'bg-rose-500 text-white' :
-                        item.affinity! >= 5 ? 'bg-pink-500 text-white' :
-                        item.affinity! > 0 ? 'bg-pink-400/80 text-white' :
-                        item.affinity! < 0 ? 'bg-blue-500 text-white' : 'bg-muted text-muted-foreground'
-                      }`}>
-                        Affinity: {item.affinity! > 0 ? `+${item.affinity}` : item.affinity}
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-xs text-muted-foreground">未激活</Badge>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-1">{aliases.length ? aliases.map((alias) => <Badge key={alias} variant="outline">{alias}</Badge>) : <span className="text-xs text-muted-foreground">未登记别名</span>}</div>
-                  <dl className="grid gap-2 text-xs sm:grid-cols-2"><div><dt className="text-muted-foreground">群</dt><dd className="break-all font-mono">{item.group_id}</dd></div><div><dt className="text-muted-foreground">Bot</dt><dd className="break-all font-mono">{item.bot_id}</dd></div><div><dt className="text-muted-foreground">互动数</dt><dd>{interactionCount(item) ?? '—'}</dd></div></dl>
-                  <Button type="button" className="w-fit" variant="outline" size="sm" onClick={() => openDetail(item)}>查看详情</Button>
-                </article>
-              })}
+              items={people}
+              keyExtractor={(row) => row.scope_key}
+              onRowClick={(row) => openDetail(row)}
+              columns={[
+                { key: 'user_id', header: '用户 ID', className: 'max-w-44 truncate py-1 font-mono text-[11px]', render: (row) => row.user_id },
+                { key: 'display_name', header: '显示名称', isTitle: true, className: 'max-w-44 truncate py-1 text-xs font-medium', render: (row) => row.display_name },
+                { key: 'aliases', header: '登记别名', className: 'max-w-48 truncate py-1 text-xs text-muted-foreground', render: (row) => { const aliases = aliasLabels(row.aliases); return aliases.length ? aliases.join('、') : '未登记' } },
+                { key: 'group', header: '群', className: 'max-w-36 truncate py-1 font-mono text-[11px]', render: (row) => row.group_id },
+                { key: 'bot', header: 'Bot', className: 'max-w-32 truncate py-1', render: (row) => <Badge variant="secondary" className="max-w-full truncate px-1.5 font-mono text-[10px] font-normal">{row.bot_id}</Badge> },
+                { key: 'count', header: '互动数', className: 'py-1 text-center font-mono text-[11px]', render: (row) => interactionCount(row) ?? '—' },
+                { key: 'affinity', header: 'Affinity', className: 'py-1', render: (row) => { const has = row.affinity !== null; return has ? <Badge className={`text-[10px] font-mono font-semibold ${row.affinity! >= 15 ? 'bg-rose-500 text-white' : row.affinity! >= 5 ? 'bg-pink-500 text-white' : row.affinity! > 0 ? 'bg-pink-400/80 text-white' : row.affinity! < 0 ? 'bg-blue-500 text-white' : 'bg-muted text-muted-foreground'}`}>{row.affinity! > 0 ? `+${row.affinity}` : row.affinity}</Badge> : <Badge variant="outline" className="text-[10px] text-muted-foreground">未激活</Badge> } },
+                { key: 'actions', header: null, hideOnMobile: false, render: (row) => <Button type="button" variant="ghost" size="icon-xs" aria-label={`查看 ${row.display_name} 详情`} onClick={(event) => { event.stopPropagation(); openDetail(row) }}><EyeIcon aria-hidden="true" /></Button> },
+              ]}
             />
           </QueryState>
           {data?.page ? <PaginationControls page={data.page} onOffsetChange={pagination.setOffset} onLimitChange={pagination.setLimit} disabled={loading} label="人物分页" /> : null}

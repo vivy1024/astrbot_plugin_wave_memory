@@ -27,7 +27,7 @@ import {
 import { getScopeOptions, scopeOptionsFor } from '@/api/options'
 import { type TagExecutionOptions, type TagWritePolicy } from '@/api/tags'
 import { TagExtractionConfigPanel } from '@/components/tag/TagExtractionConfigPanel'
-import { PaginationControls, QueryState, ResponsiveTable, ScopeSelect, type ObjectRefState } from '@/components/shared'
+import { DeclarativeDataTable, PaginationControls, QueryState, ScopeSelect, type ObjectRefState } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -39,7 +39,6 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { useCanonicalScopeDefault, usePaginationSearchParams } from '@/hooks/use-pagination-search-params'
 
@@ -471,7 +470,6 @@ export function MemoriesPage() {
   }
 
   const items = payload?.items ?? []
-  const allSelected = items.length > 0 && selectedRefs.length === items.length
 
   function formatCount(value: unknown): string {
     return value !== undefined && value !== null && value !== '' ? String(value) : '0'
@@ -546,10 +544,26 @@ export function MemoriesPage() {
 
           <QueryState status={status} error={error} onRetry={() => void load()} title={!scope ? '请选择真实 Bot 与会话' : undefined} description={!scope ? '记忆管理不接受默认 Bot、私聊或伪群作用域；不会从裸 ID 补默认 Scope。' : payload?.page.reason_code ?? undefined}>
 
-            <ResponsiveTable label="记忆条目清单" table={<Table>
-              <TableHeader><TableRow><TableHead className="w-10"><input aria-label="选择当前页全部记忆" type="checkbox" checked={allSelected} onChange={(event) => toggleAll(event.target.checked)} /></TableHead><TableHead className="w-16">ID</TableHead><TableHead>内容</TableHead><TableHead>发送者</TableHead><TableHead>来源</TableHead><TableHead>Tags</TableHead><TableHead className="text-center">向量</TableHead><TableHead>时间</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
-              <TableBody>{items.map((item) => <TableRow key={item.ref} className={selectedRefs.includes(item.ref) ? 'bg-primary/5' : undefined}><TableCell><input aria-label={`选择记忆 ${item.id}`} type="checkbox" checked={selectedRefs.includes(item.ref)} onChange={(event) => toggleRow(item.ref, event.target.checked)} /></TableCell><TableCell className="font-mono text-xs text-muted-foreground">#{item.id}</TableCell><TableCell className="max-w-md cursor-pointer truncate hover:text-primary" onClick={() => void open(item)}>{item.content}</TableCell><TableCell className="max-w-32 truncate text-muted-foreground">{item.sender_name ?? item.sender_id ?? '未记录'}</TableCell><TableCell><Badge variant="secondary" className="font-mono text-[10px]">{item.source ?? '未记录'}</Badge></TableCell><TableCell><div className="flex flex-wrap gap-1">{item.tags?.length ? item.tags.slice(0, 2).map((tag, index) => <Badge key={`${tag.name}-${index}`} className={tagBadgeClass(tag.type)}>{tag.name}</Badge>) : <span className="text-xs text-muted-foreground">—</span>}</div></TableCell><TableCell className={item.has_vector ? 'text-center font-bold text-emerald-500' : 'text-center font-bold text-destructive'}>{item.has_vector ? '●' : '○'}</TableCell><TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">{formatTime(item.timestamp)}</TableCell><TableCell className="text-right"><Button variant="ghost" size="icon-sm" title="打开详情" onClick={() => void open(item)}><FileEditIcon /></Button></TableCell></TableRow>)}</TableBody>
-            </Table>} cards={items.map((item) => <article key={item.ref} className={`flex flex-col gap-3 rounded-lg border bg-card p-4 ${selectedRefs.includes(item.ref) ? 'border-primary/50 bg-primary/5' : ''}`}><div className="flex flex-wrap items-center justify-between gap-2"><label className="flex items-center gap-2 text-xs text-muted-foreground"><input aria-label={`选择记忆 ${item.id}`} type="checkbox" checked={selectedRefs.includes(item.ref)} onChange={(event) => toggleRow(item.ref, event.target.checked)} />选择</label><span className="font-mono text-xs text-muted-foreground">#{item.id}</span></div><button type="button" className="min-w-0 text-left text-sm leading-relaxed hover:text-primary" onClick={() => void open(item)}>{item.content}</button><dl className="grid gap-2 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">发送者</dt><dd className="break-words">{item.sender_name ?? item.sender_id ?? '未记录'}</dd></div><div><dt className="text-muted-foreground">来源</dt><dd><Badge variant="secondary" className="font-mono text-[10px]">{item.source ?? '未记录'}</Badge></dd></div><div><dt className="text-muted-foreground">向量</dt><dd className={item.has_vector ? 'text-emerald-500' : 'text-destructive'}>{item.has_vector ? '有向量' : '无向量'}</dd></div><div><dt className="text-muted-foreground">时间</dt><dd className="break-all font-mono text-xs">{formatTime(item.timestamp)}</dd></div></dl><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap gap-1">{item.tags?.length ? item.tags.map((tag, index) => <Badge key={`${tag.name}-${index}`} className={tagBadgeClass(tag.type)}>{tag.name}</Badge>) : <span className="text-xs text-muted-foreground">无标签</span>}</div><Button type="button" variant="outline" size="sm" onClick={() => void open(item)}>打开详情</Button></div></article>)} />
+            <DeclarativeDataTable
+              label="记忆条目清单"
+              items={items}
+              keyExtractor={(row) => String(row.ref)}
+              selectedKeys={new Set(selectedRefs)}
+              onToggleSelect={(row) => toggleRow(row.ref, !selectedRefs.includes(row.ref))}
+              onToggleAll={(checked) => toggleAll(checked)}
+              onRowClick={(row) => void open(row)}
+              rowClassName={(row) => selectedRefs.includes(row.ref) ? 'bg-primary/5' : undefined}
+              columns={[
+                { key: 'id', header: 'ID', className: 'w-16 font-mono text-xs text-muted-foreground', render: (row) => `#${row.id}` },
+                { key: 'content', header: '内容', isTitle: true, className: 'max-w-md cursor-pointer truncate hover:text-primary', render: (row) => row.content },
+                { key: 'sender', header: '发送者', className: 'max-w-32 truncate text-muted-foreground', render: (row) => row.sender_name ?? row.sender_id ?? '未记录' },
+                { key: 'source', header: '来源', render: (row) => <Badge variant="secondary" className="font-mono text-[10px]">{row.source ?? '未记录'}</Badge> },
+                { key: 'tags', header: 'Tags', render: (row) => <div className="flex flex-wrap gap-1">{row.tags?.length ? row.tags.slice(0, 2).map((tag, index) => <Badge key={`${tag.name}-${index}`} className={tagBadgeClass(tag.type)}>{tag.name}</Badge>) : <span className="text-xs text-muted-foreground">—</span>}</div> },
+                { key: 'vector', header: '向量', className: 'text-center', render: (row) => <span className={row.has_vector ? 'font-bold text-emerald-500' : 'font-bold text-destructive'} title={row.has_vector ? '有向量' : '无向量'}>{row.has_vector ? '有向量' : '无向量'}</span> },
+                { key: 'time', header: '时间', className: 'whitespace-nowrap font-mono text-xs text-muted-foreground', render: (row) => formatTime(row.timestamp) },
+                { key: 'actions', header: null, render: (row) => <Button variant="ghost" size="icon-sm" title="打开详情" onClick={(e) => { e.stopPropagation(); void open(row) }}><FileEditIcon /></Button> },
+              ]}
+            />
           </QueryState>
           {payload ? <PaginationControls className="mt-4" page={payload.page} disabled={status === 'loading'} onOffsetChange={pagination.setOffset} onLimitChange={pagination.setLimit} /> : null}
         </CardContent>

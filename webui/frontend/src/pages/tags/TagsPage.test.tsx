@@ -64,8 +64,8 @@ describe('TagsPage', () => {
     const { container } = render(<TagsPage />)
 
     expect(await screen.findByText('共同记忆')).toBeVisible()
-    expect(container.querySelector('[data-responsive-table="cards"]')).toBeInTheDocument()
-    expect(container.querySelector('[data-responsive-table="table"]')).not.toBeInTheDocument()
+    expect(container.querySelector('[data-mode="cards"]')).toBeInTheDocument()
+    expect(container.querySelector('[data-mode="table"]')).not.toBeInTheDocument()
     expect(screen.getByText('置信度')).toBeVisible()
   })
 })

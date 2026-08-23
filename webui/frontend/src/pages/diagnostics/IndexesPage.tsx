@@ -1,16 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangleIcon, EyeIcon, RefreshCwIcon, SearchIcon, ShieldCheckIcon } from 'lucide-react'
+import { AlertTriangleIcon, EyeIcon, RefreshCwIcon, ShieldCheckIcon } from 'lucide-react'
 
 import { isRequestCancelled } from '@/api/client'
 import { getIndexDiagnostics, type DiagnosticCheck, type DiagnosticHealth, type IndexDiagnostics } from '@/api/diagnostics'
-import { QueryState, ResponsiveDetail, ResponsiveTable } from '@/components/shared'
+import { DeclarativeDataTable, InputWithIcon, QueryState, ResponsiveDetail } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 const CHECK_LABELS: Record<string, string> = {
   fts: '全文检索索引',
@@ -195,8 +193,40 @@ export function IndexesPage() {
 
     <HealthStatus loading={loading} error={error} data={data} issueCount={issueCount} />
 
-    <Card className="border-border/60"><CardHeader className="gap-3 border-b pb-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><CardTitle className="text-sm">索引健康矩阵</CardTitle><CardDescription>优先展示各只读探针的当前状态与关键证据。</CardDescription></div><Badge variant="outline" className="text-[10px]">{data ? `检查于 ${formatCheckedAt(data.checked_at)}` : '状态未确认'}</Badge></div><div className="flex flex-wrap items-center gap-2"><div className="relative min-w-0 flex-1 basis-56"><SearchIcon className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><Input aria-label="搜索诊断项" className="h-8 pl-8" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索检查名称" /></div><select aria-label="健康状态" className="h-8 rounded-md border bg-background px-2 text-xs" value={healthFilter} onChange={(event) => setHealthFilter(event.target.value)}><option value="">全部状态</option>{Object.entries(HEALTH_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><Button type="button" size="sm" variant="outline" disabled={loading} onClick={() => setReload((value) => value + 1)}><RefreshCwIcon aria-hidden="true" />重新检查</Button><Button asChild size="sm"><Link to="/maintenance?source=diagnostics&panel=indexes">进入 Maintenance 修复任务</Link></Button></div></CardHeader><CardContent className="p-4"><QueryState status={status} error={error} title="索引诊断读取失败" onRetry={() => setReload((value) => value + 1)}>
-      {checks.length ? <ResponsiveTable label="索引诊断检查项" table={<Table><TableHeader><TableRow className="bg-muted/20"><TableHead>检查对象</TableHead><TableHead className="w-36">健康状态</TableHead><TableHead>关键证据 / 影响</TableHead><TableHead className="w-44">来源</TableHead><TableHead className="w-14"><span className="sr-only">详情</span></TableHead></TableRow></TableHeader><TableBody>{checks.map((check) => <TableRow key={check.name}><TableCell><div className="font-medium">{checkLabel(check.name)}</div><div className="font-mono text-xs text-muted-foreground">{check.name}</div></TableCell><TableCell><Badge variant={healthVariant(check.health)}>{HEALTH_LABELS[check.health]}</Badge></TableCell><TableCell className="max-w-xl text-sm text-muted-foreground">{primaryMetric(check)}</TableCell><TableCell>{sourceLabel(check.source)}</TableCell><TableCell className="text-right"><ResponsiveDetail title={checkLabel(check.name)} description="只读健康证据与用户可见影响" trigger={<Button type="button" variant="ghost" size="icon-sm" aria-label={`查看 ${checkLabel(check.name)} 详情`}><EyeIcon aria-hidden="true" /></Button>}><CheckDetail check={check} /></ResponsiveDetail></TableCell></TableRow>)}</TableBody></Table>} cards={checks.map((check) => <article key={check.name} className="flex flex-col gap-3 rounded-lg border bg-card p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-medium">{checkLabel(check.name)}</p><p className="break-all font-mono text-xs text-muted-foreground">{check.name}</p></div><Badge variant={healthVariant(check.health)}>{HEALTH_LABELS[check.health]}</Badge></div><dl className="grid gap-2 text-sm"><div><dt className="text-muted-foreground">关键证据 / 影响</dt><dd className="break-words">{primaryMetric(check)}</dd></div><div><dt className="text-muted-foreground">来源</dt><dd>{sourceLabel(check.source)}</dd></div></dl><ResponsiveDetail title={checkLabel(check.name)} description="只读健康证据与用户可见影响" trigger={<Button type="button" variant="outline" size="sm">查看详情</Button>}><CheckDetail check={check} /></ResponsiveDetail></article>)} /> : <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">当前筛选没有匹配的诊断项。</p>}
-    </QueryState></CardContent></Card>
+    <Card className="border-border/60">
+      <CardHeader className="gap-3 border-b pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div><CardTitle className="text-sm">索引健康矩阵</CardTitle><CardDescription>优先展示各只读探针的当前状态与关键证据。</CardDescription></div>
+          <Badge variant="outline" className="text-[10px]">{data ? `检查于 ${formatCheckedAt(data.checked_at)}` : '状态未确认'}</Badge>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <InputWithIcon value={search} onValueChange={setSearch} placeholder="搜索检查名称" aria-label="搜索诊断项" />
+          <select aria-label="健康状态" className="h-8 rounded-md border bg-background px-2 text-xs" value={healthFilter} onChange={(event) => setHealthFilter(event.target.value)}>
+            <option value="">全部状态</option>
+            {Object.entries(HEALTH_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+          <Button type="button" size="sm" variant="outline" disabled={loading} onClick={() => setReload((value) => value + 1)}><RefreshCwIcon aria-hidden="true" />重新检查</Button>
+          <Button asChild size="sm"><Link to="/maintenance?source=diagnostics&panel=indexes">进入 Maintenance 修复任务</Link></Button>
+        </div>
+      </CardHeader>
+      <CardContent className="p-4">
+        <QueryState status={status} error={error} title="索引诊断读取失败" onRetry={() => setReload((value) => value + 1)}>
+          {checks.length ? (
+            <DeclarativeDataTable
+              label="索引诊断检查项"
+              items={checks}
+              keyExtractor={(row) => row.name}
+              columns={[
+                { key: 'name', header: '检查对象', isTitle: true, render: (row) => <div><div className="font-medium">{checkLabel(row.name)}</div><div className="font-mono text-xs text-muted-foreground">{row.name}</div></div> },
+                { key: 'health', header: '健康状态', render: (row) => <Badge variant={healthVariant(row.health)}>{HEALTH_LABELS[row.health]}</Badge> },
+                { key: 'evidence', header: '关键证据 / 影响', render: (row) => <span className="max-w-xl text-sm text-muted-foreground">{primaryMetric(row)}</span> },
+                { key: 'source', header: '来源', render: (row) => sourceLabel(row.source) },
+                { key: 'actions', header: null, render: (row) => <ResponsiveDetail title={checkLabel(row.name)} description="只读健康证据与用户可见影响" trigger={<Button type="button" variant="ghost" size="icon-sm" aria-label={`查看 ${checkLabel(row.name)} 详情`}><EyeIcon aria-hidden="true" /></Button>}><CheckDetail check={row} /></ResponsiveDetail> },
+              ]}
+            />
+          ) : null}
+        </QueryState>
+      </CardContent>
+    </Card>
   </div>
 }

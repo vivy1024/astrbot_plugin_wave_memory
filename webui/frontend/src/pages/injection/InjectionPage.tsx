@@ -5,7 +5,7 @@ import { useSearchParams } from 'react-router-dom'
 import { isRequestCancelled } from '@/api/client'
 import { getInjectionTrace, listInjectionTraces, type InjectionTraceSummary, type TraceDetailPayload, type TraceFilters } from '@/api/injection'
 import { getScopeOptions, scopeOptionsFor } from '@/api/options'
-import { PaginationControls, QueryState, ResponsiveTable, ScopeSelect } from '@/components/shared'
+import { PaginationControls, QueryState, ScopeSelect, DeclarativeDataTable } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,7 +13,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useCanonicalScopeDefault, usePaginationSearchParams } from '@/hooks/use-pagination-search-params'
 import { TraceDetailSheet } from '@/pages/injection/TraceDetailSheet'
 
@@ -317,32 +316,24 @@ export function InjectionPage() {
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <QueryState status={status} error={error} onRetry={() => void load()}>
-            <ResponsiveTable label="Injection Trace 摘要清单" table={<Table>
-              <TableHeader><TableRow><TableHead>Trace / 时间</TableHead><TableHead>Bot</TableHead><TableHead>会话</TableHead><TableHead>模式 / 状态</TableHead><TableHead>预览</TableHead><TableHead>命中 / 跳过 / 错误</TableHead><TableHead>主 Token 通道</TableHead><TableHead>Token / 耗时</TableHead><TableHead>Revision</TableHead></TableRow></TableHeader>
-              <TableBody>{payload?.items.map((trace) => {
-                const session = traceSession(trace)
-                const traceId = String(trace.trace_id ?? '')
-                const traceStatus = String(trace.status ?? (trace.has_error ? 'error' : 'unknown'))
-                return (
-                  <TableRow key={traceId} className="cursor-pointer" onClick={() => traceId && selectTrace(traceId)}>
-                    <TableCell><span className="flex min-w-40 flex-col"><Button type="button" variant="link" className="h-auto justify-start p-0 font-mono text-xs" onClick={(event) => { event.stopPropagation(); selectTrace(traceId) }}>{traceId || '未记录 trace_id'}</Button><span className="text-xs text-muted-foreground">{formatTime(trace.timestamp ?? trace.created_at)}</span></span></TableCell>
-                    <TableCell className="font-mono text-xs">{traceBot(trace)}</TableCell>
-                    <TableCell><span className="flex min-w-44 flex-col"><span>{session.primary}</span>{session.secondary ? <span className="text-xs text-muted-foreground">{session.secondary}</span> : null}</span></TableCell>
-                    <TableCell><span className="flex flex-col gap-1"><span>{textValue(trace.mode)}</span><Badge className="w-fit" variant={traceStatus === 'ok' ? 'secondary' : traceStatus === 'unknown' ? 'outline' : 'destructive'}>{statusLabel(traceStatus)}</Badge></span></TableCell>
-                    <TableCell className="max-w-md truncate" title={tracePreview(trace)}>{tracePreview(trace)}</TableCell>
-                    <TableCell className="font-mono text-xs">{channelCount(trace, 'hit')} / {channelCount(trace, 'skipped')} / {channelCount(trace, 'error')}</TableCell>
-                    <TableCell className="font-mono text-xs">{primaryTokenChannel(trace)}</TableCell>
-                    <TableCell>{textValue(trace.total_tokens ?? trace.tokens)} / {traceLatency(trace)}</TableCell>
-                    <TableCell className="font-mono text-xs">{textValue(trace.config_revision)}</TableCell>
-                  </TableRow>
-                )
-              })}</TableBody>
-            </Table>} cards={payload?.items.map((trace) => {
-              const session = traceSession(trace)
-              const traceId = String(trace.trace_id ?? '')
-              const traceStatus = String(trace.status ?? (trace.has_error ? 'error' : 'unknown'))
-              return <article key={traceId} className="flex flex-col gap-3 rounded-lg border bg-card p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><Button type="button" variant="link" className="h-auto p-0 text-left font-mono text-xs" disabled={!traceId} onClick={() => selectTrace(traceId)}>{traceId || '未记录 trace_id'}</Button><p className="text-xs text-muted-foreground">{formatTime(trace.timestamp ?? trace.created_at)}</p></div><Badge className="w-fit" variant={traceStatus === 'ok' ? 'secondary' : traceStatus === 'unknown' ? 'outline' : 'destructive'}>{statusLabel(traceStatus)}</Badge></div><dl className="grid gap-2 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">Bot</dt><dd className="break-all font-mono">{traceBot(trace)}</dd></div><div><dt className="text-muted-foreground">会话</dt><dd className="break-words">{session.primary}{session.secondary ? <span className="block text-xs text-muted-foreground">{session.secondary}</span> : null}</dd></div><div><dt className="text-muted-foreground">模式</dt><dd>{textValue(trace.mode)}</dd></div><div><dt className="text-muted-foreground">命中 / 跳过 / 错误</dt><dd className="font-mono text-xs">{channelCount(trace, 'hit')} / {channelCount(trace, 'skipped')} / {channelCount(trace, 'error')}</dd></div><div><dt className="text-muted-foreground">主 Token 通道</dt><dd className="break-words font-mono text-xs">{primaryTokenChannel(trace)}</dd></div><div><dt className="text-muted-foreground">Token / 耗时</dt><dd>{textValue(trace.total_tokens ?? trace.tokens)} / {traceLatency(trace)}</dd></div><div><dt className="text-muted-foreground">Revision</dt><dd className="break-all font-mono text-xs">{textValue(trace.config_revision)}</dd></div></dl><div><p className="text-xs text-muted-foreground">预览</p><p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{tracePreview(trace)}</p></div><Button type="button" variant="outline" size="sm" disabled={!traceId} onClick={() => selectTrace(traceId)}>查看 Trace 详情</Button></article>
-            })} />
+            <DeclarativeDataTable
+              label="Injection Trace 摘要清单"
+              items={payload?.items ?? []}
+              keyExtractor={(row) => String(row.trace_id ?? '')}
+              columns={[
+                { key: 'trace', header: 'Trace / 时间', isTitle: true, render: (row) => <span className="flex min-w-40 flex-col"><Button type="button" variant="link" className="h-auto justify-start p-0 font-mono text-xs" onClick={(event) => { event.stopPropagation(); selectTrace(String(row.trace_id ?? '')) }}>{row.trace_id || '未记录 trace_id'}</Button><span className="text-xs text-muted-foreground">{formatTime(row.timestamp ?? row.created_at)}</span></span> },
+                { key: 'bot', header: 'Bot', render: (row) => <span className="font-mono text-xs">{traceBot(row)}</span> },
+                { key: 'session', header: '会话', render: (row) => { const s = traceSession(row); return <span className="flex min-w-44 flex-col"><span>{s.primary}</span>{s.secondary ? <span className="text-xs text-muted-foreground">{s.secondary}</span> : null}</span> } },
+                { key: 'status', header: '模式 / 状态', render: (row) => { const st = String(row.status ?? (row.has_error ? 'error' : 'unknown')); return <span className="flex flex-col gap-1"><span>{textValue(row.mode)}</span><Badge className="w-fit" variant={st === 'ok' ? 'secondary' : st === 'unknown' ? 'outline' : 'destructive'}>{statusLabel(st)}</Badge></span> } },
+                { key: 'preview', header: '预览', render: (row) => <span className="max-w-md truncate" title={tracePreview(row)}>{tracePreview(row)}</span> },
+                { key: 'channels', header: '命中 / 跳过 / 错误', render: (row) => <span className="font-mono text-xs">{channelCount(row, 'hit')} / {channelCount(row, 'skipped')} / {channelCount(row, 'error')}</span> },
+                { key: 'token_channel', header: '主 Token 通道', render: (row) => <span className="font-mono text-xs">{primaryTokenChannel(row)}</span> },
+                { key: 'tokens_lat', header: 'Token / 耗时', render: (row) => <span>{textValue(row.total_tokens ?? row.tokens)} / {traceLatency(row)}</span> },
+                { key: 'revision', header: 'Revision', render: (row) => <span className="font-mono text-xs">{textValue(row.config_revision)}</span> },
+              ]}
+              onRowClick={(row) => row.trace_id && selectTrace(String(row.trace_id))}
+              renderCardActions={(row) => row.trace_id ? <Button type="button" variant="outline" size="sm" onClick={() => selectTrace(String(row.trace_id))}>查看 Trace 详情</Button> : null}
+            />
           </QueryState>
           {payload ? <PaginationControls page={payload.page} onOffsetChange={pagination.setOffset} onLimitChange={pagination.setLimit} disabled={status === 'loading'} /> : null}
         </CardContent>

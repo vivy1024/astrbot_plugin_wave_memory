@@ -1,16 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { RefreshCwIcon, SearchIcon, ShieldCheckIcon, TagsIcon } from 'lucide-react'
 
 import { isRequestCancelled } from '@/api/client'
 import { getTagQuality, getTags, type TagListPayload, type TagQualityPayload } from '@/api/tags'
-import { PaginationControls, QueryState, ResponsiveTable, type PageSize } from '@/components/shared'
-import { ScopedTagGovernancePanel } from '@/components/tag/ScopedTagGovernancePanel'
+import { DeclarativeDataTable, InputWithIcon, PaginationControls, QueryState, type PageSize } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { ScopedTagGovernancePanel } from '@/components/tag/ScopedTagGovernancePanel'
+import { RefreshCwIcon, ShieldCheckIcon, TagsIcon } from 'lucide-react'
 
 function formatPercent(value: number): string {
   return `${(Math.max(0, Math.min(1, value || 0)) * 100).toFixed(1).replace(/\.0$/, '')}%`
@@ -44,6 +42,67 @@ const REASON_LABELS: Record<string, string> = {
 
 function reasonLabel(value?: string | null): string {
   return value ? REASON_LABELS[value] ?? value : '当前无降级原因'
+}
+
+type TagRow = TagListPayload['items'][number]
+
+const TAG_COLUMNS: import('@/components/shared').DataColumn<TagRow>[] = [
+  {
+    key: 'name',
+    header: 'Tag',
+    isTitle: true,
+    render: (row) => <span className="font-medium">{row.name}</span>,
+  },
+  {
+    key: 'type',
+    header: '类型',
+    render: (row) => <Badge variant="outline">{row.type || '未分类'}</Badge>,
+  },
+  {
+    key: 'frequency',
+    header: '频率',
+    width: '24 text-right',
+    render: (row) => <span className="tabular-nums">{row.frequency}</span>,
+  },
+  {
+    key: 'confidence',
+    header: '置信度',
+    width: '24 text-right',
+    render: (row) => <span className="tabular-nums">{formatConfidence(row.confidence)}</span>,
+  },
+  {
+    key: 'capability',
+    header: '能力',
+    render: () => <Badge variant="secondary">只读</Badge>,
+  },
+]
+
+function TagsTable({ items, total, limit, offset, loading, onOffset, onLimit }: {
+  items: TagRow[]
+  total: number
+  limit: PageSize
+  offset: number
+  loading: boolean
+  onOffset: (v: number) => void
+  onLimit: (v: PageSize) => void
+}) {
+  return (
+    <>
+      <DeclarativeDataTable
+        label="Tag 只读目录"
+        items={items}
+        keyExtractor={(row) => String(row.id)}
+        columns={TAG_COLUMNS}
+      />
+      <PaginationControls
+        page={{ limit, offset, total, total_status: 'exact', reason_code: null, page: Math.floor(offset / limit) + 1, page_count: Math.ceil(total / limit) || 1, has_more: offset + limit < total }}
+        disabled={loading}
+        onOffsetChange={onOffset}
+        onLimitChange={onLimit}
+        label="Tag 分页"
+      />
+    </>
+  )
 }
 
 export function TagsPage() {
@@ -87,7 +146,6 @@ export function TagsPage() {
   const tagTypes = data?.available_types ?? []
   const status = loading ? 'loading' : error ? 'error' : !data?.items.length ? 'empty' : 'success'
   const total = data?.total ?? 0
-  const pageCount = total ? Math.ceil(total / limit) : 0
 
   return <div className="flex flex-col gap-5" data-page="tags">
     <ScopedTagGovernancePanel />
@@ -127,9 +185,21 @@ export function TagsPage() {
       </CardContent>
     </Card>
 
-    <Card className="border-border/60"><CardHeader className="gap-3 border-b pb-3"><div><CardTitle className="text-sm">Tag 目录</CardTitle><CardDescription>服务端分页的只读结果；搜索和排序会重新读取真实数据。</CardDescription></div><form className="flex flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); setOffset(0); setSearch(searchDraft.trim()) }}><div className="relative min-w-0 flex-1 basis-56"><SearchIcon className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" /><Input name="tag-search" autoComplete="off" aria-label="搜索 Tag" className="h-8 pl-8" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="例如：共同记忆…" /></div><select name="tag-type" aria-label="Tag 类型" className="h-8 rounded-md border bg-background px-2 text-xs text-foreground" value={type} onChange={(event) => { setOffset(0); setType(event.target.value) }}><option value="">全部类型</option>{tagTypes.map((value) => <option key={value} value={value}>{value}</option>)}</select><select name="tag-sort" aria-label="排序方式" className="h-8 rounded-md border bg-background px-2 text-xs text-foreground" value={sort} onChange={(event) => { setOffset(0); setSort(event.target.value === 'recent' ? 'recent' : 'frequency') }}><option value="frequency">按频率</option><option value="recent">按最近创建</option></select><Button type="submit" size="sm">查询</Button></form></CardHeader><CardContent className="p-4"><QueryState status={status} error={error} title="Tag 数据读取失败" onRetry={() => setReload((value) => value + 1)} description={status === 'empty' ? '当前筛选条件下没有 Tag；未使用演示数据填充。' : undefined}>
-      {data?.items.length ? <><ResponsiveTable label="Tag 只读目录" table={<Table><TableHeader><TableRow className="bg-muted/20"><TableHead>Tag</TableHead><TableHead>类型</TableHead><TableHead className="text-right">频率</TableHead><TableHead className="text-right">置信度</TableHead><TableHead>能力</TableHead></TableRow></TableHeader><TableBody>{data.items.map((item) => <TableRow key={String(item.id)}><TableCell className="font-medium">{item.name}</TableCell><TableCell><Badge variant="outline">{item.type || '未分类'}</Badge></TableCell><TableCell className="text-right tabular-nums">{item.frequency}</TableCell><TableCell className="text-right tabular-nums">{formatConfidence(item.confidence)}</TableCell><TableCell><Badge variant="secondary">只读</Badge></TableCell></TableRow>)}</TableBody></Table>} cards={data.items.map((item) => <article key={String(item.id)} className="rounded-lg border bg-card p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-medium">{item.name}</p><p className="mt-1 text-xs text-muted-foreground">{item.type || '未分类'}</p></div><Badge variant="secondary">只读</Badge></div><dl className="mt-3 grid grid-cols-2 gap-3 text-sm"><div><dt className="text-xs text-muted-foreground">频率</dt><dd className="font-medium tabular-nums">{item.frequency}</dd></div><div><dt className="text-xs text-muted-foreground">置信度</dt><dd className="font-medium tabular-nums">{formatConfidence(item.confidence)}</dd></div></dl></article>)} />
-      <PaginationControls page={{ limit, offset, total, total_status: 'exact', reason_code: null, page: Math.floor(offset / limit) + 1, page_count: pageCount, has_more: offset + limit < total }} disabled={loading} onOffsetChange={setOffset} onLimitChange={(value) => { setOffset(0); setLimit(value) }} label="Tag 分页" /></> : null}
-    </QueryState></CardContent></Card>
+    <Card className="border-border/60">
+      <CardHeader className="gap-3 border-b pb-3">
+        <div><CardTitle className="text-sm">Tag 目录</CardTitle><CardDescription>服务端分页的只读结果；搜索和排序会重新读取真实数据。</CardDescription></div>
+        <form className="flex flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); setOffset(0); setSearch(searchDraft.trim()) }}>
+          <InputWithIcon value={searchDraft} onValueChange={(v) => { setSearchDraft(v); }} placeholder="例如：共同记忆…" aria-label="搜索 Tag" />
+          <select aria-label="Tag 类型" className="h-8 rounded-md border bg-background px-2 text-xs text-foreground" value={type} onChange={(event) => { setOffset(0); setType(event.target.value) }}><option value="">全部类型</option>{tagTypes.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+          <select aria-label="排序方式" className="h-8 rounded-md border bg-background px-2 text-xs" value={sort} onChange={(event) => { setOffset(0); setSort(event.target.value === 'recent' ? 'recent' : 'frequency') }}><option value="frequency">按频率</option><option value="recent">按最近创建</option></select>
+          <Button type="submit" size="sm">查询</Button>
+        </form>
+      </CardHeader>
+      <CardContent className="p-4">
+        <QueryState status={status} error={error} title="Tag 数据读取失败" onRetry={() => setReload((value) => value + 1)} description={status === 'empty' ? '当前筛选条件下没有 Tag；未使用演示数据填充。' : undefined}>
+          {data?.items.length ? <TagsTable items={data.items} total={total} limit={limit} offset={offset} loading={loading} onOffset={setOffset} onLimit={(v) => { setOffset(0); setLimit(v) }} /> : null}
+        </QueryState>
+      </CardContent>
+    </Card>
   </div>
 }

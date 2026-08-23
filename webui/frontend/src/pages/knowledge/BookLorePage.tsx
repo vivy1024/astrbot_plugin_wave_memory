@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import { EyeIcon, RefreshCwIcon, SearchIcon } from 'lucide-react'
+import { EyeIcon, RefreshCwIcon } from 'lucide-react'
 
 import {
   getBookLoreItems,
@@ -9,12 +9,10 @@ import {
   type BookLoreResource,
   type BookLoreSummary,
 } from '@/api/knowledge'
-import { PaginationControls, QueryState, ResponsiveDetail, ResponsiveTable } from '@/components/shared'
+import { DeclarativeDataTable, InputWithIcon, PaginationControls, QueryState, ResponsiveDetail } from '@/components/shared'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { usePaginationSearchParams } from '@/hooks/use-pagination-search-params'
 
@@ -137,6 +135,7 @@ export function BookLorePage() {
     event.preventDefault()
     pagination.setFilters({ search: searchDraft.trim() || null })
   }
+
   const status = !summary && summaryError ? 'error' : loading ? 'loading' : error ? 'error' : !payload?.items.length ? 'empty' : 'success'
 
   return (
@@ -155,7 +154,7 @@ export function BookLorePage() {
         <CardContent className="p-0">
           <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
             <form className="flex min-w-[17rem] flex-1 flex-wrap items-center gap-2" onSubmit={submitSearch}>
-              <div className="relative min-w-48 max-w-md flex-1"><SearchIcon className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><Input aria-label="搜索 BookLore" className="h-8 pl-8" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="搜索标题、摘要或内容" /></div>
+              <InputWithIcon value={searchDraft} onValueChange={(v) => setSearchDraft(v)} placeholder="搜索标题、摘要或内容" aria-label="搜索 BookLore" />
               <Button type="submit" size="sm" className="h-8" disabled={loading}>搜索</Button>
               <Button type="button" size="sm" className="h-8" variant="ghost" onClick={() => { setSearchDraft(''); pagination.setFilters({ search: null }) }}>清除</Button>
               <Button type="button" size="sm" className="h-8" variant="outline" disabled={loading} onClick={() => setReload((value) => value + 1)}><RefreshCwIcon aria-hidden="true" /><span className="sr-only">重新读取</span></Button>
@@ -169,12 +168,25 @@ export function BookLorePage() {
 
           <Tabs value={resource} onValueChange={(tab) => pagination.setFilters({ tab })} className="w-full">
             <div className="px-4 pt-3"><TabsList className="h-8 border bg-muted/40 p-0.5">{RESOURCES.map((item) => <TabsTrigger key={item.value} value={item.value} className="h-7 text-xs">{item.label}<span className="ml-1 text-[10px] text-muted-foreground">{summary?.counts[item.value] ?? '—'}</span></TabsTrigger>)}</TabsList></div>
-            {RESOURCES.map((item) => <TabsContent key={item.value} value={item.value} className="mt-3"><QueryState status={status} error={error ?? summaryError} title={`${item.label}读取失败`} description={!summary && summaryError ? '无法确认服务端 catalog scope，因此没有使用硬编码默认值继续查询。' : undefined} onRetry={() => setReload((value) => value + 1)}>
-              <ResponsiveTable label={`${item.label}知识目录`} table={<Table>
-                <TableHeader><TableRow className="bg-muted/15"><TableHead className="w-56">标题</TableHead><TableHead>摘要 / 内容</TableHead><TableHead className="w-48">治理状态</TableHead><TableHead className="w-14"><span className="sr-only">详情</span></TableHead></TableRow></TableHeader>
-                <TableBody>{payload?.items.map((entry) => <TableRow key={String(entry.id)}><TableCell className="font-medium">{itemTitle(entry)}</TableCell><TableCell className="max-w-2xl truncate text-muted-foreground">{itemSummary(entry)}</TableCell><TableCell>{governance(entry)}</TableCell><TableCell className="text-right"><ResponsiveDetail title={itemTitle(entry)} description={`${item.label}的只读内容与治理状态`} trigger={<Button type="button" variant="ghost" size="icon-sm" aria-label={`查看 ${itemTitle(entry)} 详情`}><EyeIcon aria-hidden="true" /></Button>}><ItemDetail item={entry} resource={item.value} /></ResponsiveDetail></TableCell></TableRow>)}</TableBody>
-              </Table>} cards={payload?.items.map((entry) => <article key={String(entry.id)} className="flex flex-col gap-3 rounded-lg border bg-card p-4"><div><p className="font-medium">{itemTitle(entry)}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm text-muted-foreground">{itemSummary(entry)}</p></div><div className="flex flex-wrap items-center justify-between gap-3">{governance(entry)}<ResponsiveDetail title={itemTitle(entry)} description={`${item.label}的只读内容与治理状态`} trigger={<Button type="button" variant="outline" size="sm">查看详情</Button>}><ItemDetail item={entry} resource={item.value} /></ResponsiveDetail></div></article>)} />
-            </QueryState></TabsContent>)}
+            {RESOURCES.map((item) => (
+              <TabsContent key={item.value} value={item.value} className="mt-3">
+                <QueryState status={status} error={error ?? summaryError} title={`${item.label}读取失败`} description={!summary && summaryError ? '无法确认服务端 catalog scope，因此没有使用硬编码默认值继续查询。' : undefined} onRetry={() => setReload((value) => value + 1)}>
+                  <DeclarativeDataTable
+                    label={`${item.label}知识目录`}
+                    items={payload?.items ?? []}
+                    keyExtractor={(entry) => String(entry.id)}
+                    columns={[
+                      { key: 'title', header: '标题', isTitle: true, render: (entry) => itemTitle(entry) },
+                      { key: 'summary', header: '摘要 / 内容', render: (entry) => <span className="max-w-2xl truncate text-muted-foreground">{itemSummary(entry)}</span> },
+                      { key: 'governance', header: '治理状态', render: (entry) => governance(entry) },
+                      { key: 'actions', header: null, render: (entry) => <ResponsiveDetail title={itemTitle(entry)} description={`${item.label}的只读内容与治理状态`} trigger={<Button type="button" variant="ghost" size="icon-sm" aria-label={`查看 ${itemTitle(entry)} 详情`}><EyeIcon aria-hidden="true" /></Button>}><ItemDetail item={entry} resource={item.value} /></ResponsiveDetail> },
+                    ]}
+                    renderCardSubtitle={(entry) => <p className="mt-1 whitespace-pre-wrap break-words text-sm text-muted-foreground">{itemSummary(entry)}</p>}
+                    renderCardActions={(entry) => <ResponsiveDetail title={itemTitle(entry)} description={`${item.label}的只读内容与治理状态`} trigger={<Button type="button" variant="outline" size="sm">查看详情</Button>}><ItemDetail item={entry} resource={item.value} /></ResponsiveDetail>}
+                  />
+                </QueryState>
+              </TabsContent>
+            ))}
           </Tabs>
           {payload?.page ? <div className="border-t px-4 py-3"><PaginationControls page={payload.page} onOffsetChange={pagination.setOffset} onLimitChange={pagination.setLimit} disabled={loading} label="BookLore 分页" /></div> : null}
         </CardContent>

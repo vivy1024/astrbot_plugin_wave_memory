@@ -31,7 +31,7 @@ import {
 } from '@/api/tags'
 import { getSystemStatus, type SystemPayload } from '@/api/system'
 import { TagExtractionConfigPanel } from '@/components/tag/TagExtractionConfigPanel'
-import { ResponsiveTable } from '@/components/shared'
+import { DeclarativeDataTable } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -40,7 +40,6 @@ import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 const activeJobStatuses = new Set(['pending', 'queued', 'running'])
@@ -307,7 +306,20 @@ export function MaintainPage() {
               </div>
             </div>
 
-            {suggestions.length ? <ResponsiveTable label="质量审计建议清单" table={<Table><TableHeader><TableRow><TableHead>治理类型</TableHead><TableHead>源标签</TableHead><TableHead>目标对象</TableHead><TableHead>建议原因</TableHead><TableHead className="text-right">审核</TableHead></TableRow></TableHeader><TableBody>{suggestions.map((item) => <TableRow key={item.id}><TableCell><Badge variant={item.action === 'delete' ? 'destructive' : 'secondary'}>{item.action === 'merge' ? '合并' : item.action === 'retype' ? '重分类' : '删除'}</Badge></TableCell><TableCell>{sourceTagLabel(item)}</TableCell><TableCell>{targetLabel(item)}</TableCell><TableCell className="max-w-md text-sm text-muted-foreground">{item.reason}</TableCell><TableCell><Button asChild size="sm" variant="outline"><Link to="/tags?tab=governance">进入工作台</Link></Button></TableCell></TableRow>)}</TableBody></Table>} cards={suggestions.map((item) => <article key={item.id} className="flex flex-col gap-3 rounded-lg border bg-card p-4"><div className="flex flex-wrap items-center justify-between gap-2"><Badge variant={item.action === 'delete' ? 'destructive' : 'secondary'}>{item.action === 'merge' ? '合并' : item.action === 'retype' ? '重分类' : '删除'}</Badge><span className="font-mono text-xs text-muted-foreground">#{item.id}</span></div><dl className="grid gap-2 text-sm"><div><dt className="text-muted-foreground">源标签</dt><dd className="break-words">{sourceTagLabel(item)}</dd></div><div><dt className="text-muted-foreground">目标对象</dt><dd className="break-words">{targetLabel(item)}</dd></div><div><dt className="text-muted-foreground">建议原因</dt><dd className="whitespace-pre-wrap break-words text-muted-foreground">{item.reason}</dd></div></dl><div className="flex flex-wrap justify-end gap-2"><Button asChild type="button" size="sm" variant="outline"><Link to="/tags?tab=governance">在 Tag 工作台审核</Link></Button></div></article>)} /> : <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed py-12 text-center"><HelpCircleIcon className="size-8 text-muted-foreground" /><p className="font-medium">当前没有待审核建议</p><p className="text-xs text-muted-foreground">可启动质量审计生成新的治理建议。</p></div>}
+            {suggestions.length ? <DeclarativeDataTable
+            label="质量审计建议清单"
+            items={suggestions}
+            keyExtractor={(row) => String(row.id)}
+            columns={[
+              { key: 'action', header: '治理类型', render: (row) => <Badge variant={row.action === 'delete' ? 'destructive' : 'secondary'}>{row.action === 'merge' ? '合并' : row.action === 'retype' ? '重分类' : '删除'}</Badge> },
+              { key: 'source', header: '源标签', isTitle: true, render: (row) => sourceTagLabel(row) },
+              { key: 'target', header: '目标对象', render: (row) => targetLabel(row) },
+              { key: 'reason', header: '建议原因', render: (row) => <span className="max-w-md text-sm text-muted-foreground">{row.reason}</span> },
+              { key: 'actions', header: null, render: () => <Button asChild size="sm" variant="outline"><Link to="/tags?tab=governance">进入工作台</Link></Button> },
+            ]}
+            renderCardSubtitle={() => <span />}
+            renderCardActions={() => <Button asChild type="button" size="sm" variant="outline"><Link to="/tags?tab=governance">在 Tag 工作台审核</Link></Button>}
+          /> : <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed py-12 text-center"><HelpCircleIcon className="size-8 text-muted-foreground" /><p className="font-medium">当前没有待审核建议</p><p className="text-xs text-muted-foreground">可启动质量审计生成新的治理建议。</p></div>}
           </TabsContent>
         </Tabs>
 
