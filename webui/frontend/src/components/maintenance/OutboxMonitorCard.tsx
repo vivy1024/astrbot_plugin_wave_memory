@@ -55,19 +55,19 @@ export function OutboxMonitorCard() {
       <CardContent className="grid gap-4 py-4 sm:grid-cols-4 text-center">
         <div className="rounded-lg border bg-card/60 p-3">
           <p className="text-xs text-muted-foreground">Domain Outbox 项</p>
-          <p className="mt-1 text-xl font-bold font-mono text-primary">{data.outbox_items.toLocaleString('zh-CN')}</p>
+          <p className="mt-1 text-xl font-bold font-mono text-primary">{(data.outbox_items ?? 0).toLocaleString('zh-CN')}</p>
         </div>
         <div className="rounded-lg border bg-card/60 p-3">
           <p className="text-xs text-muted-foreground">Outbox 累计投递</p>
-          <p className="mt-1 text-xl font-bold font-mono">{data.outbox_deliveries.toLocaleString('zh-CN')}</p>
+          <p className="mt-1 text-xl font-bold font-mono">{(data.outbox_deliveries ?? 0).toLocaleString('zh-CN')}</p>
         </div>
         <div className="rounded-lg border bg-card/60 p-3">
           <p className="text-xs text-muted-foreground">Scope 恢复项队列</p>
-          <p className="mt-1 text-xl font-bold font-mono">{data.scope_recovery_items.toLocaleString('zh-CN')}</p>
+          <p className="mt-1 text-xl font-bold font-mono">{(data.scope_recovery_items ?? 0).toLocaleString('zh-CN')}</p>
         </div>
         <div className="rounded-lg border bg-card/60 p-3">
           <p className="text-xs text-muted-foreground">Job 请求并发计数</p>
-          <p className="mt-1 text-xl font-bold font-mono">{data.job_requests.toLocaleString('zh-CN')}</p>
+          <p className="mt-1 text-xl font-bold font-mono">{(data.job_requests ?? 0).toLocaleString('zh-CN')}</p>
         </div>
       </CardContent>
     </Card>

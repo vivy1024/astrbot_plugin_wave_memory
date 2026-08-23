@@ -5,13 +5,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MaintenancePage } from './MaintenancePage'
 
-const api = vi.hoisted(() => ({ list: vi.fn(), job: vi.fn(), logs: vi.fn(), checkpoint: vi.fn(), cancel: vi.fn() }))
+const api = vi.hoisted(() => ({ list: vi.fn(), job: vi.fn(), logs: vi.fn(), checkpoint: vi.fn(), cancel: vi.fn(), outbox: vi.fn() }))
 vi.mock('@/api/maintenance', () => ({
   listMaintenanceJobs: api.list,
   getMaintenanceJob: api.job,
   getMaintenanceLogs: api.logs,
   getMaintenanceCheckpoint: api.checkpoint,
   cancelMaintenanceJob: api.cancel,
+  getOutboxStatus: api.outbox,
 }))
 vi.mock('@/pages/maintain/MaintainPage', () => ({ MaintainPage: () => <div>维护工作台</div> }))
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), info: vi.fn(), success: vi.fn() } }))
@@ -33,6 +34,14 @@ function deferred<T>() {
 }
 
 beforeEach(() => {
+  api.outbox.mockResolvedValue({
+    status: 'healthy',
+    outbox_items: 0,
+    outbox_deliveries: 0,
+    scope_recovery_items: 0,
+    job_requests: 0,
+    write_gateway_wired: true,
+  })
   api.list.mockResolvedValue(jobPage([jobA, jobB]))
   api.job.mockImplementation((id: string) => id === 'job-a' ? Promise.resolve({ item: jobA }) : Promise.reject(new Error('detail denied')))
   api.logs.mockResolvedValue({ items: [] })

@@ -1,12 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { AlertCircleIcon, ArchiveIcon, BookOpenIcon, CheckCircle2Icon, CheckIcon, DatabaseIcon, Edit2Icon, EyeIcon, Globe2Icon, Loader2Icon, MessageSquareQuoteIcon, PlusIcon, RefreshCwIcon, SearchIcon, ShieldCheckIcon, XIcon, LockIcon } from 'lucide-react'
+import { AlertCircleIcon, ArchiveIcon, BookOpenIcon, CheckCircle2Icon, CheckIcon, DatabaseIcon, Edit2Icon, EyeIcon, Globe2Icon, Loader2Icon, MessageSquareQuoteIcon, RefreshCwIcon, ShieldCheckIcon, XIcon, LockIcon } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { fetchJson } from '@/api/client'
 import { archiveJargon, batchReviewJargons, checkHolymanUpdate, getCatalogAudit, getJargonEvidence, listJargonBlocklist, listJargons, previewHolymanSync, removeJargonBlocklistItem, reviewJargon, updateJargonMeaning, type CatalogAssetRecord, type CatalogAuditPayload, type HolymanSyncPreviewPayload, type HolymanUpdateCheckPayload, type JargonBlocklistItem, type JargonEvidencePayload, type JargonItem, type JargonResponse, type JargonScopeSelection } from '@/api/jargon'
 import { getScopeOptions, scopeOptionsFor } from '@/api/options'
-import { EvidenceList, ObjectDeepLink, PaginationControls, QueryState, ResponsiveDetail, ResponsiveTable, ScopeSelect, type ObjectRefState } from '@/components/shared'
+import {
+  BatchActionBar,
+  EvidenceList,
+  ObjectDeepLink,
+  PaginationControls,
+  QueryState,
+  ResponsiveDetail,
+  ResponsiveTable,
+  ScopeFilterBar,
+  type ObjectRefState,
+} from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -506,15 +516,79 @@ export function JargonPage() {
 
     <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'local' | 'catalog')}><TabsList><TabsTrigger value="local"><BookOpenIcon />群聊黑话</TabsTrigger><TabsTrigger value="catalog"><Globe2Icon />Holyman 广域资产</TabsTrigger></TabsList>
       <TabsContent value="local" className="flex flex-col gap-4">
-        <Card><CardContent className="p-4"><form className="flex flex-wrap items-end gap-2" onSubmit={submitSearch}><ScopeSelect className="w-48 shrink-0 [&_[data-slot=field-label]]:sr-only" value={botId || undefined} loadOptions={loadBots} label="Bot" placeholder="选择真实 Bot" onValueChange={(value) => pagination.setFilters({ bot_id: value, session_id: null })} /><ScopeSelect className="w-56 shrink-0 [&_[data-slot=field-label]]:sr-only" value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" placeholder="选择真实群会话" disabled={!botId} onValueChange={(value) => pagination.setFilters({ session_id: value })} /><Field className="w-32 shrink-0 gap-0 [&_[data-slot=field-label]]:sr-only"><FieldLabel>审核状态</FieldLabel><Select value={filterDraft.status || 'all'} onValueChange={(value) => setFilterDraft((current) => ({ ...current, status: value === 'all' ? '' : value }))}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem><SelectItem value="confirmed">已确认</SelectItem><SelectItem value="pending">待审核</SelectItem><SelectItem value="rejected">已拒绝</SelectItem></SelectContent></Select></Field><Field className="min-w-52 flex-1 gap-0 [&_[data-slot=field-label]]:sr-only"><FieldLabel htmlFor="jargon-search">搜索黑话</FieldLabel><Input id="jargon-search" value={filterDraft.search} placeholder="搜索黑话或释义…" onChange={(event) => setFilterDraft((current) => ({ ...current, search: event.target.value }))} /></Field><Button type="submit" size="sm"><SearchIcon data-icon="inline-start" />搜索</Button><Button type="button" variant="outline" size="sm" onClick={resetFilters}>重置</Button><Button type="button" variant="outline" size="sm" disabled title={payload?.capabilities.create?.reason_code ?? '带证据的新建命令尚未开放'}><PlusIcon data-icon="inline-start" />新建黑话</Button></form></CardContent></Card>
+        <ScopeFilterBar
+          botId={botId}
+          sessionId={sessionId}
+          loadBots={loadBots}
+          loadSessions={loadSessions}
+          onBotChange={(val) => pagination.setFilters({ bot_id: val, session_id: null })}
+          onSessionChange={(val) => pagination.setFilters({ session_id: val })}
+          searchValue={filterDraft.search}
+          onSearchChange={(val) => setFilterDraft((current) => ({ ...current, search: val }))}
+          searchPlaceholder="搜索黑话或释义…"
+          onSubmit={submitSearch}
+          onReset={resetFilters}
+        >
+          <Field className="w-32 shrink-0 gap-0 [&_[data-slot=field-label]]:sr-only">
+            <FieldLabel>审核状态</FieldLabel>
+            <Select
+              value={filterDraft.status || 'all'}
+              onValueChange={(value) => setFilterDraft((current) => ({ ...current, status: value === 'all' ? '' : value }))}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部状态</SelectItem>
+                <SelectItem value="confirmed">已确认</SelectItem>
+                <SelectItem value="pending">待审核</SelectItem>
+                <SelectItem value="rejected">已拒绝</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+        </ScopeFilterBar>
 
         <Card>
-<CardHeader>
-<CardTitle className="text-base">群聊黑话清单</CardTitle>
-<CardDescription>主表只显示中文业务字段；来源、规则、对象引用和 JSON 收纳在详情中。</CardDescription>
-</CardHeader>
-<CardContent className="flex flex-col gap-4">
-{selectedItems.length ? <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3"><Badge variant="secondary">已选 {selectedItems.length} 条</Badge><Button type="button" size="sm" disabled={batchMutating || selectedItems.some((item) => item.anchors.length === 0 || !item.object_ref)} onClick={() => void reviewSelected('approve')}><CheckIcon data-icon="inline-start" />批量通过</Button><Button type="button" size="sm" variant="outline" disabled={batchMutating || selectedItems.some((item) => !item.object_ref)} onClick={() => void reviewSelected('reject')}><XIcon data-icon="inline-start" />批量拒绝并全局拉黑</Button><Button type="button" size="sm" variant="outline" disabled={batchMutating || !archiveAvailable || selectedItems.some((item) => !item.object_ref)} onClick={() => void archiveSelected()}><ArchiveIcon data-icon="inline-start" />批量归档</Button><Button type="button" size="sm" variant="ghost" className="ml-auto" onClick={() => setSelectedIds([])}>取消选择</Button></div> : null}
+          <CardHeader>
+            <CardTitle className="text-base">群聊黑话清单</CardTitle>
+            <CardDescription>主表只显示中文业务字段；来源、规则、对象引用和 JSON 收纳在详情中。</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <BatchActionBar
+              selectedCount={selectedItems.length}
+              disabled={batchMutating}
+              onClear={() => setSelectedIds([])}
+            >
+              <Button
+                type="button"
+                size="sm"
+                disabled={batchMutating || selectedItems.some((item) => item.anchors.length === 0 || !item.object_ref)}
+                onClick={() => void reviewSelected('approve')}
+              >
+                <CheckIcon data-icon="inline-start" />
+                批量通过
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={batchMutating || selectedItems.some((item) => !item.object_ref)}
+                onClick={() => void reviewSelected('reject')}
+              >
+                <XIcon data-icon="inline-start" />
+                批量拒绝并全局拉黑
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={batchMutating || !archiveAvailable || selectedItems.some((item) => !item.object_ref)}
+                onClick={() => void archiveSelected()}
+              >
+                <ArchiveIcon data-icon="inline-start" />
+                批量归档
+              </Button>
+            </BatchActionBar>
 <QueryState status={queryStatus} error={error} onRetry={() => void load()} title={!botId || !sessionId ? '请选择真实 Bot 与会话' : undefined} description={!botId || !sessionId ? '作用域未选择时不会查询，也不会补入默认 Bot。' : undefined}>
 <ResponsiveTable label="群聊黑话清单" table={<Table>
 <TableHeader><TableRow><TableHead className="w-10"><input aria-label="选择当前页全部黑话" type="checkbox" checked={allPageSelected} onChange={(event) => setSelectedIds(event.target.checked ? pageItems.map((item) => item.id) : [])} /></TableHead><TableHead>词条</TableHead><TableHead>释义</TableHead><TableHead className="w-20">频次</TableHead><TableHead className="w-24">来源</TableHead><TableHead className="w-24">状态</TableHead><TableHead className="w-20">证据</TableHead><TableHead className="w-64 text-right">操作</TableHead></TableRow></TableHeader>

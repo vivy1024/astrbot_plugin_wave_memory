@@ -8,7 +8,6 @@ import {
   Loader2Icon,
   MessageSquareTextIcon,
   PlusIcon,
-  SearchIcon,
   ShieldCheckIcon,
   Trash2Icon,
 } from 'lucide-react'
@@ -29,14 +28,15 @@ import {
 import { fetchJson } from '@/api/client'
 import { getScopeOptions, scopeOptionsFor } from '@/api/options'
 import {
+  BatchActionBar,
   EvidenceList,
   ObjectDeepLink,
   PaginationControls,
-  QualityDecisionBadge,
   QueryState,
+  QualityDecisionBadge,
   ResponsiveDetail,
   ResponsiveTable,
-  ScopeSelect,
+  ScopeFilterBar,
   type ObjectRefState,
 } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -351,10 +351,114 @@ export function BeliefsPage() {
 
     {deepLinkStatus ? <Alert data-slot="belief-deep-link-state" variant={deepLinkStatus === 'ready' || deepLinkStatus === 'loading' ? 'default' : 'destructive'}><AlertTitle>{deepLinkStatus === 'loading' ? '正在校验对象深链' : deepLinkStatus === 'ready' ? '深链信念已定位' : '无法打开深链信念'}</AlertTitle><AlertDescription>{deepLinkStatus === 'ready' && deepLinkedItem ? <span><strong>{TYPE_LABELS[deepLinkedItem.type]}</strong>：{deepLinkedItem.content}</span> : deepLinkStatus === 'loading' ? '正在验证对象引用、当前范围与版本。' : DEEP_LINK_LABELS[deepLinkStatus as Exclude<ObjectRefState, 'ready'>]}</AlertDescription></Alert> : null}
 
-    <Card><CardContent className="p-4"><form className="flex flex-wrap items-end gap-2" onSubmit={submitSearch}><ScopeSelect className="w-48 shrink-0 [&_[data-slot=field-label]]:sr-only" value={botId || undefined} loadOptions={loadBots} label="Bot" placeholder="选择真实 Bot" onValueChange={(value) => pagination.setFilters({ bot_id: value, session_id: null })} /><ScopeSelect className="w-56 shrink-0 [&_[data-slot=field-label]]:sr-only" value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" placeholder="选择真实群会话" disabled={!botId} onValueChange={(value) => pagination.setFilters({ session_id: value })} /><Field className="w-32 shrink-0 gap-0 [&_[data-slot=field-label]]:sr-only"><FieldLabel>信念类型</FieldLabel><Select value={filterDraft.type || 'all'} onValueChange={(value) => setFilterDraft((current) => ({ ...current, type: value === 'all' ? '' : value as BeliefType }))}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">全部类型</SelectItem>{Object.entries(TYPE_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectGroup></SelectContent></Select></Field><Field className="w-32 shrink-0 gap-0 [&_[data-slot=field-label]]:sr-only"><FieldLabel>生命周期</FieldLabel><Select value={filterDraft.status || 'all'} onValueChange={(value) => setFilterDraft((current) => ({ ...current, status: value === 'all' ? '' : value }))}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">全部状态</SelectItem><SelectItem value="pending">待审核</SelectItem><SelectItem value="active">已生效</SelectItem><SelectItem value="archived">已归档</SelectItem><SelectItem value="quarantined">已隔离</SelectItem></SelectGroup></SelectContent></Select></Field><Field className="min-w-52 flex-1 gap-0 [&_[data-slot=field-label]]:sr-only"><FieldLabel htmlFor="belief-search">搜索信念</FieldLabel><Input id="belief-search" value={filterDraft.search} placeholder="搜索信念内容或锚定句…" onChange={(event) => setFilterDraft((current) => ({ ...current, search: event.target.value }))} /></Field><Button type="submit" size="sm"><SearchIcon data-icon="inline-start" />搜索</Button><Button type="button" variant="outline" size="sm" onClick={resetFilters}>重置</Button><Button type="button" variant="outline" size="sm" disabled title={payload?.capabilities.create?.reason_code ?? '带证据的新建命令尚未开放'}><PlusIcon data-icon="inline-start" />新增信念</Button></form></CardContent></Card>
+    <ScopeFilterBar
+      botId={botId}
+      sessionId={sessionId}
+      loadBots={loadBots}
+      loadSessions={loadSessions}
+      onBotChange={(val) => pagination.setFilters({ bot_id: val, session_id: null })}
+      onSessionChange={(val) => pagination.setFilters({ session_id: val })}
+      searchValue={filterDraft.search}
+      onSearchChange={(val) => setFilterDraft((current) => ({ ...current, search: val }))}
+      searchPlaceholder="搜索信念内容或锚定句…"
+      onSubmit={submitSearch}
+      onReset={resetFilters}
+      actions={
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled
+          title={payload?.capabilities.create?.reason_code ?? '带证据的新建命令尚未开放'}
+        >
+          <PlusIcon data-icon="inline-start" />
+          新增信念
+        </Button>
+      }
+    >
+      <Field className="w-32 shrink-0 gap-0 [&_[data-slot=field-label]]:sr-only">
+        <FieldLabel>信念类型</FieldLabel>
+        <Select
+          value={filterDraft.type || 'all'}
+          onValueChange={(value) => setFilterDraft((current) => ({ ...current, type: value === 'all' ? '' : value as BeliefType }))}
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="all">全部类型</SelectItem>
+              {Object.entries(TYPE_LABELS).map(([value, label]) => (
+                <SelectItem key={value} value={value}>{label}</SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </Field>
+      <Field className="w-32 shrink-0 gap-0 [&_[data-slot=field-label]]:sr-only">
+        <FieldLabel>生命周期</FieldLabel>
+        <Select
+          value={filterDraft.status || 'all'}
+          onValueChange={(value) => setFilterDraft((current) => ({ ...current, status: value === 'all' ? '' : value }))}
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="all">全部状态</SelectItem>
+              <SelectItem value="pending">待审核</SelectItem>
+              <SelectItem value="active">已生效</SelectItem>
+              <SelectItem value="archived">已归档</SelectItem>
+              <SelectItem value="quarantined">已隔离</SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </Field>
+    </ScopeFilterBar>
 
-    <Card><CardHeader><CardTitle className="text-base">信念清单</CardTitle><CardDescription>恢复旧版高密度裁决入口；跨页全选、自由编辑和物理删除因安全契约保持禁用。</CardDescription></CardHeader><CardContent className="flex flex-col gap-4">
-      {selectedItems.length ? <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3"><Badge variant="secondary">已选 {selectedItems.length} 条</Badge><Button type="button" size="sm" disabled={batchMutating || !batchAvailable || !selectedCanApprove} onClick={() => void transitionSelected('approve')}><CheckIcon data-icon="inline-start" />批量确认通过</Button><Button type="button" size="sm" variant="outline" disabled={batchMutating || !batchAvailable || !selectedCanArchive} onClick={() => void transitionSelected('archive')}><ArchiveIcon data-icon="inline-start" />批量归档</Button><Button type="button" size="sm" variant="destructive" disabled title={payload?.capabilities.physical_delete?.reason_code ?? '物理删除禁用'}><Trash2Icon data-icon="inline-start" />批量物理删除</Button><Button type="button" size="sm" variant="ghost" className="ml-auto" onClick={() => setSelectedIds([])}>取消选择</Button>{!payload?.capabilities.select_all_matching?.available ? <span className="w-full text-xs text-muted-foreground">跨页全部匹配暂不可用：{payload?.capabilities.select_all_matching?.reason_code ?? '需要服务端重新签发整批 ObjectRef'}</span> : null}</div> : null}
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">信念清单</CardTitle>
+        <CardDescription>恢复旧版高密度裁决入口；跨页全选、自由编辑和物理删除因安全契约保持禁用。</CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <BatchActionBar
+          selectedCount={selectedItems.length}
+          disabled={batchMutating || !batchAvailable}
+          onClear={() => setSelectedIds([])}
+          extra={!payload?.capabilities.select_all_matching?.available ? `跨页全部匹配暂不可用：${payload?.capabilities.select_all_matching?.reason_code ?? '需要服务端重新签发整批 ObjectRef'}` : undefined}
+        >
+          <Button
+            type="button"
+            size="sm"
+            disabled={batchMutating || !batchAvailable || !selectedCanApprove}
+            onClick={() => void transitionSelected('approve')}
+          >
+            <CheckIcon data-icon="inline-start" />
+            批量确认通过
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={batchMutating || !batchAvailable || !selectedCanArchive}
+            onClick={() => void transitionSelected('archive')}
+          >
+            <ArchiveIcon data-icon="inline-start" />
+            批量归档
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="destructive"
+            disabled
+            title={payload?.capabilities.physical_delete?.reason_code ?? '物理删除禁用'}
+          >
+            <Trash2Icon data-icon="inline-start" />
+            批量物理删除
+          </Button>
+        </BatchActionBar>
       <QueryState status={queryStatus} error={error} onRetry={() => void load()} title={!scope ? '请选择真实 Bot 与会话' : undefined} description={!scope ? '作用域未选择时不会查询，也不会补入默认 Bot。' : undefined}>
         <ResponsiveTable label="信念清单" table={<Table><TableHeader><TableRow><TableHead className="w-10"><input aria-label="选择当前页全部信念" type="checkbox" checked={allPageSelected} onChange={(event) => setSelectedIds(event.target.checked ? pageItems.map((item) => item.id) : [])} /></TableHead><TableHead>信念</TableHead><TableHead className="w-28">类型</TableHead><TableHead className="w-24">状态</TableHead><TableHead className="w-24">置信度</TableHead><TableHead className="w-20">证据</TableHead><TableHead className="w-36">更新时间</TableHead><TableHead className="w-64 text-right">操作</TableHead></TableRow></TableHeader><TableBody>{pageItems.map((item) => <TableRow key={item.id} data-slot="belief-card" className={selectedIds.includes(item.id) ? 'bg-primary/5' : undefined}><TableCell><input aria-label={`选择信念 ${item.id}`} type="checkbox" checked={selectedIds.includes(item.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} /></TableCell><TableCell><p className="max-w-xl font-medium leading-6">{item.content}</p>{item.anchor_sentence ? <p className="mt-1 max-w-xl truncate text-xs text-muted-foreground">锚定句：{item.anchor_sentence}</p> : null}</TableCell><TableCell><Badge className={typeClass(item.type)}>{TYPE_LABELS[item.type]}</Badge></TableCell><TableCell><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></TableCell><TableCell><div className="flex items-center gap-2"><span className="font-medium tabular-nums">{confidenceText(item.confidence)}</span><QualityDecisionBadge decision={item.evidence_health === 'available' ? 'allow' : 'quarantine'} /></div></TableCell><TableCell>{item.evidence.length} 条</TableCell><TableCell className="text-xs text-muted-foreground">{formatTime(item.updated_at)}</TableCell><TableCell className="text-right"><div className="flex justify-end gap-1"><Button type="button" variant="outline" size="sm" disabled={!item.object_ref || !payload?.capabilities.evidence?.available} title={item.object_ref ? '还原同作用域证据链' : '缺少服务端签发的 ObjectRef'} onClick={() => setEvidenceItem(item)}><MessageSquareTextIcon data-icon="inline-start" />证据</Button>{item.status === 'pending' ? <Button type="button" size="icon-sm" aria-label={`通过信念 ${item.id}`} disabled={mutating === item.id || !item.actions.approve.available} title={item.actions.approve.reason_code ?? '通过并激活'} onClick={() => void transition(item, 'approve')}><CheckIcon /></Button> : null}<Button type="button" variant="outline" size="icon-sm" aria-label={`归档信念 ${item.id}`} disabled={mutating === item.id || !item.actions.archive.available} title={item.actions.archive.reason_code ?? '归档'} onClick={() => void transition(item, 'archive')}><ArchiveIcon /></Button><Button type="button" variant="ghost" size="icon-sm" aria-label={`编辑信念 ${item.id}`} disabled title={payload?.capabilities.edit?.reason_code ?? '自由编辑禁用'}><Edit2Icon /></Button><ResponsiveDetail title={TYPE_LABELS[item.type]} description="证据、状态分量与受控生命周期操作" className="sm:max-w-4xl" trigger={<Button type="button" variant="ghost" size="icon-sm" aria-label={`查看信念 ${item.id} 详情`} title="查看详情"><EyeIcon /></Button>}><BeliefDetails item={item} mutating={mutating === item.id} onTransition={(action) => void transition(item, action)} /></ResponsiveDetail><Button type="button" variant="ghost" size="icon-sm" aria-label={`删除信念 ${item.id}`} disabled title={payload?.capabilities.physical_delete?.reason_code ?? '物理删除禁用'}><Trash2Icon /></Button></div></TableCell></TableRow>)}</TableBody></Table>} cards={pageItems.map((item) => <article key={item.id} data-slot="belief-card" className={`flex flex-col gap-3 rounded-lg border bg-card p-4 ${selectedIds.includes(item.id) ? 'border-primary/50 bg-primary/5' : ''}`}><div className="flex items-start justify-between gap-2"><label className="flex min-w-0 items-start gap-2"><input aria-label={`选择信念 ${item.id}`} type="checkbox" checked={selectedIds.includes(item.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} /><span className="whitespace-pre-wrap break-words font-medium leading-6">{item.content}</span></label><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></div><div className="flex flex-wrap gap-2"><Badge className={typeClass(item.type)}>{TYPE_LABELS[item.type]}</Badge><span className="text-sm text-muted-foreground">置信度 {confidenceText(item.confidence)} · {item.evidence.length} 条证据</span></div><div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" size="sm" disabled={!item.object_ref} onClick={() => setEvidenceItem(item)}><MessageSquareTextIcon data-icon="inline-start" />证据</Button>{item.status === 'pending' ? <Button type="button" size="sm" disabled={!item.actions.approve.available} onClick={() => void transition(item, 'approve')}><CheckIcon data-icon="inline-start" />确认</Button> : null}<Button type="button" variant="outline" size="sm" disabled={!item.actions.archive.available} onClick={() => void transition(item, 'archive')}><ArchiveIcon data-icon="inline-start" />归档</Button><ResponsiveDetail title={TYPE_LABELS[item.type]} description="证据、状态分量与受控生命周期操作" className="sm:max-w-4xl" trigger={<Button type="button" variant="outline" size="sm">详情</Button>}><BeliefDetails item={item} mutating={mutating === item.id} onTransition={(action) => void transition(item, action)} /></ResponsiveDetail></div></article>)} />
       </QueryState>{payload ? <PaginationControls page={payload.page} onOffsetChange={pagination.setOffset} onLimitChange={pagination.setLimit} /> : null}
