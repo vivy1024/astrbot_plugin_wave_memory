@@ -7,26 +7,61 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![AstrBot](https://img.shields.io/badge/AstrBot-≥4.14-green.svg)](https://github.com/AstrBotDevs/AstrBot)
 
-**零外部依赖的五阶段记忆检索引擎 + 灵魂人格系统**
+**给长期群 Bot 用的记忆层：记住这个群说过什么、谁是谁、关系好不好；回复时把相关记忆和其他通道一起注入。**
 
-*SQLite + HNSW + 纯数学 — 不需要 Neo4j、不需要 Elasticsearch、不需要向量数据库*
+日常检索只依赖 Embedding，本地 SQLite 毫秒级召回，不装 Neo4j / Elasticsearch / 独立向量库。黑话、风格、信念等才需要再配一个 LLM。
 
-[快速开始](#快速开始) · [检索引擎](#-检索引擎) · [灵魂系统](#-灵魂系统) · [WebUI](#-webui-管理面板) · [Releases](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
+[快速开始](#快速开始) · [为什么选我们](#为什么选我们) · [适合谁](#适合谁不适合谁) · [检索引擎](#-检索引擎) · [灵魂系统](#-灵魂系统) · [WebUI](#-webui-管理面板) · [Releases](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
 
 </div>
 
 ---
 
-### Highlights
+### 能做什么
 
-- 🧠 **五阶段零 LLM 检索** — EPA → 残差金字塔 → 脉冲传播 → 向量融合 → 测地线重排，查询 < 50ms
-- 🌐 **有向共现矩阵** — 替代 Neo4j 的图关联能力，13 万节点 / 44 万有向边
-- 💬 **灵魂人格系统** — 自我人格编排、信念涌现、经历精选、情绪轨迹、做梦巩固、自省纠错
-- 🗣️ **文化融入** — 群内黑话 + 内置口癖资产 + 健康风格范例注入 + 绰号识别
-- ⏰ **记忆生命周期** — 时间衰减 + 重要性分级 + 自动淘汰，像人一样遗忘
-- 🔍 **时间感知检索** — 说"昨天/上周"自动加时间过滤，群隔离精确加权
-- 📊 **交互式知识图谱** — Three.js 3D 星图渲染，六层数据图层，多跳路径探索
-- 🔧 **零配置启动** — 填 2 个 Provider ID 即跑，所有子系统自动按条件就绪
+- **记住群聊**：把对话写成长期记忆，按当前 Bot 和群检索，注入到下一次回复。说「昨天 / 上周」会加时间过滤。
+- **记住群友**：昵称、别名、互动次数、好感；同名用户不跨 Bot、不跨群合并。
+- **像群友一样说话**：学本群黑话和 Bot 自己的回复风格；黑话、信念、风格样例都可以在管理台审核后再用。
+- **有心情和关系**：心情、关切、时间线、好感；可看历史关系事件，也能人工校准（必须挂一条本群真实记忆）。
+- **能看见一次回复用了什么**：注入观测台按通道列出命中、跳过、错误和最终文本。
+- **中文管理台 + 3D 图谱**：记忆、人物、标签、事实、黑话、心智都在 9876 端口；神经云图看记忆和关系。
+
+三种模式：`full` 完整人格；`memory_only` 只要记忆注入；`compat_only` 给 SelfLearning / ChatPlus 当记忆后端，避免两套记忆一起注入。
+
+### 为什么选我们
+
+1. **日常检索只依赖向量模型**  
+   写入和召回用 Embedding + 本地 HNSW / 全文检索。回复当下的记忆搜索不再调聊天大模型。实测十万级记忆本地查询 < 50ms；加上远程 Embedding 大约 850ms。不装 Neo4j、Elasticsearch、独立向量库。
+
+2. **记忆注入不是单独塞几条**  
+   一次回复可以同时带上：相关记忆、人名精确命中、时间线、事实、人物画像/好感、已审核信念、本群黑话、风格样例、书设定。安全通道会去掉刚聊过的重复内容和身份污染。各通道超时互不影响，总预算可裁。
+
+3. **配置自由度高，能关也能细调**  
+   - 整机模式：`full` / `memory_only` / `compat_only`  
+   - 每个注入通道可单独开关、调优先级、条数、token 预算、超时、最低分  
+   - 检索算法（脉冲/残差金字塔/EPA/测地线）可关；跨群权重、黑话频率、风格评分、好感衰减都能改  
+   - 不想要人格时只开记忆注入；已有人格插件时可以只当记忆后端
+
+4. **按 Bot 和群隔离，能审计**  
+   A 群的梗和好感不会当成 B 群的。管理台能看见「这句话用了哪些通道、为什么跳过」，黑话/信念/风格要审核后才进人格。
+
+### 限制
+
+- **不是轻量插件**：要比「只塞最近 N 条」更占磁盘和内存；十万级记忆大约 1.7GB SQLite + 几百 MB 索引。
+- **必须配 Embedding**；学黑话、打标签、风格范例还要配 Tag LLM。没有这两个，完整能力起不来。
+- **单机本地库**：数据在这台 AstrBot 上，不能开箱多机共享一份云端记忆。
+- **主要面向 QQ 群**（aiocqhttp）。私聊、未绑定群只能看，不能当正式群身份来写。
+- **管理台是独立 9876 端口**，不是 AstrBot 自带设置页。
+- **不会替你写完整人设**，也不会自动改其他插件的配置。
+
+### 适合谁 / 不适合谁
+
+| 选 WaveMemory | 另找轻量方案 |
+|---------------|--------------|
+| 要长期陪聊群 Bot，记得住群史、黑话、群友关系 | 只要最近几轮上下文或一句摘要 |
+| 想自己审核黑话 / 信念 / 风格再注入 | 不想维护 Embedding 和本地索引 |
+| 已经有人格插件，需要一个可隔离的记忆后端 | 需要多机共享、云端托管的记忆服务 |
+| 能接受单独开一个中文管理台做排查 | 只想在 AstrBot 设置里勾一个开关 |
 
 ### Recent Releases
 
@@ -190,10 +225,9 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 
 | 模块 | 功能 |
 |------|------|
-| SelfReflect | 检测群友纠正信号 → 搜索知识 → 内化为高权重记忆 |
-| DreamService | 6h 周期离线联想，三层时间线涟漪浪潮强化记忆 |
-| StudyService | 从 BookLore 知识库主动学习 |
-| Consolidation | 4h 周期 LLM 摘要 → facts + relations + social + nicknames |
+| SelfReflect | 检测群友纠正信号 → 搜索已有记忆 → 内化为高权重记忆 |
+| DreamService | 6h 周期离线联想，强化近期重要记忆 |
+| Consolidation | 4h 周期 LLM 摘要 → 事实 / 关系 / 社交 / 绰号 |
 
 ### 文化融入
 
@@ -219,17 +253,17 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 
 ## 📊 WebUI 管理面板
 
-默认首页是 `webui/frontend` 的 Vite + React + TypeScript + Tailwind CSS v4 + shadcn/ui 单页应用，构建产物发布到 `webui/static/app`，运行时仍由 Quart + Hypercorn 纯 Python 托管静态文件，不依赖 Node.js。旧 Alpine.js 首页保留在 `/legacy`，用于安全回滚。
+管理台在 **9876** 端口，中文界面。运行时由 Python 托管已构建的前端，不需要在生产环境装 Node.js。
 
-| 路由 | 页面 | 功能 |
-|------|------|------|
-| `/#/dashboard` | 概览 | 系统健康 · 模块就绪度 · 注入指标趋势 · 错误监控 |
-| `/#/injection` | 注入观察台 | trace 筛选 · 命中/过滤上下文 · Sheet 详情抽屉 · 最终注入预览 |
-| `/#/channels` | 通道配置 | enabled/priority/top_k/token_budget/timeout_ms/min_score 热更新 · validation diff 预览 |
-| `/#/learning` | 学习对象审查 | memory/facts/belief/jargon/few-shot/persona/affinity/timeline/operation memory 登记表 |
-| `/#/feedback` | Agent 反馈 | 记忆反馈 · 配置建议 · 审查候选 · 人工批准/拒绝/忽略 |
-| `/#/compatibility` | 兼容模式 | LivingMemory-compatible facade 状态 · 工具别名 · 重复记忆插件风险 |
-| `/legacy` | 旧版首页 | 原单文件 Alpine.js 面板，作为回滚入口 |
+| 页面 | 功能 |
+|------|------|
+| 总览 | 健康状态、待办、近期异常 |
+| 神经云图 | 3D 记忆与关系图，先选 Bot 和群 |
+| 记忆 / 标签 / 导入 | 按群查看和编辑记忆、打标签、从来源预检导入 |
+| 维护任务 / 注入观测台 / 通道配置 | 后台任务、一次回复用了哪些通道、通道开关与预算 |
+| 信念 / 黑话与口癖 / 心智状态 | 审核信念和黑话，看心情、关切、时间线、好感 |
+| 书设定 / 经历 / 风格样例 / 事实 / 人物 | 只读或审核知识对象，人物页可筛好感和校准关系 |
+| 索引诊断 / 生态兼容 / 系统配置 | 检索索引健康、和其他记忆插件共存、默认值与生效值 |
 
 开发命令：
 
@@ -512,7 +546,7 @@ Runtime_Settings.runtime_mode = memory_only
 | FTS5 召回 | full/memory_only | 通道配置 |
 | 注入编排器 | enable_auto_inject 且非默认 compat_only | 9876: 通道配置 / 注入观察台 |
 | Trace Store | 自动 | 6185: Trace_Settings / 9876: 注入观察台 |
-| Agent 反馈 | full/memory_only | 9876: Agent 反馈 |
+| Agent 反馈 | full/memory_only | Agent 工具提交，管理台审核相关对象 |
 | LivingMemory-compatible facade | 自动 | 6185: Compatibility_Settings / 9876: 兼容模式 |
 | 记忆整合 | LLM Provider 可用且 full 模式 | 6185: enable_consolidation |
 | PersonaComposer | full 模式 | 自动 |
@@ -555,8 +589,7 @@ Runtime_Settings.runtime_mode = memory_only
 │   ├── consolidation.py         # 记忆整合
 │   ├── dream.py                 # 做梦系统
 │   ├── self_reflect.py          # 自省系统
-│   ├── study_service.py         # 主动学习
-│   ├── jargon/                  # 黑话 / Holyman 分层知识库
+│   ├── jargon/                  # 黑话 / 内置口癖资产
 │   └── few_shot/                # 健康风格学习
 ├── tools/                       # 9 个 Agent 工具
 ├── webui/                       # Web 管理面板

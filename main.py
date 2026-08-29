@@ -201,7 +201,7 @@ def _build_bot_registry(config: dict) -> dict[str, BotProfile]:
 @register(
     "astrbot_plugin_wave_memory",
     "vivy1024",
-    "群聊长期记忆与人格插件。按 Bot 和群记住对话、检索注入、黑话与风格学习、信念/好感/时间线，并带 3D 知识图谱和中文管理台。",
+    "群聊长期记忆插件。日常检索只依赖向量模型，本地 SQLite 毫秒级召回，不装 Neo4j/ES。记忆注入和黑话、风格、信念、好感、时间线一起进回复，通道和预算可单独调。适合长期陪聊群 Bot；不是只塞最近几条的轻量摘要。",
     "4.7.2",
     "https://github.com/vivy1024/astrbot_plugin_wave_memory",
 )
