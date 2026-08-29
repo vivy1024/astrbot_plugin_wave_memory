@@ -57,7 +57,7 @@ export function ScopeFilterBar({
             value={botId || undefined}
             loadOptions={loadBots}
             label="Bot"
-            placeholder="选择真实 Bot"
+            placeholder="选择 Bot"
             onValueChange={(val) => onBotChange(val)}
           />
           <ScopeSelect

@@ -12,9 +12,9 @@ from ..container import get_container
 from ..middleware.auth import require_auth
 
 try:
-    from ...domain.scope import RuntimeScope
+    from ...domain.scope import RuntimeScope, SessionRef
 except ImportError:  # pragma: no cover
-    from domain.scope import RuntimeScope
+    from domain.scope import RuntimeScope, SessionRef
 
 try:
     from ...services.relationship_calibration import RelationshipCalibrationError, RelationshipCalibrationGateway
@@ -49,8 +49,11 @@ def _connection():
     return getattr(db, "conn", None)
 
 
-def _table_rows(conn: Any, table: str) -> list[dict[str, Any]]:
-    cursor = conn.execute(f'SELECT * FROM "{table}"')
+def _table_rows(conn: Any, table: str, where: str = "", params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+    sql = f'SELECT * FROM "{table}"'
+    if where:
+        sql += f" WHERE {where}"
+    cursor = conn.execute(sql, params)
     names = [str(column[0]) for column in cursor.description or ()]
     return [dict(zip(names, row)) for row in cursor.fetchall()]
 
@@ -94,6 +97,65 @@ def _request_scope():
     except RuntimeError:
         provider = None
     return current_runtime_scope(provider)
+
+
+def _alias_session_ids(conn: Any, scope) -> list[str]:
+    """Same bot + group conversation, different platform names. Read-only aliases."""
+    if scope is None or scope.session is None or conn is None:
+        return []
+    current_id = scope.session.id
+    conversation_id = scope.session.conversation_id
+    if not conversation_id:
+        return [current_id]
+    ids = [current_id]
+    try:
+        rows = conn.execute(
+            """SELECT DISTINCT session_id
+                 FROM scoped_soul_relationships
+                WHERE bot_id=? AND visibility=? AND session_id LIKE ?""",
+            (scope.bot_id, scope.visibility, f"%:group:{conversation_id}"),
+        ).fetchall()
+    except Exception:
+        return ids
+    suffix = f":group:{conversation_id}"
+    for (session_id,) in rows:
+        value = str(session_id or "").strip()
+        if value and value.endswith(suffix) and value not in ids:
+            ids.append(value)
+    return ids
+
+
+def _relationship_rows_for_scope(repository: Any, scope, alias_session_ids: list[str]) -> dict[str, Any]:
+    rows: dict[str, Any] = {}
+    for item in repository.list_relationships(scope):
+        rows[str(item["subject_principal_id"])] = item
+    if scope.session is None:
+        return rows
+    for session_id in alias_session_ids:
+        if session_id == scope.session.id:
+            continue
+        try:
+            platform_id, kind, conversation_id = session_id.split(":", 2)
+            alias_scope = RuntimeScope(
+                scope.bot_id,
+                scope.visibility,
+                SessionRef(session_id, platform_id, kind, conversation_id),
+            )
+        except Exception:
+            continue
+        for item in repository.list_relationships(alias_scope):
+            subject = str(item.get("subject_principal_id") or "")
+            current_subject = f"{scope.session.platform_id}:user:{subject.split(':user:')[-1]}" if ":user:" in subject else subject
+            if current_subject in rows:
+                continue
+            alias_item = dict(item)
+            alias_item["subject_principal_id"] = current_subject
+            alias_item["calibration"] = {
+                "available": False,
+                "reason_code": "alias_session_readonly",
+            }
+            rows[current_subject] = alias_item
+    return rows
 
 
 def _profile_item(profile: dict[str, Any], registry: dict[str, dict[str, Any]], scope) -> dict[str, Any] | None:
@@ -146,11 +208,15 @@ async def list_legacy_people_audit():
         search = str(request.args.get("search") or "").strip().casefold()
         registry = _registry_by_principal(conn)
         items = []
-        for profile in _table_rows(conn, "user_profiles"):
-            if bot_id and str(profile.get("bot_id") or "") != bot_id:
-                continue
-            if group_id and str(profile.get("group_id") or "") != group_id:
-                continue
+        where_parts: list[str] = []
+        params: list[Any] = []
+        if bot_id:
+            where_parts.append("bot_id=?")
+            params.append(bot_id)
+        if group_id:
+            where_parts.append("group_id=?")
+            params.append(group_id)
+        for profile in _table_rows(conn, "user_profiles", " AND ".join(where_parts), tuple(params)):
             user_id = str(profile.get("user_id") or "").strip()
             if not user_id:
                 continue
@@ -329,6 +395,52 @@ def _historical_audit_summary_for_subject(repository: Any, scope: RuntimeScope, 
             subject_scope,
             recent_limit=5,
         )
+        if isinstance(summary, dict) and summary.get("available"):
+            return {
+                **summary,
+                "readonly": True,
+                "affects_affinity": False,
+                "source_table": "scoped_soul_relationship_legacy_events",
+            }
+        if hasattr(repository, "list_relationship_history"):
+            history = repository.list_relationship_history(
+                subject_scope,
+                subject_principal_id=subject,
+                limit=25,
+                offset=0,
+            )
+            items = list(history.get("items") or [])
+            counts: dict[str, int] = {}
+            recent = []
+            for item in items[:5]:
+                event_type = str(item.get("event_type") or item.get("kind") or "event")
+                counts[event_type] = counts.get(event_type, 0) + 1
+                recent.append({
+                    "event_type": event_type,
+                    "dimension": str(item.get("dimension") or ""),
+                    "delta": item.get("delta"),
+                    "reason": str(item.get("reason") or ""),
+                    "occurred_at": item.get("timestamp"),
+                    "legacy_event_id": str(item.get("id") or ""),
+                })
+            return {
+                "available": bool(items),
+                "total": int(history.get("total") or len(items)),
+                "by_type": [{"event_type": key, "count": value} for key, value in counts.items()],
+                "recent": recent,
+                "readonly": True,
+                "affects_affinity": False,
+                "source_table": "scoped_soul_relationship_events",
+            }
+        return {
+            "available": False,
+            "total": 0,
+            "by_type": [],
+            "recent": [],
+            "readonly": True,
+            "affects_affinity": False,
+            "source_table": "scoped_soul_relationship_legacy_events",
+        }
     except Exception:
         return {
             "available": False,
@@ -339,14 +451,6 @@ def _historical_audit_summary_for_subject(repository: Any, scope: RuntimeScope, 
             "affects_affinity": False,
             "reason_code": "historical_audit_query_failed",
         }
-    if not isinstance(summary, dict):
-        summary = {}
-    return {
-        **summary,
-        "readonly": True,
-        "affects_affinity": False,
-        "source_table": "scoped_soul_relationship_legacy_events",
-    }
 
 
 @people_bp.route("/people/relationships", methods=["GET"])
@@ -367,11 +471,20 @@ async def list_relationships():
         conn = _connection()
         if conn is not None and _table_exists(conn, "user_profiles"):
             registry = _registry_by_principal(conn)
-            for profile in _table_rows(conn, "user_profiles"):
+            for profile in _table_rows(
+                conn,
+                "user_profiles",
+                "bot_id=? AND group_id=?",
+                (scope.bot_id, scope.session.conversation_id),
+            ):
                 item = _profile_item(profile, registry, scope)
                 if item is not None:
                     profiles.append(item)
-        relationship_rows = {str(item["subject_principal_id"]): item for item in repository.list_relationships(scope)}
+        relationship_rows = _relationship_rows_for_scope(
+            repository,
+            scope,
+            _alias_session_ids(conn, scope),
+        )
         refs = _object_refs()
         items = []
         for profile in profiles:
@@ -559,7 +672,12 @@ async def list_people():
         registry = _registry_by_principal(conn)
         items = [
             item
-            for profile in _table_rows(conn, "user_profiles")
+            for profile in _table_rows(
+                conn,
+                "user_profiles",
+                "bot_id=? AND group_id=?",
+                (scope.bot_id, scope.session.conversation_id),
+            )
             if (item := _profile_item(profile, registry, scope)) is not None
         ]
 

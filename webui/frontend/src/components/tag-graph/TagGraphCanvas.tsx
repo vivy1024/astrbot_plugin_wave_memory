@@ -54,7 +54,7 @@ export function TagGraphCanvas({ nodes, edges, selectedRef, pathEdgeIds = new Se
   }, [nodes])
 
   if (isMobile) {
-    return <div className="grid gap-2" data-tag-graph-mode="list" aria-label="Tag 神经云图移动端列表">
+    return <div className="grid gap-2" data-tag-graph-mode="list" aria-label="标签关系图移动端列表">
       {[...nodes].sort((a, b) => (b.in_degree + b.out_degree) - (a.in_degree + a.out_degree)).map((node) => <button key={node.id} type="button" className={cn('rounded-lg border bg-card p-3 text-left', selectedRef === node.ref && 'border-primary ring-1 ring-primary/30')} onClick={() => onSelect(node)}>
         <span className="flex items-center justify-between gap-3"><span className="min-w-0 truncate font-medium">{node.name}</span><Badge variant="outline">{node.type}</Badge></span>
         <span className="mt-2 grid grid-cols-3 gap-2 text-xs text-muted-foreground"><span>记忆 {node.memory_count}</span><span>入度 {node.in_degree}</span><span>出度 {node.out_degree}</span></span>
@@ -64,7 +64,7 @@ export function TagGraphCanvas({ nodes, edges, selectedRef, pathEdgeIds = new Se
   }
 
   return <div className="overflow-hidden rounded-xl border bg-slate-950" data-tag-graph-mode="svg">
-    <svg viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-label={`Tag 神经云图，共 ${nodes.length} 个节点、${edges.length} 条有向边`} className="h-auto min-h-[28rem] w-full">
+    <svg viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-label={`标签关系图，共 ${nodes.length} 个节点、${edges.length} 条有向边`} className="h-auto min-h-[28rem] w-full">
       <defs>
         <marker id="tag-graph-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" /></marker>
       </defs>
@@ -88,7 +88,7 @@ export function TagGraphCanvas({ nodes, edges, selectedRef, pathEdgeIds = new Se
           const degree = node.in_degree + node.out_degree
           const radius = Math.max(15, Math.min(30, 14 + Math.sqrt(degree + node.memory_count) * 2.3))
           const selected = selectedRef === node.ref
-          return <g key={node.id} role="button" tabIndex={0} aria-label={`选择 Tag ${node.name}`} transform={`translate(${position.x} ${position.y})`} className="cursor-pointer outline-none" onClick={() => onSelect(node)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(node) } }}>
+          return <g key={node.id} role="button" tabIndex={0} aria-label={`选择标签 ${node.name}`} transform={`translate(${position.x} ${position.y})`} className="cursor-pointer outline-none" onClick={() => onSelect(node)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(node) } }}>
             <circle r={radius + (selected ? 7 : 3)} fill={colorFor(node.type)} fillOpacity={selected ? 0.26 : 0.12} stroke={colorFor(node.type)} strokeWidth={selected ? 3 : 1.5} />
             <circle r={Math.max(6, radius * 0.42)} fill={colorFor(node.type)} fillOpacity={0.88} />
             <text y={radius + 16} textAnchor="middle" fill="white" fontSize="12" fontWeight={selected ? 700 : 500}>{node.name.length > 16 ? `${node.name.slice(0, 15)}…` : node.name}</text>

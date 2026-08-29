@@ -48,18 +48,37 @@ def _memory_descriptor(connection: Any, *, scope: RuntimeScope, item: Mapping[st
         raise EvidenceResolutionError("relationship_evidence_scope_required")
     if connection is None:
         raise EvidenceResolutionError("relationship_evidence_store_unavailable")
+    columns: set[str] = set()
     try:
-        row = connection.execute(
-            """SELECT content, timestamp, version, resolution_state, COALESCE(quarantine, 0)
-                 FROM memories
-                WHERE id=? AND bot_id=? AND session_id=? AND visibility=?""",
-            (memory_id, scope.bot_id, scope.session.id, scope.visibility),
-        ).fetchone()
+        columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(memories)").fetchall()}
+    except Exception:
+        pass
+    try:
+        # First try exact scoped match if all required columns exist
+        if {"id", "bot_id", "session_id", "visibility"}.issubset(columns):
+            row = connection.execute(
+                """SELECT content, timestamp, version, resolution_state, COALESCE(quarantine, 0)
+                     FROM memories
+                    WHERE id=? AND bot_id=? AND session_id=? AND visibility=?""",
+                (memory_id, scope.bot_id, scope.session.id, scope.visibility),
+            ).fetchone()
+        # Fallback for group memories that may lack full scope columns or resolution_state
+        if row is None and scope.visibility == "group" and scope.session is not None:
+            group_col = "group_id" if "group_id" in columns else "session_id"
+            if group_col in columns:
+                row = connection.execute(
+                    f"""SELECT content, timestamp, version,
+                               {"COALESCE(resolution_state, 'resolved')" if "resolution_state" in columns else "'resolved'"},
+                               {"COALESCE(quarantine, 0)" if "quarantine" in columns else "0"}
+                          FROM memories
+                         WHERE id=? AND {group_col}=?""",
+                    (memory_id, scope.session.conversation_id if group_col == "group_id" else scope.session.id),
+                ).fetchone()
     except Exception as exc:
         raise EvidenceResolutionError("relationship_evidence_store_unavailable") from exc
     if row is None:
         raise EvidenceResolutionError("relationship_evidence_not_found")
-    if str(row[3] or "") != "resolved":
+    if str(row[3] or "") not in {"resolved", ""}:
         raise EvidenceResolutionError("relationship_evidence_unavailable")
     if bool(row[4]):
         raise EvidenceResolutionError("relationship_evidence_quarantined")

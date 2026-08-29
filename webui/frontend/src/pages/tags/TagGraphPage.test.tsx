@@ -58,7 +58,7 @@ describe('TagGraphPage', () => {
     expect(screen.getByText('真实 Alpha 记忆')).toBeVisible()
     expect(screen.queryByRole('button', { name: /删除|重命名|改类型/ })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '设为起点' }))
-    await user.click(screen.getByRole('button', { name: '选择 Tag Beta' }))
+    await user.click(screen.getByRole('button', { name: '选择标签 Beta' }))
     await user.click(screen.getByRole('button', { name: '设为终点' }))
     await user.click(screen.getByRole('button', { name: '查询当前可见图层' }))
 
@@ -80,7 +80,7 @@ describe('TagGraphPage', () => {
   it('移动端降级为可访问列表而不是 SVG 云图', async () => {
     isMobile = true
     const view = render(<MemoryRouter initialEntries={['/tags/graph?bot_id=bot-a&session_id=qq%3Agroup%3Ag1']}><TagGraphPage /></MemoryRouter>)
-    expect(await screen.findByLabelText('Tag 神经云图移动端列表')).toBeVisible()
+    expect(await screen.findByLabelText('标签关系图移动端列表')).toBeVisible()
     expect(view.container.querySelector('[data-tag-graph-mode="list"]')).toBeInTheDocument()
     expect(view.container.querySelector('[data-tag-graph-mode="svg"]')).not.toBeInTheDocument()
     expect(api.getTagGraph).toHaveBeenCalledWith(graph.scope, expect.objectContaining({ maxNodes: 120 }))

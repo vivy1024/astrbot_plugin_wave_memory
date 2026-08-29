@@ -118,12 +118,12 @@ export function ExplorePage() {
         <Separator orientation="vertical" className="hidden data-[orientation=vertical]:h-5 sm:block" />
         <Badge variant="secondary" className="max-w-[min(52vw,34rem)] truncate">
           <CompassIcon data-icon="inline-start" aria-hidden="true" />
-          {hasScope ? `${botId} · ${sessionId}` : '等待完整 Scope'}
+          {hasScope ? `${botId} · ${sessionId}` : '请先选择 Bot 和群'}
         </Badge>
         {hasScope ? <Badge variant={statusVariant}>{statusLabel}</Badge> : null}
         <Button type="button" size="sm" variant="outline" onClick={() => setScopeDialogOpen(true)}>
           <Settings2Icon data-icon="inline-start" aria-hidden="true" />
-          切换 Scope
+          切换 Bot / 群
         </Button>
         {hasScope && (frameState.status === 'error' || frameState.status === 'timeout') ? (
           <Button type="button" size="sm" variant="secondary" onClick={retryFrame}>
@@ -165,9 +165,9 @@ export function ExplorePage() {
       >
         <DialogContent showCloseButton={hasScope} className="sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>选择神经云图 Scope</DialogTitle>
+            <DialogTitle>选择神经云图的 Bot 和群</DialogTitle>
             <DialogDescription>
-              必须选择服务端授权的真实 Bot 与 canonical 群会话。iframe 仅接收 Scope，不在 URL 中传递认证 token。
+              必须选择服务端授权的 Bot 和群。嵌入页只接收当前群，不会把认证信息放进网址。
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -175,7 +175,7 @@ export function ExplorePage() {
               value={botId || undefined}
               loadOptions={loadBots}
               label="Bot"
-              placeholder="选择真实 Bot"
+              placeholder="选择 Bot"
               required
               onValueChange={(value) => pagination.setFilters({ bot_id: value, session_id: null, visibility: 'group' })}
             />
@@ -183,7 +183,7 @@ export function ExplorePage() {
               value={sessionId || undefined}
               loadOptions={loadSessions}
               label="群 / 会话"
-              placeholder="选择 canonical 活跃会话"
+              placeholder="选择群"
               disabled={!botId}
               required
               onValueChange={(value) => {

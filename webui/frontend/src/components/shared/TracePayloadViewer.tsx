@@ -75,24 +75,24 @@ export function TracePayloadViewer({
   const views = [...sections, { key: '__full__', label: '完整 JSON', content: fullContent }]
 
   return (
-    <section data-slot="trace-payload-viewer" aria-label="Trace 载荷查看器" className={cn('flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3', className)}>
+    <section data-slot="trace-payload-viewer" aria-label="注入载荷查看器" className={cn('flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3', className)}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">分区仅用于阅读；复制和下载始终使用完整服务端内容，不截断尾部。</p>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={() => void copy()} aria-label="复制完整 Trace 载荷">
+          <Button type="button" variant="outline" size="sm" onClick={() => void copy()} aria-label="复制完整注入载荷">
             {copied ? <CheckIcon data-icon="inline-start" /> : <CopyIcon data-icon="inline-start" />}
             {copied ? '已复制' : '复制全部'}
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => onDownload(fullContent, downloadName)} aria-label="下载完整 Trace 载荷">
+          <Button type="button" variant="outline" size="sm" onClick={() => onDownload(fullContent, downloadName)} aria-label="下载完整注入载荷">
             <DownloadIcon data-icon="inline-start" />
             下载全部
           </Button>
         </div>
       </div>
-      <span className="sr-only" role="status" aria-live="polite">{copied ? '完整 Trace 载荷已复制' : ''}</span>
+      <span className="sr-only" role="status" aria-live="polite">{copied ? '完整注入载荷已复制' : ''}</span>
       <Tabs defaultValue={views[0].key}>
         <div className="overflow-x-auto pb-1">
-          <TabsList aria-label="Trace 载荷分区">
+          <TabsList aria-label="注入载荷分区">
             {views.map((view) => <TabsTrigger key={view.key} value={view.key}>{view.label}</TabsTrigger>)}
           </TabsList>
         </div>

@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { scopeOptionsFor, type ScopeOptionsPayload } from '@/api/options'
+import { groupSessionOptions, scopeOptionsFor, type ScopeOptionsPayload } from '@/api/options'
 import { buildObjectDeepLink } from '@/lib/object-deep-link'
 import { ObjectDeepLink } from '../ObjectDeepLink'
 import { QueryState } from '../QueryState'
@@ -57,6 +57,38 @@ describe('ScopeSelect 与 ObjectDeepLink', () => {
     }
 
     expect(scopeOptionsFor(payload, ['session']).map((item) => item.label)).toEqual(['记忆实验群（42）', '99'])
+  })
+
+  it('group-only 页面会禁用私聊 session，并保留群会话', () => {
+    const payload: ScopeOptionsPayload = {
+      bots: [],
+      sessions: [
+        {
+          id: '羽书:group:42',
+          bot_id: 'yushu',
+          platform_id: '羽书',
+          kind: 'group',
+          conversation_id: '42',
+          label: '42',
+        },
+        {
+          id: '羽书:private:1',
+          bot_id: 'yushu',
+          platform_id: '羽书',
+          kind: 'private',
+          conversation_id: '1',
+          label: '1',
+        },
+      ],
+      channels: [],
+      generated_at: 0,
+      source: { health: 'healthy', reason_code: null },
+    }
+    const options = groupSessionOptions(scopeOptionsFor(payload, ['session']), 'yushu')
+    expect(options).toHaveLength(2)
+    expect(options[0]).toMatchObject({ value: '羽书:group:42', disabled: false })
+    expect(options[1]?.disabled).toBe(true)
+    expect(options[1]?.description).toContain('本页只支持群会话')
   })
 
   it('触发器只显示单行标签，不把下拉说明带进固定高度输入框', async () => {
@@ -117,7 +149,7 @@ describe('ScopeSelect 与 ObjectDeepLink', () => {
       </MemoryRouter>,
     )
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('不会使用裸 ID 或默认 Bot定位'.replace('Bot定位', 'Bot 定位'))
+    expect(screen.getByRole('status')).toHaveTextContent('不会用裸编号或默认 Bot 猜测')
   })
 })
 

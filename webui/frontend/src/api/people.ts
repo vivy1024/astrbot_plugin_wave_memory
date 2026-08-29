@@ -168,3 +168,15 @@ function queryString(query: object): string {
 export function getPeople(query: PeopleQuery): Promise<PageResponse<PersonItem>> {
   return fetchJson<PageResponse<PersonItem>>(`/api/people${queryString(query)}`)
 }
+
+export interface LegacyPeopleQuery {
+  bot_id: string
+  group_id: string
+  search?: string
+  limit?: PageSize
+  offset?: number
+}
+
+export function getLegacyPeople(query: LegacyPeopleQuery): Promise<PageResponse<PersonItem>> {
+  return fetchJson<PageResponse<PersonItem>>(`/api/people/legacy/audit${queryString(query)}`)
+}

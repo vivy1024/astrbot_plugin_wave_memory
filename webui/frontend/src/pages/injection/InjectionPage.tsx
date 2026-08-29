@@ -225,7 +225,7 @@ export function InjectionPage() {
     setDetailError('')
     getInjectionTrace(selectedTraceId, controller.signal)
       .then((value) => { if (active) setDetail(value) })
-      .catch((reason: unknown) => { if (active && !isRequestCancelled(reason)) setDetailError(reason instanceof Error ? reason.message : 'Trace 详情加载失败') })
+      .catch((reason: unknown) => { if (active && !isRequestCancelled(reason)) setDetailError(reason instanceof Error ? reason.message : '注入详情加载失败') })
       .finally(() => { if (active) setDetailLoading(false) })
     return () => { active = false; controller.abort() }
   }, [selectedTraceId])
@@ -268,13 +268,13 @@ export function InjectionPage() {
     <div data-slot="observatory-page" className="flex flex-col gap-6">
       <Card>
         <CardHeader>
-          <CardTitle>Observatory · 注入观测台</CardTitle>
-          <CardDescription>筛选 Trace 摘要并按需读取结构化详情。筛选保存在 URL；Bot、会话和通道均来自服务端真实选项。</CardDescription>
+          <CardTitle>注入观测台</CardTitle>
+          <CardDescription>筛选一次回复用了哪些记忆通道。筛选保存在网址里；Bot、群和通道均来自服务端真实选项。</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <FieldGroup className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <ScopeSelect value={botId || undefined} loadOptions={loadBots} label="Bot" placeholder="选择真实 Bot" onValueChange={(value) => pagination.setFilters({ bot_id: value, session_id: null })} />
-            <ScopeSelect value={sessionId || undefined} loadOptions={loadSessions} label="结构化会话" placeholder="选择真实会话" disabled={!botId} onValueChange={(value) => pagination.setFilters({ session_id: value })} />
+            <ScopeSelect value={botId || undefined} loadOptions={loadBots} label="Bot" placeholder="选择 Bot" onValueChange={(value) => pagination.setFilters({ bot_id: value, session_id: null })} />
+            <ScopeSelect value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" placeholder="选择群" disabled={!botId} onValueChange={(value) => pagination.setFilters({ session_id: value })} />
             <ScopeSelect value={filterDraft.channel || undefined} loadOptions={loadChannels} label="通道" placeholder="选择已注册通道" onValueChange={(value) => setFilterDraft((current) => ({ ...current, channel: value }))} />
             <Field><FieldLabel htmlFor="trace-sender">发送者 ID</FieldLabel><Input id="trace-sender" value={filterDraft.sender_id} onChange={(event) => setFilterDraft((current) => ({ ...current, sender_id: event.target.value }))} /></Field>
             <Field>
@@ -291,10 +291,10 @@ export function InjectionPage() {
                 <SelectContent><SelectGroup><SelectItem value="all">全部</SelectItem><SelectItem value="true">有错误</SelectItem><SelectItem value="false">无错误</SelectItem></SelectGroup></SelectContent>
               </Select>
             </Field>
-            <Field><FieldLabel htmlFor="trace-scope">Scope / chat type</FieldLabel><Input id="trace-scope" value={filterDraft.scope} onChange={(event) => setFilterDraft((current) => ({ ...current, scope: event.target.value }))} placeholder="按 trace 实际 scope 筛选" /></Field>
+            <Field><FieldLabel htmlFor="trace-scope">群 / 聊天类型</FieldLabel><Input id="trace-scope" value={filterDraft.scope} onChange={(event) => setFilterDraft((current) => ({ ...current, scope: event.target.value }))} placeholder="按实际群或聊天类型筛选" /></Field>
             <Field><FieldLabel htmlFor="trace-from">开始时间</FieldLabel><Input id="trace-from" type="datetime-local" value={epochToInput(filterDraft.from_ts || null)} onChange={(event) => setFilterDraft((current) => ({ ...current, from_ts: inputToEpoch(event.target.value) }))} /></Field>
             <Field><FieldLabel htmlFor="trace-to">结束时间</FieldLabel><Input id="trace-to" type="datetime-local" value={epochToInput(filterDraft.to_ts || null)} onChange={(event) => setFilterDraft((current) => ({ ...current, to_ts: inputToEpoch(event.target.value) }))} /></Field>
-            <Field><FieldLabel htmlFor="trace-revision">配置 revision</FieldLabel><Input id="trace-revision" value={filterDraft.config_revision} onChange={(event) => setFilterDraft((current) => ({ ...current, config_revision: event.target.value }))} placeholder="例如 cfg-…" /></Field>
+            <Field><FieldLabel htmlFor="trace-revision">配置版本</FieldLabel><Input id="trace-revision" value={filterDraft.config_revision} onChange={(event) => setFilterDraft((current) => ({ ...current, config_revision: event.target.value }))} placeholder="例如 cfg-…" /></Field>
           </FieldGroup>
           <div className="flex flex-wrap gap-2">
             <Button type="button" onClick={submitFilters}><SearchIcon data-icon="inline-start" aria-hidden="true" />查询</Button>
@@ -305,23 +305,23 @@ export function InjectionPage() {
       </Card>
 
       <Alert>
-        <AlertTitle>如何阅读与验证 Trace</AlertTitle>
-        <AlertDescription>先核对真实 Bot 与结构化 session，再检查 revision、通道状态、预算、命中、过滤原因、错误和最终文本。</AlertDescription>
+        <AlertTitle>如何阅读与验证这次注入</AlertTitle>
+        <AlertDescription>先核对 Bot 和群，再检查配置版本、通道状态、预算、命中、过滤原因、错误和最终文本。</AlertDescription>
       </Alert>
 
       <Card>
         <CardHeader>
-          <CardTitle>Trace 摘要</CardTitle>
+          <CardTitle>注入摘要</CardTitle>
           <CardDescription>{payload?.page.total_status === 'exact' ? `当前筛选共 ${payload.page.total ?? 0} 条` : `总数不可用：${payload?.page.reason_code ?? '等待查询'}`}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <QueryState status={status} error={error} onRetry={() => void load()}>
             <DeclarativeDataTable
-              label="Injection Trace 摘要清单"
+              label="注入摘要清单"
               items={payload?.items ?? []}
               keyExtractor={(row) => String(row.trace_id ?? '')}
               columns={[
-                { key: 'trace', header: 'Trace / 时间', isTitle: true, render: (row) => <span className="flex min-w-40 flex-col"><Button type="button" variant="link" className="h-auto justify-start p-0 font-mono text-xs" onClick={(event) => { event.stopPropagation(); selectTrace(String(row.trace_id ?? '')) }}>{row.trace_id || '未记录 trace_id'}</Button><span className="text-xs text-muted-foreground">{formatTime(row.timestamp ?? row.created_at)}</span></span> },
+                { key: 'trace', header: '记录 / 时间', isTitle: true, render: (row) => <span className="flex min-w-40 flex-col"><Button type="button" variant="link" className="h-auto justify-start p-0 font-mono text-xs" onClick={(event) => { event.stopPropagation(); selectTrace(String(row.trace_id ?? '')) }}>{row.trace_id || '未记录编号'}</Button><span className="text-xs text-muted-foreground">{formatTime(row.timestamp ?? row.created_at)}</span></span> },
                 { key: 'bot', header: 'Bot', render: (row) => <span className="font-mono text-xs">{traceBot(row)}</span> },
                 { key: 'session', header: '会话', render: (row) => { const s = traceSession(row); return <span className="flex min-w-44 flex-col"><span>{s.primary}</span>{s.secondary ? <span className="text-xs text-muted-foreground">{s.secondary}</span> : null}</span> } },
                 { key: 'status', header: '模式 / 状态', render: (row) => { const st = String(row.status ?? (row.has_error ? 'error' : 'unknown')); return <span className="flex flex-col gap-1"><span>{textValue(row.mode)}</span><Badge className="w-fit" variant={st === 'ok' ? 'secondary' : st === 'unknown' ? 'outline' : 'destructive'}>{statusLabel(st)}</Badge></span> } },
@@ -329,10 +329,10 @@ export function InjectionPage() {
                 { key: 'channels', header: '命中 / 跳过 / 错误', render: (row) => <span className="font-mono text-xs">{channelCount(row, 'hit')} / {channelCount(row, 'skipped')} / {channelCount(row, 'error')}</span> },
                 { key: 'token_channel', header: '主 Token 通道', render: (row) => <span className="font-mono text-xs">{primaryTokenChannel(row)}</span> },
                 { key: 'tokens_lat', header: 'Token / 耗时', render: (row) => <span>{textValue(row.total_tokens ?? row.tokens)} / {traceLatency(row)}</span> },
-                { key: 'revision', header: 'Revision', render: (row) => <span className="font-mono text-xs">{textValue(row.config_revision)}</span> },
+                { key: 'revision', header: '配置版本', render: (row) => <span className="font-mono text-xs">{textValue(row.config_revision)}</span> },
               ]}
               onRowClick={(row) => row.trace_id && selectTrace(String(row.trace_id))}
-              renderCardActions={(row) => row.trace_id ? <Button type="button" variant="outline" size="sm" onClick={() => selectTrace(String(row.trace_id))}>查看 Trace 详情</Button> : null}
+              renderCardActions={(row) => row.trace_id ? <Button type="button" variant="outline" size="sm" onClick={() => selectTrace(String(row.trace_id))}>查看注入详情</Button> : null}
             />
           </QueryState>
           {payload ? <PaginationControls page={payload.page} onOffsetChange={pagination.setOffset} onLimitChange={pagination.setLimit} disabled={status === 'loading'} /> : null}

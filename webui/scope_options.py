@@ -177,11 +177,53 @@ class RuntimeScopeOptionsSource:
         except Exception:
             return None
 
+    @staticmethod
+    def _is_chat_group_id(group_id: str) -> bool:
+        value = str(group_id or "").strip()
+        if not value:
+            return False
+        lowered = value.casefold()
+        if lowered.startswith(("arc", "oni", "lore", "legacy_private", "private:")):
+            return False
+        if ":" in value or "/" in value:
+            return False
+        return True
+
+    @staticmethod
+    def _annotate_session_aliases(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+        for item in sessions:
+            if item.get("kind") != "group":
+                item.setdefault("alias_group", None)
+                item.setdefault("is_primary_alias", True)
+                item.setdefault("alias_session_ids", [item["id"]])
+                continue
+            key = (str(item.get("bot_id") or ""), str(item.get("kind") or ""), str(item.get("conversation_id") or ""))
+            grouped.setdefault(key, []).append(item)
+        for members in grouped.values():
+            ranked = sorted(
+                members,
+                key=lambda item: (
+                    -int(item.get("count") or 0),
+                    len(str(item.get("platform_id") or "")),
+                    str(item.get("id") or ""),
+                ),
+            )
+            primary = ranked[0]
+            alias_ids = [str(item["id"]) for item in ranked]
+            for item in members:
+                item["alias_group"] = f"{primary['bot_id']}:{primary['kind']}:{primary['conversation_id']}"
+                item["is_primary_alias"] = item["id"] == primary["id"]
+                item["alias_session_ids"] = alias_ids
+                if not item["is_primary_alias"]:
+                    item["label"] = f"{item.get('label') or item['conversation_id']} · {item['platform_id']}残留"
+        return sessions
+
     def _legacy_groups(self, conn: Any) -> list[dict[str, Any]]:
         groups: dict[tuple[str, str], dict[str, Any]] = {}
         def add(bot_id: Any, group_id: Any, source: str, count: Any) -> None:
             bot, group = str(bot_id or "").strip(), str(group_id or "").strip()
-            if not bot or not group:
+            if not bot or not group or not RuntimeScopeOptionsSource._is_chat_group_id(group):
                 return
             key = (bot, group)
             item = groups.setdefault(key, {"bot_id": bot, "group_id": group, "label": group, "source": source, "count": 0})
@@ -285,7 +327,7 @@ class RuntimeScopeOptionsSource:
                         capabilities={table: count},
                         group_name=self._group_name(bot_id, session.conversation_id),
                     )
-        return sorted(sessions.values(), key=lambda item: (item["bot_id"], item["id"]))
+        return self._annotate_session_aliases(sorted(sessions.values(), key=lambda item: (item["bot_id"], item["id"])))
 
     def _channels(self, conn: Any) -> list[dict[str, Any]]:
         channels: dict[str, dict[str, Any]] = {}
@@ -318,10 +360,22 @@ class RuntimeScopeOptionsSource:
         conn = getattr(self._db, "conn", None)
         if conn is None:
             raise RuntimeError("canonical database connection is unavailable")
+        sessions = self._sessions(conn)
+        established = {
+            (str(item.get("bot_id") or ""), str(item.get("conversation_id") or ""))
+            for item in sessions
+            if item.get("kind") == "group"
+        }
+        legacy_groups = []
+        for item in self._legacy_groups(conn):
+            key = (str(item.get("bot_id") or ""), str(item.get("group_id") or ""))
+            if key in established:
+                continue
+            legacy_groups.append({**item, "binding_status": "unresolved"})
         return {
             "bots": self._bots(),
-            "sessions": self._sessions(conn),
-            "legacy_groups": self._legacy_groups(conn),
+            "sessions": sessions,
+            "legacy_groups": legacy_groups,
             "channels": self._channels(conn),
             "source": {
                 "providers": [

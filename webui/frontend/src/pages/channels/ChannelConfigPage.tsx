@@ -268,7 +268,7 @@ export function ChannelConfigPage() {
               <FieldLabel htmlFor="runtime-mode">运行模式</FieldLabel>
               <div id="runtime-mode" className="flex min-h-10 flex-col justify-center rounded-md border px-3 py-2 text-sm">
                 <span>{String(runtime.mode ?? draft.mode ?? 'unknown')}</span>
-                <span className="text-muted-foreground">revision: {revision || '未记录'} · 生效时间：{effectiveSince ? new Date(effectiveSince * 1000).toLocaleString('zh-CN') : '未记录'}</span>
+                <span className="text-muted-foreground">配置版本：{revision || '未记录'} · 生效时间：{effectiveSince ? new Date(effectiveSince * 1000).toLocaleString('zh-CN') : '未记录'}</span>
               </div>
             </Field>
             <Field>
@@ -287,7 +287,7 @@ export function ChannelConfigPage() {
               {rootError ? <span className="text-xs text-destructive" role="alert">{rootError}</span> : null}
             </Field>
             <Field>
-              <FieldLabel>Trace 记录开关</FieldLabel>
+              <FieldLabel>注入记录开关</FieldLabel>
               <div className="flex h-10 items-center justify-between gap-3 rounded-md border px-3">
                 <span className="text-sm text-muted-foreground">{draft.trace_enabled ? '已开启' : '已关闭'}</span>
                 <Switch checked={Boolean(draft.trace_enabled)} onCheckedChange={(checked) => updateDraft({ ...draft, trace_enabled: checked })} />

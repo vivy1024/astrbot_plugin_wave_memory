@@ -20,6 +20,7 @@ export interface ExperienceEpisode {
 
 export interface ListExperiencesParams {
   bot_id?: string
+  group_id?: string
   search?: string
   episode_type?: string
   min_emotional_weight?: number
@@ -31,6 +32,7 @@ export interface ListExperiencesParams {
 export function listExperiences(params: ListExperiencesParams = {}): Promise<PageResponse<ExperienceEpisode>> {
   const query = new URLSearchParams()
   if (params.bot_id) query.set('bot_id', params.bot_id)
+  if (params.group_id) query.set('group_id', params.group_id)
   if (params.search) query.set('search', params.search)
   if (params.episode_type) query.set('episode_type', params.episode_type)
   if (params.min_emotional_weight !== undefined) query.set('min_emotional_weight', String(params.min_emotional_weight))

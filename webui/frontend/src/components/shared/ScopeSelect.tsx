@@ -63,8 +63,13 @@ export function ScopeSelect({
   }, [loadOptions, reloadKey])
 
   const selectOption = useCallback((nextValue: string) => {
-    const option = options.find((item) => item.value === nextValue)
-    if (option) onValueChange(nextValue, option)
+    const option = options.find((item) => item.value === nextValue) ?? {
+      value: nextValue,
+      label: nextValue,
+      kind: 'session' as const,
+      description: '选项已失效或尚未加载完成',
+    }
+    onValueChange(nextValue, option)
   }, [onValueChange, options])
 
   const grouped = (Object.keys(KIND_LABELS) as ScopeOptionKind[])

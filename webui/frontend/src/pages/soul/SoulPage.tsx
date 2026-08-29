@@ -4,7 +4,7 @@ import { ActivityIcon, AlertCircleIcon, Clock3Icon, CompassIcon, GitBranchIcon, 
 import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
 
 import { isRequestCancelled } from '@/api/client'
-import { getScopeOptions, scopeOptionsFor } from '@/api/options'
+import { getScopeOptions, groupSessionOptions, scopeOptionsFor } from '@/api/options'
 import {
   getRelationshipHistoricalAudit,
   getRelationships,
@@ -28,9 +28,9 @@ const componentChartConfig = {
 } satisfies ChartConfig
 
 const relationshipChartConfig = {
-  automatic_value: { label: 'automatic', color: 'var(--chart-1)' },
-  manual_adjustment: { label: 'manual', color: 'var(--chart-2)' },
-  effective_value: { label: 'effective', color: 'var(--chart-3)' },
+  automatic_value: { label: '自动', color: 'var(--chart-1)' },
+  manual_adjustment: { label: '人工', color: 'var(--chart-2)' },
+  effective_value: { label: '生效', color: 'var(--chart-3)' },
 } satisfies ChartConfig
 
 const RELATIONSHIP_DIMENSIONS = [
@@ -49,11 +49,15 @@ function formatTime(seconds: unknown): string {
 function reasonText(reason: string | null | undefined): string {
   if (!reason) return '服务端未提供原因'
   const labels: Record<string, string> = {
-    soul_scoped_repository_unavailable: '正式 SoulScope repository 尚未就绪',
-    scoped_soul_mutation_unavailable: '正式 scoped mutation 尚未提供',
-    soul_runtime_refresh_unavailable: 'Soul runtime refresh 尚未提供',
-    formal_soul_context_unavailable: '正式仓储尚未提供 Circadian、时区、精力或困倦字段',
-    relationship_subject_required: '请选择当前群友 principal 后再查看关系轨迹',
+    soul_scoped_repository_unavailable: '心智数据还没准备好',
+    scoped_soul_mutation_unavailable: '还不能在这里改心智数据',
+    soul_runtime_refresh_unavailable: '还不能强制刷新心智',
+    formal_soul_context_unavailable: '还没有时区、精力或困倦记录',
+    relationship_subject_required: '请先选择当前群友，再看关系变化',
+    relationship_unknown: '当前群友还没有正式关系记录',
+    relationship_values_unknown: '当前群友还没有关系维度记录',
+    alias_session_readonly: '这是同一群的旧平台残留，只能看不能改',
+    scope_required: '请先选择 Bot 和群',
   }
   return labels[reason] ?? reason
 }
@@ -122,7 +126,7 @@ function RelationshipTrajectory({ history, dimension }: { history: RelationshipH
 }
 
 function RelationshipHistoryList({ history }: { history: RelationshipHistoryItem[] }) {
-  if (!history.length) return <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">当前 Scope 没有可追踪的 RelationshipEvent 或人工校准记录。</p>
+  if (!history.length) return <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">当前群没有可追踪的关系变化或人工校准记录。</p>
   return <div className="flex flex-col gap-3">{history.map((item) => <div key={item.id} className="rounded-lg border bg-muted/10 p-3"><div className="flex flex-wrap items-center gap-2"><Badge variant={item.kind === 'manual' ? 'secondary' : 'outline'}>{item.kind === 'manual' ? 'manual calibration' : 'automatic RelationshipEvent'}</Badge><Badge variant="outline">{dimensionLabel(item.dimension)}</Badge>{item.action ? <Badge variant="outline">{item.action}</Badge> : null}<span className="text-[10px] text-muted-foreground">{formatTime(item.timestamp)} · revision {item.revision ?? '未记录'}</span></div><p className="mt-2 text-sm font-medium">{item.reason || '服务端未提供原因'}</p><div className="mt-2 grid gap-2 text-xs sm:grid-cols-2"><div className="rounded border bg-background/60 p-2"><span className="text-muted-foreground">变化</span><span className="ml-2 font-mono">{item.delta === null ? '人工层变更' : displayRelationshipValue(item.delta)}</span></div><div className="rounded border bg-background/60 p-2"><span className="text-muted-foreground">来源</span><span className="ml-2 font-mono">{item.source_memory_id !== null ? `memory:${item.source_memory_id}` : item.source_episode_id !== null ? `episode:${item.source_episode_id}` : '未提供真实消息引用'}</span></div></div><div className="mt-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">{item.operation_id ? <span className="font-mono">operation:{item.operation_id}</span> : null}{item.actor ? <span>actor:{item.actor}</span> : null}</div><div className="mt-3"><EvidenceList evidence={item.evidence} /></div></div>)}</div>
 }
 
@@ -206,12 +210,12 @@ function HistoricalAuditSideChannel({
           {hasEmbedded ? <Badge variant="outline">来自 soul/state</Badge> : null}
         </div>
         <CardDescription>
-          来自 scoped_soul_relationship_legacy_events；与上方 live RelationshipEvent 轨迹分离，不参与 affinity 计算。
+          来自本群历史关系事件；与上方实时关系变化分开，不参与好感计算。
         </CardDescription>
       </CardHeader>
       <CardContent className="pt-5">
         {loading ? (
-          <p className="text-sm text-muted-foreground">正在读取 historical audit…</p>
+          <p className="text-sm text-muted-foreground">正在读取历史审计…</p>
         ) : error ? (
           <p className="text-sm text-muted-foreground">{error}</p>
         ) : !summary?.available || total <= 0 ? (
@@ -262,7 +266,7 @@ function HistoricalAuditSideChannel({
 function SoulContextCard({ context }: { context: SoulStatePayload['soul_context'] | undefined }) {
   const current = context ?? { status: 'unavailable', reason_code: 'formal_soul_context_unavailable', timezone: null, circadian: null, energy: null, sleepiness: null }
   const available = current.status === 'available'
-  return <Card><CardHeader className="border-b bg-muted/10 py-4"><div className="flex items-center gap-2"><Globe2Icon className="size-4 text-primary" /><CardTitle className="text-sm">Circadian Soul State</CardTitle></div><CardDescription>时区、节律、精力与困倦仅展示正式后端字段</CardDescription></CardHeader><CardContent className="pt-5">{!available ? <SectionUnavailable reason={current.reason_code} /> : <dl className="grid gap-3 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">时区</dt><dd className="mt-1 font-mono">{current.timezone ?? '未知 / 未记录'}</dd></div><div><dt className="text-muted-foreground">精力</dt><dd className="mt-1 font-mono">{displayRelationshipValue(current.energy)}</dd></div><div><dt className="text-muted-foreground">困倦</dt><dd className="mt-1 font-mono">{displayRelationshipValue(current.sleepiness)}</dd></div><div><dt className="text-muted-foreground">Circadian</dt><dd className="mt-1 break-all font-mono">{typeof current.circadian === 'string' ? current.circadian : JSON.stringify(current.circadian ?? '未知 / 未记录')}</dd></div></dl>}</CardContent></Card>
+  return <Card><CardHeader className="border-b bg-muted/10 py-4"><div className="flex items-center gap-2"><Globe2Icon className="size-4 text-primary" /><CardTitle className="text-sm">作息与精力</CardTitle></div><CardDescription>时区、节律、精力与困倦只展示已记录的正式字段</CardDescription></CardHeader><CardContent className="pt-5">{!available ? <SectionUnavailable reason={current.reason_code} /> : <dl className="grid gap-3 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">时区</dt><dd className="mt-1 font-mono">{current.timezone ?? '未知 / 未记录'}</dd></div><div><dt className="text-muted-foreground">精力</dt><dd className="mt-1 font-mono">{displayRelationshipValue(current.energy)}</dd></div><div><dt className="text-muted-foreground">困倦</dt><dd className="mt-1 font-mono">{displayRelationshipValue(current.sleepiness)}</dd></div><div><dt className="text-muted-foreground">节律</dt><dd className="mt-1 break-all font-mono">{typeof current.circadian === 'string' ? current.circadian : JSON.stringify(current.circadian ?? '未知 / 未记录')}</dd></div></dl>}</CardContent></Card>
 }
 
 export function SoulPage() {
@@ -271,6 +275,7 @@ export function SoulPage() {
   const [payload, setPayload] = useState<SoulStatePayload | null>(null)
   const [relationshipOptions, setRelationshipOptions] = useState<RelationshipItem[]>([])
   const [relationshipOptionsLoading, setRelationshipOptionsLoading] = useState(false)
+  const [selectedRelationship, setSelectedRelationship] = useState<RelationshipItem | null>(null)
   const subjectId = searchParams.get('subject_principal_id') ?? ''
   const fromTs = parseTimestampParam(searchParams.get('from_ts'))
   const toTs = parseTimestampParam(searchParams.get('to_ts'))
@@ -289,7 +294,9 @@ export function SoulPage() {
     const ref = relationship.people_ref
     if (!ref || !relationship.values || relationship.revision === null) return null
     const locator = String(ref.locator ?? subjectId)
-    const selected = relationshipOptions.find((item) => item.subject_principal_id === locator)
+    const selected = selectedRelationship?.subject_principal_id === locator
+      ? selectedRelationship
+      : relationshipOptions.find((item) => item.subject_principal_id === locator)
     if (!selected) return null
     return {
       ...selected,
@@ -302,12 +309,11 @@ export function SoulPage() {
       object_ref: ref,
       calibration: relationship.calibration ?? { available: false, reason_code: 'relationship_unknown' },
     }
-  }, [payload, relationshipOptions, subjectId])
+  }, [payload, relationshipOptions, selectedRelationship, subjectId])
 
   const loadBots = useCallback(async () => scopeOptionsFor(await getScopeOptions(), ['bot']), [])
   const loadSessions = useCallback(async () => {
-    const options = scopeOptionsFor(await getScopeOptions(), ['session'])
-    return botId ? options.filter((option) => option.description?.startsWith(`${botId} ·`)) : options
+    return groupSessionOptions(scopeOptionsFor(await getScopeOptions(), ['session']), botId)
   }, [botId])
 
   useEffect(() => {
@@ -325,6 +331,24 @@ export function SoulPage() {
       .finally(() => { if (active && !controller.signal.aborted) setRelationshipOptionsLoading(false) })
     return () => { active = false; controller.abort() }
   }, [scope])
+
+  useEffect(() => {
+    if (!scope || !subjectId) {
+      setSelectedRelationship(null)
+      return
+    }
+    const controller = new AbortController()
+    const userId = subjectId.includes(':user:') ? subjectId.slice(subjectId.lastIndexOf(':user:') + 6) : subjectId
+    getRelationships({ ...scope, user_id: userId, limit: 25, offset: 0 }, controller.signal)
+      .then((value) => {
+        if (controller.signal.aborted) return
+        setSelectedRelationship(value.items.find((item) => item.subject_principal_id === subjectId) ?? value.items[0] ?? null)
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setSelectedRelationship(null)
+      })
+    return () => controller.abort()
+  }, [scope, subjectId])
 
   const loadFormal = useCallback(async () => {
     formalRequestRef.current?.abort()
@@ -378,8 +402,8 @@ export function SoulPage() {
     <div data-slot="soul-page" className="flex flex-col gap-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">Soul 状态与时间线</h1>
-          <p className="text-sm text-muted-foreground">Bot 在当前 canonical 群会话中的 Mood、Concern、关系投影与时间线。</p>
+          <h1 className="text-xl font-bold tracking-tight">心智状态与时间线</h1>
+          <p className="text-sm text-muted-foreground">Bot 在当前群里的心情、关切、关系和时间线。</p>
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={() => void loadFormal()} disabled={!scope || status === 'loading'}>
@@ -395,25 +419,25 @@ export function SoulPage() {
 
       <Card>
         <CardHeader className="py-4">
-          <CardTitle>Soul 作用域状态</CardTitle>
-          <CardDescription>Mood、Concern、Timeline 与关系仅按真实 Bot + canonical group session 读取；不接受默认 Bot、私聊或伪群作用域。</CardDescription>
+          <CardTitle>当前群心智</CardTitle>
+          <CardDescription>心情、关切、时间线和关系只按所选 Bot 和群读取，不接受私聊或未绑定群。</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 pt-0 md:grid-cols-3 lg:grid-cols-5">
           <ScopeSelect value={botId || undefined} loadOptions={loadBots} label="Bot" onValueChange={(value) => pagination.setFilters({ bot_id: value, session_id: null, subject_principal_id: null })} />
           <ScopeSelect value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" disabled={!botId} onValueChange={(value) => pagination.setFilters({ session_id: value, subject_principal_id: null })} />
-          <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium"><span>群友 principal</span><select className="h-8 min-w-0 rounded-md border bg-background px-2 font-mono text-xs font-normal" value={subjectId} onChange={(event) => pagination.setFilters({ subject_principal_id: event.target.value || null })} disabled={!botId || !sessionId || relationshipOptionsLoading || relationshipOptions.length === 0}><option value="">{relationshipOptionsLoading ? '正在读取当前群友…' : '选择当前群友'}</option>{relationshipOptions.map((item) => <option key={item.subject_principal_id} value={item.subject_principal_id}>{item.person.display_name} · {item.person.user_id}</option>)}{subjectId && !relationshipOptions.some((item) => item.subject_principal_id === subjectId) ? <option value={subjectId}>{subjectId}（当前深链）</option> : null}</select><span className="text-xs font-normal text-muted-foreground">选项来自当前 Bot + canonical 群会话；subject principal 不跨 Scope 复用</span></label>
+          <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium"><span>群友</span><select className="h-8 min-w-0 rounded-md border bg-background px-2 font-mono text-xs font-normal" value={subjectId} onChange={(event) => pagination.setFilters({ subject_principal_id: event.target.value || null })} disabled={!botId || !sessionId || relationshipOptionsLoading || relationshipOptions.length === 0}><option value="">{relationshipOptionsLoading ? '正在读取当前群友…' : '选择当前群友'}</option>{relationshipOptions.map((item) => <option key={item.subject_principal_id} value={item.subject_principal_id}>{item.person.display_name} · {item.person.user_id}</option>)}{subjectId && !relationshipOptions.some((item) => item.subject_principal_id === subjectId) ? <option value={subjectId}>{subjectId}（当前链接）</option> : null}</select><span className="text-xs font-normal text-muted-foreground">名单来自当前 Bot 和群，不会跨群复用</span></label>
           <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium"><span>开始时间</span><Input type="datetime-local" value={localDateTimeValue(fromTs)} onChange={(event) => pagination.setFilters({ from_ts: timestampFromInput(event.target.value) })} disabled={!scope} /><span className="text-xs font-normal text-muted-foreground">留空表示不限</span></label>
           <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium"><span>结束时间</span><Input type="datetime-local" value={localDateTimeValue(toTs)} onChange={(event) => pagination.setFilters({ to_ts: timestampFromInput(event.target.value) })} disabled={!scope} /><span className="text-xs font-normal text-muted-foreground">按本地时区转为 Unix 秒</span></label>
         </CardContent>
       </Card>
 
-      <QueryState status={status} error={error} onRetry={() => void loadFormal()} title={!scope ? '请选择真实 Bot 与群会话' : undefined} description={!scope ? 'Soul 不接受默认 Bot、私聊或伪群作用域。' : undefined}>
+      <QueryState status={status} error={error} onRetry={() => void loadFormal()} title={!scope ? '请选择 Bot 与群' : undefined} description={!scope ? '心智页只读取已绑定的群，不接受私聊或未绑定群。' : undefined}>
         {payload ? <div className="flex flex-col gap-5">
-          {formalUnavailable ? <Alert><AlertCircleIcon /><AlertTitle>正式 scoped Soul 数据 unavailable</AlertTitle><AlertDescription>{reasonText(payload.source.reason_code)}。下方正式区域会保持 unavailable/unknown；不会用未归属旧表内容伪装成当前 Scope。</AlertDescription></Alert> : null}
+          {formalUnavailable ? <Alert><AlertCircleIcon /><AlertTitle>心智数据不可用</AlertTitle><AlertDescription>{reasonText(payload.source.reason_code)}。下面会保持空白，不会用其他群的旧数据顶上。</AlertDescription></Alert> : null}
 
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="overflow-hidden border-primary/15 bg-gradient-to-br from-card to-primary/5 lg:col-span-2">
-              <CardHeader className="border-b bg-muted/10 py-4"><div className="flex items-center gap-2"><ActivityIcon className="size-4 text-primary" /><CardTitle className="text-sm">当前 Mood 图 / 分量</CardTitle></div><CardDescription>正式 SoulScope · revision {payload.mood.revision ?? '未记录'} · policy {payload.mood.policy_version ?? '未记录'}</CardDescription></CardHeader>
+              <CardHeader className="border-b bg-muted/10 py-4"><div className="flex items-center gap-2"><ActivityIcon className="size-4 text-primary" /><CardTitle className="text-sm">当前心情</CardTitle></div><CardDescription>版本 {payload.mood.revision ?? '未记录'}</CardDescription></CardHeader>
               <CardContent className="pt-5">
                 {formalUnavailable ? <SectionUnavailable reason={payload.source.reason_code} /> : <div className="grid gap-5 md:grid-cols-[180px_1fr]"><div className="flex min-h-40 flex-col items-center justify-center rounded-xl border bg-muted/10 text-center"><Badge variant={payload.mood.state === 'known' ? 'secondary' : 'outline'}>{payload.mood.state}</Badge><p className="mt-3 text-xl font-semibold">{payload.mood.value ?? '未知 / 未记录'}</p><p className="mt-1 text-xs text-muted-foreground">当前可信心境</p></div><div>{componentData.length ? <ChartContainer config={componentChartConfig} className="h-[190px] w-full"><BarChart data={componentData} layout="vertical" margin={{ left: 8, right: 16 }}><CartesianGrid horizontal={false} opacity={0.2} /><XAxis type="number" tickLine={false} axisLine={false} /><YAxis dataKey="name" type="category" tickLine={false} axisLine={false} width={88} className="text-[10px]" /><ChartTooltip content={<ChartTooltipContent />} /><Bar dataKey="value" fill="var(--chart-2)" radius={4} /></BarChart></ChartContainer> : <div className="flex h-[190px] items-center justify-center rounded-xl border text-sm text-muted-foreground">无可信分量</div>}</div></div>}
                 {!formalUnavailable ? <div className="mt-4"><EvidenceList evidence={payload.mood.evidence} /></div> : null}
@@ -421,15 +445,15 @@ export function SoulPage() {
             </Card>
 
             <Card className="overflow-hidden border-pink-500/15 bg-gradient-to-br from-card to-pink-500/5">
-              <CardHeader className="border-b bg-muted/10 py-4"><div className="flex items-center gap-2"><HeartHandshakeIcon className="size-4 text-pink-500" /><CardTitle className="text-sm">关系投影</CardTitle></div><CardDescription>正式 SoulScope · revision {payload.relationship.revision ?? '未记录'}</CardDescription></CardHeader>
+              <CardHeader className="border-b bg-muted/10 py-4"><div className="flex items-center gap-2"><HeartHandshakeIcon className="size-4 text-pink-500" /><CardTitle className="text-sm">关系</CardTitle></div><CardDescription>版本 {payload.relationship.revision ?? '未记录'}</CardDescription></CardHeader>
               <CardContent className="flex flex-col gap-4 pt-5">
-                {formalUnavailable ? <SectionUnavailable reason={payload.source.reason_code} /> : <><div className="rounded-xl border bg-background/50 p-4 text-center"><Badge variant={payload.relationship.state === 'known' ? 'secondary' : 'outline'}>{payload.relationship.state}</Badge><p className="mt-3 text-3xl font-bold font-mono">{payload.relationship.affinity ?? '—'}</p><p className="text-xs text-muted-foreground">Affinity</p>{typeof payload.relationship.affinity === 'number' ? <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-pink-500" style={{ width: `${Math.max(0, Math.min(100, payload.relationship.affinity <= 1 ? payload.relationship.affinity * 100 : payload.relationship.affinity))}%` }} /></div> : null}</div><EvidenceList evidence={payload.relationship.evidence} />{(payload.relationship.evidence_summaries?.length ?? 0) > 0 ? <div className="rounded-lg border bg-muted/10 p-3"><div className="mb-2 flex flex-wrap items-center gap-2"><Badge variant="outline">可读历史摘要</Badge><Badge variant="secondary">只读</Badge><Badge variant="outline">不改变好感度</Badge></div><div className="grid gap-1.5 text-xs text-muted-foreground">{payload.relationship.evidence_summaries!.map((summary, index) => <p key={`${index}-${summary.slice(0, 24)}`} className="rounded border bg-background/70 px-2 py-1.5">{summary}</p>)}</div></div> : null}{payload.relationship.people_ref ? <ObjectDeepLink to="/people" objectRef={payload.relationship.people_ref}>打开当前人物关系</ObjectDeepLink> : null}{relationshipItem ? <RelationshipCalibrationPanel item={relationshipItem} query={{ bot_id: botId, session_id: sessionId, visibility: 'group', user_id: relationshipItem.person.user_id, subject_principal_id: relationshipItem.subject_principal_id }} onChanged={() => void loadFormal()} /> : <Alert><AlertTitle>当前关系未知</AlertTitle><AlertDescription>请输入当前群友的 canonical subject principal；没有正式关系行时不会创建默认 0，也不会提供校准写入口。</AlertDescription></Alert>}</>}
+                {formalUnavailable ? <SectionUnavailable reason={payload.source.reason_code} /> : <><div className="rounded-xl border bg-background/50 p-4 text-center"><Badge variant={payload.relationship.state === 'known' ? 'secondary' : 'outline'}>{payload.relationship.state === 'known' ? '已记录' : '未记录'}</Badge><p className="mt-3 text-3xl font-bold font-mono">{payload.relationship.affinity ?? '—'}</p><p className="text-xs text-muted-foreground">好感</p>{typeof payload.relationship.affinity === 'number' ? <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-pink-500" style={{ width: `${Math.max(0, Math.min(100, payload.relationship.affinity <= 1 ? payload.relationship.affinity * 100 : payload.relationship.affinity))}%` }} /></div> : null}</div><EvidenceList evidence={payload.relationship.evidence} />{(payload.relationship.evidence_summaries?.length ?? 0) > 0 ? <div className="rounded-lg border bg-muted/10 p-3"><div className="mb-2 flex flex-wrap items-center gap-2"><Badge variant="outline">可读历史摘要</Badge><Badge variant="secondary">只读</Badge><Badge variant="outline">不改变好感度</Badge></div><div className="grid gap-1.5 text-xs text-muted-foreground">{payload.relationship.evidence_summaries!.map((summary, index) => <p key={`${index}-${summary.slice(0, 24)}`} className="rounded border bg-background/70 px-2 py-1.5">{summary}</p>)}</div></div> : null}{payload.relationship.people_ref ? <ObjectDeepLink to="/people" objectRef={payload.relationship.people_ref}>打开当前人物关系</ObjectDeepLink> : null}{relationshipItem ? <RelationshipCalibrationPanel item={relationshipItem} query={{ bot_id: botId, session_id: sessionId, visibility: 'group', user_id: relationshipItem.person.user_id, subject_principal_id: relationshipItem.subject_principal_id }} onChanged={() => void loadFormal()} /> : <Alert><AlertTitle>当前关系未知</AlertTitle><AlertDescription>请先选择当前群友。没有正式关系记录时不会写成 0，也不能校准。</AlertDescription></Alert>}</>}
               </CardContent>
             </Card>
           </div>
 
           <Card className="overflow-hidden border-violet-500/20 bg-gradient-to-br from-card to-violet-500/[0.04]">
-            <CardHeader className="border-b bg-muted/10 py-4"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><GitBranchIcon className="size-4 text-violet-500" /><CardTitle className="text-sm">关系可解释轨迹</CardTitle></div><label className="flex items-center gap-2 text-xs font-medium"><span>维度</span><select className="h-8 rounded-md border bg-background px-2 font-mono text-xs" value={relationshipDimension} onChange={(event) => pagination.setFilters({ relationship_dimension: event.target.value })}>{RELATIONSHIP_DIMENSIONS.map(([key, label]) => <option key={key} value={key}>{label} · {key}</option>)}</select></label></div><CardDescription>automatic / manual / effective 来自同一 Scope 的真实 RelationshipEvent 与 calibration audit；空层保持断点</CardDescription></CardHeader>
+            <CardHeader className="border-b bg-muted/10 py-4"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><GitBranchIcon className="size-4 text-violet-500" /><CardTitle className="text-sm">关系变化</CardTitle></div><label className="flex items-center gap-2 text-xs font-medium"><span>维度</span><select className="h-8 rounded-md border bg-background px-2 font-mono text-xs" value={relationshipDimension} onChange={(event) => pagination.setFilters({ relationship_dimension: event.target.value })}>{RELATIONSHIP_DIMENSIONS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label></div><CardDescription>自动学习、人工调整和最终生效值来自本群真实事件；缺的层就留空</CardDescription></CardHeader>
             <CardContent className="grid gap-5 pt-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(20rem,0.8fr)]">{formalUnavailable || !subjectId ? <SectionUnavailable reason={!subjectId ? 'relationship_subject_required' : payload.source.reason_code} /> : <><div className="min-w-0"><RelationshipTrajectory history={payload.relationship_history?.items ?? []} dimension={relationshipDimension} /></div><div className="min-w-0"><div className="mb-3 flex items-center gap-2 text-xs font-semibold"><MessageSquareQuoteIcon className="size-4 text-muted-foreground" />导致变化的真实来源</div><RelationshipHistoryList history={payload.relationship_history?.items ?? []} /></div></>}</CardContent>
           </Card>
 
@@ -444,20 +468,20 @@ export function SoulPage() {
 
           <div className="grid gap-4 lg:grid-cols-3">
             <Card>
-              <CardHeader className="border-b bg-muted/10 py-4"><div className="flex items-center gap-2"><TargetIcon className="size-4 text-primary" /><CardTitle className="text-sm">Concern · 当前关切</CardTitle></div><CardDescription>正式 SoulScope 共享窗口记录</CardDescription></CardHeader>
-              <CardContent className="flex flex-col gap-3 pt-5">{formalUnavailable || payload.concerns.page.total_status === 'unavailable' ? <SectionUnavailable reason={payload.concerns.page.reason_code ?? payload.source.reason_code} /> : payload.concerns.items.length ? payload.concerns.items.map((item) => <div key={item.id} className="rounded-lg border bg-muted/10 p-3"><div className="flex items-start justify-between gap-3"><p className="text-sm font-semibold">{item.topic || item.summary || '未命名关切'}</p><Badge variant="outline">revision {item.revision ?? '—'}</Badge></div><p className="mt-1 text-[10px] text-muted-foreground">最近触发 {formatTime(item.last_triggered)}</p><div className="mt-3"><EvidenceList evidence={item.evidence} /></div></div>) : <p className="p-6 text-center text-sm text-muted-foreground">当前 Scope 没有关切记录。</p>}</CardContent>
+              <CardHeader className="border-b bg-muted/10 py-4"><div className="flex items-center gap-2"><TargetIcon className="size-4 text-primary" /><CardTitle className="text-sm">当前关切</CardTitle></div><CardDescription>本群正在记着的事</CardDescription></CardHeader>
+              <CardContent className="flex flex-col gap-3 pt-5">{formalUnavailable || payload.concerns.page.total_status === 'unavailable' ? <SectionUnavailable reason={payload.concerns.page.reason_code ?? payload.source.reason_code} /> : payload.concerns.items.length ? payload.concerns.items.map((item) => <div key={item.id} className="rounded-lg border bg-muted/10 p-3"><div className="flex items-start justify-between gap-3"><p className="text-sm font-semibold">{item.topic || item.summary || '未命名关切'}</p><Badge variant="outline">版本 {item.revision ?? '—'}</Badge></div><p className="mt-1 text-[10px] text-muted-foreground">最近触发 {formatTime(item.last_triggered)}</p><div className="mt-3"><EvidenceList evidence={item.evidence} /></div></div>) : <p className="p-6 text-center text-sm text-muted-foreground">当前群没有关切记录。</p>}</CardContent>
             </Card>
 
             <Card>
-              <CardHeader className="border-b bg-muted/10 py-4"><div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Clock3Icon className="size-4 text-primary" /><CardTitle className="text-sm">Timeline · 时间线</CardTitle></div><TimeAnchorsExplorer botId={botId} /></div><CardDescription>正式 SoulScope 共享窗口事件锚点 · 已应用时间范围</CardDescription></CardHeader>
-              <CardContent className="pt-5">{formalUnavailable || payload.timeline.page.total_status === 'unavailable' ? <SectionUnavailable reason={payload.timeline.page.reason_code ?? payload.source.reason_code} /> : payload.timeline.items.length ? <div className="ml-2 flex flex-col gap-5 border-l-2 border-muted pl-5">{payload.timeline.items.map((item) => <div key={item.id} className="relative"><span className="absolute -left-[27px] top-1 size-3 rounded-full border-2 border-background bg-primary" /><div className="rounded-lg border bg-muted/10 p-3"><p className="text-sm font-semibold">{item.event_summary || item.summary || '未命名事件'}</p><p className="mt-1 text-[10px] text-muted-foreground">{item.event_type || 'unknown'} · {formatTime(item.timestamp)} · revision {item.revision ?? '未记录'}</p><div className="mt-3"><EvidenceList evidence={item.evidence} /></div></div></div>)}</div> : <p className="p-6 text-center text-sm text-muted-foreground">当前 Scope 没有时间线记录。</p>}</CardContent>
+              <CardHeader className="border-b bg-muted/10 py-4"><div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Clock3Icon className="size-4 text-primary" /><CardTitle className="text-sm">时间线</CardTitle></div><TimeAnchorsExplorer botId={botId} /></div><CardDescription>本群事件锚点，已按上面的时间范围过滤</CardDescription></CardHeader>
+              <CardContent className="pt-5">{formalUnavailable || payload.timeline.page.total_status === 'unavailable' ? <SectionUnavailable reason={payload.timeline.page.reason_code ?? payload.source.reason_code} /> : payload.timeline.items.length ? <div className="ml-2 flex flex-col gap-5 border-l-2 border-muted pl-5">{payload.timeline.items.map((item) => <div key={item.id} className="relative"><span className="absolute -left-[27px] top-1 size-3 rounded-full border-2 border-background bg-primary" /><div className="rounded-lg border bg-muted/10 p-3"><p className="text-sm font-semibold">{item.event_summary || item.summary || '未命名事件'}</p><p className="mt-1 text-[10px] text-muted-foreground">{item.event_type || 'unknown'} · {formatTime(item.timestamp)} · 版本 {item.revision ?? '未记录'}</p><div className="mt-3"><EvidenceList evidence={item.evidence} /></div></div></div>)}</div> : <p className="p-6 text-center text-sm text-muted-foreground">当前群没有时间线记录。</p>}</CardContent>
             </Card>
             <SoulContextCard context={payload.soul_context} />
           </div>
 
-          <div className="flex flex-col gap-2"><p className="text-xs text-muted-foreground">正式 Soul API 对 Concern 与 Timeline 使用同一组 limit/offset；下方分页会同时移动两个列表的共享窗口。</p><PaginationControls page={payload.concerns.page} onOffsetChange={pagination.setOffset} onLimitChange={pagination.setLimit} /></div>
+          <div className="flex flex-col gap-2"><p className="text-xs text-muted-foreground">关切和时间线共用下面的分页，翻页会同时移动这两份列表。</p><PaginationControls page={payload.concerns.page} onOffsetChange={pagination.setOffset} onLimitChange={pagination.setLimit} /></div>
 
-          <Alert><AlertTitle>运行时一致性边界</AlertTitle><AlertDescription>正式 mutation：{payload.capabilities.mutate.available ? 'available' : `unavailable（${reasonText(payload.capabilities.mutate.reason_code)}）`}；runtime refresh：{payload.runtime_refresh.status}。页面仅展示正式 Scope 数据，不会展示未归属的旧数据。</AlertDescription></Alert>
+          <Alert><AlertTitle>写入与刷新</AlertTitle><AlertDescription>改关系：{payload.capabilities.mutate.available ? '可用' : `不可用（${reasonText(payload.capabilities.mutate.reason_code)}）`}；强制自省：{payload.runtime_refresh.status === 'available' || payload.runtime_refresh.status === 'refreshed' ? '可用' : '不可用'}。本页只展示当前群的正式数据。</AlertDescription></Alert>
         </div> : null}
       </QueryState>
     </div>

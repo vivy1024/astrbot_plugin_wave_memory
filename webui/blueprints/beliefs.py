@@ -216,12 +216,24 @@ def _memory_evidence_available(container, scope: RuntimeScope, source_memory_id)
         columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
         required = {"id", "bot_id", "session_id", "visibility", "resolution_state", "quarantine"}
         if not required <= columns:
-            return False
+            return conn.execute(
+                "SELECT 1 FROM memories WHERE id=? AND (group_id=? OR session_id=?) "
+                "AND COALESCE(quarantine,0)=0 LIMIT 1",
+                (int(source_memory_id), scope.session.conversation_id, scope.session.id),
+            ).fetchone() is not None
         row = conn.execute(
             "SELECT 1 FROM memories WHERE id=? AND bot_id=? AND session_id=? AND visibility=? "
             "AND resolution_state='resolved' AND COALESCE(quarantine,0)=0 LIMIT 1",
             (int(source_memory_id), scope.bot_id, scope.session.id, scope.visibility),
         ).fetchone()
+        if row is None and scope.visibility == "group":
+            row = conn.execute(
+                "SELECT 1 FROM memories WHERE id=? AND (group_id=? OR session_id=?) "
+                "AND COALESCE(visibility,'group')='group' "
+                "AND COALESCE(resolution_state,'resolved')='resolved' "
+                "AND COALESCE(quarantine,0)=0 LIMIT 1",
+                (int(source_memory_id), scope.session.conversation_id, scope.session.id),
+            ).fetchone()
         return row is not None
     except Exception:
         return False

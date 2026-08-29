@@ -308,8 +308,8 @@ export function ImportPage() {
             <Field className="lg:col-span-2"><FieldLabel>导入来源</FieldLabel><Select value={sourceId} onValueChange={(value) => { setSourceId(value); resetPreflight() }}><SelectTrigger><SelectValue placeholder="选择真实来源" /></SelectTrigger><SelectContent><SelectGroup>{sources.map((source) => <SelectItem key={source.id} value={source.id} disabled={!source.has_adapter}>{source.name} · {source.count.toLocaleString('zh-CN')} 条{source.has_adapter ? '' : '（无 adapter）'}</SelectItem>)}</SelectGroup></SelectContent></Select><FieldDescription>{selectedSource?.description ?? '来源必须来自当前 discovery 结果。'}</FieldDescription></Field>
           </QueryState>
           <Field><FieldLabel>最大导入条数</FieldLabel><Input type="number" min={1} max={50000} value={limit} disabled={busy || tracking} onChange={(event) => { setLimit(Math.max(1, Math.min(50000, Number(event.target.value) || 1))); resetPreflight() }} /></Field>
-          <Field><FieldLabel>同步提取 Tag</FieldLabel><div className="flex h-10 items-center justify-between rounded-md border px-3"><span className="text-sm">{extractTags ? '开启' : '关闭'}</span><Switch checked={extractTags} disabled={busy || tracking} onCheckedChange={(value) => { setExtractTags(value); resetPreflight() }} /></div></Field>
-          <Field><FieldLabel>Tag 批大小</FieldLabel><Input type="number" min={1} max={50} value={tagBatchSize} disabled={!extractTags || busy || tracking} onChange={(event) => { setTagBatchSize(Math.max(1, Math.min(50, Number(event.target.value) || 1))); resetPreflight() }} /><FieldDescription>固定使用 missing_only，不覆盖已有 Tag。</FieldDescription></Field>
+          <Field><FieldLabel>同步提取标签</FieldLabel><div className="flex h-10 items-center justify-between rounded-md border px-3"><span className="text-sm">{extractTags ? '开启' : '关闭'}</span><Switch checked={extractTags} disabled={busy || tracking} onCheckedChange={(value) => { setExtractTags(value); resetPreflight() }} /></div></Field>
+          <Field><FieldLabel>标签批大小</FieldLabel><Input type="number" min={1} max={50} value={tagBatchSize} disabled={!extractTags || busy || tracking} onChange={(event) => { setTagBatchSize(Math.max(1, Math.min(50, Number(event.target.value) || 1))); resetPreflight() }} /><FieldDescription>固定只补缺，不覆盖已有标签。</FieldDescription></Field>
           <div className="flex items-end"><Button disabled={!sourceId || busy || tracking} onClick={() => void inspect()}>{busy && !preflight ? <Loader2Icon className="animate-spin" /> : <SearchCheckIcon />}运行真实预检</Button></div>
         </div>
 
@@ -323,7 +323,7 @@ export function ImportPage() {
     </Card>
 
     {preflight ? <Card>
-      <CardHeader><CardTitle className="text-base">2. 结构化 preflight</CardTitle><CardDescription>预检于 {formatTime(preflight.checked_at)} 完成 · 来源状态：{preflight.source_status === 'available' ? '可用' : '未知'}。请核对后再执行。</CardDescription></CardHeader>
+      <CardHeader><CardTitle className="text-base">2. 结构化预检</CardTitle><CardDescription>预检于 {formatTime(preflight.checked_at)} 完成 · 来源状态：{preflight.source_status === 'available' ? '可用' : '未知'}。请核对后再执行。</CardDescription></CardHeader>
       <CardContent className="flex flex-col gap-5">
         <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-4">
           <div className="rounded-lg border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">数据源</p><p className="mt-2 font-semibold">{preflight.source.name}</p><p className="mt-1 text-xs text-muted-foreground">{preflight.source.description}</p></div>
@@ -332,8 +332,8 @@ export function ImportPage() {
           <div className="rounded-lg border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">预计待导入</p><p className="mt-2 text-xl font-semibold">{preflight.preview.estimated_remaining.toLocaleString('zh-CN')}</p></div>
           <div className="rounded-lg border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">预计已导入</p><p className="mt-2 text-xl font-semibold">{preflight.preview.estimated_imported.toLocaleString('zh-CN')}</p></div>
           <div className="rounded-lg border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">重复估计</p><p className="mt-2 text-xl font-semibold">{preflightDuplicateEstimate.toLocaleString('zh-CN')}</p></div>
-          <div className="rounded-lg border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">向量处理</p><p className="mt-2 font-semibold">{preflight.preview.re_embed ? '会重新生成 embedding' : '保留来源向量策略'}</p></div>
-          <div className="rounded-lg border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">Tag 处理</p><p className="mt-2 font-semibold">{preflight.preview.extract_tags ? `同步提取 · 每批 ${tagBatchSize}` : '本次不提取'}</p></div>
+          <div className="rounded-lg border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">向量处理</p><p className="mt-2 font-semibold">{preflight.preview.re_embed ? '会重新生成向量' : '保留来源向量策略'}</p></div>
+          <div className="rounded-lg border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">标签处理</p><p className="mt-2 font-semibold">{preflight.preview.extract_tags ? `同步提取 · 每批 ${tagBatchSize}` : '本次不提取'}</p></div>
         </div>
         <div className="flex flex-wrap items-center gap-3"><Button disabled={busy || tracking || Boolean(jobId && activeStatuses.has(job?.status ?? ''))} onClick={() => void start()}>{busy ? <Loader2Icon className="animate-spin" /> : <PlayIcon />}确认创建 Durable Job</Button><p className="text-xs text-muted-foreground">token 不展示、不编辑，且仅用于这次来源与参数完全一致的导入。</p></div>
       </CardContent>
@@ -346,7 +346,7 @@ export function ImportPage() {
         <div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.round(progress.ratio * 100)}%` }} /></div>
         <div className="grid gap-3 md:grid-cols-4">
           <div className="rounded-lg border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">已处理</p><p className="mt-1 text-lg font-semibold">{progress.processed.toLocaleString('zh-CN')}</p></div>
-          <div className="rounded-lg border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">已打 Tag</p><p className="mt-1 text-lg font-semibold">{progress.tagged.toLocaleString('zh-CN')}</p></div>
+          <div className="rounded-lg border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">已打标签</p><p className="mt-1 text-lg font-semibold">{progress.tagged.toLocaleString('zh-CN')}</p></div>
           <div className="rounded-lg border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">跳过 / 重复</p><p className="mt-1 text-lg font-semibold">{progress.skipped.toLocaleString('zh-CN')}</p></div>
           <div className="rounded-lg border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">失败</p><p className="mt-1 text-lg font-semibold">{progress.errors.toLocaleString('zh-CN')}</p></div>
         </div>
@@ -358,10 +358,10 @@ export function ImportPage() {
     </Card> : jobId ? <Card><CardContent className="py-6">{jobError ? <Alert variant="destructive"><AlertCircleIcon /><AlertTitle>无法恢复 URL 中的导入任务</AlertTitle><AlertDescription className="flex flex-col gap-3"><span>{jobError instanceof Error ? jobError.message : 'job_id 无效、已删除或当前账号不可访问。'}</span><span className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="outline" onClick={() => setPollVersion((value) => value + 1)}><RefreshCwIcon />重试</Button><Button type="button" size="sm" variant="ghost" onClick={clearJob}>清除无效任务引用</Button></span></AlertDescription></Alert> : <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2Icon className="animate-spin" />正在通过 URL 中的 job_id 恢复导入任务...</div>}</CardContent></Card> : null}
 
     <Card>
-      <CardHeader><CardTitle className="text-base">4. 结果复核</CardTitle><CardDescription>导入完成后分别检查新数据、Tag 审计和系统覆盖率。</CardDescription></CardHeader>
+      <CardHeader><CardTitle className="text-base">4. 结果复核</CardTitle><CardDescription>导入完成后分别检查新数据、标签审计和系统覆盖率。</CardDescription></CardHeader>
       <CardContent className="grid gap-3 md:grid-cols-3">
         <Button asChild variant="outline" size="lg"><Link to="/memories"><DatabaseIcon />查看新导入记忆<ArrowRightIcon /></Link></Button>
-        <Button asChild variant="outline" size="lg"><Link to={`${maintenancePath}?tab=workbench`}><TagsIcon />复核 Tag 与审计<ArrowRightIcon /></Link></Button>
+        <Button asChild variant="outline" size="lg"><Link to={`${maintenancePath}?tab=workbench`}><TagsIcon />复核标签与审计<ArrowRightIcon /></Link></Button>
         <Button asChild variant="outline" size="lg"><Link to="/dashboard"><RefreshCwIcon />查看覆盖率变化<ArrowRightIcon /></Link></Button>
       </CardContent>
     </Card>

@@ -14,7 +14,7 @@ function RenamedPath({ to }: { to: string }) {
 }
 
 function NotFoundPage() {
-  return <main className="mx-auto w-full max-w-2xl p-6"><Card><CardHeader><CardTitle>页面不存在</CardTitle><CardDescription>该地址已废弃或从未存在，不会猜测 Scope 或把旧裸 ID 转换成新链接。</CardDescription></CardHeader><CardContent>请从当前规范导航重新选择真实 Bot、会话和对象。</CardContent></Card></main>
+  return <main className="mx-auto w-full max-w-2xl p-6"><Card><CardHeader><CardTitle>页面不存在</CardTitle><CardDescription>该地址已废弃或从未存在，不会猜测群或把旧编号转换成新链接。</CardDescription></CardHeader><CardContent>请从当前规范导航重新选择真实 Bot、会话和对象。</CardContent></Card></main>
 }
 
 export function AppShell() {

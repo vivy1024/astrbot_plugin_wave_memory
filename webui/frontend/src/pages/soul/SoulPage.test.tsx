@@ -59,7 +59,7 @@ describe('SoulPage 仅加载正式 Scope 数据', () => {
 
     expect(await screen.findByText('平静')).toBeVisible()
     expect(screen.queryByText(/只读审计/)).not.toBeInTheDocument()
-    expect(screen.getByText(/同一组 limit\/offset/)).toBeVisible()
+    expect(screen.getByText(/关切和时间线共用下面的分页/)).toBeVisible()
     expect(api.formal).toHaveBeenCalledWith(expect.objectContaining({ bot_id: 'bot-a', session_id: 'session-a' }), 25, 0, expect.anything(), { from_ts: undefined, to_ts: undefined })
   })
 
@@ -83,10 +83,10 @@ describe('SoulPage 仅加载正式 Scope 数据', () => {
     })
     render(<MemoryRouter initialEntries={['/soul?bot_id=bot-a&session_id=session-a&subject_principal_id=qq:user:u1&from_ts=90&to_ts=110']}><SoulPage /></MemoryRouter>)
 
-    expect(await screen.findByText('关系可解释轨迹')).toBeVisible()
+    expect(await screen.findByText('关系变化')).toBeVisible()
     expect(screen.getByText('真实消息导致变化')).toBeVisible()
     expect(screen.getByText('memory:101')).toBeVisible()
-    expect(screen.getByText('Circadian Soul State')).toBeVisible()
+    expect(screen.getByText('作息与精力')).toBeVisible()
     expect(api.formal).toHaveBeenCalledWith(expect.objectContaining({ bot_id: 'bot-a', session_id: 'session-a', subject_principal_id: 'qq:user:u1' }), 25, 0, expect.anything(), { from_ts: 90, to_ts: 110 })
   })
 

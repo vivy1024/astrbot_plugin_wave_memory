@@ -264,7 +264,7 @@ export function MaintainPage() {
 
   return <div data-slot="maintain-workbench" className="flex flex-col gap-6">
     <div className="grid gap-4 md:grid-cols-4">
-      <Card><CardHeader className="pb-2"><CardDescription>系统总 Tag 数</CardDescription><CardTitle className="font-mono text-2xl">{Number(quality?.total_tags ?? 0).toLocaleString('zh-CN')}</CardTitle></CardHeader></Card>
+      <Card><CardHeader className="pb-2">        <CardDescription>系统总标签数</CardDescription><CardTitle className="font-mono text-2xl">{Number(quality?.total_tags ?? 0).toLocaleString('zh-CN')}</CardTitle></CardHeader></Card>
       <Card><CardHeader className="pb-2"><CardDescription>记忆标签覆盖率</CardDescription><CardTitle className="font-mono text-2xl">{coverage}</CardTitle></CardHeader></Card>
       <Card><CardHeader className="pb-2"><CardDescription>待审核治理建议</CardDescription><CardTitle className="font-mono text-2xl text-amber-500">{pendingCount}</CardTitle></CardHeader></Card>
       <Card><CardHeader className="pb-2"><CardDescription>可提取无标签记忆</CardDescription><CardTitle className="font-mono text-2xl">{extractableCount.toLocaleString('zh-CN')}</CardTitle><CardDescription>短文本跳过 {skippedShortCount.toLocaleString('zh-CN')}{orphanRefs ? ` · 孤儿关联 ${orphanRefs.toLocaleString('zh-CN')}` : ''}</CardDescription></CardHeader></Card>
@@ -277,7 +277,7 @@ export function MaintainPage() {
           <TabsList><TabsTrigger value="extract">批量标签提取</TabsTrigger><TabsTrigger value="audit">质量审计与建议审核</TabsTrigger></TabsList>
           <TabsContent value="extract" className="mt-5 flex flex-col gap-4">
             <TagExtractionConfigPanel
-              title="维护中心 Tag 提取配置"
+              title="维护中心标签提取配置"
               description="每次只提交一个有界 durable batch；后端固定 missing_only，避免改写已有标签。"
               onOptionsChange={handleTagOptionsChange}
               disabled={running}
@@ -302,7 +302,7 @@ export function MaintainPage() {
                 <Field className="min-w-52"><FieldLabel>审计策略</FieldLabel><select value={auditStrategy} disabled={running} onChange={(event) => setAuditStrategy(event.target.value as TagAuditStrategy)} className="h-9 w-full rounded-md border bg-background px-3 text-sm"><option value="mixed">混合采样</option><option value="low_quality">低质量优先</option><option value="high_freq">高频标签优先</option></select></Field>
                 <Field className="w-32"><FieldLabel>扫描数量</FieldLabel><Input type="number" min={10} max={2000} value={auditCount} disabled={running} onChange={(event) => setAuditCount(Math.max(10, Math.min(2000, Number(event.target.value) || 10)))} /></Field>
                 <Button size="sm" disabled={running} onClick={() => void handleStartAudit()}>{running && jobType === 'audit' ? <Loader2Icon className="animate-spin" /> : <RefreshCwIcon />}启动质量审计</Button>
-                {suggestions.length ? <Button asChild size="sm" variant="outline"><Link to="/tags?tab=governance">在 Tag 工作台审核</Link></Button> : null}
+                {suggestions.length ? <Button asChild size="sm" variant="outline"><Link to="/tags?tab=governance">在标签工作台审核</Link></Button> : null}
               </div>
             </div>
 
@@ -318,7 +318,7 @@ export function MaintainPage() {
               { key: 'actions', header: null, render: () => <Button asChild size="sm" variant="outline"><Link to="/tags?tab=governance">进入工作台</Link></Button> },
             ]}
             renderCardSubtitle={() => <span />}
-            renderCardActions={() => <Button asChild type="button" size="sm" variant="outline"><Link to="/tags?tab=governance">在 Tag 工作台审核</Link></Button>}
+            renderCardActions={() => <Button asChild type="button" size="sm" variant="outline"><Link to="/tags?tab=governance">在标签工作台审核</Link></Button>}
           /> : <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed py-12 text-center"><HelpCircleIcon className="size-8 text-muted-foreground" /><p className="font-medium">当前没有待审核建议</p><p className="text-xs text-muted-foreground">可启动质量审计生成新的治理建议。</p></div>}
           </TabsContent>
         </Tabs>

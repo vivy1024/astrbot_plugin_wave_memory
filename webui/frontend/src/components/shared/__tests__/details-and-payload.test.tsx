@@ -44,10 +44,38 @@ describe('响应式键盘详情', () => {
     await user.click(trigger)
     expect(await screen.findByRole('dialog')).toHaveAttribute('data-responsive-detail', 'sheet')
     expect(screen.getByText('sha256:abc')).toBeVisible()
-    expect(screen.getByRole('link', { name: '打开证据对象' })).toHaveAttribute('href', '/memories?ref=opaque-evidence-ref')
+    expect(screen.getByRole('link', { name: '打开这条证据' })).toHaveAttribute('href', '/memories?ref=opaque-evidence-ref')
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(trigger).toHaveFocus()
+  })
+
+  it('缺少 evidence 数组时显示内嵌空状态而不是崩溃', () => {
+    setViewport(1024)
+    render(<MemoryRouter><EvidenceList evidence={undefined} /></MemoryRouter>)
+    expect(screen.getByText('当前没有可展示的证据。')).toBeInTheDocument()
+    expect(document.querySelector('[data-evidence-layout="empty"]')).toBeInTheDocument()
+  })
+
+  it('对象 source_scope 显示 bot 与 session，不渲染 [object Object]', () => {
+    setViewport(1024)
+    render(
+      <MemoryRouter>
+        <EvidenceList
+          evidence={[{
+            type: 'memory',
+            id: '12',
+            source_scope: { bot_id: 'yushu', session: { id: '羽书:group:42' }, visibility: 'group' },
+            captured_at: 1_700_000_000,
+            summary: '群友说了句谢谢',
+            availability: 'available',
+          }]}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('群友说了句谢谢')).toBeInTheDocument()
+    expect(screen.getByText('yushu · 羽书:group:42 · group')).toBeInTheDocument()
+    expect(screen.queryByText('[object Object]')).not.toBeInTheDocument()
   })
 })
 
@@ -60,11 +88,11 @@ describe('Trace 与状态展示', () => {
     const raw = JSON.stringify({ request: { prompt: 'hello' }, final_text: `body-${'x'.repeat(50_100)}-TAIL-MARKER` })
     render(<TracePayloadViewer payload={JSON.parse(raw)} rawPayload={raw} onCopy={onCopy} onDownload={onDownload} />)
 
-    await user.click(screen.getByRole('button', { name: '复制完整 Trace 载荷' }))
+    await user.click(screen.getByRole('button', { name: '复制完整注入载荷' }))
     expect(onCopy).toHaveBeenCalledWith(raw)
-    expect(await screen.findByText('完整 Trace 载荷已复制')).toBeInTheDocument()
+    expect(await screen.findByText('完整注入载荷已复制')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: '下载完整 Trace 载荷' }))
+    await user.click(screen.getByRole('button', { name: '下载完整注入载荷' }))
     expect(onDownload).toHaveBeenCalledWith(raw, 'trace-payload.json')
 
     await user.click(screen.getByRole('tab', { name: '完整 JSON' }))
@@ -91,7 +119,8 @@ describe('Trace 与状态展示', () => {
 
   it('EvidenceList 真实空态不创建替代证据', () => {
     render(<MemoryRouter><EvidenceList evidence={[]} /></MemoryRouter>)
-    expect(screen.getByText('当前没有证据')).toBeVisible()
-    expect(screen.getByText(/未使用相似文本或演示记录替代/)).toBeVisible()
+    expect(screen.getByText('当前没有可展示的证据。')).toBeVisible()
+    expect(document.querySelector('[data-evidence-layout="empty"]')).toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
 })

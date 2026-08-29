@@ -183,20 +183,20 @@ export function TraceDetailSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent data-slot="trace-detail-sheet" className="flex w-full flex-col gap-0 pr-0 sm:max-w-4xl sm:pr-2">
         <SheetHeader className="shrink-0 border-b pb-4 pr-6">
-          <SheetTitle>Trace 详情</SheetTitle>
-          <SheetDescription>{detail?.trace_id ? `trace_id: ${detail.trace_id}` : '按需读取请求、预算、通道、命中、过滤、错误与最终文本。'}</SheetDescription>
+          <SheetTitle>注入详情</SheetTitle>
+          <SheetDescription>{detail?.trace_id ? `记录编号：${detail.trace_id}` : '按需读取请求、预算、通道、命中、过滤、错误与最终文本。'}</SheetDescription>
         </SheetHeader>
         <ScrollArea className="flex-1 pr-6">
           <div className="flex flex-col gap-4 py-6">
             {loading ? (
               <><Skeleton className="h-28 w-full" /><Skeleton className="h-64 w-full" /><Skeleton className="h-48 w-full" /></>
             ) : error ? (
-              <Alert variant="destructive"><AlertTriangleIcon /><AlertTitle>详情加载失败</AlertTitle><AlertDescription>{error}。引用不存在、作用域不匹配或版本失效时不会改用裸 ID 或默认 Bot 猜测。</AlertDescription></Alert>
+              <Alert variant="destructive"><AlertTriangleIcon /><AlertTitle>详情加载失败</AlertTitle><AlertDescription>{error}。引用不存在、不属于当前群或版本失效时，不会改用裸编号或默认 Bot 猜测。</AlertDescription></Alert>
             ) : detail ? (
               <>
-                <Alert><AlertTitle>观测与解释边界</AlertTitle><AlertDescription>以下结构化分区用于解释注入链路；对象跳转只使用服务端签发的 opaque ObjectRef。完整载荷仅作为末尾的辅助核对内容。</AlertDescription></Alert>
+                <Alert><AlertTitle>观测与解释边界</AlertTitle><AlertDescription>以下分区用来解释这次回复用了哪些通道；对象跳转只打开服务端给出的本群链接。完整载荷仅作为末尾的辅助核对内容。</AlertDescription></Alert>
 
-                <Section title="请求上下文" description="只展示 trace 实际记录的请求与正式作用域；缺失字段保持未记录。">
+                <Section title="请求上下文" description="只展示这次注入实际记录的请求与当前群；缺失字段保持未记录。">
                   <DetailGrid value={detail.request ?? detail.context} preferredKeys={['bot_profile_id', 'bot_id', 'session_id', 'sender_id', 'scope', 'chat_type', 'message']} omitKeys={['group_id']} />
                 </Section>
 
@@ -212,8 +212,8 @@ export function TraceDetailSheet({
                   })}</div> : <p className="text-sm text-muted-foreground">暂无通道明细。</p>}
                 </Section>
 
-                <Section title="命中项" description="展示可解释字段；正式对象入口另由服务端 ObjectRef 提供。"><ItemCards items={hits} kind="hit" /></Section>
-                {links.length ? <Section title="正式对象入口" description="仅跟随服务端签发的 ObjectRef，不使用裸 ID 构造路由。"><div className="flex flex-wrap gap-2">{links.map((item) => <ObjectDeepLink key={`${item.path}:${item.ref.ref}`} to={item.path} objectRef={item.ref}>{item.label}</ObjectDeepLink>)}</div></Section> : null}
+                <Section title="命中项" description="展示可解释字段；正式对象入口另由服务端给出的跳转链接提供。"><ItemCards items={hits} kind="hit" /></Section>
+                {links.length ? <Section title="正式对象入口" description="只跟随服务端给出的跳转链接，不会用裸编号拼路由。"><div className="flex flex-wrap gap-2">{links.map((item) => <ObjectDeepLink key={`${item.path}:${item.ref.ref}`} to={item.path} objectRef={item.ref}>{item.label}</ObjectDeepLink>)}</div></Section> : null}
                 <Section title="过滤项" description="展示过滤通道、原因和可用预览，不补造缺失原因。"><ItemCards items={filtered} kind="filtered" /></Section>
 
                 <Section title="最终注入文本">
@@ -232,7 +232,7 @@ export function TraceDetailSheet({
                   <TracePayloadViewer payload={detail} rawPayload={rawPayload} downloadName={`trace-${detail.trace_id ?? 'unknown'}.json`} maxHeightClassName="h-80" />
                 </Section>
               </>
-            ) : <p className="py-6 text-center text-sm text-muted-foreground">请选择一条 Trace。</p>}
+            ) : <p className="py-6 text-center text-sm text-muted-foreground">请选择一条注入记录。</p>}
           </div>
         </ScrollArea>
       </SheetContent>

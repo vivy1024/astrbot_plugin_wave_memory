@@ -43,8 +43,8 @@ function policyFromConfig(config: WaveConfigPayload | null): TagWritePolicy {
 }
 
 export function TagExtractionConfigPanel({
-  title = '基础 Tag 提取配置',
-  description = '三处 Tag 提取入口共用同一套 Provider、向量维度和默认执行参数。',
+  title = '基础标签提取配置',
+  description = '三处标签提取入口共用同一套模型、向量维度和默认执行参数。',
   config,
   onConfigChange,
   options,
@@ -87,7 +87,7 @@ export function TagExtractionConfigPanel({
       })
       .catch((err) => {
         if (!alive) return
-        toast.error(err instanceof Error ? err.message : 'Tag 配置加载失败')
+        toast.error(err instanceof Error ? err.message : '标签配置加载失败')
       })
       .finally(() => {
         if (alive) setLoading(false)
@@ -137,9 +137,9 @@ export function TagExtractionConfigPanel({
           tag_write_policy: tagWritePolicy,
         },
       })
-      toast.success('Tag 提取配置保存成功；Provider 与向量维度需要重启后生效')
+      toast.success('标签提取配置保存成功；模型与向量维度需要重启后生效')
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Tag 提取配置保存失败')
+      toast.error(err instanceof Error ? err.message : '标签提取配置保存失败')
     } finally {
       setSaving(false)
     }
@@ -180,7 +180,7 @@ export function TagExtractionConfigPanel({
             />
           </Field>
           <Field>
-            <FieldLabel>Tag 提取分析 LLM</FieldLabel>
+            <FieldLabel>标签提取分析模型</FieldLabel>
             <Input
               value={String(localConfig?.tag_llm_provider_id ?? '')}
               disabled={disabled || loading || saving}
@@ -202,7 +202,7 @@ export function TagExtractionConfigPanel({
                 />
                 <span>执行 extract_tags</span>
               </label>
-              <FieldDescription>关闭后只保存/导入数据，不调用 Tag LLM。</FieldDescription>
+              <FieldDescription>关闭后只保存/导入数据，不调用标签提取模型。</FieldDescription>
             </Field>
           ) : null}
           <Field>
@@ -250,7 +250,7 @@ export function TagExtractionConfigPanel({
       <CardFooter className="justify-end">
         <Button type="button" disabled={disabled || loading || saving || !localConfig} onClick={() => void handleSave()}>
           {saving ? <Loader2Icon data-icon="inline-start" className="animate-spin" /> : <SaveIcon data-icon="inline-start" />}
-          保存 Tag 配置
+          保存标签配置
         </Button>
       </CardFooter>
     </Card>

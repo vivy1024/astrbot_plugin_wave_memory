@@ -163,7 +163,7 @@ export function BookLorePage() {
           </div>
 
           <QueryState status={summaryError ? 'error' : summary ? 'success' : 'loading'} error={summaryError} title="BookLore 摘要读取失败" onRetry={() => setReload((value) => value + 1)}>
-            {summary ? <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-y bg-muted/15 px-4 py-2 text-xs"><span className="font-medium">Catalog Scope</span><span className="text-muted-foreground">{summary.scope.catalog_id} · {summary.scope.corpus_id} · {summary.scope.version}</span><span className="ml-auto text-muted-foreground">搜索与分页仅作用于当前分类</span></div> : null}
+            {summary ? <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-y bg-muted/15 px-4 py-2 text-xs"><span className="font-medium">书设定范围</span><span className="text-muted-foreground">{summary.scope.catalog_id} · {summary.scope.corpus_id} · {summary.scope.version}</span><span className="ml-auto text-muted-foreground">搜索与分页仅作用于当前分类</span></div> : null}
           </QueryState>
 
           <Tabs value={resource} onValueChange={(tab) => pagination.setFilters({ tab })} className="w-full">

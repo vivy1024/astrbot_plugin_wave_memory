@@ -37,7 +37,7 @@ vi.mock('@/api/knowledge', () => ({
   getApprovedFewShot: mocks.getApprovedFewShot,
   getScopedFacts: mocks.getScopedFacts,
 }))
-vi.mock('@/api/people', () => ({ getPeople: mocks.getPeople, getRelationships: mocks.getRelationships }))
+vi.mock('@/api/people', () => ({ getPeople: mocks.getPeople, getRelationships: mocks.getRelationships, getLegacyPeople: vi.fn() }))
 vi.mock('@/api/jargon', () => ({ listJargons: mocks.listJargons, getCatalogAudit: mocks.getCatalogAudit, getJargonEvidence: mocks.getJargonEvidence, batchReviewJargons: mocks.batchReviewJargons, updateJargonMeaning: mocks.updateJargonMeaning, archiveJargon: mocks.archiveJargon, checkHolymanUpdate: mocks.checkHolymanUpdate, previewHolymanSync: mocks.previewHolymanSync, reviewJargon: vi.fn() }))
 vi.mock('@/api/diagnostics', () => ({ getIndexDiagnostics: mocks.getIndexDiagnostics }))
 vi.mock('@/api/options', () => ({
@@ -45,6 +45,7 @@ vi.mock('@/api/options', () => ({
   scopeOptionsFor: (_payload: unknown, kinds: string[]) => kinds.includes('bot')
     ? [{ value: 'bot-real', label: '真实 Bot', kind: 'bot', description: 'Bot ID bot-real' }]
     : [{ value: 'qq:group:42', label: '群 42', kind: 'session', description: 'bot-real · group · runtime' }],
+  groupSessionOptions: (options: Array<{ kind?: string }>) => options.filter((option) => option.kind === 'session'),
 }))
 
 const page = { total: 1, total_status: 'exact', reason_code: null, limit: 25, offset: 0, page: 1, page_count: 1, has_more: false }
@@ -95,7 +96,7 @@ describe('知识、人物与诊断页面关键约束', () => {
   it('FewShot 未选择真实 Bot 时不请求跨 Bot 列表', async () => {
     render(<MemoryRouter><FewShotPage /></MemoryRouter>)
 
-    expect(await screen.findByText(/禁止跨群或跨 Bot 汇总/)).toBeVisible()
+    expect(await screen.findByText(/不会跨群汇总/)).toBeVisible()
     expect(mocks.getApprovedFewShot).not.toHaveBeenCalled()
   })
 
@@ -105,7 +106,7 @@ describe('知识、人物与诊断页面关键约束', () => {
 
     await waitFor(() => expect(mocks.listJargons).toHaveBeenCalledTimes(1))
     expect(mocks.getCatalogAudit).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('tab', { name: /Holyman 广域资产/ }))
+    await user.click(screen.getByRole('tab', { name: /内置广域资产/ }))
     await waitFor(() => expect(mocks.getCatalogAudit).toHaveBeenCalledTimes(1))
     await user.click(screen.getByRole('button', { name: '同步预览' }))
     await waitFor(() => expect(mocks.previewHolymanSync).toHaveBeenCalledWith(true))

@@ -16,7 +16,7 @@ describe('ExplorePage 全屏壳层', () => {
   it('缺少完整 Scope 时强制展示 Scope Dialog，且不创建 iframe', () => {
     const view = render(<MemoryRouter initialEntries={['/explore']}><ExplorePage /></MemoryRouter>)
 
-    expect(screen.getByRole('dialog')).toHaveTextContent('选择神经云图 Scope')
+    expect(screen.getByRole('dialog')).toHaveTextContent('选择神经云图的 Bot 和群')
     expect(screen.getByTestId('scope-Bot')).toBeVisible()
     expect(screen.getByTestId('scope-群 / 会话')).toBeVisible()
     expect(screen.queryByTitle('3D Cosmic NeuroGalaxy')).not.toBeInTheDocument()
@@ -36,7 +36,7 @@ describe('ExplorePage 全屏壳层', () => {
     expect(query.has('token')).toBe(false)
     expect(iframe).toHaveAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups')
     expect(screen.getByRole('button', { name: '返回总览' })).toBeVisible()
-    expect(screen.getByRole('button', { name: '切换 Scope' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '切换 Bot / 群' })).toBeVisible()
     expect(screen.getByText('loading · 加载中')).toBeVisible()
   })
 })

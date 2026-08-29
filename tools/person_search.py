@@ -255,6 +255,18 @@ class WaveMemoryPersonSearchTool(FunctionTool[AstrAgentContext]):
                 LIMIT 1""",
             (qq_id, scope.session.conversation_id, scope.bot_id),
         ).fetchone()
+        reg_cols = {str(c[1]) for c in conn.execute("PRAGMA table_info(person_registry)").fetchall()} if "person_registry" in {str(r[0]) for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()} else set()
+        if "aliases" in reg_cols:
+            where_reg = "qq_id=?" if "qq_id" in reg_cols else "user_id=?"
+            registry_row = conn.execute(
+                f"""SELECT aliases, display_name
+                     FROM person_registry
+                    WHERE {where_reg}
+                    LIMIT 1""",
+                (qq_id,),
+            ).fetchone()
+        else:
+            registry_row = None
         relation_line = ""
         soul = getattr(self.db, "soul_repository", None)
         if soul is not None:
@@ -279,6 +291,16 @@ class WaveMemoryPersonSearchTool(FunctionTool[AstrAgentContext]):
 
         title = "跨群画像" if cross_group else "当前群画像"
         parts = [f"【{display_name}】的{title}", f"QQ: {qq_id}"]
+        if registry_row and registry_row[0]:
+            try:
+                import json as _json
+                aliases_list = _json.loads(registry_row[0]) if isinstance(registry_row[0], str) else registry_row[0]
+                if isinstance(aliases_list, list) and aliases_list:
+                    clean_aliases = [str(a).strip() for a in aliases_list if str(a).strip()]
+                    if clean_aliases:
+                        parts.append(f"历史昵称/别名: {'、'.join(clean_aliases)}")
+            except Exception:
+                pass
         if interaction:
             parts.append(f"当前群互动次数: {int(interaction[0] or 0)}")
             if interaction[1]:

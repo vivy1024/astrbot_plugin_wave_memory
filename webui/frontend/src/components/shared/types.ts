@@ -53,7 +53,7 @@ export interface EvidenceRef {
   id: string
   content_hash?: string | null
   captured_at?: string | number | null
-  source_scope?: string | null
+  source_scope?: string | Record<string, unknown> | null
   availability?: 'available' | 'unavailable' | 'quarantined' | 'unknown'
   object_ref?: ObjectRefDescriptor | null
   summary?: string | null

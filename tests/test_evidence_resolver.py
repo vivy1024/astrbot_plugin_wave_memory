@@ -53,18 +53,32 @@ def descriptor(value: RuntimeScope, memory_id: str = "11") -> dict:
     return {"kind": "memory", "id": memory_id, "source_scope": value.to_dict()}
 
 
-def test_resolver_reads_real_memory_and_computes_hash():
-    connection = db()
-    result = resolve_relationship_evidence(connection, scope=scope(), values=[descriptor(scope())])
+def test_resolver_reads_legacy_group_memory_and_computes_hash():
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        """CREATE TABLE memories(
+               id INTEGER PRIMARY KEY, content TEXT, timestamp REAL,
+               version INTEGER, bot_id TEXT, session_id TEXT, visibility TEXT,
+               group_id TEXT, resolution_state TEXT, quarantine INTEGER DEFAULT 0
+           )"""
+    )
+    # Memory without full bot_id/session_id but with group_id matching
+    conn.execute(
+        """INSERT INTO memories VALUES(
+               12, '群聊旧消息', 105, 1, NULL, NULL, NULL, 'g1', NULL, 0)"""
+    )
+    conn.commit()
+    result = resolve_relationship_evidence(conn, scope=scope(), values=[descriptor(scope(), "12")])
     assert result == [{
         "kind": "memory",
         "type": "memory",
-        "id": "11",
-        "content_hash": hashlib.sha256("真实消息".encode()).hexdigest(),
-        "captured_at": 100.0,
+        "id": "12",
+        "content_hash": hashlib.sha256("群聊旧消息".encode()).hexdigest(),
+        "captured_at": 105.0,
         "source_scope": scope().to_dict(),
         "available": True,
     }]
+
 
 
 def test_resolver_rejects_cross_scope_and_unknown_objects():

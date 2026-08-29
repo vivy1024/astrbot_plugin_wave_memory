@@ -5,9 +5,9 @@ class TestStage5SoulScopedReadonly:
     def test_soul_page_uses_explicit_scope_and_read_contract(self):
         page = Path("webui/frontend/src/pages/soul/SoulPage.tsx").read_text(encoding="utf-8")
         api = Path("webui/frontend/src/api/soul.ts").read_text(encoding="utf-8")
-        for marker in ("getScopeOptions", "ScopeSelect", "Soul 作用域状态", "Mood", "Concern", "Timeline", "ObjectDeepLink", "EvidenceList"):
+        for marker in ("getScopeOptions", "ScopeSelect", "当前群心智", "心情", "关切", "时间线", "ObjectDeepLink", "EvidenceList"):
             assert marker in page + api
-        assert "不接受默认 Bot" in page
+        assert "不接受私聊" in page
         assert "PageResponse" in api
 
     def test_soul_page_exposes_unknown_and_empty_states_without_writes(self):

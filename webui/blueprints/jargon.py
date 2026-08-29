@@ -335,12 +335,26 @@ def _memory_evidence_available(container, scope: RuntimeScope, source_memory_id)
     try:
         columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
         if not {"id", "bot_id", "session_id", "visibility", "resolution_state", "quarantine"} <= columns:
-            return False
-        return conn.execute(
+            # Fallback for legacy memories table
+            return conn.execute(
+                "SELECT 1 FROM memories WHERE id=? AND (group_id=? OR session_id=?) "
+                "AND COALESCE(quarantine,0)=0 LIMIT 1",
+                (int(source_memory_id), scope.session.conversation_id, scope.session.id),
+            ).fetchone() is not None
+        found = conn.execute(
             "SELECT 1 FROM memories WHERE id=? AND bot_id=? AND session_id=? AND visibility=? "
             "AND resolution_state='resolved' AND COALESCE(quarantine,0)=0 LIMIT 1",
             (int(source_memory_id), scope.bot_id, scope.session.id, scope.visibility),
         ).fetchone() is not None
+        if not found and scope.visibility == "group":
+            found = conn.execute(
+                "SELECT 1 FROM memories WHERE id=? AND (group_id=? OR session_id=?) "
+                "AND COALESCE(visibility,'group')='group' "
+                "AND COALESCE(resolution_state,'resolved')='resolved' "
+                "AND COALESCE(quarantine,0)=0 LIMIT 1",
+                (int(source_memory_id), scope.session.conversation_id, scope.session.id),
+            ).fetchone() is not None
+        return found
     except Exception:
         return False
 

@@ -499,9 +499,15 @@ async def list_experiences():
         params: list[Any] = []
 
         bot_id = str(request.args.get("bot_id") or "").strip()
-        if bot_id and "bot_id" in columns:
+        group_id = str(request.args.get("group_id") or "").strip()
+        if not bot_id or not group_id:
+            return jsonify(page_response([], total=0, limit=limit, offset=offset))
+        if "bot_id" in columns:
             where.append("bot_id=?")
             params.append(bot_id)
+        if "group_id" in columns:
+            where.append("group_id=?")
+            params.append(group_id)
 
         search = str(request.args.get("search") or "").strip()
         if search:

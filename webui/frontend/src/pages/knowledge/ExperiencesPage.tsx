@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { BookOpenIcon, HeartIcon, MessageSquareIcon, RefreshCwIcon, SearchIcon, UserIcon } from 'lucide-react'
 
 import { listExperiences, type ExperienceEpisode } from '@/api/experiences'
+import { getScopeOptions, groupSessionOptions, scopeOptionsFor } from '@/api/options'
+import { ScopeSelect } from '@/components/shared'
+import { useCanonicalScopeDefault, usePaginationSearchParams } from '@/hooks/use-pagination-search-params'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -17,21 +20,39 @@ const EPISODE_TYPE_LABELS: Record<string, string> = {
 }
 
 export function ExperiencesPage() {
+  const pagination = usePaginationSearchParams()
+  const botId = pagination.searchParams.get('bot_id') ?? ''
+  const sessionId = pagination.searchParams.get('session_id') ?? ''
+  const groupId = sessionId.startsWith('legacy:')
+    ? sessionId.split(':').slice(2).join(':')
+    : sessionId.split(':').slice(2).join(':')
+  useCanonicalScopeDefault({ botId, sessionId, setFilters: pagination.setFilters, enabled: !sessionId.startsWith('legacy:') })
   const [items, setItems] = useState<ExperienceEpisode[]>([])
   const [total, setTotal] = useState(0)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [minWeight, setMinWeight] = useState('all')
   const [page, setPage] = useState(1)
   const limit = 18
+  const loadBots = useCallback(async () => scopeOptionsFor(await getScopeOptions(), ['bot']), [])
+  const loadSessions = useCallback(async () => groupSessionOptions(scopeOptionsFor(await getScopeOptions(), ['session']), botId), [botId])
 
   const loadData = useCallback(async () => {
+    if (!botId || !groupId) {
+      setItems([])
+      setTotal(0)
+      setLoading(false)
+      setError(null)
+      return
+    }
     setLoading(true)
     setError(null)
     try {
       const weightVal = minWeight === 'high' ? 0.4 : minWeight === 'medium' ? 0.3 : undefined
       const res = await listExperiences({
+        bot_id: botId,
+        group_id: groupId,
         search: search.trim() || undefined,
         min_emotional_weight: weightVal,
         limit,
@@ -46,7 +67,7 @@ export function ExperiencesPage() {
     } finally {
       setLoading(false)
     }
-  }, [search, minWeight, page])
+  }, [botId, groupId, minWeight, page, search])
 
   useEffect(() => {
     void loadData()
@@ -60,7 +81,7 @@ export function ExperiencesPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">经历片段</h1>
           <p className="text-sm text-muted-foreground">
-            Bot 在真实对话中留下的行为轨迹：触发内容、内心活动、实际回复与用户反馈（共 {total} 条）
+            按当前 Bot 与群查看经历片段：触发内容、内心活动、实际回复与用户反馈（共 {total} 条）
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => void loadData()} disabled={loading}>
@@ -69,7 +90,9 @@ export function ExperiencesPage() {
         </Button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-end gap-3">
+        <ScopeSelect className="min-w-48" value={botId || undefined} loadOptions={loadBots} label="Bot" placeholder="选择 Bot" onValueChange={(value) => { pagination.setFilters({ bot_id: value, session_id: null }); setPage(1) }} />
+        <ScopeSelect className="min-w-56" value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" placeholder="选择群会话" disabled={!botId} onValueChange={(value) => { pagination.setFilters({ session_id: value }); setPage(1) }} />
         <div className="relative min-w-[220px] flex-1 sm:max-w-md">
           <SearchIcon className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
           <Input
@@ -106,7 +129,11 @@ export function ExperiencesPage() {
         </Card>
       ) : null}
 
-      {loading ? (
+      {!botId || !groupId ? (
+        <Card>
+          <CardContent className="py-12 text-center text-sm text-muted-foreground">请先选择 Bot 和群，不会加载全部 Bot 的经历。</CardContent>
+        </Card>
+      ) : loading ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, index) => (
             <Card key={index}>
@@ -145,6 +172,7 @@ export function ExperiencesPage() {
                 </div>
                 <CardDescription className="text-xs">
                   {item.bot_id ? `bot ${item.bot_id}` : '未记录 bot'}
+                  {item.group_id ? ` · 群 ${item.group_id}` : ''}
                   {item.outcome ? ` · ${item.outcome}` : ''}
                 </CardDescription>
               </CardHeader>

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, useMemo, type FormEvent } from 'react'
 import { AlertCircleIcon, EyeIcon, RefreshCwIcon, SearchIcon, SlidersHorizontalIcon, ArrowUpDownIcon } from 'lucide-react'
 
-import { getScopeOptions, scopeOptionsFor } from '@/api/options'
+import { getScopeOptions, groupSessionOptions, scopeOptionsFor } from '@/api/options'
 import {
+  getLegacyPeople,
   getPeople,
   getRelationshipHistoricalAudit,
   getRelationships,
@@ -85,16 +86,16 @@ function HistoricalAuditPanel({
   return (
     <div className="rounded-lg border bg-muted/10 p-3.5">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <Badge variant="outline">历史事件审计</Badge>
+        <Badge variant="outline">正式关系事件</Badge>
         <Badge variant="secondary">只读</Badge>
         <Badge variant="outline">不改变好感度</Badge>
       </div>
       {loading ? (
-        <p className="text-xs text-muted-foreground">正在读取 historical audit…</p>
+        <p className="text-xs text-muted-foreground">正在读取正式关系事件…</p>
       ) : error ? (
         <p className="text-xs text-muted-foreground">{error}</p>
       ) : !summary?.available || total <= 0 ? (
-        <p className="text-xs text-muted-foreground">当前 Scope 没有 historical audit 记录。</p>
+        <p className="text-xs text-muted-foreground">当前群没有正式关系事件。旧审计表不存在时不会用假数据填满。</p>
       ) : (
         <div className="grid gap-2 text-xs">
           <p>
@@ -116,7 +117,7 @@ function HistoricalAuditPanel({
             ))}
           </div>
           <p className="text-[10px] text-muted-foreground">
-            来源表 scoped_soul_relationship_legacy_events；仅审计展示，不参与 affinity 计算。
+            来自本群历史关系事件；仅审计展示，不参与好感计算。
           </p>
         </div>
       )}
@@ -124,24 +125,24 @@ function HistoricalAuditPanel({
   )
 }
 
-function PersonDetail({ item, relationship, query, onChanged }: { item: PersonItem; relationship: RelationshipItem | null; query: { bot_id: string; session_id: string; visibility: 'group'; user_id?: string }; onChanged?: () => void }) {
+function PersonDetail({ item, relationship, relationshipError, query, onChanged }: { item: PersonItem; relationship: RelationshipItem | null; relationshipError?: string | null; query: { bot_id: string; session_id: string; visibility: 'group'; user_id?: string }; onChanged?: () => void }) {
   const aliases = aliasLabels(item.aliases)
   const metadataCount = Object.keys(item.metadata ?? {}).length + Object.keys(item.registry_metadata ?? {}).length
   const actualAffinity = relationship?.affinity !== undefined && relationship?.affinity !== null ? relationship.affinity : null
 
   return     <div className="flex flex-col gap-5 text-sm">
-    <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">正式人物画像</Badge><Badge variant="secondary">group Scope</Badge><Badge variant="outline">关系以正式 projection 为准</Badge></div>
+    <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">正式人物画像</Badge><Badge variant="secondary">当前群</Badge><Badge variant="outline">好感以本群记录为准</Badge></div>
 
 
     <div className="grid gap-3 rounded-lg border bg-muted/10 p-3.5">
       <div><span className="mb-0.5 block text-xs text-muted-foreground">显示名称</span><span className="break-words font-medium">{item.display_name}</span></div>
       <div><span className="mb-0.5 block text-xs text-muted-foreground">用户 ID</span><span className="break-all font-mono text-xs">{item.user_id}</span></div>
-      <div><span className="mb-0.5 block text-xs text-muted-foreground">Canonical Scope</span><span className="break-all font-mono text-xs">{item.bot_id} · {item.group_id} · group</span></div>
+      <div><span className="mb-0.5 block text-xs text-muted-foreground">所在群</span><span className="break-all font-mono text-xs">{item.bot_id} · {item.group_id}</span></div>
     </div>
 
     <div className="grid grid-cols-2 gap-3 rounded-lg border p-3.5">
       <div><span className="mb-0.5 block text-xs text-muted-foreground">互动数</span><span className="font-mono font-medium">{interactionCount(item) ?? '未记录'}</span></div>
-      <div><span className="mb-0.5 block text-xs text-muted-foreground">Affinity</span>
+      <div><span className="mb-0.5 block text-xs text-muted-foreground">好感</span>
         {actualAffinity !== null ? (
           <Badge className={`text-xs font-mono font-semibold ${
             actualAffinity >= 15 ? 'bg-rose-500 text-white' :
@@ -152,13 +153,13 @@ function PersonDetail({ item, relationship, query, onChanged }: { item: PersonIt
             {actualAffinity > 0 ? `+${actualAffinity}` : actualAffinity}
           </Badge>
         ) : (
-          <Badge variant="outline">未激活</Badge>
+          <Badge variant="outline">未记录</Badge>
         )}
       </div>
       <div className="col-span-2"><span className="mb-1.5 block text-xs text-muted-foreground">登记别名</span><div className="flex flex-wrap gap-1">{aliases.length ? aliases.map((alias) => <Badge key={alias} variant="outline" className="font-normal">{alias}</Badge>) : <span className="text-muted-foreground">未登记别名</span>}</div></div>
     </div>
 
-    {relationship ? <RelationshipCalibrationPanel item={relationship} query={query} onChanged={onChanged} /> : <Alert><AlertCircleIcon /><AlertTitle>当前关系未知</AlertTitle><AlertDescription>当前 Scope 没有正式 relationship projection；不会使用跨群全局值或默认 0 伪造关系。</AlertDescription></Alert>}
+    {relationshipError ? <Alert variant="destructive"><AlertCircleIcon /><AlertTitle>关系读取失败</AlertTitle><AlertDescription>{relationshipError}</AlertDescription></Alert> : relationship ? <RelationshipCalibrationPanel item={relationship} query={query} onChanged={onChanged} /> : <Alert><AlertCircleIcon /><AlertTitle>当前关系未知</AlertTitle><AlertDescription>当前群没有正式关系记录，不会用其他群的好感或默认 0 顶上。</AlertDescription></Alert>}
 
     {(relationship?.evidence_summaries?.length ?? 0) > 0 ? (
       <div className="rounded-lg border bg-muted/10 p-3.5">
@@ -188,8 +189,8 @@ function PersonDetail({ item, relationship, query, onChanged }: { item: PersonIt
     {actualAffinity === null && (
       <Alert>
         <AlertCircleIcon />
-        <AlertTitle>Affinity 当前不可用</AlertTitle>
-        <AlertDescription>{item.affinity_reason_code || '当前没有经过复合作用域验证的 affinity projection。'} 页面不会使用跨群全局值或固定回填值伪装当前关系。</AlertDescription>
+        <AlertTitle>好感当前不可用</AlertTitle>
+        <AlertDescription>当前群没有正式好感记录，不会用其他群的数字顶上。</AlertDescription>
       </Alert>
     )}
 
@@ -208,11 +209,17 @@ export function PeoplePage() {
   const botId = pagination.searchParams.get('bot_id') ?? ''
   const sessionId = pagination.searchParams.get('session_id') ?? ''
   const search = pagination.searchParams.get('search') ?? ''
-  useCanonicalScopeDefault({ botId, sessionId, setFilters: pagination.setFilters })
+  const legacyScope = sessionId.startsWith('legacy:') ? sessionId.split(':') : null
+  const legacyGroupId = legacyScope && legacyScope.length >= 3 ? legacyScope.slice(2).join(':') : ''
+  const isLegacyScope = Boolean(legacyGroupId)
+  useCanonicalScopeDefault({ botId, sessionId, setFilters: pagination.setFilters, enabled: !isLegacyScope })
 
   const [searchDraft, setSearchDraft] = useState(search)
   const [data, setData] = useState<PageResponse<PersonItem> | null>(null)
   const [relationshipData, setRelationshipData] = useState<PageResponse<RelationshipItem> | null>(null)
+  const [relationshipError, setRelationshipError] = useState<string | null>(null)
+  const [detailRelationship, setDetailRelationship] = useState<RelationshipItem | null>(null)
+  const [detailRelationshipError, setDetailRelationshipError] = useState<string | null>(null)
   const [error, setError] = useState<unknown>()
   const [loading, setLoading] = useState(false)
   const [reload, setReload] = useState(0)
@@ -230,25 +237,80 @@ export function PeoplePage() {
 
   const loadBots = useCallback(async () => scopeOptionsFor(await getScopeOptions(), ['bot']), [])
   const loadSessions = useCallback(async () => {
-    const options = scopeOptionsFor(await getScopeOptions(), ['session'])
-    return botId ? options.filter((option) => option.description?.startsWith(`${botId} ·`)) : []
+    return groupSessionOptions(scopeOptionsFor(await getScopeOptions(), ['session']), botId)
   }, [botId])
 
   useEffect(() => { setSearchDraft(search) }, [search])
   useEffect(() => {
-    if (!botId || !sessionId) { setData(null); setRelationshipData(null); setLoading(false); setError(undefined); return }
+    if (!botId || !sessionId) {
+      setData(null)
+      setRelationshipData(null)
+      setRelationshipError(null)
+      setLoading(false)
+      setError(undefined)
+      return
+    }
     let active = true
     setLoading(true)
     setError(undefined)
-    Promise.all([
-      getPeople({ bot_id: botId, session_id: sessionId, visibility: 'group', search: search || undefined, limit: pagination.limit, offset: pagination.offset }),
-      getRelationships({ bot_id: botId, session_id: sessionId, visibility: 'group', search: search || undefined, limit: pagination.limit, offset: pagination.offset }).catch(() => null),
-    ])
-      .then(([people, relationships]) => { if (active) { setData(people); setRelationshipData(relationships) } })
-      .catch((reason: unknown) => { if (active) { setData(null); setRelationshipData(null); setError(reason) } })
+    setRelationshipError(null)
+    const peopleRequest = isLegacyScope
+      ? getLegacyPeople({ bot_id: botId, group_id: legacyGroupId, search: search || undefined, limit: pagination.limit, offset: pagination.offset })
+      : getPeople({ bot_id: botId, session_id: sessionId, visibility: 'group', search: search || undefined, limit: pagination.limit, offset: pagination.offset })
+    peopleRequest
+      .then((people) => { if (active) setData(people) })
+      .catch((reason: unknown) => {
+        if (!active) return
+        setData(null)
+        setError(reason)
+      })
       .finally(() => { if (active) setLoading(false) })
+    if (isLegacyScope) {
+      setRelationshipData(null)
+      setRelationshipError('未绑定群只读，不能读取或校准正式关系')
+      return () => { active = false }
+    }
+    getRelationships({ bot_id: botId, session_id: sessionId, visibility: 'group', search: search || undefined, limit: 100, offset: 0 })
+      .then((relationships) => {
+        if (!active) return
+        setRelationshipData(relationships)
+        setRelationshipError(null)
+      })
+      .catch((reason: unknown) => {
+        if (!active) return
+        setRelationshipData(null)
+        setRelationshipError(reason instanceof Error ? reason.message : '关系读取失败')
+      })
     return () => { active = false }
-  }, [botId, pagination.limit, pagination.offset, reload, search, sessionId])
+  }, [botId, isLegacyScope, legacyGroupId, pagination.limit, pagination.offset, reload, search, sessionId])
+
+  useEffect(() => {
+    if (!detailOpen || !selectedPerson || !botId || !sessionId || isLegacyScope) {
+      setDetailRelationship(null)
+      setDetailRelationshipError(isLegacyScope ? '未绑定群只读，不能校准好感度' : null)
+      return
+    }
+    let active = true
+    setDetailRelationshipError(null)
+    getRelationships({
+      bot_id: botId,
+      session_id: sessionId,
+      visibility: 'group',
+      user_id: selectedPerson.user_id,
+      limit: 25,
+      offset: 0,
+    })
+      .then((page) => {
+        if (!active) return
+        setDetailRelationship(page.items.find((entry) => entry.person.user_id === selectedPerson.user_id) ?? null)
+      })
+      .catch((reason: unknown) => {
+        if (!active) return
+        setDetailRelationship(null)
+        setDetailRelationshipError(reason instanceof Error ? reason.message : '关系读取失败')
+      })
+    return () => { active = false }
+  }, [botId, detailOpen, isLegacyScope, reload, selectedPerson, sessionId])
   const submitSearch = (event: FormEvent) => {
     event.preventDefault()
     pagination.setFilters({ search: searchDraft.trim() || null })
@@ -351,13 +413,13 @@ export function PeoplePage() {
     <div className="flex flex-wrap items-center justify-between gap-3">
       <header className="max-w-2xl">
         <h1 className="text-xl font-bold tracking-tight">人物与关系画像</h1>
-        <p className="text-xs text-muted-foreground">按 user_id + group_id + bot_id 复合作用域查看身份、别名与互动；同名用户不会跨 Bot 或群合并。</p>
+        <p className="text-xs text-muted-foreground">按当前 Bot 和群查看身份、别名与互动；同名用户不会跨 Bot 或跨群合并。</p>
       </header>
       <div className="flex flex-wrap gap-2">
         <SummaryTile label="筛选人物" value={loading ? '…' : total} />
         <SummaryTile label="本页别名" value={loading ? '…' : aliasCount} tone="text-pink-600" />
         <SummaryTile label="本页互动" value={loading ? '…' : interactionTotal} tone="text-blue-600" />
-        <SummaryTile label="本页平均 Affinity" value={loading ? '…' : averageAffinity} tone="text-rose-600" />
+        <SummaryTile label="本页平均好感" value={loading ? '…' : averageAffinity} tone="text-rose-600" />
       </div>
     </div>
 
@@ -365,11 +427,18 @@ export function PeoplePage() {
       <CardContent className="p-0">
         <div className="flex flex-col gap-3 bg-muted/[0.035] p-3">
           <div className="flex flex-wrap items-end gap-2" data-slot="people-scope-context">
-            <Badge variant="outline" className="mb-0.5 h-7">Canonical Scope</Badge>
-            <ScopeSelect className="min-w-48 flex-1 xl:max-w-64" value={botId || undefined} loadOptions={loadBots} label="Bot" placeholder="选择真实 Bot" required onValueChange={(value) => pagination.setFilters({ bot_id: value, session_id: null })} />
-            <ScopeSelect className="min-w-56 flex-[1.4] xl:max-w-80" value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" placeholder="选择该 Bot 的 canonical 群会话" disabled={!botId} required onValueChange={(value) => pagination.setFilters({ session_id: value })} />
-            <span className="pb-1 text-[10px] text-muted-foreground">BotProfile.db_id ≠ QQ 号 · visibility: group</span>
+            <Badge variant="outline" className="mb-0.5 h-7">当前群</Badge>
+            <ScopeSelect className="min-w-48 flex-1 xl:max-w-64" value={botId || undefined} loadOptions={loadBots} label="Bot" placeholder="选择 Bot" required onValueChange={(value) => pagination.setFilters({ bot_id: value, session_id: null })} />
+            <ScopeSelect className="min-w-56 flex-[1.4] xl:max-w-80" value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" placeholder="选择该 Bot 的群" disabled={!botId} required onValueChange={(value) => pagination.setFilters({ session_id: value })} />
+            <span className="pb-1 text-[10px] text-muted-foreground">这里的 Bot 不是 QQ 号</span>
           </div>
+          {isLegacyScope ? (
+            <Alert>
+              <AlertCircleIcon />
+              <AlertTitle>未绑定群只读</AlertTitle>
+              <AlertDescription>这个群有人物或旧记忆，但还没有正式绑定。可以查看名单，不能改好感，也不会把数据写成新群身份。</AlertDescription>
+            </Alert>
+          ) : null}
 
           <form className="flex flex-col gap-3" onSubmit={submitSearch}>
             <div className="flex flex-wrap items-center gap-2">
@@ -389,7 +458,7 @@ export function PeoplePage() {
               <Button type="button" size="icon-sm" className="h-8 w-8" variant="outline" disabled={loading || !botId || !sessionId} onClick={() => setReload((value) => value + 1)} aria-label="刷新人物画像">
                 <RefreshCwIcon className={loading ? 'animate-spin' : undefined} aria-hidden="true" />
               </Button>
-              <span className="ml-auto text-xs text-muted-foreground">{data?.page ? `当前第 ${Math.floor(pagination.offset / pagination.limit) + 1} 页` : '请选择完整 Scope'}</span>
+              <span className="ml-auto text-xs text-muted-foreground">{data?.page ? `当前第 ${Math.floor(pagination.offset / pagination.limit) + 1} 页` : '请先选择 Bot 和群'}</span>
             </div>
 
             {showAdvancedFilters && (
@@ -397,21 +466,21 @@ export function PeoplePage() {
                 <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
                   {/* 关系激活状态 */}
                   <div className="flex flex-col gap-1.5">
-                    <span className="font-semibold text-muted-foreground">关系激活状态</span>
+                    <span className="font-semibold text-muted-foreground">关系记录</span>
                     <select
                       className="h-8 rounded-md border bg-background px-2 text-xs"
                       value={filterState}
                       onChange={(e) => setFilterState(e.target.value as typeof filterState)}
                     >
                       <option value="all">全部人物</option>
-                      <option value="known">仅显示已激活关系 (known)</option>
-                      <option value="unknown">仅未激活关系 (unknown)</option>
+                      <option value="known">仅已记录关系</option>
+                      <option value="unknown">仅未记录关系</option>
                     </select>
                   </div>
 
                   {/* Affinity 范围 */}
                   <div className="flex flex-col gap-1.5">
-                    <span className="font-semibold text-muted-foreground">Affinity 范围</span>
+                    <span className="font-semibold text-muted-foreground">好感范围</span>
                     <div className="flex items-center gap-1.5">
                       <Input
                         type="number"
@@ -456,7 +525,7 @@ export function PeoplePage() {
                       >
                         <option value="name">显示名称</option>
                         <option value="interactions">互动次数</option>
-                        <option value="affinity">Affinity</option>
+                        <option value="affinity">好感</option>
                       </select>
                       <Button
                         type="button"
@@ -478,7 +547,7 @@ export function PeoplePage() {
         <Separator />
 
         <div className="flex flex-col gap-3 p-3">
-          <QueryState status={status} error={error} title="人物画像读取失败" description={!botId || !sessionId ? '请先选择真实 Bot 与 canonical 群会话；页面不会读取跨作用域人物。' : '当前 Scope 与搜索条件下没有正式人物画像。'} onRetry={() => setReload((value) => value + 1)}>
+          <QueryState status={status} error={error} title="人物画像读取失败" description={!botId || !sessionId ? '请先选择 Bot 和群；页面不会读取跨群人物。' : '当前群和搜索条件下没有正式人物画像。'} onRetry={() => setReload((value) => value + 1)}>
             <DeclarativeDataTable
               label="人物画像清单"
               items={people}
@@ -491,7 +560,7 @@ export function PeoplePage() {
                 { key: 'group', header: '群', className: 'max-w-36 truncate py-1 font-mono text-[11px]', render: (row) => row.group_id },
                 { key: 'bot', header: 'Bot', className: 'max-w-32 truncate py-1', render: (row) => <Badge variant="secondary" className="max-w-full truncate px-1.5 font-mono text-[10px] font-normal">{row.bot_id}</Badge> },
                 { key: 'count', header: '互动数', className: 'py-1 text-center font-mono text-[11px]', render: (row) => interactionCount(row) ?? '—' },
-                { key: 'affinity', header: 'Affinity', className: 'py-1', render: (row) => { const has = row.affinity !== null; return has ? <Badge className={`text-[10px] font-mono font-semibold ${row.affinity! >= 15 ? 'bg-rose-500 text-white' : row.affinity! >= 5 ? 'bg-pink-500 text-white' : row.affinity! > 0 ? 'bg-pink-400/80 text-white' : row.affinity! < 0 ? 'bg-blue-500 text-white' : 'bg-muted text-muted-foreground'}`}>{row.affinity! > 0 ? `+${row.affinity}` : row.affinity}</Badge> : <Badge variant="outline" className="text-[10px] text-muted-foreground">未激活</Badge> } },
+                { key: 'affinity', header: '好感', className: 'py-1', render: (row) => { if (relationshipError) return <Badge variant="outline" className="text-[10px] text-destructive">关系读取失败</Badge>; const has = row.affinity !== null; return has ? <Badge className={`text-[10px] font-mono font-semibold ${row.affinity! >= 15 ? 'bg-rose-500 text-white' : row.affinity! >= 5 ? 'bg-pink-500 text-white' : row.affinity! > 0 ? 'bg-pink-400/80 text-white' : row.affinity! < 0 ? 'bg-blue-500 text-white' : 'bg-muted text-muted-foreground'}`}>{row.affinity! > 0 ? `+${row.affinity}` : row.affinity}</Badge> : <Badge variant="outline" className="text-[10px] text-muted-foreground">未记录</Badge> } },
                 { key: 'actions', header: null, hideOnMobile: false, render: (row) => <Button type="button" variant="ghost" size="icon-xs" aria-label={`查看 ${row.display_name} 详情`} onClick={(event) => { event.stopPropagation(); openDetail(row) }}><EyeIcon aria-hidden="true" /></Button> },
               ]}
             />
@@ -504,8 +573,8 @@ export function PeoplePage() {
 
     <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
       <SheetContent className="w-[min(94vw,34rem)] sm:max-w-xl">
-        <SheetHeader className="border-b pr-12"><SheetTitle>人物画像详情</SheetTitle><SheetDescription>只读查看复合作用域内的身份、别名、互动与 Affinity 可用性。</SheetDescription></SheetHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">{selectedPerson ? <PersonDetail item={selectedPerson} relationship={relationshipData?.items.find((entry) => entry.person.user_id === selectedPerson.user_id) ?? null} query={{ bot_id: botId, session_id: sessionId, visibility: 'group', user_id: selectedPerson.user_id }} onChanged={() => setReload((value) => value + 1)} /> : null}</div>
+        <SheetHeader className="border-b pr-12"><SheetTitle>人物画像详情</SheetTitle><SheetDescription>只读查看当前群里的身份、别名、互动与好感。</SheetDescription></SheetHeader>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">{selectedPerson ? <PersonDetail item={selectedPerson} relationship={detailRelationship} relationshipError={detailRelationshipError} query={{ bot_id: botId, session_id: sessionId, visibility: 'group', user_id: selectedPerson.user_id }} onChanged={() => setReload((value) => value + 1)} /> : null}</div>
       </SheetContent>
     </Sheet>
   </div>

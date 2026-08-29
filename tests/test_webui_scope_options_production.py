@@ -92,9 +92,7 @@ def test_runtime_scope_options_use_registry_and_real_database_sources():
     assert payload["sessions"][0]["group_name"] == "全名群聊"
     assert payload["sessions"][0]["label"] == "全名群聊（full-42）"
     assert payload["sessions"][0]["platform_id"] == "discord"
-    assert payload["legacy_groups"] == [
-        {"bot_id": "bot-alpha", "group_id": "g1", "label": "g1", "source": "profiles", "count": 1}
-    ]
+    assert payload["legacy_groups"] == []
     channels = {item["id"]: item for item in payload["channels"]}
     assert channels["facts"]["source"] == "runtime-config,traces"
     assert channels["facts"]["trace_count"] == 1
@@ -132,6 +130,27 @@ def test_scope_options_formal_tables_report_capabilities_without_legacy_guess():
     assert payload["legacy_groups"] == []
 
 
+def test_scope_options_mark_platform_aliases_and_unresolved_numeric_groups():
+    connection = sqlite3.connect(":memory:")
+    connection.executescript("""
+        CREATE TABLE memories (bot_id TEXT, session_id TEXT, resolution_state TEXT);
+        CREATE TABLE user_profiles (bot_id TEXT, group_id TEXT);
+    """)
+    connection.execute("INSERT INTO memories VALUES ('bot-alpha','qq:group:g1','resolved')")
+    connection.execute("INSERT INTO memories VALUES ('bot-alpha','qq2:group:g1','resolved')")
+    connection.execute("INSERT INTO user_profiles VALUES ('bot-alpha','g1')")
+    connection.execute("INSERT INTO user_profiles VALUES ('bot-alpha','1015727706')")
+    connection.execute("INSERT INTO user_profiles VALUES ('bot-alpha','arc01_炼气高中期')")
+    payload = RuntimeScopeOptionsSource(db=SimpleNamespace(conn=connection), bot_registry=_registry()).get_scope_options()
+    sessions = {item["id"]: item for item in payload["sessions"]}
+    assert sessions["qq:group:g1"]["is_primary_alias"] is True
+    assert sessions["qq2:group:g1"]["is_primary_alias"] is False
+    assert sessions["qq2:group:g1"]["alias_session_ids"] == ["qq:group:g1", "qq2:group:g1"]
+    assert payload["legacy_groups"] == [
+        {"bot_id": "bot-alpha", "group_id": "1015727706", "label": "1015727706", "source": "profiles", "count": 1, "binding_status": "unresolved"}
+    ]
+
+
 def test_scope_options_ignore_top_level_qq_bot_and_trace_group_guess():
     connection = sqlite3.connect(":memory:")
     connection.executescript("""
@@ -139,11 +158,11 @@ def test_scope_options_ignore_top_level_qq_bot_and_trace_group_guess():
         CREATE TABLE user_profiles (bot_id TEXT, group_id TEXT);
     """)
     connection.execute("INSERT INTO injection_traces VALUES ('bad','900000001','qq-group',NULL)")
-    connection.execute("INSERT INTO user_profiles VALUES ('bot-alpha','legacy-group')")
+    connection.execute("INSERT INTO user_profiles VALUES ('bot-alpha','1015727706')")
     db = SimpleNamespace(conn=connection)
     payload = RuntimeScopeOptionsSource(db=db, bot_registry=_registry()).get_scope_options()
     assert payload["sessions"] == []
-    assert payload["legacy_groups"][0]["group_id"] == "legacy-group"
+    assert payload["legacy_groups"][0]["group_id"] == "1015727706"
 
 
 def test_request_scope_provider_requires_explicit_registered_scope(monkeypatch):

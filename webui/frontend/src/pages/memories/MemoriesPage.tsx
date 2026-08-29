@@ -45,8 +45,8 @@ import { useCanonicalScopeDefault, usePaginationSearchParams } from '@/hooks/use
 const SOURCES = ['live', 'chat', 'noise', 'core', 'identity_quarantine', 'evolution', 'bzz_experience', 'experience', 'lore', 'book_lore', 'oni_lore', 'bot_reply', 'fewshot']
 
 const DEEP_LINK_LABELS: Record<Exclude<ObjectRefState, 'ready'>, string> = {
-  'not-found': '对象不存在、引用无效或 revision 已变化；不会使用裸 ID 回退定位。',
-  'scope-mismatch': '对象引用与当前 Bot / 会话 Scope 不匹配。',
+  'not-found': '对象不存在、引用无效或版本已变化；不会用裸编号回退定位。',
+  'scope-mismatch': '这条记忆不属于当前 Bot 和群。',
   'version-stale': '对象版本已更新，请从最新列表重新打开。',
 }
 
@@ -325,7 +325,7 @@ export function MemoriesPage() {
         paramsNext.set('object_id', String(next.id))
         return paramsNext
       })
-      toast.success('记忆已按当前 Scope 更新')
+      toast.success('记忆已按当前群更新')
       await load()
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : '更新失败')
@@ -377,7 +377,7 @@ export function MemoriesPage() {
     setSaving(true)
     try {
       const result = await correctMemoryTags(detail, operation, [name], reason)
-      if (!result.ok || result.operation.status !== 'succeeded' || !result.item) throw new Error('服务端未确认 Tag 校准成功')
+      if (!result.ok || result.operation.status !== 'succeeded' || !result.item) throw new Error('服务端未确认标签校准成功')
       setDetail({ ...detail, ...result.item.memory })
       setTagState(result.item.tags)
       resolvedRef.current = result.item.memory.ref
@@ -389,9 +389,9 @@ export function MemoriesPage() {
       })
       setNewTagName('')
       setTagReason('')
-      toast.success(operation === 'add' ? `已人工纳入 Tag“${name}”` : `已人工排除 Tag“${name}”`)
+      toast.success(operation === 'add' ? `已人工纳入标签“${name}”` : `已人工排除标签“${name}”`)
     } catch (failure) {
-      toast.error(failure instanceof Error ? failure.message : 'Tag 校准失败')
+      toast.error(failure instanceof Error ? failure.message : '标签校准失败')
     } finally {
       setSaving(false)
     }
@@ -415,9 +415,9 @@ export function MemoriesPage() {
         return next
       })
       setTagReason('')
-      toast.success('已撤销当前人工 Tag 校准')
+      toast.success('已撤销当前人工标签校准')
     } catch (failure) {
-      toast.error(failure instanceof Error ? failure.message : '撤销 Tag 校准失败')
+      toast.error(failure instanceof Error ? failure.message : '撤销标签校准失败')
     } finally {
       setSaving(false)
     }
@@ -436,9 +436,9 @@ export function MemoriesPage() {
     if (!scope || streamRunning) return
     const refs: MemoryRefInput[] = selectedItems().map((item) => ({ id: item.id, ref: item.ref }))
     if (!refs.length) return
-    setStreamTitle(action === 're-embed' ? '批量重新向量化' : '批量提取 Tag')
+    setStreamTitle(action === 're-embed' ? '批量重新向量化' : '批量提取标签')
     setStreamProgress(null)
-    setStreamLog([`[INIT] 已提交 ${refs.length} 个当前 Scope 的 ObjectRef。`])
+    setStreamLog([`[INIT] 已提交当前群的 ${refs.length} 条记忆。`])
     setStreamOpen(true)
     setStreamRunning(true)
     void runPostStream(memoryBatchStreamUrl(action, scope), refs, (state) => {
@@ -525,7 +525,7 @@ export function MemoriesPage() {
               <Select value={filterDraft.hasTags || 'all'} onValueChange={(value) => setFilterDraft((current) => ({ ...current, hasTags: value === 'all' ? '' : value }))}>
                 <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">全部Tag状态</SelectItem>
+                  <SelectItem value="all">全部标签状态</SelectItem>
                   <SelectItem value="true">有标签</SelectItem>
                   <SelectItem value="false">无标签</SelectItem>
                 </SelectContent>
@@ -538,11 +538,11 @@ export function MemoriesPage() {
 
           <Separator />
 
-          {deepLinkStatus && deepLinkStatus !== 'ready' ? <Alert variant={deepLinkStatus === 'loading' ? 'default' : 'destructive'}><AlertTitle>{deepLinkStatus === 'loading' ? '正在校验对象深链' : '无法打开深链记忆'}</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-2">{deepLinkStatus === 'loading' ? '正在验证 ObjectRef、当前 Scope 与 canonical revision。' : <><span>{DEEP_LINK_LABELS[deepLinkStatus]}</span><Button size="sm" variant="outline" onClick={() => setDetailRetry((value) => value + 1)}>重试</Button><Button size="sm" variant="ghost" onClick={closeDetail}>关闭并清除引用</Button></>}</AlertDescription></Alert> : null}
+          {deepLinkStatus && deepLinkStatus !== 'ready' ? <Alert variant={deepLinkStatus === 'loading' ? 'default' : 'destructive'}><AlertTitle>{deepLinkStatus === 'loading' ? '正在校验跳转链接' : '无法打开这条记忆'}</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-2">{deepLinkStatus === 'loading' ? '正在验证当前群和版本是否还对得上。' : <><span>{DEEP_LINK_LABELS[deepLinkStatus]}</span><Button size="sm" variant="outline" onClick={() => setDetailRetry((value) => value + 1)}>重试</Button><Button size="sm" variant="ghost" onClick={closeDetail}>关闭并清除引用</Button></>}</AlertDescription></Alert> : null}
 
-          {selectedRefs.length ? <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 mb-4"><Badge variant="secondary">已选 {selectedRefs.length} 条</Badge><Button size="sm" variant="destructive" onClick={() => setConfirmAction({ title: '永久删除所选记忆？', description: `将删除 ${selectedRefs.length} 条当前 Scope 记忆及其标签关联，操作不可撤销。`, label: '确认批量删除', destructive: true, run: batchDelete })}><Trash2Icon data-icon="inline-start" />批量删除</Button><Button size="sm" variant="outline" disabled={streamRunning} onClick={() => setConfirmAction({ title: '批量重新向量化？', description: `将重算 ${selectedRefs.length} 条记忆的向量并触发索引修复。`, label: '确认执行', run: () => startStream('re-embed') })}><RefreshCwIcon data-icon="inline-start" />批量 re-embed</Button><Button size="sm" variant="outline" disabled={streamRunning} onClick={() => setConfirmAction({ title: '批量提取 Tag？', description: `将按当前策略处理 ${selectedRefs.length} 条记忆；append/replace 可能改变已有标签。`, label: '确认执行', run: () => startStream('extract-tags') })}><TagIcon data-icon="inline-start" />批量提取 Tag</Button><Button size="sm" variant="outline" onClick={() => setConfigOpen(true)}>提取配置</Button><Button size="sm" variant="ghost" className="ml-auto" onClick={() => setSelectedRefs([])}>取消选择</Button></div> : null}
+          {selectedRefs.length ? <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 mb-4"><Badge variant="secondary">已选 {selectedRefs.length} 条</Badge><Button size="sm" variant="destructive" onClick={() => setConfirmAction({ title: '永久删除所选记忆？', description: `将删除 ${selectedRefs.length} 条当前群记忆及其标签关联，操作不可撤销。`, label: '确认批量删除', destructive: true, run: batchDelete })}><Trash2Icon data-icon="inline-start" />批量删除</Button><Button size="sm" variant="outline" disabled={streamRunning} onClick={() => setConfirmAction({ title: '批量重新向量化？', description: `将重算 ${selectedRefs.length} 条记忆的向量并触发索引修复。`, label: '确认执行', run: () => startStream('re-embed') })}><RefreshCwIcon data-icon="inline-start" />批量重新向量化</Button><Button size="sm" variant="outline" disabled={streamRunning} onClick={() => setConfirmAction({ title: '批量提取标签？', description: `将按当前策略处理 ${selectedRefs.length} 条记忆；追加或替换可能改变已有标签。`, label: '确认执行', run: () => startStream('extract-tags') })}><TagIcon data-icon="inline-start" />批量提取标签</Button><Button size="sm" variant="outline" onClick={() => setConfigOpen(true)}>提取配置</Button><Button size="sm" variant="ghost" className="ml-auto" onClick={() => setSelectedRefs([])}>取消选择</Button></div> : null}
 
-          <QueryState status={status} error={error} onRetry={() => void load()} title={!scope ? '请选择真实 Bot 与会话' : undefined} description={!scope ? '记忆管理不接受默认 Bot、私聊或伪群作用域；不会从裸 ID 补默认 Scope。' : payload?.page.reason_code ?? undefined}>
+          <QueryState status={status} error={error} onRetry={() => void load()} title={!scope ? '请选择 Bot 和群' : undefined} description={!scope ? '记忆管理不接受默认 Bot、私聊或未绑定群；不会从裸编号猜当前群。' : payload?.page.reason_code ?? undefined}>
 
             <DeclarativeDataTable
               label="记忆条目清单"
@@ -558,7 +558,7 @@ export function MemoriesPage() {
                 { key: 'content', header: '内容', isTitle: true, className: 'max-w-md cursor-pointer truncate hover:text-primary', render: (row) => row.content },
                 { key: 'sender', header: '发送者', className: 'max-w-32 truncate text-muted-foreground', render: (row) => row.sender_name ?? row.sender_id ?? '未记录' },
                 { key: 'source', header: '来源', render: (row) => <Badge variant="secondary" className="font-mono text-[10px]">{row.source ?? '未记录'}</Badge> },
-                { key: 'tags', header: 'Tags', render: (row) => <div className="flex flex-wrap gap-1">{row.tags?.length ? row.tags.slice(0, 2).map((tag, index) => <Badge key={`${tag.name}-${index}`} className={tagBadgeClass(tag.type)}>{tag.name}</Badge>) : <span className="text-xs text-muted-foreground">—</span>}</div> },
+                { key: 'tags', header: '标签', render: (row) => <div className="flex flex-wrap gap-1">{row.tags?.length ? row.tags.slice(0, 2).map((tag, index) => <Badge key={`${tag.name}-${index}`} className={tagBadgeClass(tag.type)}>{tag.name}</Badge>) : <span className="text-xs text-muted-foreground">—</span>}</div> },
                 { key: 'vector', header: '向量', className: 'text-center', render: (row) => <span className={row.has_vector ? 'font-bold text-emerald-500' : 'font-bold text-destructive'} title={row.has_vector ? '有向量' : '无向量'}>{row.has_vector ? '有向量' : '无向量'}</span> },
                 { key: 'time', header: '时间', className: 'whitespace-nowrap font-mono text-xs text-muted-foreground', render: (row) => formatTime(row.timestamp) },
                 { key: 'actions', header: null, render: (row) => <Button variant="ghost" size="icon-sm" title="打开详情" onClick={(e) => { e.stopPropagation(); void open(row) }}><FileEditIcon /></Button> },
@@ -572,24 +572,24 @@ export function MemoriesPage() {
 
       <Sheet open={detailOpen} onOpenChange={(openValue) => { if (!openValue) closeDetail() }}>
         <SheetContent className="w-full gap-0 overflow-hidden sm:max-w-2xl">
-          <SheetHeader className="border-b pr-12"><SheetTitle>记忆明细</SheetTitle><SheetDescription>{detail ? `${detail.bot_id} · ${detail.session_id} · revision ${detail.version}` : '正在按 ObjectRef 读取'}</SheetDescription></SheetHeader>
+          <SheetHeader className="border-b pr-12"><SheetTitle>记忆明细</SheetTitle><SheetDescription>{detail ? `${detail.bot_id} · ${detail.session_id} · 版本 ${detail.version}` : '正在按当前群读取'}</SheetDescription></SheetHeader>
           <ScrollArea className="flex-1"><div className="flex flex-col gap-5 p-4">
             {detailLoading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2Icon className="animate-spin" />正在加载详情与相似记忆</div> : detail ? <>
-              <Field><FieldLabel htmlFor="memory-content">内容</FieldLabel><Textarea id="memory-content" className="min-h-36" value={content} onChange={(event) => setContent(event.target.value)} /><FieldDescription>保存会推进 revision，并回读新的 ObjectRef。</FieldDescription></Field>
+              <Field><FieldLabel htmlFor="memory-content">内容</FieldLabel><Textarea id="memory-content" className="min-h-36" value={content} onChange={(event) => setContent(event.target.value)} /><FieldDescription>保存会更新版本，并重新读取这条记忆。</FieldDescription></Field>
               <div className="grid gap-3 rounded-lg border bg-muted/20 p-3 text-xs sm:grid-cols-2"><div><span className="text-muted-foreground">发送者：</span>{detail.sender_name ?? detail.sender_id}</div><div><span className="text-muted-foreground">来源：</span>{detail.source ?? '未记录'}</div><div><span className="text-muted-foreground">重要度：</span><Input type="number" min="0" max="1" step="0.01" className="ml-2 inline-flex h-8 w-24" value={importance} onChange={(event) => setImportance(Number(event.target.value))} /></div><div><span className="text-muted-foreground">向量：</span><Badge variant={detail.has_vector ? 'secondary' : 'destructive'}>{detail.has_vector ? '已入库' : '缺失'}</Badge></div><div><span className="text-muted-foreground">创建时间：</span>{formatTime(detail.timestamp)}</div><div><span className="text-muted-foreground">访问次数：</span>{detail.access_count ?? '未记录'}</div></div>
-              <Field><FieldLabel>Tag 精确校准</FieldLabel><div className="flex flex-col gap-3 rounded-lg border bg-muted/10 p-3">{tagState ? <><div className="flex flex-col gap-2"><span className="text-xs text-muted-foreground">自动基线</span><div className="flex min-h-7 flex-wrap gap-1.5">{tagState.automatic.length ? tagState.automatic.map((tag, index) => <Badge key={`automatic-${tag.name}-${index}`} variant="outline" className={tagBadgeClass(tag.tag_type ?? tag.type)}>{tag.name}</Badge>) : <span className="text-xs text-muted-foreground">无自动 Tag</span>}</div></div><div className="flex flex-col gap-2"><span className="text-xs text-muted-foreground">当前 effective</span><div className="flex min-h-7 flex-wrap gap-1.5">{tagState.effective.map((tag, index) => <Badge key={`effective-${tag.name}-${index}`} className={`${tagBadgeClass(tag.tag_type ?? tag.type)} flex items-center gap-1 pr-1`}>{tag.name}<Button type="button" variant="ghost" size="icon-xs" className="size-8" aria-label={`人工排除 Tag ${tag.name}`} onClick={() => setConfirmAction({ title: `人工排除 Tag“${tag.name}”？`, description: '自动基线会保留，本次变更将作为有理由、可撤销的 scoped 人工校准。', label: '确认排除', destructive: true, run: () => applyTagCorrection('remove', tag.name) })}>×</Button></Badge>)}</div></div>{tagState.manual ? <Alert><TagIcon /><AlertTitle>人工校准生效中</AlertTitle><AlertDescription>{tagState.manual.reason} · revision {tagState.manual.revision}</AlertDescription></Alert> : null}</> : <Alert><AlertCircleIcon /><AlertTitle>Tag 状态 unavailable</AlertTitle><AlertDescription>未能读取 automatic/manual/effective 投影，页面不会把未知状态伪装为空。</AlertDescription></Alert>}<Field><FieldLabel htmlFor="memory-tag-reason">校准理由</FieldLabel><Textarea id="memory-tag-reason" name="memory-tag-reason" autoComplete="off" maxLength={1000} value={tagReason} onChange={(event) => setTagReason(event.target.value)} placeholder="例如：自动提取遗漏了本条记忆的核心主题…" /></Field><div className="flex flex-col gap-2 sm:flex-row sm:items-end"><Field className="min-w-0 flex-1"><FieldLabel htmlFor="memory-tag-name">人工纳入 Tag</FieldLabel><Input id="memory-tag-name" name="memory-tag-name" autoComplete="off" maxLength={200} className="w-full text-xs" placeholder="例如：项目决策…" value={newTagName} onChange={(event) => setNewTagName(event.target.value)} /></Field><Button type="button" size="sm" disabled={saving || !newTagName.trim()} onClick={() => void applyTagCorrection('add', newTagName.trim())}>人工纳入</Button>{tagState?.manual ? <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => setConfirmAction({ title: '撤销当前 Tag 人工校准？', description: '将恢复上一层人工校准；若不存在上一层，则恢复自动基线。', label: '确认撤销', run: undoTagCorrection })}>撤销校准</Button> : null}</div></div></Field>
-              <Card className="border-primary/20 bg-primary/5"><CardHeader className="py-3"><CardTitle className="text-sm">相似记忆</CardTitle><CardDescription>由当前 ObjectRef 对应向量查询；结果未签发新 ObjectRef，因此仅只读展示，不使用裸 ID 穿透。</CardDescription></CardHeader><CardContent className="flex flex-col gap-2 pt-0">{similarLoading ? <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2Icon className="animate-spin" />计算中</div> : similarItems.length ? similarItems.map((item) => <div key={item.id} className="rounded-lg border bg-background/50 p-2.5"><div className="flex justify-between gap-2 text-[10px] font-mono text-muted-foreground"><span>#{item.id} · {item.source || '未记录'}</span><span className="font-semibold text-primary">相似度 {item.similarity}%</span></div><p className="mt-1 line-clamp-2 text-xs leading-relaxed">{item.content}</p></div>) : <p className="py-3 text-center text-xs text-muted-foreground">未找到相似记录，或当前记忆没有可用向量。</p>}</CardContent></Card>
-              <div className="flex flex-wrap gap-2 border-t pt-4"><Button disabled={saving} onClick={() => void saveDetail()}>{saving ? <Loader2Icon className="animate-spin" /> : <SaveIcon />}保存并回读 revision</Button><Button disabled={saving} variant="outline" onClick={() => setConfirmAction({ title: '重新向量化当前记忆？', description: '将重算向量并触发索引修复，不修改正文 revision。', label: '确认 re-embed', run: reEmbedDetail })}><RefreshCwIcon />re-embed</Button><Button disabled={saving} variant="destructive" className="ml-auto" onClick={() => setConfirmAction({ title: `永久删除记忆 #${detail.id}？`, description: '将按当前 ObjectRef 删除记忆，操作不可撤销。', label: '确认删除', destructive: true, run: removeDetail })}><Trash2Icon />删除当前 ObjectRef</Button></div>
-            </> : <Alert variant="destructive"><AlertTitle>详情 unavailable</AlertTitle><AlertDescription>无法读取当前 ObjectRef。</AlertDescription></Alert>}
+              <Field><FieldLabel>标签精确校准</FieldLabel><div className="flex flex-col gap-3 rounded-lg border bg-muted/10 p-3">{tagState ? <><div className="flex flex-col gap-2"><span className="text-xs text-muted-foreground">自动基线</span><div className="flex min-h-7 flex-wrap gap-1.5">{tagState.automatic.length ? tagState.automatic.map((tag, index) => <Badge key={`automatic-${tag.name}-${index}`} variant="outline" className={tagBadgeClass(tag.tag_type ?? tag.type)}>{tag.name}</Badge>) : <span className="text-xs text-muted-foreground">无自动标签</span>}</div></div><div className="flex flex-col gap-2"><span className="text-xs text-muted-foreground">当前生效</span><div className="flex min-h-7 flex-wrap gap-1.5">{tagState.effective.map((tag, index) => <Badge key={`effective-${tag.name}-${index}`} className={`${tagBadgeClass(tag.tag_type ?? tag.type)} flex items-center gap-1 pr-1`}>{tag.name}<Button type="button" variant="ghost" size="icon-xs" className="size-8" aria-label={`人工排除标签 ${tag.name}`} onClick={() => setConfirmAction({ title: `人工排除标签“${tag.name}”？`, description: '自动基线会保留，本次变更将作为有理由、可撤销的本群人工校准。', label: '确认排除', destructive: true, run: () => applyTagCorrection('remove', tag.name) })}>×</Button></Badge>)}</div></div>{tagState.manual ? <Alert><TagIcon /><AlertTitle>人工校准生效中</AlertTitle><AlertDescription>{tagState.manual.reason} · 版本 {tagState.manual.revision}</AlertDescription></Alert> : null}</> : <Alert><AlertCircleIcon /><AlertTitle>标签状态不可用</AlertTitle><AlertDescription>未能读取自动、人工和生效标签，页面不会把未知状态伪装为空。</AlertDescription></Alert>}<Field><FieldLabel htmlFor="memory-tag-reason">校准理由</FieldLabel><Textarea id="memory-tag-reason" name="memory-tag-reason" autoComplete="off" maxLength={1000} value={tagReason} onChange={(event) => setTagReason(event.target.value)} placeholder="例如：自动提取遗漏了本条记忆的核心主题…" /></Field><div className="flex flex-col gap-2 sm:flex-row sm:items-end"><Field className="min-w-0 flex-1"><FieldLabel htmlFor="memory-tag-name">人工纳入标签</FieldLabel><Input id="memory-tag-name" name="memory-tag-name" autoComplete="off" maxLength={200} className="w-full text-xs" placeholder="例如：项目决策…" value={newTagName} onChange={(event) => setNewTagName(event.target.value)} /></Field><Button type="button" size="sm" disabled={saving || !newTagName.trim()} onClick={() => void applyTagCorrection('add', newTagName.trim())}>人工纳入</Button>{tagState?.manual ? <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => setConfirmAction({ title: '撤销当前 Tag 人工校准？', description: '将恢复上一层人工校准；若不存在上一层，则恢复自动基线。', label: '确认撤销', run: undoTagCorrection })}>撤销校准</Button> : null}</div></div></Field>
+              <Card className="border-primary/20 bg-primary/5"><CardHeader className="py-3"><CardTitle className="text-sm">相似记忆</CardTitle><CardDescription>按当前记忆的向量查询相似内容；结果只读展示，不会用裸编号跳到别的群。</CardDescription></CardHeader><CardContent className="flex flex-col gap-2 pt-0">{similarLoading ? <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2Icon className="animate-spin" />计算中</div> : similarItems.length ? similarItems.map((item) => <div key={item.id} className="rounded-lg border bg-background/50 p-2.5"><div className="flex justify-between gap-2 text-[10px] font-mono text-muted-foreground"><span>#{item.id} · {item.source || '未记录'}</span><span className="font-semibold text-primary">相似度 {item.similarity}%</span></div><p className="mt-1 line-clamp-2 text-xs leading-relaxed">{item.content}</p></div>) : <p className="py-3 text-center text-xs text-muted-foreground">未找到相似记录，或当前记忆没有可用向量。</p>}</CardContent></Card>
+              <div className="flex flex-wrap gap-2 border-t pt-4"><Button disabled={saving} onClick={() => void saveDetail()}>{saving ? <Loader2Icon className="animate-spin" /> : <SaveIcon />}保存并重新读取</Button><Button disabled={saving} variant="outline" onClick={() => setConfirmAction({ title: '重新向量化当前记忆？', description: '将重算向量并触发索引修复，不修改正文版本。', label: '确认重新向量化', run: reEmbedDetail })}><RefreshCwIcon />重新向量化</Button><Button disabled={saving} variant="destructive" className="ml-auto" onClick={() => setConfirmAction({ title: `永久删除记忆 #${detail.id}？`, description: '将按当前记忆删除，操作不可撤销。', label: '确认删除', destructive: true, run: removeDetail })}><Trash2Icon />删除当前记忆</Button></div>
+            </> : <Alert variant="destructive"><AlertTitle>详情不可用</AlertTitle><AlertDescription>无法读取当前记忆。</AlertDescription></Alert>}
           </div></ScrollArea>
         </SheetContent>
       </Sheet>
 
       <Dialog open={Boolean(confirmAction)} onOpenChange={(openValue) => { if (!openValue && !confirmRunning) setConfirmAction(null) }}><DialogContent><DialogHeader><DialogTitle>{confirmAction?.title}</DialogTitle><DialogDescription>{confirmAction?.description}</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" disabled={confirmRunning} onClick={() => setConfirmAction(null)}>取消</Button><Button variant={confirmAction?.destructive ? 'destructive' : 'default'} disabled={confirmRunning} onClick={() => void executeConfirm()}>{confirmRunning ? <Loader2Icon className="animate-spin" /> : null}{confirmAction?.label}</Button></DialogFooter></DialogContent></Dialog>
 
-      <Dialog open={configOpen} onOpenChange={setConfigOpen}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>Tag 提取参数</DialogTitle><DialogDescription>配置仅用于当前勾选的 scoped ObjectRef。</DialogDescription></DialogHeader><TagExtractionConfigPanel title="LLM 运行配置" description="missing_only 最安全；append/replace 会在执行前再次确认。" disabled={streamRunning} onOptionsChange={(options: Required<TagExecutionOptions>) => { setTagBatchSize(options.tag_batch_size); setTagWritePolicy(options.tag_write_policy) }} /><DialogFooter><Button onClick={() => setConfigOpen(false)}>保存配置</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={configOpen} onOpenChange={setConfigOpen}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>标签提取参数</DialogTitle><DialogDescription>配置仅用于当前勾选的本群记忆。</DialogDescription></DialogHeader><TagExtractionConfigPanel title="LLM 运行配置" description="只补缺最安全；追加或替换会在执行前再次确认。" disabled={streamRunning} onOptionsChange={(options: Required<TagExecutionOptions>) => { setTagBatchSize(options.tag_batch_size); setTagWritePolicy(options.tag_write_policy) }} /><DialogFooter><Button onClick={() => setConfigOpen(false)}>保存配置</Button></DialogFooter></DialogContent></Dialog>
 
-      <Dialog open={streamOpen} onOpenChange={setStreamOpen}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>{streamTitle}</DialogTitle><DialogDescription>批量任务只提交当前 Scope 的服务端签发 ObjectRef。</DialogDescription></DialogHeader><div className="flex flex-col gap-4">{streamProgress ? <div><div className="mb-1 flex justify-between text-xs"><span>{Math.round(streamProgress.progress * 100)}%</span><span>{streamProgress.processed ?? 0}/{streamProgress.total} · 失败 {streamProgress.errors ?? 0}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full bg-primary transition-all" style={{ width: `${streamProgress.progress * 100}%` }} /></div></div> : <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2Icon className="animate-spin" />正在连接批量任务</div>}<ScrollArea className="h-40 rounded-lg border bg-muted/40 p-3 font-mono text-[10px]">{streamLog.map((line, index) => <div key={`${index}-${line}`} className={line.includes('[ERROR]') ? 'text-destructive' : line.includes('[SUCCESS]') ? 'text-emerald-500' : undefined}>{line}</div>)}</ScrollArea>{streamProgress?.done ? <Alert className="border-emerald-500/20 bg-emerald-500/10"><CheckCircle2Icon /><AlertTitle>处理完成</AlertTitle></Alert> : null}</div></DialogContent></Dialog>
+      <Dialog open={streamOpen} onOpenChange={setStreamOpen}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>{streamTitle}</DialogTitle><DialogDescription>批量任务只提交当前群里服务端确认过的记忆。</DialogDescription></DialogHeader><div className="flex flex-col gap-4">{streamProgress ? <div><div className="mb-1 flex justify-between text-xs"><span>{Math.round(streamProgress.progress * 100)}%</span><span>{streamProgress.processed ?? 0}/{streamProgress.total} · 失败 {streamProgress.errors ?? 0}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full bg-primary transition-all" style={{ width: `${streamProgress.progress * 100}%` }} /></div></div> : <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2Icon className="animate-spin" />正在连接批量任务</div>}<ScrollArea className="h-40 rounded-lg border bg-muted/40 p-3 font-mono text-[10px]">{streamLog.map((line, index) => <div key={`${index}-${line}`} className={line.includes('[ERROR]') ? 'text-destructive' : line.includes('[SUCCESS]') ? 'text-emerald-500' : undefined}>{line}</div>)}</ScrollArea>{streamProgress?.done ? <Alert className="border-emerald-500/20 bg-emerald-500/10"><CheckCircle2Icon /><AlertTitle>处理完成</AlertTitle></Alert> : null}</div></DialogContent></Dialog>
     </div>
   )
 }

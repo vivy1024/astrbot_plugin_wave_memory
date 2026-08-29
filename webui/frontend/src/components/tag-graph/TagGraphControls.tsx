@@ -37,12 +37,12 @@ export function TagGraphControls({ botId, sessionId, layers, includePulse, loadi
 
   return <Card className="border-border/60"><CardContent className="flex flex-col gap-3 p-4">
     <div className="flex flex-wrap items-end gap-3">
-      <Badge variant="outline" className="mb-1">Canonical Scope</Badge>
-      <ScopeSelect className="min-w-48 flex-1 xl:max-w-64" value={botId || undefined} loadOptions={loadBots} label="Bot" placeholder="选择真实 Bot" required onValueChange={(value) => onScopeChange({ botId: value, sessionId: '' })} />
-      <ScopeSelect className="min-w-56 flex-[1.3] xl:max-w-80" value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" placeholder="选择 canonical 群会话" disabled={!botId} required onValueChange={(value) => onScopeChange({ sessionId: value })} />
-      <span className="pb-2 text-[10px] text-muted-foreground">visibility: group · 只读</span>
+      <Badge variant="outline" className="mb-1">当前群</Badge>
+      <ScopeSelect className="min-w-48 flex-1 xl:max-w-64" value={botId || undefined} loadOptions={loadBots} label="Bot" placeholder="选择 Bot" required onValueChange={(value) => onScopeChange({ botId: value, sessionId: '' })} />
+      <ScopeSelect className="min-w-56 flex-[1.3] xl:max-w-80" value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" placeholder="选择该 Bot 的群" disabled={!botId} required onValueChange={(value) => onScopeChange({ sessionId: value })} />
+      <span className="pb-2 text-[10px] text-muted-foreground">只读 · 当前群</span>
     </div>
-    <div className="flex flex-wrap items-center gap-2 border-t pt-3" aria-label="Tag Graph 图层">
+    <div className="flex flex-wrap items-center gap-2 border-t pt-3" aria-label="标签图层">
       {(Object.keys(LAYER_LABELS) as TagGraphLayer[]).map((layer) => {
         const visible = layers.includes(layer)
         return <Button key={layer} type="button" size="sm" variant={visible ? 'secondary' : 'outline'} aria-pressed={visible} disabled={loading} onClick={() => toggleLayer(layer)}>{visible ? <EyeIcon aria-hidden="true" /> : <EyeOffIcon aria-hidden="true" />}{LAYER_LABELS[layer]}</Button>

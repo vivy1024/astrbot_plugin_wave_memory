@@ -43,7 +43,7 @@ export function ObjectDeepLink({
     return (
       <span data-slot="object-deep-link" role="status" className={cn('inline-flex items-center gap-2 text-sm text-muted-foreground', className)}>
         <Link2OffIcon className="size-4" aria-hidden="true" />
-        {label}；不会使用裸 ID 或默认 Bot 定位。
+        {label}；不会用裸编号或默认 Bot 猜测。
       </span>
     )
   }

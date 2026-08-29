@@ -98,6 +98,6 @@ describe('InjectionPage 异步筛选', () => {
     expect((await screen.findAllByText('mobile-trace')).length).toBeGreaterThan(0)
     await waitFor(() => expect(view.container.querySelector('[data-responsive-table="cards"]')).toBeInTheDocument())
     expect(view.container.querySelector('[data-responsive-table="cards"] table')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '查看 Trace 详情' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '查看注入详情' })).toBeVisible()
   })
 })

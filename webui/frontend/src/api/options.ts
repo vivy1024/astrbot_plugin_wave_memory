@@ -21,6 +21,18 @@ export interface SessionOptionDto {
   sources?: string[]
   count?: number
   capabilities?: Record<string, number>
+  alias_group?: string | null
+  is_primary_alias?: boolean
+  alias_session_ids?: string[]
+}
+
+export interface LegacyGroupOptionDto {
+  bot_id: string
+  group_id: string
+  label: string
+  source?: string
+  count?: number
+  binding_status?: 'unresolved' | string
 }
 
 export interface ChannelOptionDto {
@@ -33,6 +45,7 @@ export interface ChannelOptionDto {
 export interface ScopeOptionsPayload {
   bots: BotOptionDto[]
   sessions: SessionOptionDto[]
+  legacy_groups?: LegacyGroupOptionDto[]
   channels: ChannelOptionDto[]
 
   generated_at: number
@@ -61,16 +74,30 @@ export function scopeOptionsFor(payload: ScopeOptionsPayload, kinds: Array<Scope
   if (kinds.includes('session')) {
     items.push(...payload.sessions.map((session) => {
       const groupName = session.group_name?.trim()
-      const label = session.kind === 'group' && groupName && groupName !== session.conversation_id
+      const baseLabel = session.kind === 'group' && groupName && groupName !== session.conversation_id
         ? `${groupName}（${session.conversation_id}）`
         : session.label || session.conversation_id
+      const aliasNote = session.kind === 'group' && session.is_primary_alias === false
+        ? `同一群 · ${session.platform_id}残留`
+        : session.kind === 'group' && (session.alias_session_ids?.length ?? 0) > 1
+          ? '同一群主会话'
+          : ''
       return {
         value: session.id,
-        label,
+        label: aliasNote && session.is_primary_alias === false ? `${baseLabel} · ${session.platform_id}残留` : baseLabel,
         kind: 'session' as const,
-        description: `${session.bot_id} · ${session.kind} · ${session.source ?? 'runtime'}`,
+        description: `${session.bot_id} · ${session.kind} · ${session.source ?? 'runtime'}${aliasNote ? ` · ${aliasNote}` : ''}`,
+        disabled: session.kind === 'private',
       }
     }))
+    for (const group of payload.legacy_groups ?? []) {
+      items.push({
+        value: `legacy:${group.bot_id}:${group.group_id}`,
+        label: `${group.label || group.group_id}（未绑定）`,
+        kind: 'session',
+        description: `${group.bot_id} · group · unresolved · ${group.count ?? 0} 条人物`,
+      })
+    }
   }
   if (kinds.includes('channel')) {
     items.push(...payload.channels.map((channel) => ({
@@ -82,4 +109,15 @@ export function scopeOptionsFor(payload: ScopeOptionsPayload, kinds: Array<Scope
     })))
   }
   return items
+}
+
+export function groupSessionOptions(options: ScopeOption[], botId?: string): ScopeOption[] {
+  return options
+    .filter((option) => option.kind === 'session' && (!botId || option.description?.startsWith(`${botId} ·`)))
+    .map((option) => {
+      const isPrivate = option.disabled || option.description?.includes(' · private ·') || option.value.includes(':private:')
+      return isPrivate
+        ? { ...option, disabled: true, description: `${option.description ?? ''} · 本页只支持群会话` }
+        : option
+    })
 }

@@ -62,7 +62,7 @@ export function OutboxMonitorCard() {
           <p className="mt-1 text-xl font-bold font-mono">{(data.outbox_deliveries ?? 0).toLocaleString('zh-CN')}</p>
         </div>
         <div className="rounded-lg border bg-card/60 p-3">
-          <p className="text-xs text-muted-foreground">Scope 恢复项队列</p>
+          <p className="text-xs text-muted-foreground">当前群恢复项队列</p>
           <p className="mt-1 text-xl font-bold font-mono">{(data.scope_recovery_items ?? 0).toLocaleString('zh-CN')}</p>
         </div>
         <div className="rounded-lg border bg-card/60 p-3">

@@ -33,10 +33,16 @@ export interface CanonicalScopeDefaultOptions {
 
 function preferredSession(sessions: SessionOptionDto[], botId: string, sessionId: string): SessionOptionDto | undefined {
   const exact = sessions.find((item) => item.bot_id === botId && item.id === sessionId)
-  if (exact) return exact
+  if (exact) {
+    if (exact.is_primary_alias === false && exact.alias_session_ids?.length) {
+      const primary = sessions.find((item) => item.id === exact.alias_session_ids?.[0] && item.bot_id === exact.bot_id)
+      return primary ?? exact
+    }
+    return exact
+  }
   const bySession = sessionId ? sessions.find((item) => item.id === sessionId && (!botId || item.bot_id === botId)) : undefined
   if (bySession) return bySession
-  const candidates = botId ? sessions.filter((item) => item.bot_id === botId) : sessions
+  const candidates = (botId ? sessions.filter((item) => item.bot_id === botId) : sessions).filter((item) => item.is_primary_alias !== false)
   return [...candidates].sort((left, right) => (right.count ?? 0) - (left.count ?? 0) || left.id.localeCompare(right.id))[0]
 }
 
