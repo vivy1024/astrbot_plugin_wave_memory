@@ -285,6 +285,9 @@ export function JargonPage() {
   const objectId = params.get('object_id') ?? ''
   const statusFilter = params.get('status') ?? ''
   const search = params.get('search') ?? ''
+  const sourceFilter = params.get('source') ?? ''
+  const evidenceFilter = params.get('has_evidence') ?? ''
+  const minFrequency = params.get('min_frequency') ?? ''
   useCanonicalScopeDefault({ botId, sessionId, setFilters: pagination.setFilters })
   const scope = useMemo<JargonScopeSelection>(() => ({ bot_id: botId, session_id: sessionId, visibility: 'group' }), [botId, sessionId])
   const [payload, setPayload] = useState<JargonResponse | null>(null)
@@ -304,13 +307,13 @@ export function JargonPage() {
   const [blocklist, setBlocklist] = useState<JargonBlocklistItem[]>([])
   const [blocklistStatus, setBlocklistStatus] = useState<'loading' | 'success' | 'error'>('loading')
   const [removingBlocklistId, setRemovingBlocklistId] = useState<number | null>(null)
-  const [filterDraft, setFilterDraft] = useState({ search, status: statusFilter })
+  const [filterDraft, setFilterDraft] = useState({ search, status: statusFilter, source: sourceFilter, hasEvidence: evidenceFilter, minFrequency })
   const [activeTab, setActiveTab] = useState<'local' | 'catalog'>('local')
   const listRequest = useRef(0)
   const blocklistRequest = useRef(0)
   const catalogRequest = useRef(0)
 
-  useEffect(() => setFilterDraft({ search, status: statusFilter }), [search, statusFilter])
+  useEffect(() => setFilterDraft({ search, status: statusFilter, source: sourceFilter, hasEvidence: evidenceFilter, minFrequency }), [evidenceFilter, minFrequency, search, sourceFilter, statusFilter])
   useEffect(() => {
     setEvidenceItem(null)
     setEditItem(null)
@@ -326,7 +329,16 @@ export function JargonPage() {
     setQueryStatus('loading')
     setError(undefined)
     try {
-      const next = normalizeJargonResponse(await listJargons({ ...scope, limit: pagination.limit, offset: pagination.offset, status: statusFilter || undefined, search: search || undefined }))
+      const next = normalizeJargonResponse(await listJargons({
+        ...scope,
+        limit: pagination.limit,
+        offset: pagination.offset,
+        status: statusFilter || undefined,
+        search: search || undefined,
+        source: sourceFilter || undefined,
+        has_evidence: evidenceFilter || undefined,
+        min_frequency: minFrequency || undefined,
+      }))
       if (request !== listRequest.current) return
       setPayload(next)
       setSelectedIds([])
@@ -335,7 +347,7 @@ export function JargonPage() {
       if (request !== listRequest.current) return
       setPayload(null); setError(reason); setQueryStatus('error')
     }
-  }, [botId, pagination.limit, pagination.offset, scope, search, sessionId, statusFilter])
+  }, [botId, evidenceFilter, minFrequency, pagination.limit, pagination.offset, scope, search, sessionId, sourceFilter, statusFilter])
 
   const loadBlocklist = useCallback(async () => {
     const request = ++blocklistRequest.current
@@ -490,12 +502,18 @@ export function JargonPage() {
 
   function submitSearch(event: FormEvent) {
     event.preventDefault()
-    pagination.setFilters({ search: filterDraft.search.trim() || null, status: filterDraft.status || null })
+    pagination.setFilters({
+      search: filterDraft.search.trim() || null,
+      status: filterDraft.status || null,
+      source: filterDraft.source || null,
+      has_evidence: filterDraft.hasEvidence || null,
+      min_frequency: filterDraft.minFrequency.trim() || null,
+    })
   }
 
   function resetFilters() {
-    setFilterDraft({ search: '', status: '' })
-    pagination.setFilters({ search: null, status: null })
+    setFilterDraft({ search: '', status: '', source: '', hasEvidence: '', minFrequency: '' })
+    pagination.setFilters({ search: null, status: null, source: null, has_evidence: null, min_frequency: null })
   }
 
   const pageItems = payload?.items ?? []
@@ -546,6 +564,32 @@ export function JargonPage() {
               </SelectContent>
             </Select>
           </Field>
+          <Field className="w-32 shrink-0 gap-0 [&_[data-slot=field-label]]:sr-only">
+            <FieldLabel>来源</FieldLabel>
+            <Select value={filterDraft.source || 'all'} onValueChange={(value) => setFilterDraft((current) => ({ ...current, source: value === 'all' ? '' : value }))}>
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部来源</SelectItem>
+                <SelectItem value="wave_memory">本群习得</SelectItem>
+                <SelectItem value="holyman_skills">内置资产</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field className="w-32 shrink-0 gap-0 [&_[data-slot=field-label]]:sr-only">
+            <FieldLabel>证据</FieldLabel>
+            <Select value={filterDraft.hasEvidence || 'all'} onValueChange={(value) => setFilterDraft((current) => ({ ...current, hasEvidence: value === 'all' ? '' : value }))}>
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">不限证据</SelectItem>
+                <SelectItem value="yes">有证据锚点</SelectItem>
+                <SelectItem value="no">无证据锚点</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field className="w-28 shrink-0 gap-0 [&_[data-slot=field-label]]:sr-only">
+            <FieldLabel>最低频次</FieldLabel>
+            <Input className="h-8" inputMode="numeric" placeholder="最低频次" value={filterDraft.minFrequency} onChange={(event) => setFilterDraft((current) => ({ ...current, minFrequency: event.target.value }))} />
+          </Field>
         </ScopeFilterBar>
 
         <Card>
@@ -590,9 +634,9 @@ export function JargonPage() {
               </Button>
             </BatchActionBar>
 <QueryState status={queryStatus} error={error} onRetry={() => void load()} title={!botId || !sessionId ? '请选择真实 Bot 与会话' : undefined} description={!botId || !sessionId ? '作用域未选择时不会查询，也不会补入默认 Bot。' : undefined}>
-<ResponsiveTable label="群聊黑话清单" table={<Table>
-<TableHeader><TableRow><TableHead className="w-10"><input aria-label="选择当前页全部黑话" type="checkbox" checked={allPageSelected} onChange={(event) => setSelectedIds(event.target.checked ? pageItems.map((item) => item.id) : [])} /></TableHead><TableHead>词条</TableHead><TableHead>释义</TableHead><TableHead className="w-20">频次</TableHead><TableHead className="w-24">来源</TableHead><TableHead className="w-24">状态</TableHead><TableHead className="w-20">证据</TableHead><TableHead className="w-64 text-right">操作</TableHead></TableRow></TableHeader>
-<TableBody>{pageItems.map((item) => <TableRow key={item.id} className={selectedIds.includes(item.id) ? 'bg-primary/5' : undefined}><TableCell><input aria-label={`选择黑话 ${item.word}`} type="checkbox" checked={selectedIds.includes(item.id)} onChange={(event) => toggleSelected(item.id, event.target.checked)} /></TableCell><TableCell className="font-semibold">{item.word}</TableCell><TableCell className="max-w-xl"><p className="line-clamp-2 text-sm text-muted-foreground">{item.meaning || '尚未形成可展示的释义'}</p></TableCell><TableCell className="tabular-nums">{item.frequency}</TableCell><TableCell><Badge variant="secondary" className="font-mono text-[10px]">{item.source || 'wave_memory'}</Badge></TableCell><TableCell><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></TableCell><TableCell>{item.anchors.length ? `${item.anchors.length} 条` : '无锚点'}</TableCell><TableCell className="text-right"><div className="flex justify-end gap-1"><Button type="button" variant="outline" size="sm" disabled={!item.object_ref} title={item.object_ref ? '还原同作用域聊天证据' : '缺少服务端签发的 ObjectRef'} onClick={() => setEvidenceItem(item)}><MessageSquareQuoteIcon data-icon="inline-start" />证据</Button>{item.status === 'pending' ? <><Button type="button" size="icon-sm" aria-label={`确认黑话 ${item.word}`} disabled={mutating === item.id || !reviewAvailable || item.anchors.length === 0} title="确认黑话" onClick={() => void review(item, 'approve')}><CheckIcon /></Button><Button type="button" variant="outline" size="icon-sm" aria-label={`拒绝并全局拉黑黑话 ${item.word}`} disabled={mutating === item.id || !reviewAvailable} title="拒绝并全局拉黑" onClick={() => void review(item, 'reject')}><XIcon /></Button></> : null}<Button type="button" variant="ghost" size="icon-sm" aria-label={`编辑黑话 ${item.word}`} disabled={!editAvailable || !item.object_ref} title={editAvailable ? '编辑释义；保存后回到待审核' : payload?.capabilities.edit?.reason_code ?? '编辑不可用'} onClick={() => openMeaningEditor(item)}><Edit2Icon /></Button><ResponsiveDetail title={item.word} description="黑话释义、证据引用与审核操作" className="sm:max-w-4xl" trigger={<Button type="button" variant="ghost" size="icon-sm" aria-label={`查看黑话 ${item.word} 详情`} title="查看详情"><EyeIcon /></Button>}><JargonDetails item={item} reviewAvailable={reviewAvailable} busy={mutating === item.id} onReview={(action) => void review(item, action)} /></ResponsiveDetail><Button type="button" variant="ghost" size="icon-sm" aria-label={`归档黑话 ${item.word}`} disabled={!archiveAvailable || !item.object_ref} title={archiveAvailable ? '归档并移出正式注入集合' : payload?.capabilities.archive?.reason_code ?? '归档不可用'} onClick={() => setArchiveItem(item)}><ArchiveIcon /></Button></div></TableCell></TableRow>)}</TableBody>
+<ResponsiveTable label="群聊黑话清单" table={<Table className="w-full table-fixed">
+<TableHeader><TableRow><TableHead className="w-8"><input aria-label="选择当前页全部黑话" type="checkbox" checked={allPageSelected} onChange={(event) => setSelectedIds(event.target.checked ? pageItems.map((item) => item.id) : [])} /></TableHead><TableHead className="w-28">词条</TableHead><TableHead className="w-auto">释义</TableHead><TableHead className="w-16">频次</TableHead><TableHead className="w-20">来源</TableHead><TableHead className="w-20">状态</TableHead><TableHead className="w-16">证据</TableHead><TableHead className="w-52 text-right">操作</TableHead></TableRow></TableHeader>
+<TableBody>{pageItems.map((item) => <TableRow key={item.id} className={selectedIds.includes(item.id) ? 'bg-primary/5' : undefined}><TableCell><input aria-label={`选择黑话 ${item.word}`} type="checkbox" checked={selectedIds.includes(item.id)} onChange={(event) => toggleSelected(item.id, event.target.checked)} /></TableCell><TableCell className="font-semibold truncate">{item.word}</TableCell><TableCell className="whitespace-normal break-words"><p className="line-clamp-2 text-sm text-muted-foreground">{item.meaning || '尚未形成可展示的释义'}</p></TableCell><TableCell className="tabular-nums">{item.frequency}</TableCell><TableCell><Badge variant="secondary" className="font-mono text-[10px]">{item.source || 'wave_memory'}</Badge></TableCell><TableCell><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></TableCell><TableCell>{item.anchors.length ? `${item.anchors.length} 条` : '无锚点'}</TableCell><TableCell className="text-right"><div className="flex justify-end gap-1"><Button type="button" variant="outline" size="sm" disabled={!item.object_ref} title={item.object_ref ? '还原同作用域聊天证据' : '缺少服务端签发的 ObjectRef'} onClick={() => setEvidenceItem(item)}><MessageSquareQuoteIcon data-icon="inline-start" />证据</Button>{item.status === 'pending' ? <><Button type="button" size="icon-sm" aria-label={`确认黑话 ${item.word}`} disabled={mutating === item.id || !reviewAvailable || item.anchors.length === 0} title="确认黑话" onClick={() => void review(item, 'approve')}><CheckIcon /></Button><Button type="button" variant="outline" size="icon-sm" aria-label={`拒绝并全局拉黑黑话 ${item.word}`} disabled={mutating === item.id || !reviewAvailable} title="拒绝并全局拉黑" onClick={() => void review(item, 'reject')}><XIcon /></Button></> : null}<Button type="button" variant="ghost" size="icon-sm" aria-label={`编辑黑话 ${item.word}`} disabled={!editAvailable || !item.object_ref} title={editAvailable ? '编辑释义；保存后回到待审核' : payload?.capabilities.edit?.reason_code ?? '编辑不可用'} onClick={() => openMeaningEditor(item)}><Edit2Icon /></Button><ResponsiveDetail title={item.word} description="黑话释义、证据引用与审核操作" className="sm:max-w-4xl" trigger={<Button type="button" variant="ghost" size="icon-sm" aria-label={`查看黑话 ${item.word} 详情`} title="查看详情"><EyeIcon /></Button>}><JargonDetails item={item} reviewAvailable={reviewAvailable} busy={mutating === item.id} onReview={(action) => void review(item, action)} /></ResponsiveDetail><Button type="button" variant="ghost" size="icon-sm" aria-label={`归档黑话 ${item.word}`} disabled={!archiveAvailable || !item.object_ref} title={archiveAvailable ? '归档并移出正式注入集合' : payload?.capabilities.archive?.reason_code ?? '归档不可用'} onClick={() => setArchiveItem(item)}><ArchiveIcon /></Button></div></TableCell></TableRow>)}</TableBody>
 </Table>} cards={pageItems.map((item) => <article key={item.id} className={`flex flex-col gap-3 rounded-lg border bg-card p-4 ${selectedIds.includes(item.id) ? 'border-primary/50 bg-primary/5' : ''}`}><div className="flex items-start justify-between gap-2"><label className="flex min-w-0 items-start gap-2"><input aria-label={`选择黑话 ${item.word}`} type="checkbox" checked={selectedIds.includes(item.id)} onChange={(event) => toggleSelected(item.id, event.target.checked)} /><span><span className="block font-semibold">{item.word}</span><span className="mt-1 block whitespace-pre-wrap break-words text-sm text-muted-foreground">{item.meaning || '尚未形成可展示的释义'}</span></span></label><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></div><div className="flex flex-wrap gap-2 text-xs text-muted-foreground"><span>频次 {item.frequency}</span><span>来源 {item.source || 'wave_memory'}</span><span>证据 {item.anchors.length} 条</span></div><div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" size="sm" disabled={!item.object_ref} onClick={() => setEvidenceItem(item)}><MessageSquareQuoteIcon data-icon="inline-start" />证据</Button><Button type="button" variant="outline" size="sm" disabled={!editAvailable || !item.object_ref} onClick={() => openMeaningEditor(item)}><Edit2Icon data-icon="inline-start" />编辑</Button><ResponsiveDetail title={item.word} description="黑话释义、证据引用与审核操作" className="sm:max-w-4xl" trigger={<Button type="button" variant="outline" size="sm">详情</Button>}><JargonDetails item={item} reviewAvailable={reviewAvailable} busy={mutating === item.id} onReview={(action) => void review(item, action)} /></ResponsiveDetail></div></article>)} />
 </QueryState>{payload && !payload.capabilities.review?.available ? <Alert>
 <AlertTitle>审核能力当前不可用</AlertTitle>

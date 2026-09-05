@@ -77,6 +77,24 @@ describe('响应式键盘详情', () => {
     expect(screen.getByText('yushu · 羽书:group:42 · group')).toBeInTheDocument()
     expect(screen.queryByText('[object Object]')).not.toBeInTheDocument()
   })
+
+  it('管道拼接的 source_scope 拆成可读群名', () => {
+    setViewport(1024)
+    render(
+      <MemoryRouter>
+        <EvidenceList
+          evidence={[{
+            type: 'memory',
+            id: '323370',
+            source_scope: 'yushu|羽书:group:398291136|group',
+            availability: 'available',
+          }]}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('yushu · 羽书:group:398291136 · group')).toBeInTheDocument()
+    expect(screen.queryByText('yushu|羽书:group:398291136|group')).not.toBeInTheDocument()
+  })
 })
 
 describe('Trace 与状态展示', () => {

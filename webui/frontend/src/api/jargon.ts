@@ -31,6 +31,9 @@ export interface JargonFilters extends JargonScopeSelection {
   offset: number
   status?: string
   search?: string
+  source?: string
+  has_evidence?: string
+  min_frequency?: string | number
 }
 
 export interface JargonCapability {
@@ -119,6 +122,9 @@ export function listJargons(filters: JargonFilters): Promise<JargonResponse> {
   const params = new URLSearchParams({ bot_id: filters.bot_id, session_id: filters.session_id, visibility: filters.visibility, limit: String(filters.limit), offset: String(filters.offset) })
   if (filters.status) params.set('status', filters.status)
   if (filters.search) params.set('search', filters.search)
+  if (filters.source) params.set('source', filters.source)
+  if (filters.has_evidence) params.set('has_evidence', filters.has_evidence)
+  if (filters.min_frequency !== undefined && filters.min_frequency !== '') params.set('min_frequency', String(filters.min_frequency))
   return fetchJson<JargonResponse>(`/api/jargon?${params.toString()}`)
 }
 

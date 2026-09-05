@@ -1,3 +1,4 @@
+import { Suspense } from 'react'
 import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
 
 import { appRoutes, defaultRoute } from '@/app/routes'
@@ -5,8 +6,19 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { WaveSidebar } from '@/components/layout/WaveSidebar'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Toaster } from '@/components/ui/sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+
+function PageFallback() {
+  return (
+    <div className="flex flex-col gap-4 p-4" data-slot="page-fallback">
+      <Skeleton className="h-8 w-48" />
+      <Skeleton className="h-32 w-full" />
+      <Skeleton className="h-64 w-full" />
+    </div>
+  )
+}
 
 function RenamedPath({ to }: { to: string }) {
   const location = useLocation()
@@ -25,7 +37,9 @@ export function AppShell() {
         <PageHeader />
         <ScrollArea className="h-[calc(100svh-3.5rem)]">
           <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 p-4 md:p-6">
-            <Outlet />
+            <Suspense fallback={<PageFallback />}>
+              <Outlet />
+            </Suspense>
           </div>
         </ScrollArea>
       </SidebarInset>
@@ -39,7 +53,7 @@ export function AppRoutes() {
     <Routes>
       {appRoutes.filter((route) => route.path === '/explore').map((route) => {
         const Element = route.element
-        return <Route key={route.path} path={route.path} element={<Element />} />
+        return <Route key={route.path} path={route.path} element={<Suspense fallback={<PageFallback />}><Element /></Suspense>} />
       })}
       <Route element={<AppShell />}>
         <Route index element={<Navigate replace to={defaultRoute} />} />

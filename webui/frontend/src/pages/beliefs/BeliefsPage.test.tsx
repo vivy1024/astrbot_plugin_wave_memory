@@ -43,6 +43,8 @@ const belief = {
   confidence: 0.82,
   confidence_components: { evidence: 0.9, consistency: 0.8 },
   confidence_policy_version: 'belief-v2',
+  confidence_evidence: { support_windows: 2 },
+  gating: { decision: 'direct', reason_code: 'relationship_direct', trust: 80, hostility: 10, subjects: ['qq:user:u1'], policy_version: 'relationship-gating-v1', review_required: false, unknown_subjects: [], relationship_revisions: { 'qq:user:u1': 1 } },
   anchor_sentence: '它们也会害怕',
   evidence_health: 'available',
   quarantine_reason: null,
@@ -117,6 +119,17 @@ describe('BeliefsPage scoped 审核恢复', () => {
     expect(screen.getByRole('tab', { name: '自省独白' })).toBeDisabled()
   })
 
+  it('详情展示关系门禁与 evidence-v1 保护说明', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(await screen.findByRole('button', { name: '查看信念 21 详情' }))
+
+    expect(await screen.findByText('关系门禁')).toBeVisible()
+    expect(screen.getByText('关系门禁：自动放行')).toBeVisible()
+    expect(screen.getByText(/高信任仅表示可以跳过人工复核/)).toBeVisible()
+  })
+
   it('当前页选择后批量通过会提交逐项 ObjectRef，不启用跨页猜测', async () => {
     const user = userEvent.setup()
     renderPage()
@@ -128,13 +141,13 @@ describe('BeliefsPage scoped 审核恢复', () => {
     await waitFor(() => expect(mocks.batchTransitionBeliefs).toHaveBeenCalledWith([expect.objectContaining({ id: 21, revision: 2, object_ref: expect.objectContaining({ ref: 'opaque-belief-21' }) })], 'approve', { bot_id: 'bot-real', session_id: 'qq:group:42', visibility: 'group' }))
   })
 
-  it('新建、自由编辑与物理删除保持可见禁用', async () => {
+  it('新建与物理删除保持可见禁用', async () => {
     const user = userEvent.setup()
     renderPage()
 
     expect(await screen.findByRole('button', { name: '新增信念' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '编辑信念 21' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '删除信念 21' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '通过信念 21' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '归档信念 21' })).toBeVisible()
 
     await user.click(screen.getByRole('checkbox', { name: '选择信念 21' }))
     expect(screen.getByRole('button', { name: '批量物理删除' })).toBeDisabled()

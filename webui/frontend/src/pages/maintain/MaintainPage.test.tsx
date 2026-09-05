@@ -42,7 +42,7 @@ describe('MaintainPage Scope 边界', () => {
     render(<MemoryRouter><MaintainPage /></MemoryRouter>)
 
     await user.click(await screen.findByRole('tab', { name: '质量审计与建议审核' }))
-    const links = await screen.findAllByRole('link', { name: '在 Tag 工作台审核' })
+    const links = await screen.findAllByRole('link', { name: '在标签工作台审核' })
     expect(links.length).toBeGreaterThan(0)
     expect(links[0]).toHaveAttribute('href', '/tags?tab=governance')
   })

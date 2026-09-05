@@ -163,16 +163,16 @@ export function FactsPage() {
           <QueryState status={status} error={error} title="事实读取失败" description={!botId || !sessionId ? '请先选择 Bot 和群，不会跨 Bot 汇总。' : '当前群和筛选条件下没有正式事实。'} onRetry={() => setReload((value) => value + 1)}>
             <ResponsiveTable
               label="事实关系清单"
-              table={<Table>
-                <TableHeader><TableRow className="h-8 bg-muted/15"><TableHead className="w-16 py-1 text-[11px]">编号</TableHead><TableHead className="py-1 text-[11px]">主体</TableHead><TableHead className="py-1 text-[11px]">关系</TableHead><TableHead className="py-1 text-[11px]">客体</TableHead><TableHead className="w-20 py-1 text-[11px]">置信度</TableHead><TableHead className="w-24 py-1 text-[11px]">证据</TableHead><TableHead className="w-12 py-1"><span className="sr-only">详情</span></TableHead></TableRow></TableHeader>
+              table={<Table className="w-full table-fixed">
+                <TableHeader><TableRow className="h-8 bg-muted/15"><TableHead className="w-14 py-1 text-[11px]">编号</TableHead><TableHead className="w-1/4 py-1 text-[11px]">主体</TableHead><TableHead className="w-24 py-1 text-[11px]">关系</TableHead><TableHead className="w-auto py-1 text-[11px]">客体</TableHead><TableHead className="w-16 py-1 text-[11px]">置信度</TableHead><TableHead className="w-20 py-1 text-[11px]">证据</TableHead><TableHead className="w-10 py-1"><span className="sr-only">详情</span></TableHead></TableRow></TableHeader>
                 <TableBody>{facts.map((fact) => <TableRow key={`${fact.bot_id}:${fact.session_id}:${fact.id}`} className="h-9 cursor-pointer hover:bg-muted/10" onClick={() => openDetail(fact)}>
-                  <TableCell className="py-1 font-mono text-[11px]">{fact.id}</TableCell>
-                  <TableCell className="max-w-52 truncate py-1 text-xs font-medium">{fact.subject}</TableCell>
-                  <TableCell className="py-1"><Badge variant="outline" className="px-1.5 text-[10px] font-normal">{fact.predicate}</Badge></TableCell>
-                  <TableCell className="max-w-sm truncate py-1 text-xs">{fact.object}</TableCell>
-                  <TableCell className="py-1 font-mono text-[11px]">{confidence(fact.confidence)}</TableCell>
-                  <TableCell className="py-1"><Badge variant={fact.evidence_status === 'available' ? 'default' : 'outline'} className="text-[10px]">{fact.evidence_status === 'available' ? '可溯源' : '不可用'}</Badge></TableCell>
-                  <TableCell className="py-1 text-right" onClick={(event) => event.stopPropagation()}><Button type="button" variant="ghost" size="icon-xs" aria-label={`查看事实 ${fact.id} 详情`} onClick={() => openDetail(fact)}><EyeIcon aria-hidden="true" /></Button></TableCell>
+                  <TableCell className="py-1 font-mono text-[11px] align-top">{fact.id}</TableCell>
+                  <TableCell className="py-1 text-xs font-medium align-top whitespace-normal break-words">{fact.subject}</TableCell>
+                  <TableCell className="py-1 align-top"><Badge variant="outline" className="px-1.5 text-[10px] font-normal">{fact.predicate}</Badge></TableCell>
+                  <TableCell className="py-1 text-xs align-top whitespace-normal break-words">{fact.object}</TableCell>
+                  <TableCell className="py-1 font-mono text-[11px] align-top">{confidence(fact.confidence)}</TableCell>
+                  <TableCell className="py-1 align-top"><Badge variant={fact.evidence_status === 'available' ? 'default' : 'outline'} className="text-[10px]">{fact.evidence_status === 'available' ? '可溯源' : '不可用'}</Badge></TableCell>
+                  <TableCell className="py-1 text-right align-top" onClick={(event) => event.stopPropagation()}><Button type="button" variant="ghost" size="icon-xs" aria-label={`查看事实 ${fact.id} 详情`} onClick={() => openDetail(fact)}><EyeIcon aria-hidden="true" /></Button></TableCell>
                 </TableRow>)}</TableBody>
               </Table>}
               cards={facts.map((fact) => <article key={`${fact.bot_id}:${fact.session_id}:${fact.id}`} className="flex flex-col gap-3 rounded-lg border bg-card p-4">

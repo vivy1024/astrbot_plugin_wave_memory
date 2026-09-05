@@ -44,6 +44,8 @@ export interface MemoriesFilters extends MemoryScope {
   limit: PageSize
   offset: number
   source?: string
+  /** Exact sender identifier; the backend's legacy `sender` filter means sender_name. */
+  sender_id?: string
   sender?: string
   has_tags?: string
   has_vector?: string

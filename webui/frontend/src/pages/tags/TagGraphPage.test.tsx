@@ -15,7 +15,11 @@ vi.mock('@/api/tagGraph', async (importOriginal) => ({
   getTagGraphDetail: (...args: unknown[]) => api.getTagGraphDetail(...args),
   findTagGraphPath: (...args: unknown[]) => api.findTagGraphPath(...args),
 }))
-vi.mock('@/api/options', () => ({ getScopeOptions: vi.fn(), scopeOptionsFor: vi.fn(() => []) }))
+vi.mock('@/api/options', () => ({
+  getScopeOptions: vi.fn(async () => ({ bots: [], sessions: [] })),
+  scopeOptionsFor: vi.fn(() => []),
+  groupSessionOptions: vi.fn(() => []),
+}))
 vi.mock('@/hooks/use-mobile', () => ({ useIsMobile: () => isMobile }))
 vi.mock('@/components/shared', () => ({
   ScopeSelect: ({ label }: { label: string }) => <div data-testid={`scope-${label}`}>{label}</div>,

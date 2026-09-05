@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { useCanonicalScopeDefault } from '@/hooks/use-pagination-search-params'
 
 const DEFAULT_LAYERS: TagGraphLayer[] = ['cooccurrence', 'relations']
 
@@ -52,6 +53,12 @@ export function TagGraphPage() {
       return next
     })
   }
+
+  useCanonicalScopeDefault({
+    botId,
+    sessionId,
+    setFilters: (filters) => setQuery(filters as Record<string, string | null>),
+  })
 
   useEffect(() => {
     graphRequest.current?.abort()
@@ -105,9 +112,38 @@ export function TagGraphPage() {
     <Alert><ShieldCheckIcon aria-hidden="true" /><AlertTitle>当前群与路径</AlertTitle><AlertDescription>标签和记忆跳转只走当前群。找路径时只走你勾选的图层，隐藏图层不会被偷偷用来连通。</AlertDescription></Alert>
     <TagGraphControls botId={botId} sessionId={sessionId} layers={layers} includePulse={includePulse} loading={loading} onScopeChange={({ botId: nextBot, sessionId: nextSession }) => setQuery({ bot_id: nextBot ?? botId, session_id: nextSession ?? sessionId, visibility: 'group', ref: null, source_ref: null, target_ref: null })} onLayersChange={changeLayers} onPulseChange={(enabled) => setQuery({ pulse: enabled ? '1' : null })} />
 
-    {!scope ? <Card><CardContent className="p-6 text-sm text-muted-foreground">请先选择 Bot 和群。没选完整之前不会去猜标签图。</CardContent></Card> : loading && !graph ? <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_22rem]"><Skeleton className="h-[32rem] w-full" /><Skeleton className="h-[26rem] w-full" /></div> : error && !graph ? <Alert variant="destructive"><AlertTitle>标签关系图读取失败</AlertTitle><AlertDescription>{error instanceof Error ? error.message : '请检查当前群是否可用。'} <Button type="button" size="sm" variant="outline" className="ml-2" onClick={() => setReload((value) => value + 1)}>重试</Button></AlertDescription></Alert> : graph ? <>
-      <div className="flex flex-wrap gap-2 text-xs"><Badge variant="secondary">节点 {graph.nodes.length}</Badge><Badge variant="secondary">边 {graph.edges.length}</Badge>{graph.layers.map((layer) => <Badge key={layer} variant="outline">{layer} · {graph.layer_counts[layer]?.edges ?? 0}</Badge>)}{graph.pulse.enabled ? <Badge variant="outline">pulse · {graph.pulse.half_life_hours}h</Badge> : null}</div>
-      {graph.nodes.length ? <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_23rem]"><TagGraphCanvas nodes={graph.nodes} edges={graph.edges} selectedRef={selectedRef} pathEdgeIds={pathEdgeIds} onSelect={selectNode} /><TagGraphDetail node={selectedNode} sourceRef={sourceRef} targetRef={targetRef} path={path} pathLoading={pathLoading} onSetSource={(node) => setQuery({ source_ref: node.ref })} onSetTarget={(node) => setQuery({ target_ref: node.ref })} onRunPath={runPath} onClearPath={clearPath} /></div> : <Card><CardContent className="p-6 text-sm text-muted-foreground">当前 Scope 与可见图层下没有正式 Tag 节点；未使用演示数据填充。</CardContent></Card>}
-    </> : null}
+    {!scope ? (
+      <Card><CardContent className="p-6 text-sm text-muted-foreground">请先选择 Bot 和群。没选完整之前不会去猜标签图。</CardContent></Card>
+    ) : error && !graph ? (
+      <Alert variant="destructive">
+        <AlertTitle>标签关系图读取失败</AlertTitle>
+        <AlertDescription>
+          {error instanceof Error ? error.message : '请检查当前群是否可用。'}
+          <Button type="button" size="sm" variant="outline" className="ml-2" onClick={() => setReload((value) => value + 1)}>重试</Button>
+        </AlertDescription>
+      </Alert>
+    ) : loading && !graph ? (
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <Skeleton className="h-[32rem] w-full" />
+        <Skeleton className="h-[26rem] w-full" />
+      </div>
+    ) : graph ? (
+      <>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <Badge variant="secondary">节点 {graph.nodes.length}</Badge>
+          <Badge variant="secondary">边 {graph.edges.length}</Badge>
+          {graph.layers.map((layer) => <Badge key={layer} variant="outline">{layer} · {graph.layer_counts[layer]?.edges ?? 0}</Badge>)}
+          {graph.pulse.enabled ? <Badge variant="outline">pulse · {graph.pulse.half_life_hours}h</Badge> : null}
+        </div>
+        {graph.nodes.length ? (
+          <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_23rem]">
+            <TagGraphCanvas nodes={graph.nodes} edges={graph.edges} selectedRef={selectedRef} pathEdgeIds={pathEdgeIds} onSelect={selectNode} />
+            <TagGraphDetail node={selectedNode} sourceRef={sourceRef} targetRef={targetRef} path={path} pathLoading={pathLoading} onSetSource={(node) => setQuery({ source_ref: node.ref })} onSetTarget={(node) => setQuery({ target_ref: node.ref })} onRunPath={runPath} onClearPath={clearPath} />
+          </div>
+        ) : (
+          <Card><CardContent className="p-6 text-sm text-muted-foreground">当前 Scope 与可见图层下没有正式 Tag 节点；未使用演示数据填充。</CardContent></Card>
+        )}
+      </>
+    ) : null}
   </div>
 }

@@ -35,7 +35,10 @@ function formatCapturedAt(value: EvidenceRef['captured_at']): string {
 
 function formatSourceScope(value: EvidenceRef['source_scope']): string {
   if (value === undefined || value === null || value === '') return '未知'
-  if (typeof value === 'string') return value
+  if (typeof value === 'string') {
+    const parts = value.split('|').map((part) => part.trim()).filter(Boolean)
+    return parts.length ? parts.join(' · ') : value
+  }
   if (typeof value === 'object') {
     const record = value as Record<string, unknown>
     const session = record.session

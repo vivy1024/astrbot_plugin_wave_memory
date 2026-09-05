@@ -3,7 +3,6 @@ import {
   ArchiveIcon,
   BrainCircuitIcon,
   CheckIcon,
-  Edit2Icon,
   EyeIcon,
   Loader2Icon,
   MessageSquareTextIcon,
@@ -118,6 +117,13 @@ function confidenceText(value: number | null) {
   return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`
 }
 
+function gatingLabel(decision: BeliefItem['gating']['decision'] | undefined) {
+  if (decision === 'direct') return '关系门禁：自动放行'
+  if (decision === 'quarantine') return '关系门禁：已隔离'
+  if (decision === 'pending') return '关系门禁：待审核'
+  return '关系门禁：未评估'
+}
+
 function formatTime(seconds?: number | null) {
   return seconds && Number.isFinite(seconds) ? new Date(seconds * 1000).toLocaleString('zh-CN') : '未记录'
 }
@@ -155,8 +161,9 @@ function EvidenceCards({ item }: { item: BeliefItem }) {
 
 function BeliefDetails({ item, mutating, onTransition }: { item: BeliefItem; mutating: boolean; onTransition: (action: 'approve' | 'archive') => void }) {
   return <div className="flex flex-col gap-6">
-    <section className="flex flex-col gap-2"><div className="flex flex-wrap gap-2"><Badge className={typeClass(item.type)}>{TYPE_LABELS[item.type]}</Badge><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></div><p className="text-base leading-7 text-foreground">{item.content}</p>{item.anchor_sentence ? <blockquote className="rounded-r-lg border-l-2 border-primary bg-primary/5 px-4 py-3 text-muted-foreground">“{item.anchor_sentence}”</blockquote> : null}</section>
+    <section className="flex flex-col gap-2"><div className="flex flex-wrap gap-2"><Badge className={typeClass(item.type)}>{TYPE_LABELS[item.type]}</Badge><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge><Badge variant={item.gating?.decision === 'quarantine' ? 'destructive' : 'outline'}>{gatingLabel(item.gating?.decision)}</Badge></div><p className="text-base leading-7 text-foreground">{item.content}</p>{item.anchor_sentence ? <blockquote className="rounded-r-lg border-l-2 border-primary bg-primary/5 px-4 py-3 text-muted-foreground">“{item.anchor_sentence}”</blockquote> : null}</section>
     <section className="flex flex-col gap-3"><div className="flex items-center justify-between gap-3"><h3 className="font-medium">证据支持分量</h3><Badge variant="outline">综合 {confidenceText(item.confidence)}</Badge></div><ConfidenceComponents item={item} /><ConfidenceEvidenceSummary item={item} /></section>
+    <section className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-medium">关系门禁</h3><span className="text-xs text-muted-foreground">{item.gating?.policy_version ?? '未记录策略版本'}</span></div><div className="flex flex-wrap gap-2 text-xs"><Badge variant="outline">trust {item.gating?.trust == null ? '未知' : Math.round(item.gating.trust)}</Badge><Badge variant="outline">hostility {item.gating?.hostility == null ? '未知' : Math.round(item.gating.hostility)}</Badge><Badge variant="outline">参与者 {item.gating?.subjects?.length ?? 0}</Badge>{item.gating?.review_required ? <Badge variant="secondary">需要人工复核</Badge> : <Badge variant="secondary">跳过人工复核</Badge>}</div><p className="text-sm text-muted-foreground">高信任仅表示可以跳过人工复核；进入 active 仍必须满足 evidence-v1 的支持窗口、置信度、标签链和证据要求。{item.gating?.reason_code ? ` 当前原因：${item.gating.reason_code}` : ''}</p></section>
     <section className="flex flex-col gap-3"><div className="flex items-center justify-between gap-3"><h3 className="font-medium">证据卡</h3><span className="text-sm text-muted-foreground">{item.evidence.length} 条</span></div><EvidenceCards item={item} /></section>
     {item.quarantine_reason ? <Alert variant="destructive"><AlertTitle>当前处于隔离状态</AlertTitle><AlertDescription>{item.quarantine_reason}</AlertDescription></Alert> : null}
     <div className="flex flex-wrap gap-2 border-t pt-4"><Button disabled={mutating || !item.actions.approve.available} onClick={() => onTransition('approve')}><CheckIcon data-icon="inline-start" />通过并激活</Button><Button variant="outline" disabled={mutating || !item.actions.archive.available} onClick={() => onTransition('archive')}><ArchiveIcon data-icon="inline-start" />归档</Button>{!item.actions.approve.available ? <span className="self-center text-sm text-muted-foreground">无法通过：{item.actions.approve.reason_code ?? '当前状态不允许'}</span> : null}</div>
@@ -235,10 +242,11 @@ export function BeliefsPage() {
   const type = (searchParams.get('type') ?? '') as BeliefType | ''
   const status = searchParams.get('status') ?? ''
   const search = searchParams.get('search') ?? ''
+  const evidenceHealth = searchParams.get('evidence_health') ?? ''
   useCanonicalScopeDefault({ botId, sessionId, setFilters: pagination.setFilters })
-  const [filterDraft, setFilterDraft] = useState({ search, type, status })
+  const [filterDraft, setFilterDraft] = useState({ search, type, status, evidenceHealth })
 
-  useEffect(() => setFilterDraft({ search, type, status }), [search, status, type])
+  useEffect(() => setFilterDraft({ search, type, status, evidenceHealth }), [evidenceHealth, search, status, type])
 
   const scope = useMemo<ScopedSelection | null>(() => botId && sessionId && visibility === 'group' ? { bot_id: botId, session_id: sessionId, visibility: 'group' } : null, [botId, sessionId, visibility])
   const loadBots = useCallback(async () => scopeOptionsFor(await getScopeOptions(), ['bot']), [])
@@ -257,7 +265,15 @@ export function BeliefsPage() {
     setQueryStatus('loading')
     setError(undefined)
     try {
-      const next = await listBeliefs({ ...scope, limit: pagination.limit, offset: pagination.offset, type: type || undefined, status: status || undefined, search: search || undefined })
+      const next = await listBeliefs({
+        ...scope,
+        limit: pagination.limit,
+        offset: pagination.offset,
+        type: type || undefined,
+        status: status || undefined,
+        search: search || undefined,
+        evidence_health: evidenceHealth || undefined,
+      })
       if (request !== listRequest.current) return
       setPayload(next)
       setSelectedIds([])
@@ -269,7 +285,7 @@ export function BeliefsPage() {
       setError(reason)
       setQueryStatus('error')
     }
-  }, [pagination.limit, pagination.offset, scope, search, status, type])
+  }, [evidenceHealth, pagination.limit, pagination.offset, scope, search, status, type])
 
   useEffect(() => { void load() }, [load])
   useEffect(() => {
@@ -326,12 +342,12 @@ export function BeliefsPage() {
 
   function submitSearch(event: FormEvent) {
     event.preventDefault()
-    pagination.setFilters({ search: filterDraft.search.trim() || null, type: filterDraft.type || null, status: filterDraft.status || null })
+    pagination.setFilters({ search: filterDraft.search.trim() || null, type: filterDraft.type || null, status: filterDraft.status || null, evidence_health: filterDraft.evidenceHealth || null })
   }
 
   function resetFilters() {
-    setFilterDraft({ search: '', type: '', status: '' })
-    pagination.setFilters({ search: null, type: null, status: null })
+    setFilterDraft({ search: '', type: '', status: '', evidenceHealth: '' })
+    pagination.setFilters({ search: null, type: null, status: null, evidence_health: null })
   }
 
   const pageItems = payload?.items ?? []
@@ -414,6 +430,26 @@ export function BeliefsPage() {
           </SelectContent>
         </Select>
       </Field>
+      <Field className="w-32 shrink-0 gap-0 [&_[data-slot=field-label]]:sr-only">
+        <FieldLabel>证据健康</FieldLabel>
+        <Select
+          value={filterDraft.evidenceHealth || 'all'}
+          onValueChange={(value) => setFilterDraft((current) => ({ ...current, evidenceHealth: value === 'all' ? '' : value }))}
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="all">不限证据</SelectItem>
+              <SelectItem value="available">证据可用</SelectItem>
+              <SelectItem value="unavailable">证据不可用</SelectItem>
+              <SelectItem value="quarantined">证据已隔离</SelectItem>
+              <SelectItem value="unknown">证据未知</SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </Field>
     </ScopeFilterBar>
 
     <Card>
@@ -459,7 +495,165 @@ export function BeliefsPage() {
           </Button>
         </BatchActionBar>
       <QueryState status={queryStatus} error={error} onRetry={() => void load()} title={!scope ? '请选择真实 Bot 与会话' : undefined} description={!scope ? '作用域未选择时不会查询，也不会补入默认 Bot。' : undefined}>
-        <ResponsiveTable label="信念清单" table={<Table><TableHeader><TableRow><TableHead className="w-10"><input aria-label="选择当前页全部信念" type="checkbox" checked={allPageSelected} onChange={(event) => setSelectedIds(event.target.checked ? pageItems.map((item) => item.id) : [])} /></TableHead><TableHead>信念</TableHead><TableHead className="w-28">类型</TableHead><TableHead className="w-24">状态</TableHead><TableHead className="w-24">置信度</TableHead><TableHead className="w-20">证据</TableHead><TableHead className="w-36">更新时间</TableHead><TableHead className="w-64 text-right">操作</TableHead></TableRow></TableHeader><TableBody>{pageItems.map((item) => <TableRow key={item.id} data-slot="belief-card" className={selectedIds.includes(item.id) ? 'bg-primary/5' : undefined}><TableCell><input aria-label={`选择信念 ${item.id}`} type="checkbox" checked={selectedIds.includes(item.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} /></TableCell><TableCell><p className="max-w-xl font-medium leading-6">{item.content}</p>{item.anchor_sentence ? <p className="mt-1 max-w-xl truncate text-xs text-muted-foreground">锚定句：{item.anchor_sentence}</p> : null}</TableCell><TableCell><Badge className={typeClass(item.type)}>{TYPE_LABELS[item.type]}</Badge></TableCell><TableCell><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></TableCell><TableCell><div className="flex items-center gap-2"><span className="font-medium tabular-nums">{confidenceText(item.confidence)}</span><QualityDecisionBadge decision={item.evidence_health === 'available' ? 'allow' : 'quarantine'} /></div></TableCell><TableCell>{item.evidence.length} 条</TableCell><TableCell className="text-xs text-muted-foreground">{formatTime(item.updated_at)}</TableCell><TableCell className="text-right"><div className="flex justify-end gap-1"><Button type="button" variant="outline" size="sm" disabled={!item.object_ref || !payload?.capabilities.evidence?.available} title={item.object_ref ? '还原同作用域证据链' : '缺少服务端签发的 ObjectRef'} onClick={() => setEvidenceItem(item)}><MessageSquareTextIcon data-icon="inline-start" />证据</Button>{item.status === 'pending' ? <Button type="button" size="icon-sm" aria-label={`通过信念 ${item.id}`} disabled={mutating === item.id || !item.actions.approve.available} title={item.actions.approve.reason_code ?? '通过并激活'} onClick={() => void transition(item, 'approve')}><CheckIcon /></Button> : null}<Button type="button" variant="outline" size="icon-sm" aria-label={`归档信念 ${item.id}`} disabled={mutating === item.id || !item.actions.archive.available} title={item.actions.archive.reason_code ?? '归档'} onClick={() => void transition(item, 'archive')}><ArchiveIcon /></Button><Button type="button" variant="ghost" size="icon-sm" aria-label={`编辑信念 ${item.id}`} disabled title={payload?.capabilities.edit?.reason_code ?? '自由编辑禁用'}><Edit2Icon /></Button><ResponsiveDetail title={TYPE_LABELS[item.type]} description="证据、状态分量与受控生命周期操作" className="sm:max-w-4xl" trigger={<Button type="button" variant="ghost" size="icon-sm" aria-label={`查看信念 ${item.id} 详情`} title="查看详情"><EyeIcon /></Button>}><BeliefDetails item={item} mutating={mutating === item.id} onTransition={(action) => void transition(item, action)} /></ResponsiveDetail><Button type="button" variant="ghost" size="icon-sm" aria-label={`删除信念 ${item.id}`} disabled title={payload?.capabilities.physical_delete?.reason_code ?? '物理删除禁用'}><Trash2Icon /></Button></div></TableCell></TableRow>)}</TableBody></Table>} cards={pageItems.map((item) => <article key={item.id} data-slot="belief-card" className={`flex flex-col gap-3 rounded-lg border bg-card p-4 ${selectedIds.includes(item.id) ? 'border-primary/50 bg-primary/5' : ''}`}><div className="flex items-start justify-between gap-2"><label className="flex min-w-0 items-start gap-2"><input aria-label={`选择信念 ${item.id}`} type="checkbox" checked={selectedIds.includes(item.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} /><span className="whitespace-pre-wrap break-words font-medium leading-6">{item.content}</span></label><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></div><div className="flex flex-wrap gap-2"><Badge className={typeClass(item.type)}>{TYPE_LABELS[item.type]}</Badge><span className="text-sm text-muted-foreground">置信度 {confidenceText(item.confidence)} · {item.evidence.length} 条证据</span></div><div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" size="sm" disabled={!item.object_ref} onClick={() => setEvidenceItem(item)}><MessageSquareTextIcon data-icon="inline-start" />证据</Button>{item.status === 'pending' ? <Button type="button" size="sm" disabled={!item.actions.approve.available} onClick={() => void transition(item, 'approve')}><CheckIcon data-icon="inline-start" />确认</Button> : null}<Button type="button" variant="outline" size="sm" disabled={!item.actions.archive.available} onClick={() => void transition(item, 'archive')}><ArchiveIcon data-icon="inline-start" />归档</Button><ResponsiveDetail title={TYPE_LABELS[item.type]} description="证据、状态分量与受控生命周期操作" className="sm:max-w-4xl" trigger={<Button type="button" variant="outline" size="sm">详情</Button>}><BeliefDetails item={item} mutating={mutating === item.id} onTransition={(action) => void transition(item, action)} /></ResponsiveDetail></div></article>)} />
+        <ResponsiveTable
+          label="信念清单"
+          table={
+            <Table className="w-full table-fixed">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-8 px-2 py-2">
+                    <input
+                      aria-label="选择当前页全部信念"
+                      type="checkbox"
+                      checked={allPageSelected}
+                      onChange={(event) => setSelectedIds(event.target.checked ? pageItems.map((item) => item.id) : [])}
+                    />
+                  </TableHead>
+                  <TableHead className="w-auto px-2 py-2">信念内容与锚定句</TableHead>
+                  <TableHead className="w-24 px-2 py-2">类型 / 状态</TableHead>
+                  <TableHead className="w-28 px-2 py-2">置信度 / 门禁</TableHead>
+                  <TableHead className="w-40 px-2 py-2 text-right">时间 / 操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pageItems.map((item) => (
+                  <TableRow key={item.id} data-slot="belief-card" className={selectedIds.includes(item.id) ? 'bg-primary/5' : undefined}>
+                    <TableCell className="w-8 px-2 py-2.5 align-top">
+                      <input
+                        aria-label={`选择信念 ${item.id}`}
+                        type="checkbox"
+                        checked={selectedIds.includes(item.id)}
+                        onChange={(event) => setSelectedIds((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))}
+                      />
+                    </TableCell>
+                    <TableCell className="w-auto px-2 py-2.5 align-top whitespace-normal break-words">
+                      <p className="font-medium leading-relaxed text-sm">{item.content}</p>
+                      {item.anchor_sentence ? (
+                        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                          <span className="font-medium text-foreground/70">锚定句：</span>
+                          {item.anchor_sentence}
+                        </p>
+                      ) : null}
+                    </TableCell>
+                    <TableCell className="w-24 px-2 py-2.5 align-top whitespace-normal">
+                      <div className="flex flex-col gap-1.5 items-start">
+                        <Badge className={typeClass(item.type)}>{TYPE_LABELS[item.type]}</Badge>
+                        <Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge>
+                      </div>
+                    </TableCell>
+                    <TableCell className="w-28 px-2 py-2.5 align-top whitespace-normal">
+                      <div className="flex flex-col gap-1 items-start">
+                        <span className="font-mono text-xs font-semibold tabular-nums">{confidenceText(item.confidence)}</span>
+                        <QualityDecisionBadge decision={item.evidence_health === 'available' ? 'allow' : 'quarantine'} />
+                        <span className="font-mono text-[10px] text-muted-foreground mt-0.5">{item.evidence.length} 条引证</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="w-40 px-2 py-2.5 align-top text-right whitespace-normal">
+                      <div className="flex flex-col items-end gap-1.5">
+                        <span className="text-[10px] font-mono text-muted-foreground">{formatTime(item.updated_at)}</span>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-6 px-1.5 text-[11px]"
+                            disabled={!item.object_ref || !payload?.capabilities.evidence?.available}
+                            title={item.object_ref ? '还原同作用域证据链' : '缺少服务端签发的 ObjectRef'}
+                            onClick={() => setEvidenceItem(item)}
+                          >
+                            <MessageSquareTextIcon className="size-3" data-icon="inline-start" />
+                            证据
+                          </Button>
+                          {(item.status === 'pending' || item.status === 'quarantined') ? (
+                            <Button
+                              type="button"
+                              size="icon-sm"
+                              className="size-6"
+                              aria-label={`通过信念 ${item.id}`}
+                              disabled={mutating === item.id || !item.actions.approve.available}
+                              title={item.actions.approve.reason_code ?? '通过并激活'}
+                              onClick={() => void transition(item, 'approve')}
+                            >
+                              <CheckIcon className="size-3" />
+                            </Button>
+                          ) : null}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon-sm"
+                            className="size-6"
+                            aria-label={`归档信念 ${item.id}`}
+                            disabled={mutating === item.id || !item.actions.archive.available}
+                            title={item.actions.archive.reason_code ?? '归档'}
+                            onClick={() => void transition(item, 'archive')}
+                          >
+                            <ArchiveIcon className="size-3" />
+                          </Button>
+                          <ResponsiveDetail
+                            title={TYPE_LABELS[item.type]}
+                            description="证据、状态分量与受控生命周期操作"
+                            className="sm:max-w-4xl"
+                            trigger={
+                              <Button type="button" variant="ghost" size="icon-sm" className="size-6" aria-label={`查看信念 ${item.id} 详情`} title="查看详情">
+                                <EyeIcon className="size-3" />
+                              </Button>
+                            }
+                          >
+                            <BeliefDetails item={item} mutating={mutating === item.id} onTransition={(action) => void transition(item, action)} />
+                          </ResponsiveDetail>
+                        </div>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          }
+          cards={pageItems.map((item) => (
+            <article key={item.id} data-slot="belief-card" className={`flex flex-col gap-3 rounded-lg border bg-card p-4 ${selectedIds.includes(item.id) ? 'border-primary/50 bg-primary/5' : ''}`}>
+              <div className="flex items-start justify-between gap-2">
+                <label className="flex min-w-0 items-start gap-2">
+                  <input
+                    aria-label={`选择信念 ${item.id}`}
+                    type="checkbox"
+                    checked={selectedIds.includes(item.id)}
+                    onChange={(event) => setSelectedIds((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))}
+                  />
+                  <span className="whitespace-pre-wrap break-words font-medium leading-6">{item.content}</span>
+                </label>
+                <Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Badge className={typeClass(item.type)}>{TYPE_LABELS[item.type]}</Badge>
+                <span className="text-sm text-muted-foreground">置信度 {confidenceText(item.confidence)} · {item.evidence.length} 条证据</span>
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button type="button" variant="outline" size="sm" disabled={!item.object_ref} onClick={() => setEvidenceItem(item)}>
+                  <MessageSquareTextIcon data-icon="inline-start" />
+                  证据
+                </Button>
+                {(item.status === 'pending' || item.status === 'quarantined') ? (
+                  <Button type="button" size="sm" disabled={!item.actions.approve.available} onClick={() => void transition(item, 'approve')}>
+                    <CheckIcon data-icon="inline-start" />
+                    确认
+                  </Button>
+                ) : null}
+                <Button type="button" variant="outline" size="sm" disabled={!item.actions.archive.available} onClick={() => void transition(item, 'archive')}>
+                  <ArchiveIcon data-icon="inline-start" />
+                  归档
+                </Button>
+                <ResponsiveDetail
+                  title={TYPE_LABELS[item.type]}
+                  description="证据、状态分量与受控生命周期操作"
+                  className="sm:max-w-4xl"
+                  trigger={<Button type="button" variant="outline" size="sm">详情</Button>}
+                >
+                  <BeliefDetails item={item} mutating={mutating === item.id} onTransition={(action) => void transition(item, action)} />
+                </ResponsiveDetail>
+              </div>
+            </article>
+          ))}
+        />
       </QueryState>{payload ? <PaginationControls page={payload.page} onOffsetChange={pagination.setOffset} onLimitChange={pagination.setLimit} /> : null}
     </CardContent></Card>
 

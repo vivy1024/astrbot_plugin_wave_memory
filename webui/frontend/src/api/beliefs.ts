@@ -14,6 +14,18 @@ export interface BeliefActionAvailability {
   reason_code: string | null
 }
 
+export interface BeliefGatingSummary {
+  decision: 'direct' | 'pending' | 'quarantine' | null
+  reason_code: string | null
+  trust: number | null
+  hostility: number | null
+  subjects: string[]
+  policy_version: string | null
+  review_required: boolean
+  unknown_subjects: string[]
+  relationship_revisions: Record<string, number>
+}
+
 export interface BeliefItem {
   id: number
   belief_key: string
@@ -24,6 +36,7 @@ export interface BeliefItem {
   confidence_components: Record<string, number> | null
   confidence_policy_version: string | null
   confidence_evidence?: Record<string, number | null>
+  gating: BeliefGatingSummary
   anchor_sentence: string | null
   evidence_health: 'available' | 'unavailable' | 'quarantined' | 'unknown'
   quarantine_reason: string | null
@@ -43,6 +56,7 @@ export interface BeliefFilters extends ScopedSelection {
   type?: BeliefType
   status?: string
   search?: string
+  evidence_health?: string
 }
 
 export interface BeliefCapability {
@@ -120,6 +134,7 @@ export function listBeliefs(filters: BeliefFilters): Promise<BeliefsResponse> {
   if (filters.type) params.set('type', filters.type)
   if (filters.status) params.set('status', filters.status)
   if (filters.search) params.set('search', filters.search)
+  if (filters.evidence_health) params.set('evidence_health', filters.evidence_health)
   return fetchJson<BeliefsResponse>(`/api/beliefs?${params.toString()}`)
 }
 

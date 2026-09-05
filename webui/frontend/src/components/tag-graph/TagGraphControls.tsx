@@ -2,7 +2,7 @@ import { useCallback } from 'react'
 import { EyeIcon, EyeOffIcon, WavesIcon } from 'lucide-react'
 
 import type { TagGraphLayer } from '@/api/tagGraph'
-import { getScopeOptions, scopeOptionsFor } from '@/api/options'
+import { getScopeOptions, groupSessionOptions, scopeOptionsFor } from '@/api/options'
 import { ScopeSelect } from '@/components/shared'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -28,8 +28,7 @@ export interface TagGraphControlsProps {
 export function TagGraphControls({ botId, sessionId, layers, includePulse, loading, onScopeChange, onLayersChange, onPulseChange }: TagGraphControlsProps) {
   const loadBots = useCallback(async () => scopeOptionsFor(await getScopeOptions(), ['bot']), [])
   const loadSessions = useCallback(async () => {
-    const options = scopeOptionsFor(await getScopeOptions(), ['session'])
-    return botId ? options.filter((option) => option.description?.startsWith(`${botId} ·`)) : []
+    return groupSessionOptions(scopeOptionsFor(await getScopeOptions(), ['session']), botId)
   }, [botId])
   const toggleLayer = (layer: TagGraphLayer) => {
     onLayersChange(layers.includes(layer) ? layers.filter((item) => item !== layer) : [...layers, layer])

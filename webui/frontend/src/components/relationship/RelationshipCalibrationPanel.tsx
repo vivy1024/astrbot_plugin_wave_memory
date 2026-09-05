@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
-import { listMemories, type MemoryItem } from '@/api/memories'
+import { listMemories, type MemoryItem, type MemoriesResponse } from '@/api/memories'
 import { calibrateRelationship, type PeopleQuery, type RelationshipItem } from '@/api/people'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { formatDisplayNumber, formatSignedDisplayNumber } from '@/lib/format-number'
 
 const DIMENSIONS = [
   ['familiarity', '熟悉度'],
@@ -25,7 +26,7 @@ const ACTIONS = [
 const QUICK_ADJUSTMENTS = [5, -5] as const
 
 function displayValue(value: number | null | undefined, fallback = '—'): string {
-  return typeof value === 'number' && Number.isFinite(value) ? String(value) : fallback
+  return formatDisplayNumber(value, fallback)
 }
 
 function senderFromQuery(query: PeopleQuery, subjectPrincipalId: string): string {
@@ -38,6 +39,35 @@ function senderFromQuery(query: PeopleQuery, subjectPrincipalId: string): string
 
 type RelationshipCalibrationTarget = Pick<RelationshipItem, 'subject_principal_id' | 'revision' | 'values' | 'object_ref' | 'calibration'>
 
+const EVIDENCE_PAGE_SIZE = 100 as const
+
+type EvidencePage = MemoriesResponse['page']
+
+function apiErrorCode(reason: unknown): string | null {
+  if (!(reason instanceof Error) || !('payload' in reason)) return null
+  const payload = (reason as Error & { payload?: unknown }).payload
+  if (typeof payload !== 'object' || payload === null || !('error' in payload)) return null
+  const error = (payload as { error?: unknown }).error
+  if (typeof error !== 'object' || error === null || !('code' in error)) return null
+  const code = (error as { code?: unknown }).code
+  return typeof code === 'string' && code ? code : null
+}
+
+function calibrationFailureMessage(reason: unknown): string {
+  const code = apiErrorCode(reason)
+  const labels: Record<string, string> = {
+    relationship_evidence_required: '没有提交证据，请重新选择一条当前群记忆',
+    relationship_evidence_scope_mismatch: '证据不属于当前 Bot、当前群或当前关系对象',
+    relationship_evidence_not_found: '所选记忆已不存在或不属于当前作用域',
+    relationship_evidence_unavailable: '所选记忆尚未成为可用正式记忆',
+    relationship_evidence_quarantined: '所选记忆已被隔离，不能作为校准证据',
+    relationship_evidence_hash_mismatch: '所选记忆内容已变化，请重新选择最新证据',
+    relationship_evidence_invalid: '证据格式不符合服务端契约',
+  }
+  if (code) return `${labels[code] ?? '关系人工校准失败'}（${code}）`
+  return reason instanceof Error ? reason.message : '关系人工校准失败'
+}
+
 export function RelationshipCalibrationPanel({ item, query, onChanged }: { item: RelationshipCalibrationTarget; query: PeopleQuery; onChanged?: () => void }) {
   const [action, setAction] = useState<(typeof ACTIONS)[number][0]>('adjust')
   const [dimension, setDimension] = useState<(typeof DIMENSIONS)[number][0]>('trust')
@@ -46,47 +76,79 @@ export function RelationshipCalibrationPanel({ item, query, onChanged }: { item:
   const [evidence, setEvidence] = useState('')
   const [evidenceMemories, setEvidenceMemories] = useState<MemoryItem[]>([])
   const [evidenceSearch, setEvidenceSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [selectedEvidenceId, setSelectedEvidenceId] = useState('')
+  const [evidencePage, setEvidencePage] = useState<EvidencePage | null>(null)
+  const [evidenceLoading, setEvidenceLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [evidenceError, setEvidenceError] = useState<string | null>(null)
+  const evidenceRequestRef = useRef(0)
   const values = item.values ?? {}
   const available = Boolean(item.object_ref?.ref && item.revision !== null && item.calibration.available)
   const senderId = senderFromQuery(query, item.subject_principal_id)
 
-  useEffect(() => {
-    if (!available) {
-      setEvidenceMemories([])
-      setSelectedEvidenceId('')
-      setEvidenceError(null)
-      return
-    }
-    let active = true
+  const loadEvidencePage = useCallback(async (offset: number, append: boolean) => {
+    const requestId = ++evidenceRequestRef.current
+    setEvidenceLoading(true)
     setEvidenceError(null)
-    void listMemories({
-      bot_id: query.bot_id,
-      session_id: query.session_id,
-      visibility: query.visibility,
-      sender: senderId || undefined,
-      search: evidenceSearch.trim() || undefined,
-      limit: 50,
-      offset: 0,
-    })
-      .then((payload) => { if (active) setEvidenceMemories(payload.items) })
-      .catch((reason: unknown) => {
-        if (!active) return
-        setEvidenceMemories([])
-        setEvidenceError(reason instanceof Error ? reason.message : '当前群友记忆读取失败')
+    try {
+      const payload = await listMemories({
+        bot_id: query.bot_id,
+        session_id: query.session_id,
+        visibility: query.visibility,
+        sender_id: senderId || undefined,
+        search: debouncedSearch || undefined,
+        limit: EVIDENCE_PAGE_SIZE,
+        offset,
       })
-    return () => { active = false }
-  }, [available, evidenceSearch, query.bot_id, query.session_id, query.visibility, senderId])
+      if (requestId !== evidenceRequestRef.current) return
+      setEvidencePage(payload.page)
+      setEvidenceMemories((current) => {
+        const combined = append ? [...current, ...payload.items] : payload.items
+        const seen = new Set<number>()
+        return combined.filter((memory) => {
+          if (seen.has(memory.id)) return false
+          seen.add(memory.id)
+          return true
+        })
+      })
+      // 方案 B：列表保持服务端时间倒序，首次加载自动预选最新一条，用户仍可改选。
+      if (!append && payload.items.length > 0) {
+        setSelectedEvidenceId(String(payload.items[0].id))
+      }
+    } catch (reason: unknown) {
+      if (requestId !== evidenceRequestRef.current) return
+      setEvidenceError(reason instanceof Error ? reason.message : '当前群友记忆读取失败')
+      if (!append) setEvidenceMemories([])
+    } finally {
+      if (requestId === evidenceRequestRef.current) setEvidenceLoading(false)
+    }
+  }, [debouncedSearch, query.bot_id, query.session_id, query.visibility, senderId])
 
-  const visibleMemories = useMemo(() => {
-    const keyword = evidenceSearch.trim().toLowerCase()
-    if (!keyword) return evidenceMemories
-    return evidenceMemories.filter((memory) => {
-      return String(memory.id).includes(keyword) || (memory.content || '').toLowerCase().includes(keyword)
-    })
-  }, [evidenceMemories, evidenceSearch])
+  useEffect(() => {
+    const handle = window.setTimeout(() => setDebouncedSearch(evidenceSearch.trim()), 300)
+    return () => window.clearTimeout(handle)
+  }, [evidenceSearch])
+
+  useEffect(() => {
+    evidenceRequestRef.current += 1
+    setEvidencePage(null)
+    setEvidenceMemories([])
+    setSelectedEvidenceId('')
+    setEvidenceError(null)
+    if (!available) return
+    void loadEvidencePage(0, false)
+  }, [available, debouncedSearch, loadEvidencePage])
+
+  const visibleMemories = evidenceMemories
+  const evidenceHasMore = evidencePage?.has_more === true
+  const evidenceTotal = evidencePage?.total_status === 'exact' ? evidencePage.total : null
+
+  async function loadMoreEvidence() {
+    if (evidenceLoading || !evidenceHasMore) return
+    const nextOffset = (evidencePage?.offset ?? 0) + (evidencePage?.limit ?? EVIDENCE_PAGE_SIZE)
+    await loadEvidencePage(nextOffset, true)
+  }
 
   function applyQuickAmount(nextAction: 'adjust' | 'override', value: number) {
     setAction(nextAction)
@@ -97,20 +159,44 @@ export function RelationshipCalibrationPanel({ item, query, onChanged }: { item:
     if (!available || !item.object_ref || item.revision === null) return
     if (!reason.trim()) { toast.warning('请填写人工校准理由'); return }
     if (!selectedEvidenceId) { toast.warning('请选择当前群友在本群里的真实群聊记忆'); return }
+    const selectedMemory = evidenceMemories.find((memory) => String(memory.id) === selectedEvidenceId)
+    if (!selectedMemory) {
+      setSelectedEvidenceId('')
+      toast.warning('所选证据已不在当前作用域，请重新选择最新记忆')
+      return
+    }
     const numeric = amount.trim() ? Number(amount) : undefined
     if ((action === 'adjust' || action === 'override') && (numeric === undefined || !Number.isFinite(numeric))) {
       toast.warning('请输入有效的关系数值')
       return
     }
+    const [platformId, sessionKind, ...conversationParts] = query.session_id.split(':')
+    if (!platformId || sessionKind !== query.visibility || !conversationParts.length) {
+      toast.error('当前会话 Scope 无效，无法提交关系校准')
+      return
+    }
+    const evidenceSummary = evidence.trim()
     setBusy(true)
     try {
-      const [platformId, , ...conversationParts] = query.session_id.split(':')
       const evidencePayload = [{
         kind: 'memory',
-        id: selectedEvidenceId,
-        summary: evidence.trim() || undefined,
-        source_scope: { bot_id: query.bot_id, visibility: query.visibility, session: { id: query.session_id, platform_id: platformId, kind: 'group', conversation_id: conversationParts.join(':') }, subject_principal_id: item.subject_principal_id },
+        id: String(selectedMemory.id),
+        ...(evidenceSummary ? { summary: evidenceSummary } : {}),
+        source_scope: {
+          bot_id: query.bot_id,
+          visibility: query.visibility,
+          session: {
+            id: query.session_id,
+            platform_id: platformId,
+            kind: sessionKind,
+            conversation_id: conversationParts.join(':'),
+          },
+          subject_principal_id: item.subject_principal_id,
+        },
       }]
+      if (!evidencePayload.length) {
+        throw new Error('relationship_evidence_required')
+      }
       await calibrateRelationship(query, {
         object_ref: item.object_ref.ref,
         revision: item.revision,
@@ -127,7 +213,7 @@ export function RelationshipCalibrationPanel({ item, query, onChanged }: { item:
       setAmount('')
       onChanged?.()
     } catch (failure) {
-      toast.error(failure instanceof Error ? failure.message : '关系人工校准失败')
+      toast.error(calibrationFailureMessage(failure))
     } finally {
       setBusy(false)
     }
@@ -156,7 +242,7 @@ export function RelationshipCalibrationPanel({ item, query, onChanged }: { item:
                 <dt>自动学习</dt>
                 <dd className="text-right font-mono">{displayValue(dimData?.automatic_value, isInitialized ? '0' : '—')}</dd>
                 <dt>人工调整</dt>
-                <dd className="text-right font-mono">{dimData?.manual_adjustment ? (dimData.manual_adjustment > 0 ? `+${dimData.manual_adjustment}` : String(dimData.manual_adjustment)) : '—'}</dd>
+                <dd className="text-right font-mono">{typeof dimData?.manual_adjustment === 'number' && Number.isFinite(dimData.manual_adjustment) && dimData.manual_adjustment !== 0 ? formatSignedDisplayNumber(dimData.manual_adjustment) : '—'}</dd>
                 <dt>人工覆盖</dt>
                 <dd className="text-right font-mono">{displayValue(dimData?.manual_override, '—')}</dd>
                 <dt className="font-medium text-foreground">最终生效</dt>
@@ -199,12 +285,16 @@ export function RelationshipCalibrationPanel({ item, query, onChanged }: { item:
           <FieldLabel htmlFor="relationship-evidence-search">筛选当前群友记忆</FieldLabel>
           <Input id="relationship-evidence-search" value={evidenceSearch} disabled={busy} onChange={(event) => setEvidenceSearch(event.target.value)} placeholder="按记忆 ID 或内容筛选…" />
           <FieldLabel htmlFor="relationship-evidence-memory" className="mt-2">记忆证据</FieldLabel>
-          <select id="relationship-evidence-memory" className="h-8 rounded-md border bg-background px-2 text-sm" value={selectedEvidenceId} disabled={busy} onChange={(event) => setSelectedEvidenceId(event.target.value)}>
-            <option value="">{visibleMemories.length ? '请选择当前群友的一条记忆…' : '当前群友在本群没有可引用记忆'}</option>
+          <select id="relationship-evidence-memory" className="h-8 rounded-md border bg-background px-2 text-sm" value={selectedEvidenceId} disabled={busy || evidenceLoading} onChange={(event) => setSelectedEvidenceId(event.target.value)}>
+            <option value="">{evidenceLoading && !visibleMemories.length ? '正在加载当前群友记忆…' : visibleMemories.length ? '请选择当前群友的一条记忆…' : '当前群友在本群没有可引用记忆'}</option>
             {visibleMemories.map((memory) => <option key={memory.id} value={String(memory.id)}>{memory.id} · {(memory.content || '').slice(0, 72)}</option>)}
           </select>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span>{evidenceTotal !== null ? `已加载 ${visibleMemories.length} / ${evidenceTotal} 条` : `已加载 ${visibleMemories.length} 条`}</span>
+            {evidenceHasMore ? <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={busy || evidenceLoading} onClick={() => void loadMoreEvidence()}>{evidenceLoading ? '加载中…' : '加载更多'}</Button> : null}
+          </div>
           <FieldDescription>
-            {evidenceError ?? (senderId ? `只列出这个人发过的记忆，提交时会再核对是否属于本群。` : '无法确认发送者，已回退为当前群的记忆列表。')}
+            {evidenceError ?? (senderId ? `只列出这个人发过的记忆，支持服务端搜索和分页；提交时会再核对是否属于本群。` : '无法确认发送者，已回退为当前群的记忆列表。')}
           </FieldDescription>
         </Field>
         <Field><FieldLabel htmlFor="relationship-evidence">补充证据说明（可选）</FieldLabel><Textarea id="relationship-evidence" value={evidence} disabled={busy} onChange={(event) => setEvidence(event.target.value)} placeholder="补充说明这条真实消息为什么支持校准…" /></Field>

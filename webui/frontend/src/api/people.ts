@@ -2,7 +2,7 @@ import { fetchJson } from './client'
 import type { ObjectRefDescriptor, PageResponse, PageSize } from '@/components/shared/types'
 
 export interface PeopleQuery {
-  limit?: PageSize
+  limit?: PageSize | 500
   offset?: number
   search?: string
   bot_id: string
@@ -10,6 +10,13 @@ export interface PeopleQuery {
   visibility: 'group'
   user_id?: string
   subject_principal_id?: string
+  relationship_state?: 'all' | 'known' | 'unknown'
+  min_affinity?: number | string
+  max_affinity?: number | string
+  min_interactions?: number | string
+  alias_filter?: 'all' | 'has' | 'none'
+  sort_by?: 'name' | 'interactions' | 'affinity'
+  sort_order?: 'asc' | 'desc'
 }
 
 export interface PersonScope {
@@ -154,6 +161,15 @@ export function getRelationshipHistoricalAudit(
 
 export function calibrateRelationship(query: PeopleQuery, payload: RelationshipCalibrationPayload): Promise<RelationshipCalibrationResponse> {
   return fetchJson<RelationshipCalibrationResponse>(`/api/people/relationships/commands/calibrate${queryString(query)}`, { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export interface ClearImpressionPayload {
+  user_id: string
+  reason: string
+}
+
+export function clearImpression(query: PeopleQuery, payload: ClearImpressionPayload): Promise<RelationshipCalibrationResponse> {
+  return fetchJson<RelationshipCalibrationResponse>(`/api/people/commands/clear-impression${queryString(query)}`, { method: 'POST', body: JSON.stringify(payload) })
 }
 
 function queryString(query: object): string {

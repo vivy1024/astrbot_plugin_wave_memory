@@ -1,29 +1,55 @@
-import type { ComponentType } from 'react'
-import { ActivityIcon, BookHeartIcon, BookOpenIcon, BrainCircuitIcon, DatabaseIcon, DownloadIcon, GaugeIcon, GitBranchIcon, GitCompareArrowsIcon, HeartIcon, SearchCheckIcon, Settings2Icon, SlidersIcon, SmileIcon, SparklesIcon, TagsIcon, UsersIcon, CompassIcon } from 'lucide-react'
+import { lazy, type ComponentType } from 'react'
+import {
+  ActivityIcon,
+  BookHeartIcon,
+  BookOpenIcon,
+  BrainCircuitIcon,
+  CompassIcon,
+  DatabaseIcon,
+  DownloadIcon,
+  GaugeIcon,
+  GitBranchIcon,
+  GitCompareArrowsIcon,
+  HeartIcon,
+  SearchCheckIcon,
+  Settings2Icon,
+  SlidersIcon,
+  SmileIcon,
+  SparklesIcon,
+  TagsIcon,
+  UsersIcon,
+} from 'lucide-react'
 
-import { BeliefsPage } from '@/pages/beliefs/BeliefsPage'
-import { ChannelConfigPage } from '@/pages/channels/ChannelConfigPage'
-import { DashboardPage } from '@/pages/dashboard/DashboardPage'
-import { IndexesPage } from '@/pages/diagnostics/IndexesPage'
-import { ImportPage } from '@/pages/import/ImportPage'
-import { InjectionPage } from '@/pages/injection/InjectionPage'
-import { JargonPage } from '@/pages/jargon/JargonPage'
-import { BookLorePage } from '@/pages/knowledge/BookLorePage'
-import { ExperiencesPage } from '@/pages/knowledge/ExperiencesPage'
-import { FactsPage } from '@/pages/knowledge/FactsPage'
-import { FewShotPage } from '@/pages/knowledge/FewShotPage'
-import { MaintenancePage } from '@/pages/maintenance/MaintenancePage'
-import { MemoriesPage } from '@/pages/memories/MemoriesPage'
-import { PeoplePage } from '@/pages/people/PeoplePage'
-import { CompatibilityPage } from '@/pages/review/CompatibilityPage'
-import { SettingsPage } from '@/pages/settings/SettingsPage'
-import { SoulPage } from '@/pages/soul/SoulPage'
-import { TagGraphPage } from '@/pages/tags/TagGraphPage'
-import { TagsPage } from '@/pages/tags/TagsPage'
-import { ExplorePage } from '@/pages/PlaceholderPage'
+const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })))
+const ExplorePage = lazy(() => import('@/pages/PlaceholderPage').then((m) => ({ default: m.ExplorePage })))
+const MemoriesPage = lazy(() => import('@/pages/memories/MemoriesPage').then((m) => ({ default: m.MemoriesPage })))
+const TagsPage = lazy(() => import('@/pages/tags/TagsPage').then((m) => ({ default: m.TagsPage })))
+const TagGraphPage = lazy(() => import('@/pages/tags/TagGraphPage').then((m) => ({ default: m.TagGraphPage })))
+const ImportPage = lazy(() => import('@/pages/import/ImportPage').then((m) => ({ default: m.ImportPage })))
+const MaintenancePage = lazy(() => import('@/pages/maintenance/MaintenancePage').then((m) => ({ default: m.MaintenancePage })))
+const InjectionPage = lazy(() => import('@/pages/injection/InjectionPage').then((m) => ({ default: m.InjectionPage })))
+const ChannelConfigPage = lazy(() => import('@/pages/channels/ChannelConfigPage').then((m) => ({ default: m.ChannelConfigPage })))
+const BeliefsPage = lazy(() => import('@/pages/beliefs/BeliefsPage').then((m) => ({ default: m.BeliefsPage })))
+const JargonPage = lazy(() => import('@/pages/jargon/JargonPage').then((m) => ({ default: m.JargonPage })))
+const SoulPage = lazy(() => import('@/pages/soul/SoulPage').then((m) => ({ default: m.SoulPage })))
+const BookLorePage = lazy(() => import('@/pages/knowledge/BookLorePage').then((m) => ({ default: m.BookLorePage })))
+const ExperiencesPage = lazy(() => import('@/pages/knowledge/ExperiencesPage').then((m) => ({ default: m.ExperiencesPage })))
+const FewShotPage = lazy(() => import('@/pages/knowledge/FewShotPage').then((m) => ({ default: m.FewShotPage })))
+const FactsPage = lazy(() => import('@/pages/knowledge/FactsPage').then((m) => ({ default: m.FactsPage })))
+const PeoplePage = lazy(() => import('@/pages/people/PeoplePage').then((m) => ({ default: m.PeoplePage })))
+const IndexesPage = lazy(() => import('@/pages/diagnostics/IndexesPage').then((m) => ({ default: m.IndexesPage })))
+const CompatibilityPage = lazy(() => import('@/pages/review/CompatibilityPage').then((m) => ({ default: m.CompatibilityPage })))
+const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 
 export type RouteGroup = 'overview' | 'data' | 'runtime' | 'cognition' | 'knowledge' | 'system'
-export interface AppRoute { path: string; title: string; description: string; group: RouteGroup; icon: ComponentType<{ className?: string }>; element: ComponentType }
+export interface AppRoute {
+  path: string
+  title: string
+  description: string
+  group: RouteGroup
+  icon: ComponentType<{ className?: string }>
+  element: ComponentType
+}
 
 export const appRoutes: AppRoute[] = [
   { path: '/dashboard', title: '总览', description: '真实健康、待办与近期异常', group: 'overview', icon: GaugeIcon, element: DashboardPage },
@@ -37,7 +63,7 @@ export const appRoutes: AppRoute[] = [
   { path: '/channels', title: '通道配置', description: '各注入通道的保存值与当前生效值', group: 'runtime', icon: Settings2Icon, element: ChannelConfigPage },
   { path: '/beliefs', title: '信念', description: '证据健康与生命周期审核', group: 'cognition', icon: BookHeartIcon, element: BeliefsPage },
   { path: '/jargon', title: '黑话与口癖', description: '群聊习得黑话、证据审核与内置口癖资产', group: 'cognition', icon: SmileIcon, element: JargonPage },
-  { path: '/soul', title: '心智状态', description: '当前群的心情、关切、时间线与关系', group: 'cognition', icon: HeartIcon, element: SoulPage },
+  { path: '/soul', title: '心智状态', description: 'Bot 自己的心情、关切、作息与时间线', group: 'cognition', icon: HeartIcon, element: SoulPage },
   { path: '/knowledge/book-lore', title: '书设定', description: '独立只读语料、解析与本地化', group: 'knowledge', icon: BookOpenIcon, element: BookLorePage },
   { path: '/knowledge/experiences', title: '经历片段', description: '对话沉淀的个人经历与重要事件', group: 'knowledge', icon: SparklesIcon, element: ExperiencesPage },
   { path: '/knowledge/style-examples', title: '风格样例', description: '已通过审核的正式回复范例', group: 'knowledge', icon: BrainCircuitIcon, element: FewShotPage },
@@ -49,4 +75,6 @@ export const appRoutes: AppRoute[] = [
 ]
 
 export const defaultRoute = '/dashboard'
-export function getRouteByPath(pathname: string): AppRoute { return appRoutes.find((route) => route.path === pathname) ?? appRoutes[0] }
+export function getRouteByPath(pathname: string): AppRoute {
+  return appRoutes.find((route) => route.path === pathname) ?? appRoutes[0]
+}
