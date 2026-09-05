@@ -7,6 +7,7 @@ import pytest
 
 from domain.scope import RuntimeScope, SessionRef
 from services.evidence_resolver import EvidenceResolutionError, resolve_relationship_evidence
+from services.relationship_calibration import RelationshipCalibrationError, _normalize_evidence
 
 
 def scope() -> RuntimeScope:
@@ -100,9 +101,12 @@ def test_resolver_reads_scoped_experience_episode():
         "source_scope": scope().to_dict(),
     }])
     assert result[0]["kind"] == "episode"
+    assert result[0]["type"] == "episode"
     assert result[0]["id"] == "21"
     assert result[0]["captured_at"] == 101.0
     assert result[0]["available"] is True
+    assert result[0]["title"] == "reply"
+    assert result[0]["locator"] == {"episode_id": 21}
 
 
 def test_resolver_rejects_hash_mismatch_and_free_text_notes():
@@ -118,3 +122,90 @@ def test_resolver_rejects_hash_mismatch_and_free_text_notes():
             "source_scope": scope().to_dict(),
         }])
     assert note.value.code == "relationship_evidence_object_required"
+
+
+def test_evidence_required_is_reserved_for_missing_or_empty_values():
+    connection = db()
+    for value in (None, [], "", {}):
+        with pytest.raises(EvidenceResolutionError) as error:
+            resolve_relationship_evidence(connection, scope=scope(), values=value)
+        assert error.value.code == "relationship_evidence_required"
+
+
+def test_resolver_outputs_are_accepted_by_calibration_normalizer():
+    connection = db()
+    target_scope = scope()
+    for kind, item_id in (("memory", "11"), ("episode", "21")):
+        resolved = resolve_relationship_evidence(
+            connection,
+            scope=target_scope,
+            values=[{
+                "kind": kind,
+                "id": item_id,
+                "source_scope": target_scope.to_dict(),
+            }],
+        )
+        normalized = _normalize_evidence(resolved, target_scope)
+        assert normalized[0]["kind"] == kind
+        assert normalized[0]["available"] is True
+
+
+def test_calibration_normalizer_rejects_missing_or_unknown_evidence_fields():
+    target_scope = scope()
+    base = {
+        "kind": "memory",
+        "id": "11",
+        "content_hash": "hash",
+        "captured_at": 100.0,
+        "source_scope": target_scope.to_dict(),
+        "available": True,
+    }
+    with pytest.raises(RelationshipCalibrationError) as missing:
+        _normalize_evidence([{key: value for key, value in base.items() if key != "content_hash"}], target_scope)
+    assert missing.value.code == "relationship_evidence_invalid"
+    with pytest.raises(RelationshipCalibrationError) as unknown:
+        _normalize_evidence([{**base, "client_note": "unexpected"}], target_scope)
+    assert unknown.value.code == "relationship_evidence_invalid"
+
+
+def test_evidence_summary_is_carried_into_calibration_audit_payload():
+    connection = db()
+    target_scope = scope()
+    resolved = resolve_relationship_evidence(
+        connection,
+        scope=target_scope,
+        values=[{**descriptor(target_scope), "summary": "这条消息体现了明显信任提升"}],
+    )
+    assert resolved[0]["summary"] == "这条消息体现了明显信任提升"
+    normalized = _normalize_evidence(resolved, target_scope)
+    assert normalized[0]["summary"] == "这条消息体现了明显信任提升"
+
+
+def test_evidence_summary_whitespace_only_is_dropped():
+    connection = db()
+    resolved = resolve_relationship_evidence(
+        connection,
+        scope=scope(),
+        values=[{**descriptor(scope()), "summary": "   "}],
+    )
+    assert "summary" not in resolved[0]
+
+
+def test_evidence_summary_rejects_non_string_and_trims_oversize():
+    connection = db()
+    with pytest.raises(EvidenceResolutionError) as bad_type:
+        resolve_relationship_evidence(
+            connection,
+            scope=scope(),
+            values=[{**descriptor(scope()), "summary": 123}],
+        )
+    assert bad_type.value.code == "relationship_evidence_invalid"
+
+    resolved = resolve_relationship_evidence(
+        connection,
+        scope=scope(),
+        values=[{**descriptor(scope()), "summary": "x" * 600}],
+    )
+    assert len(resolved[0]["summary"]) == 500
+    normalized = _normalize_evidence(resolved, scope())
+    assert len(normalized[0]["summary"]) == 500

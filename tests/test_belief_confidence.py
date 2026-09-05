@@ -187,13 +187,23 @@ def test_belief_engine_persists_idempotent_evidence_observations_and_gates_activ
         assert len(db.list_scoped_belief_observations(scope, belief_id=belief["id"])) == 2
         assert belief["strength"] == stable_strength
 
-        approved = BeliefLifecycleService(db.scoped_knowledge).transition(scope, belief["id"], "approve")
+        target_id = belief["id"]
+        approved = BeliefLifecycleService(db.scoped_knowledge).transition(scope, target_id, "approve")
         assert approved["status"] == "active"
         assert content in engine.get_injection(scope)
 
         asyncio.run(engine.extract_from_summary(summary, scope, source_memory_ids=[challenge_id]))
-        belief = db.list_scoped_beliefs(scope)[0]
-        assert belief["provenance"]["confidence_evidence"]["challenge_windows"] == 1
-        assert belief["strength"] < stable_strength
+        target_after = db.get_scoped_belief(scope, target_id)
+        assert target_after["status"] == "active"
+        assert target_after["provenance"]["confidence_evidence"]["challenge_windows"] == 0
+        candidates = [
+            row for row in db.list_scoped_beliefs(scope)
+            if isinstance(row.get("provenance"), dict)
+            and isinstance(row["provenance"].get("candidate"), dict)
+            and row["provenance"]["candidate"].get("relation") == "challenge"
+        ]
+        assert len(candidates) == 1
+        assert candidates[0]["status"] == "pending"
+        assert candidates[0]["provenance"]["gating"]["reason_code"] == "relationship_unknown"
     finally:
         db.close()

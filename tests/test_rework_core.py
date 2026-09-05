@@ -647,6 +647,59 @@ class ReworkCoreTest(unittest.TestCase):
         self.assertEqual(service.legacy_scope_skip_total, 1)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM beliefs").fetchone()[0], 0)
 
+    def test_belief_emergence_with_scope_creates_pending_from_episodes(self):
+        from domain.scope import RuntimeScope, SessionRef
+        from services.belief_emergence import BeliefEmergenceService
+        from services.experience_episodes import ExperienceEpisodeService
+
+        conn, _ = self._connect()
+        self.addCleanup(conn.close)
+        conn.executescript("""
+            CREATE TABLE experience_episodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_id TEXT NOT NULL,
+                group_id TEXT NOT NULL,
+                user_id TEXT,
+                episode_type TEXT NOT NULL,
+                trigger_text TEXT,
+                bot_inner_thought TEXT,
+                bot_action TEXT,
+                bot_reply TEXT,
+                user_reaction TEXT,
+                outcome TEXT,
+                source_memory_ids TEXT,
+                emotional_weight REAL,
+                created_at REAL
+            );
+        """)
+        created_ids: list[int] = []
+
+        class DB:
+            def __init__(self, connection):
+                self.conn = connection
+            def upsert_scoped_belief(self, scope, **kwargs):
+                created_ids.append(len(created_ids) + 1)
+                return created_ids[-1]
+
+        scope = RuntimeScope("yushu", "group", SessionRef("qq:group:g1", "qq", "group", "g1"))
+        ExperienceEpisodeService(conn).record_episode(
+            bot_id="yushu",
+            group_id="g1",
+            episode_type="bot_reply",
+            trigger_text="群友问我边界怎么处理",
+            bot_inner_thought="先核实事实再回应",
+            bot_reply="我会先把事情核对清楚。",
+            user_reaction="对方认可了这个做法",
+            source_memory_ids=[11, 12],
+        )
+        service = BeliefEmergenceService(DB(conn), bot_id="yushu")
+        created = asyncio.run(service.emerge_recent(days=1, limit=2, scope=scope))
+
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0]["status"], "pending")
+        self.assertIn("先核实事实", created[0]["content"])
+        self.assertEqual(service.legacy_scope_skip_total, 0)
+
     def test_jargon_injection_only_uses_scoped_confirmed_nonempty_entries(self):
         from domain.scope import RuntimeScope, SessionRef
         from services.jargon.inference import JargonInjector

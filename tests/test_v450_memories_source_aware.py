@@ -10,8 +10,8 @@ class TestStage5ScopedMemories:
             "ScopeSelect",
             "bot_id",
             "session_id",
-            "请选择真实 Bot 与会话",
-            "不会从裸 ID 补默认 Scope",
+            "请选择 Bot 和群",
+            "不会从裸编号猜当前群",
         ):
             assert marker in page
 
@@ -24,5 +24,5 @@ class TestStage5ScopedMemories:
 
     def test_memories_mutations_reuse_server_issued_urls_and_revisions(self):
         page = Path("webui/frontend/src/pages/memories/MemoriesPage.tsx").read_text(encoding="utf-8")
-        for marker in ("updateMemory(detail.mutation_url", "deleteMemory(detail.mutation_url", "result.item", "保存并回读 revision", "删除当前 ObjectRef"):
+        for marker in ("updateMemory(detail.mutation_url", "deleteMemory(detail.mutation_url", "result.item", "保存并重新读取", "删除当前记忆"):
             assert marker in page

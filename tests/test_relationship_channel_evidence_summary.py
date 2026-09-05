@@ -72,6 +72,13 @@ def test_channel_without_summary_still_works():
         },
         "relationship_history": {"items": []},
         "timeline": {"items": []},
+        "concerns": {
+            "items": [
+                {"topic": "排查考研数学复习进度", "intensity": 0.8},
+                {"topic": "低频杂音", "intensity": 0.2},
+            ]
+        },
+        "revision": 1,
     }
     ch = RelationshipChannel(repository=_Repo(state))
     ctx = SimpleNamespace(
@@ -82,3 +89,55 @@ def test_channel_without_summary_still_works():
     result = asyncio.run(ch.build(ctx))
     assert result.status == "hit"
     assert "历史关系摘要" not in result.text
+    assert "当前前情关切" in result.text
+    assert "排查考研数学复习进度" in result.text
+    assert "低频杂音" not in result.text
+
+
+def test_channel_puts_impression_before_status_and_skips_message_seen_noise():
+    class _Conn:
+        def execute(self, sql, params=None):
+            class _Row:
+                def fetchone(self_inner):
+                    return ('{"impression":"愿意核对事实","impression_event":{"event_type":"deep_talk","reason":"深夜长谈"}}',)
+            return _Row()
+
+    class _ImpressionRepo:
+        def __init__(self, state):
+            self._state = state
+            self.cm = SimpleNamespace(conn=_Conn())
+
+        def get_state(self, scope, subject_principal_id=None, limit=25, offset=0):
+            return self._state
+
+    state = {
+        "relationship": {
+            "affinity": 12,
+            "state": "neutral",
+            "dimensions": {"familiarity": 10},
+            "values": {},
+            "revision": 3,
+            "evidence": [],
+        },
+        "relationship_history": {
+            "items": [
+                {"event_type": "message_seen", "reason": "看见一条群友消息"},
+                {"event_type": "deep_talk", "reason": "深夜长谈"},
+            ]
+        },
+        "timeline": {"items": []},
+    }
+    ch = RelationshipChannel(repository=_ImpressionRepo(state))
+    ctx = SimpleNamespace(
+        mode="full",
+        config={"channels": {"affinity": {"enabled": True}}},
+        scope=_scope(),
+        sender_id="1",
+        group_id="g1",
+    )
+    result = asyncio.run(ch.build(ctx))
+    assert result.status == "hit"
+    assert result.text.startswith("你对这个人的印象：愿意核对事实")
+    assert "最近关系线索：deep_talk：深夜长谈" in result.text
+    assert "看见一条群友消息" not in result.text
+    assert result.text.index("你对这个人的印象") < result.text.index("综合值=12")

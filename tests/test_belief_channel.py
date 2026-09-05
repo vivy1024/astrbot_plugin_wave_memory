@@ -1,4 +1,5 @@
 import asyncio
+import json
 import unittest
 
 
@@ -11,6 +12,26 @@ class FakeBeliefEngine:
     def get_injection(self, scope, sender_id=None, keywords=None):
         self.calls.append({"scope": scope, "sender_id": sender_id, "keywords": list(keywords or []), "bot_id": self.bot_id})
         return self.text
+
+
+class FakeBeliefEngineDetails:
+    def __init__(self, text, belief_ids):
+        self.text = text
+        self.belief_ids = list(belief_ids)
+        self.bot_id = "old_bot"
+        self.calls = []
+
+    def get_injection_details(self, scope, sender_id=None, keywords=None):
+        self.calls.append({"scope": scope, "sender_id": sender_id, "keywords": list(keywords or []), "bot_id": self.bot_id})
+        return {
+            "text": self.text,
+            "belief_ids": self.belief_ids,
+            "gating": {"mode": "direct"},
+            "interaction_policy": {"allow_person_judgment": True},
+        }
+
+    def get_injection(self, scope, sender_id=None, keywords=None):
+        raise AssertionError("structured details path must not fall back to get_injection")
 
 
 class BeliefChannelTest(unittest.TestCase):
@@ -62,6 +83,11 @@ class BeliefChannelTest(unittest.TestCase):
         self.assertEqual(engine.calls[0]["keywords"], ["剑阵", "边界", "态度"])
         self.assertEqual(result.items[0]["source"], "BeliefEngine.get_injection")
         self.assertEqual(result.items[0]["belief_ids"], [42])
+        self.assertEqual(
+            result.items[0]["scope"],
+            {"bot_id": "baizhenzhen", "visibility": "group", "session_id": "qq:group:g1"},
+        )
+        json.dumps(result.items[0])
 
     def test_memory_only_and_compat_only_disable_without_querying_engine(self):
         from services.injection.channels.belief import BeliefChannel
@@ -111,6 +137,22 @@ class BeliefChannelTest(unittest.TestCase):
         self.assertEqual(disabled.status, "disabled")
         self.assertEqual(missing.status, "empty")
         self.assertEqual(engine.calls, [])
+
+    def test_uses_structured_belief_ids_from_injection_details(self):
+        from services.injection.channels.belief import BeliefChannel
+
+        engine = FakeBeliefEngineDetails(
+            "<beliefs>\n- 确信：白真真不喜欢被当成攻击工具\n</beliefs>",
+            [42, 7],
+        )
+        result = asyncio.run(BeliefChannel(belief_engine=engine).build(self._ctx()))
+
+        self.assertEqual(result.status, "hit")
+        self.assertEqual(result.items[0]["belief_ids"], [42, 7])
+        self.assertEqual(result.items[0]["evidence"], [42, 7])
+        self.assertEqual(result.items[0]["gating"], {"mode": "direct"})
+        self.assertEqual(engine.calls[0]["sender_id"], "u1")
+        self.assertTrue(result.items[0]["dedupe_key"].startswith("belief:42:7"))
 
 
 if __name__ == "__main__":

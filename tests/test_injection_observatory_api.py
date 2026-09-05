@@ -190,7 +190,7 @@ class InjectionObservatoryApiTest(unittest.TestCase):
         api = Path("webui/frontend/src/api/injection.ts").read_text(encoding="utf-8")
         routes = Path("webui/frontend/src/app/routes.tsx").read_text(encoding="utf-8")
 
-        self.assertIn("Observatory · 注入观测台", page)
+        self.assertIn("注入观测台", page)
         self.assertIn("listInjectionTraces", page)
         self.assertIn("usePaginationSearchParams", page)
         self.assertIn("ScopeSelect", page)

@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from domain.scope import RuntimeScope, SessionRef
+from services.impression_timeline import append_impression, relationship_context
 
 
 class _FakePlain:
@@ -89,6 +90,8 @@ def _load_method(method_name: str):
         "Image": _FakeImage,
         "json": json,
         "time": SimpleNamespace(time=lambda: 1700000000.0),
+        "append_impression": append_impression,
+        "relationship_context": relationship_context,
     }
     exec(compile(module, str(source_path), "exec"), namespace)
     return namespace[method_name]
@@ -213,6 +216,45 @@ class ImpressionHookTest(unittest.TestCase):
         meta = json.loads(row[0])
         self.assertEqual(meta.get("impression"), "最新深入讨论的新印象")
         self.assertEqual(meta.get("tags"), {"geek": 1})
+        self.assertEqual(meta.get("impression_history")[0]["text"], "旧印象")
+
+    def test_impression_persistence_uses_package_relative_import(self):
+        source_path = Path(__file__).resolve().parents[1] / "main.py"
+        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+        plugin_class = next(
+            node for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "WaveMemoryPlugin"
+        )
+        method = next(
+            node for node in plugin_class.body
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "on_decorating_result"
+        )
+        module_imports = [
+            node for node in tree.body
+            if isinstance(node, ast.ImportFrom)
+            and any(alias.name == "append_impression" for alias in node.names)
+        ]
+        self.assertEqual(len(module_imports), 1)
+        self.assertEqual(module_imports[0].module, "services.impression_timeline")
+        self.assertEqual(module_imports[0].level, 1)
+        method_imports = [
+            node for node in ast.walk(method)
+            if isinstance(node, ast.ImportFrom)
+            and any(alias.name == "append_impression" for alias in node.names)
+        ]
+        self.assertEqual(method_imports, [])
+        assigned: list[str] = []
+        for node in ast.walk(method):
+            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+                continue
+            func = node.value.func
+            if not isinstance(func, ast.Name) or func.id != "relationship_context":
+                continue
+            target = node.targets[0]
+            names = target.elts if isinstance(target, ast.Tuple) else [target]
+            assigned.extend(item.id for item in names if isinstance(item, ast.Name))
+        self.assertIn("event_anchor", assigned)
+        self.assertNotIn("event", assigned)
 
 
 if __name__ == "__main__":

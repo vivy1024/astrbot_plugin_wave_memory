@@ -157,6 +157,37 @@ def test_preview_exact_mapping_and_unmapped_or_incomplete_profiles(tmp_path: Pat
     assert report["events"][0]["disposition"] == "audit"
 
 
+def test_preview_keeps_formal_shallow_relationship_instead_of_inflating_legacy(tmp_path: Path):
+    source = tmp_path / "source.sqlite3"
+    _schema(source)
+    _seed(source)
+    conn = sqlite3.connect(source)
+    conn.execute(
+        "INSERT INTO scoped_soul_relationships VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            "bot-a",
+            "qq:group:g1",
+            "group",
+            "qq:user:u1",
+            7,
+            "neutral",
+            json.dumps({"familiarity": 15, "trust": 0.9, "fun": 0, "hostility": 0, "depth": 15}),
+            3,
+            "[]",
+            1.0,
+        ),
+    )
+    conn.commit()
+    report = preview(conn, [_scope()])
+    conn.close()
+
+    item = next(row for row in report["profiles"] if row.get("legacy_id") == "1")
+    assert item["disposition"] == "keep_formal"
+    assert item["reason"] == "formal_shallow_relationship_preferred"
+    assert report["summary"]["profiles_keep_formal"] == 1
+    assert report["events"][0]["disposition"] == "audit"
+
+
 def test_stage_preserves_source_writes_five_dimension_baseline_and_audits_events(tmp_path: Path):
     source = tmp_path / "source.sqlite3"
     output = tmp_path / "staged.sqlite3"
@@ -291,30 +322,18 @@ def test_existing_unadjusted_formal_state_is_preserved_as_live_overlay(tmp_path:
     preview_connection = sqlite3.connect(source)
     preview_report = preview(preview_connection, [_scope()])
     preview_connection.close()
-    assert preview_report["profiles"][0]["disposition"] == "migrate"
+    assert preview_report["profiles"][0]["disposition"] == "keep_formal"
     conn.close()
 
-    stage(source, output, tmp_path / "runs", [_scope()], _hash(source), CONFIRMATION)
+    report = stage(source, output, tmp_path / "runs", [_scope()], _hash(source), CONFIRMATION)
+    assert report["profile_result"]["already_migrated"] == 1
     conn = sqlite3.connect(output)
-    original_json, original_hash = conn.execute(
-        """SELECT original_formal_json, original_formal_hash
-             FROM legacy_relationship_migration_items WHERE source_table='user_profiles'"""
+    affinity, dimensions_json, revision = conn.execute(
+        "SELECT affinity, dimensions, revision FROM scoped_soul_relationships"
     ).fetchone()
-    assert json.loads(original_json)["relationship"]["affinity"] == 2
-    assert original_hash.startswith("sha256:")
-    affinity, dimensions_json, evidence_json, revision = conn.execute(
-        "SELECT affinity, dimensions, evidence, revision FROM scoped_soul_relationships"
-    ).fetchone()
-    assert affinity == 32
-    assert json.loads(dimensions_json) == {"familiarity": 40.0, "trust": 52.0, "fun": 20.0, "hostility": 10.0, "depth": 30.0}
-    assert revision == 4
-    evidence = json.loads(evidence_json)
-    assert {item["kind"] for item in evidence if "kind" in item} == {
-        "legacy_relationship_snapshot_baseline",
-        "formal_relationship_live_overlay",
-    }
-    values = dict(conn.execute("SELECT dimension, automatic_value FROM scoped_soul_relationship_values").fetchall())
-    assert values["trust"] == 52.0
+    assert affinity == 2
+    assert json.loads(dimensions_json) == {"trust": 2}
+    assert revision == 3
     conn.close()
 
 
@@ -342,9 +361,7 @@ def test_existing_live_overlay_clamps_after_legacy_baseline(tmp_path: Path):
     dimensions_json, evidence_json = conn.execute(
         "SELECT dimensions, evidence FROM scoped_soul_relationships"
     ).fetchone()
-    assert json.loads(dimensions_json)["familiarity"] == 100.0
-    overlay = next(item for item in json.loads(evidence_json) if item.get("kind") == "formal_relationship_live_overlay")
-    assert overlay["clamped_dimensions"] == [{"dimension": "familiarity", "requested": 105.0, "effective": 100.0}]
+    assert json.loads(dimensions_json)["familiarity"] == 5
     conn.close()
 
 

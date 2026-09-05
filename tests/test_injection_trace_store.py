@@ -69,6 +69,33 @@ class InjectionTraceStoreTest(unittest.TestCase):
         self.assertEqual([row["trace_id"] for row in rows], ["err-1"])
         self.assertEqual(rows[0]["status"], "error")
 
+    def test_query_timeout_and_channel_filters_use_error_and_payload_fallback(self):
+        from services.injection.channel_base import InjectionResult
+
+        store, conn = self._store()
+        store.record(
+            {
+                "trace_id": "missing-row",
+                "timestamp": 40,
+                "mode": "full",
+                "message": "x",
+                "status": "degraded",
+                "error": "book_lore:timeout",
+            },
+            [
+                InjectionResult.hit("memory", "记忆"),
+                InjectionResult.timeout("book_lore", timeout_ms=800),
+            ],
+        )
+        conn.execute("DELETE FROM injection_trace_channels WHERE trace_id=? AND channel='book_lore'", ("missing-row",))
+        conn.commit()
+
+        by_channel = store.query(from_ts=0, to_ts=99, channel="book_lore")
+        by_timeout = store.query(from_ts=0, to_ts=99, status="timeout")
+
+        self.assertEqual([row["trace_id"] for row in by_channel], ["missing-row"])
+        self.assertEqual([row["trace_id"] for row in by_timeout], ["missing-row"])
+
     def test_query_has_error_includes_channel_errors_and_timeouts(self):
         from services.injection.channel_base import InjectionResult
 
@@ -182,6 +209,39 @@ class InjectionTraceStoreTest(unittest.TestCase):
         self.assertEqual(trace_settings["retention_days"]["default"], 14)
         self.assertEqual(trace_settings["max_rows"]["default"], 5000)
         self.assertEqual(trace_settings["max_preview_chars"]["default"], 1200)
+
+    def test_record_keeps_later_channels_when_one_channel_detail_is_not_json(self):
+        from domain.scope import RuntimeScope, SessionRef
+        from services.injection.channel_base import InjectionResult
+
+        store, conn = self._store()
+        scope = RuntimeScope(
+            bot_id="yushu",
+            visibility="group",
+            session=SessionRef("qq:group:g1", "qq", "group", "g1"),
+        )
+        store.record(
+            {"trace_id": "partial-channels", "timestamp": 50, "mode": "full", "message": "x", "status": "degraded", "error": "book_lore:timeout"},
+            [
+                InjectionResult.hit("affinity", "关系", items=[{"preview": "关系"}]),
+                InjectionResult.hit("belief", "信念", items=[{"scope": scope}]),
+                InjectionResult.timeout("book_lore", timeout_ms=800),
+            ],
+        )
+
+        rows = conn.execute(
+            "SELECT channel, status FROM injection_trace_channels WHERE trace_id=? ORDER BY id",
+            ("partial-channels",),
+        ).fetchall()
+        self.assertEqual([tuple(row) for row in rows], [("affinity", "hit"), ("belief", "hit"), ("book_lore", "timeout")])
+        belief_details = json.loads(
+            conn.execute(
+                "SELECT details FROM injection_trace_channels WHERE trace_id=? AND channel='belief'",
+                ("partial-channels",),
+            ).fetchone()[0]
+        )
+        self.assertEqual(belief_details["error"], "channel_details_not_json_serializable")
+        self.assertEqual(belief_details["items"], [])
 
     def test_safe_record_returns_false_when_storage_fails(self):
         from services.injection.channel_base import InjectionResult

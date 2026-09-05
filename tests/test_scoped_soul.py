@@ -231,6 +231,32 @@ def test_soul_state_reads_scoped_repository_and_legacy_mutations_are_410(monkeyp
     assert asyncio.run(module._reject_unscoped_soul_mutations()) is None
 
 
+def test_soul_history_preserves_manual_memory_evidence_summary():
+    from webui.blueprints import soul as module
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        """CREATE TABLE memories(
+               id INTEGER PRIMARY KEY, content TEXT, timestamp REAL,
+               version INTEGER, bot_id TEXT, session_id TEXT, visibility TEXT,
+               resolution_state TEXT, quarantine INTEGER DEFAULT 0
+           )"""
+    )
+    connection.execute(
+        """INSERT INTO memories VALUES(
+               11, '原始记忆正文', 100, 2, 'bot-alpha', 'qq:group:g1',
+               'group', 'resolved', 0)"""
+    )
+    scope = group_scope()
+    evidence = module._normalize_evidence_items(
+        connection,
+        scope=scope,
+        values=[{"kind": "memory", "id": "11", "summary": "人工校准说明"}],
+        refs=None,
+    )
+    assert evidence[0]["summary"] == "人工校准说明"
+
+
 def test_soul_state_refresh_recomputes_projection_without_writes(monkeypatch):
     from webui.blueprints import soul as module
 
