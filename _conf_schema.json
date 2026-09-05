@@ -762,5 +762,88 @@
         "default": 2
       }
     }
+  },
+  "Eviction_Settings": {
+    "description": "记忆淘汰与降级策略配置",
+    "hint": "控制噪声记忆 TTL 与冷热分层淘汰参数",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用记忆淘汰",
+        "type": "bool",
+        "default": true
+      },
+      "noise_ttl_days": {
+        "description": "噪声记忆保留天数",
+        "type": "int",
+        "default": 7
+      },
+      "interval_hours": {
+        "description": "淘汰作业检查间隔（小时）",
+        "type": "float",
+        "default": 6.0
+      }
+    }
+  },
+  "Jargon_Settings": {
+    "description": "黑话挖掘与自省系统配置",
+    "hint": "群黑话统计挖掘与阈值配置",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用黑话挖掘与注入",
+        "type": "bool",
+        "default": true
+      },
+      "min_frequency": {
+        "description": "黑话候选词频门限",
+        "type": "int",
+        "default": 5
+      },
+      "min_messages": {
+        "description": "黑话候选消息数门限",
+        "type": "int",
+        "default": 10
+      },
+      "confidence_threshold": {
+        "description": "推断置信度门限",
+        "type": "float",
+        "default": 0.5
+      },
+      "max_inject": {
+        "description": "单次回复最大注入黑话数",
+        "type": "int",
+        "default": 3
+      }
+    }
+  },
+  "FewShot_Settings": {
+    "description": "Few-Shot 风格学习配置",
+    "hint": "回复风格样例库注入配置",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用 FewShot 风格注入",
+        "type": "bool",
+        "default": true
+      },
+      "max_inject": {
+        "description": "单次回复最大注入样例数",
+        "type": "int",
+        "default": 3
+      }
+    }
+  },
+  "Study_Settings": {
+    "description": "自省与自主学习配置",
+    "hint": "控制自省系统与学习源配置",
+    "type": "object",
+    "items": {
+      "self_reflect_enabled": {
+        "description": "启用自省纠错系统",
+        "type": "bool",
+        "default": true
+      }
+    }
   }
 }

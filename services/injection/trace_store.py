@@ -202,6 +202,19 @@ class InjectionTraceStore:
                 "warnings": self._bounded_redact(item.get("warnings") or []),
                 "error": self._bounded_redact(item.get("error") or ""),
             }
+            try:
+                details_json = json.dumps(details, ensure_ascii=False, sort_keys=True)
+            except TypeError:
+                details_json = json.dumps(
+                    {
+                        "items": [],
+                        "filtered": [],
+                        "warnings": details.get("warnings") or [],
+                        "error": details.get("error") or "channel_details_not_json_serializable",
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
             self.conn.execute(
                 """INSERT INTO injection_trace_channels
                    (trace_id, channel, status, tokens, chars, latency_ms, score,
@@ -214,11 +227,11 @@ class InjectionTraceStore:
                     int(_num(item.get("tokens"))),
                     int(_num(item.get("chars")) or len(text)),
                     _num(item.get("latency_ms")),
-                    item.get("score"),
+                    item.get("score") if isinstance(item.get("score"), (int, float)) and not isinstance(item.get("score"), bool) else None,
                     len(item.get("items") or []),
                     len(item.get("filtered") or []),
                     self._preview(text),
-                    json.dumps(details, ensure_ascii=False, sort_keys=True),
+                    details_json,
                 ),
             )
         self.conn.commit()
@@ -332,10 +345,23 @@ class InjectionTraceStore:
             conditions.append("COALESCE(group_id, '') != ''")
         elif normalized_scope in {"private", "private_chat", "direct"}:
             conditions.append("COALESCE(group_id, '') = ''")
-        for column, value in (("group_id", group_id), ("sender_id", sender_id), ("bot_id", bot_id), ("status", status)):
+        for column, value in (("group_id", group_id), ("sender_id", sender_id), ("bot_id", bot_id)):
             if value:
                 conditions.append(f"{column} = ?")
                 params.append(value)
+        if status:
+            if status == "timeout":
+                conditions.append(
+                    "("
+                    "status = ? OR instr(COALESCE(error, ''), ':timeout') > 0 OR "
+                    "EXISTS (SELECT 1 FROM injection_trace_channels tc "
+                    "WHERE tc.trace_id = injection_traces.trace_id AND tc.status = 'timeout')"
+                    ")"
+                )
+                params.append(status)
+            else:
+                conditions.append("status = ?")
+                params.append(status)
         if session_id:
             conditions.append("json_extract(metadata_json, '$.runtime_scope.session.id') = ?")
             params.append(session_id)
@@ -353,10 +379,14 @@ class InjectionTraceStore:
             conditions.append(f"(COALESCE(error, '') = '' AND NOT {channel_error_exists})")
         if channel:
             conditions.append(
+                "("
                 "EXISTS (SELECT 1 FROM injection_trace_channels c "
-                "WHERE c.trace_id = injection_traces.trace_id AND c.channel = ?)"
+                "WHERE c.trace_id = injection_traces.trace_id AND c.channel = ?) "
+                "OR instr(COALESCE(error, ''), ?) > 0 "
+                "OR instr(COALESCE(payload_json, ''), ?) > 0"
+                ")"
             )
-            params.append(channel)
+            params.extend([channel, f"{channel}:", f"\"channel\": \"{channel}\""])
         return " AND ".join(conditions), params
 
     def query(

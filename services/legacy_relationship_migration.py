@@ -113,6 +113,7 @@ def preview(connection: sqlite3.Connection, target_scopes: Sequence[Mapping[str,
         "events": event_items,
         "summary": {
             "profiles_migratable": sum(item.get("disposition") == "migrate" for item in profile_items),
+            "profiles_keep_formal": sum(item.get("disposition") == "keep_formal" for item in profile_items),
             "profiles_review": sum(item.get("disposition") == "review" for item in profile_items),
             "events_auditable": sum(item.get("disposition") == "audit" for item in event_items),
             "events_review": sum(item.get("disposition") == "review" for item in event_items),
@@ -261,7 +262,7 @@ def stage(
 def _stage_profiles(conn: sqlite3.Connection, items: Sequence[Mapping[str, Any]], run_id: str, source_hash: str) -> dict[str, int]:
     migrated = review = already_migrated = merged_existing_formal = 0
     for item in items:
-        if item.get("disposition") != "migrate":
+        if item.get("disposition") not in {"migrate", "keep_formal"}:
             _record_item(conn, item, run_id, source_hash, "review")
             review += 1
             continue
@@ -274,10 +275,14 @@ def _stage_profiles(conn: sqlite3.Connection, items: Sequence[Mapping[str, Any]]
             "SELECT disposition FROM legacy_relationship_migration_items WHERE source_table='user_profiles' AND legacy_id=? AND scope_key=? AND source_row_hash=?",
             (legacy_id, scope_key, item_hash),
         ).fetchone()
-        if existing_item and str(existing_item[0]) == "migrated":
+        if existing_item and str(existing_item[0]) in {"migrated", "keep_formal"}:
             already_migrated += 1
             continue
         original = _formal_snapshot(conn, scope, item["subject"])
+        if item.get("disposition") == "keep_formal":
+            _record_item(conn, item, run_id, source_hash, "keep_formal", original)
+            already_migrated += 1
+            continue
         _write_profile_baseline(conn, item, original)
         _record_item(conn, item, run_id, source_hash, "migrated", original)
         migrated += 1
@@ -321,6 +326,31 @@ def _stage_events(conn: sqlite3.Connection, items: Sequence[Mapping[str, Any]], 
         else:
             already_audited += 1
     return {"audited": audited, "review": review, "already_audited": already_audited}
+
+
+def _formal_is_shallow_versus_legacy(
+    original: Mapping[str, Any] | None,
+    legacy_dimensions: Mapping[str, float],
+) -> bool:
+    """Keep a lived but shallower formal snapshot instead of inflating it with legacy."""
+    if not isinstance(original, Mapping):
+        return False
+    relationship = original.get("relationship")
+    if not isinstance(relationship, Mapping):
+        return False
+    try:
+        formal_dimensions = _normalise_formal_dimensions(
+            relationship.get("dimensions"),
+            reason="formal_relationship_dimensions_invalid",
+        )
+    except ValueError:
+        return False
+    if not any(abs(value) > 1e-9 for value in formal_dimensions.values()):
+        return False
+    comparable = [name for name in DIMENSIONS if name in formal_dimensions]
+    if not comparable:
+        return False
+    return all(formal_dimensions[name] + 1e-9 < float(legacy_dimensions.get(name) or 0.0) for name in comparable)
 
 
 def _merge_legacy_snapshot_with_formal_overlay(
@@ -601,10 +631,21 @@ def _preview_profile(conn: sqlite3.Connection, row: Mapping[str, Any], scope_ind
     manual_reason = _manual_conflict_reason(conn, tables, scope, subject)
     if manual_reason:
         return {**item, "disposition": "review", "reason": manual_reason, "scope": dict(scope), "subject": subject}
+    formal = _formal_snapshot(conn, scope, subject)
     try:
-        _merge_legacy_snapshot_with_formal_overlay(dimensions, _formal_snapshot(conn, scope, subject))
+        _merge_legacy_snapshot_with_formal_overlay(dimensions, formal)
     except ValueError as exc:
         return {**item, "disposition": "review", "reason": str(exc), "scope": dict(scope), "subject": subject}
+    if _formal_is_shallow_versus_legacy(formal, dimensions):
+        return {
+            **item,
+            "disposition": "keep_formal",
+            "reason": "formal_shallow_relationship_preferred",
+            "scope": dict(scope),
+            "subject": subject,
+            "dimensions": dimensions,
+            "computed_affection": computed,
+        }
     return {
         **item, "disposition": "migrate", "scope": dict(scope), "subject": subject,
         "dimensions": dimensions, "computed_affection": computed,

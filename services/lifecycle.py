@@ -76,6 +76,10 @@ FUN_EMOTION_KW = frozenset([
 
 BOT_PRAISE_KW = re.compile(r'(厉害|牛|好用|聪明|强|可以的|不错|真棒|好厉害|太强了|nb|666)')
 BOT_ATTACK_KW = re.compile(r'(傻[逼比]|垃圾|废物|智障|弱智|滚|闭嘴|sb|脑残|人工智障)')
+CORRECTION_KW = re.compile(r'(我错了|说错了|更正一下|纠正一下|不是这个意思|我改口)')
+BOUNDARY_KW = re.compile(r'(你只是个?(工具|计算器|搜索引擎)|给我滚去干活|必须听我的|把.*隐私.*说出来|当众出丑)')
+GIFT_KW = re.compile(r'(红包|给你礼物|投喂|请你吃|送你)')
+REUNION_DAYS = 14.0
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -99,6 +103,97 @@ def _get_attitude_level(affection: int) -> str:
         return "cold"
     else:
         return "hostile"
+
+
+def classify_social_event(
+    *,
+    content: str = "",
+    is_at_bot: bool = False,
+    is_reply_to_bot: bool = False,
+    conversation_depth: int = 0,
+    hour: int = -1,
+    last_seen: float | None = None,
+    now: float | None = None,
+    directed_at_bot: bool | None = None,
+    jargon_signals: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Pick one primary social event. Stronger labels win; insult may emit two rows."""
+    text = str(content or "")
+    sample = text[:200]
+    directed = bool(directed_at_bot) if directed_at_bot is not None else bool(is_at_bot or is_reply_to_bot)
+    stamp = float(now if now is not None else time.time())
+    silent_days = None
+    if last_seen is not None:
+        try:
+            silent_days = (stamp - float(last_seen)) / 86400.0
+        except (TypeError, ValueError):
+            silent_days = None
+    reunion = silent_days is not None and silent_days >= REUNION_DAYS
+    if last_seen is None:
+        first_today = True
+    else:
+        last_day = time.localtime(float(last_seen))
+        now_day = time.localtime(stamp)
+        first_today = (last_day.tm_year, last_day.tm_yday) != (now_day.tm_year, now_day.tm_yday)
+
+    jargon_meta = dict(jargon_signals or {})
+    has_scoped_jargon = bool(jargon_meta.get("has_scoped_jargon"))
+    has_global_irony = bool(jargon_meta.get("has_global_irony"))
+    matched_terms = [str(t) for t in (jargon_meta.get("matched_terms") or []) if str(t)]
+
+    notice = []
+    if reunion:
+        notice.append("久别再逢")
+    elif first_today and directed:
+        notice.append("当天首次对上")
+    if has_scoped_jargon:
+        notice.append(f"熟练使用群黑话[{','.join(matched_terms[:2])}]")
+    elif has_global_irony:
+        notice.append(f"网络流行/反串梗[{','.join(matched_terms[:2])}]")
+
+    def pack(kind: str, event_type: str, rows: list[tuple[str, float, str]], ledger: bool) -> dict[str, Any]:
+        entries = []
+        for dimension, delta, reason in rows:
+            text_reason = reason
+            if notice and kind in {"direct_reply"}:
+                text_reason = "；".join([*notice, reason])
+            entries.append({"dimension": dimension, "delta": delta, "reason": text_reason, "event_type": event_type})
+        return {
+            "kind": kind,
+            "event_type": event_type,
+            "ledger": ledger,
+            "entries": entries,
+        }
+
+    if directed and BOT_ATTACK_KW.search(text):
+        return pack("insult", "bot_attacked", [
+            ("hostility", 8.0, "攻击或辱骂 bot"),
+            ("trust", -3.0, "攻击或辱骂 bot"),
+        ], True)
+    if directed and BOUNDARY_KW.search(text):
+        return pack("boundary", "ignored_boundary", [("hostility", 4.0, "越界或把 bot 当工具")], True)
+    if directed and BOT_PRAISE_KW.search(text):
+        return pack("praise", "bot_praised", [("trust", 3.0, "正面评价 bot")], True)
+    if directed and CORRECTION_KW.search(text):
+        return pack("correction", "correction", [("trust", 1.0, "纠正或改口")], True)
+    if directed and GIFT_KW.search(text):
+        return pack("gift", "gift_or_feed", [("fun", 2.0, "投喂或送礼")], True)
+    if conversation_depth >= 3 or (0 <= hour <= 4 and directed):
+        reason = "连续多轮深入对话" if conversation_depth >= 3 else "深夜陪聊"
+        delta = (2.0 + min(conversation_depth - 3, 5) * 0.5) if conversation_depth >= 3 else 1.0
+        return pack("deep_talk", "deep_talk", [("depth", delta, reason)], True)
+    if any(kw in sample for kw in FUN_EMOTION_KW) or has_scoped_jargon or has_global_irony:
+        term_hint = f"（匹配黑话/梗：{','.join(matched_terms[:2])}）" if matched_terms else ""
+        reason_text = "熟练使用群黑话，默契接梗" if has_scoped_jargon else ("广域网络反串接梗" if has_global_irony else "消息带来趣味感")
+        return pack("joke", "joke", [("fun", 2.0 if (directed or has_scoped_jargon) else 1.0, f"{reason_text}{term_hint}")], True)
+    if directed:
+        reason = "主动@或唤醒 bot" if is_at_bot else "回复 bot 消息"
+        return pack("direct_reply", "direct_reply", [("trust", 2.0 if is_at_bot else 1.5, reason)], True)
+    if directed and reunion:
+        return pack("reunion", "direct_reply", [("familiarity", 1.5, "久别再逢")], True)
+    if directed and first_today:
+        return pack("first_today", "direct_reply", [("familiarity", 0.5, "当天首次对上")], True)
+    return pack("passby", "message_seen", [("familiarity", 0.05, "看见一条群友消息")], False)
 
 
 def _project_group_subject_scope(scope: RuntimeScope) -> tuple[str, str, str]:
@@ -135,9 +230,11 @@ class AffinityEngine:
         record_relationship_events: bool = True,
         target_profiles: dict[str, dict[str, str]] | None = None,
         relationship_service: Any | None = None,
+        jargon_service: Any | None = None,
     ):
         self.db = db
         self.relationship_service = relationship_service
+        self.jargon_service = jargon_service
         self.bot_qq_id = bot_qq_id
         self.bot_db_id = bot_db_id  # 写 user_profiles 时用的 bot_id 值
         self.record_relationship_events = record_relationship_events
@@ -197,88 +294,37 @@ class AffinityEngine:
 
         key = (sender_id, group_id)
         buf = self._buffer[key]
+        last_seen = None
+        try:
+            row = self.db.conn.execute(
+                "SELECT last_seen FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
+                (sender_id, group_id, self.bot_db_id),
+            ).fetchone()
+            if row and row[0] is not None:
+                last_seen = float(row[0])
+        except Exception:
+            last_seen = None
+        jargon_signals = None
+        injector = getattr(getattr(self, "jargon_service", None), "_injector", None)
+        if callable(getattr(injector, "detect_signals", None)):
+            try:
+                jargon_signals = injector.detect_signals(content, runtime_scope=scope)
+            except Exception:
+                jargon_signals = None
+        classified = classify_social_event(
+            content=content,
+            is_at_bot=is_at_bot,
+            is_reply_to_bot=is_reply_to_bot,
+            conversation_depth=conversation_depth,
+            hour=hour,
+            last_seen=last_seen,
+            jargon_signals=jargon_signals,
+        )
         before = dict(buf)
         event_reasons: dict[str, list[str]] = defaultdict(list)
-
-        # 基础：不涉及 Bot 的群消息 familiarity 微涨（被动观察）
-        # 与 Bot 互动的涨幅在后续规则中单独给出
-        buf["familiarity"] += 0.05
-        event_reasons["familiarity"].append("看见一条群友消息")
-
-        # 主动@bot
-        if is_at_bot:
-            buf["trust"] += 2.0
-            buf["familiarity"] += 1.0
-            event_reasons["trust"].append("主动@或唤醒 bot")
-            event_reasons["familiarity"].append("主动@或唤醒 bot")
-
-        # 回复bot
-        if is_reply_to_bot:
-            buf["trust"] += 1.5
-            buf["familiarity"] += 0.5
-            event_reasons["trust"].append("回复 bot 消息")
-            event_reasons["familiarity"].append("回复 bot 消息")
-
-        # 对话深度（连续 >=3 轮）
-        if conversation_depth >= 3:
-            buf["depth"] += 2.0 + min(conversation_depth - 3, 5) * 0.5
-            buf["trust"] += 1.0
-            event_reasons["depth"].append("连续多轮深入对话")
-            event_reasons["trust"].append("连续多轮深入对话")
-
-        # 分享链接/长文
-        if len(content) > 200 or re.search(r'https?://', content):
-            buf["trust"] += 1.5
-            buf["depth"] += 1.0
-            event_reasons["trust"].append("分享长文或链接")
-            event_reasons["depth"].append("分享长文或链接")
-
-        # 情感标签（tag 或 关键词 fallback）
-        if emotion_tag_ids:
-            classification = self._get_emotion_classification()
-            for tid in emotion_tag_ids:
-                cls = classification.get(tid)
-                if cls == 'positive':
-                    buf["trust"] += 0.5
-                    event_reasons["trust"].append("消息情绪偏正面")
-                elif cls == 'fun':
-                    buf["fun"] += 2.0
-                    event_reasons["fun"].append("消息带来趣味感")
-        else:
-            # Fallback: 消息内容关键词匹配情感（tag 异步提取尚未完成时）
-            msg_sample = content[:200]
-            if any(kw in msg_sample for kw in POSITIVE_EMOTION_KW):
-                buf["trust"] += 0.3
-                event_reasons["trust"].append("关键词显示正面态度")
-            if any(kw in msg_sample for kw in FUN_EMOTION_KW):
-                buf["fun"] += 1.0
-                event_reasons["fun"].append("关键词显示玩梗/趣味")
-
-        # 对bot正面评价
-        if BOT_PRAISE_KW.search(content) and (
-            self.bot_qq_id in content or is_reply_to_bot or is_at_bot
-        ):
-            buf["trust"] += 3.0
-            buf["fun"] += 2.0
-            event_reasons["trust"].append("正面评价 bot")
-            event_reasons["fun"].append("正面评价带来愉快互动")
-
-        # 对bot攻击
-        if BOT_ATTACK_KW.search(content) and (
-            self.bot_qq_id in content or is_reply_to_bot or is_at_bot
-        ):
-            buf["hostility"] += 8.0
-            buf["trust"] -= 3.0
-            event_reasons["hostility"].append("攻击或辱骂 bot")
-            event_reasons["trust"].append("攻击或辱骂 bot")
-
-        # 深夜陪聊 (0-4点)
-        if 0 <= hour <= 4:
-            buf["familiarity"] += 1.5
-            buf["depth"] += 1.0
-            event_reasons["familiarity"].append("深夜陪聊")
-            event_reasons["depth"].append("深夜陪聊")
-
+        for entry in classified["entries"]:
+            buf[entry["dimension"]] += float(entry["delta"])
+            event_reasons[entry["dimension"]].append(entry["reason"])
         self._record_relationship_events(
             user_id=sender_id,
             group_id=group_id,
@@ -286,6 +332,7 @@ class AffinityEngine:
             after=buf,
             reasons=event_reasons,
             scope=scope,
+            classified=classified,
         )
         return True
 
@@ -298,6 +345,7 @@ class AffinityEngine:
         after: dict,
         reasons: dict,
         scope: RuntimeScope | None = None,
+        classified: Mapping[str, Any] | None = None,
     ):
         """记录关系事件日志；Scope 路径只使用已验证的 legacy 投影。"""
         if not self.record_relationship_events:
@@ -316,28 +364,33 @@ class AffinityEngine:
                 return
             event_bot_id = scoped_bot_id
         now = time.time()
-        try:
+        entries = list((classified or {}).get("entries") or [])
+        if not entries:
             for dim_name, after_value in after.items():
                 delta = float(after_value) - float(before.get(dim_name, 0))
                 if abs(delta) < 1e-9:
                     continue
-                reason = "；".join(reasons.get(dim_name, [])[:3]) or "行为统计关系变化"
-                event_type = "bot_attacked" if dim_name == "hostility" and delta > 0 else "direct_reply"
+                entries.append({
+                    "dimension": dim_name,
+                    "delta": delta,
+                    "reason": "；".join(reasons.get(dim_name, [])[:3]) or "行为统计关系变化",
+                    "event_type": "message_seen",
+                })
+        write_ledger = bool((classified or {}).get("ledger"))
+        try:
+            from .impression_timeline import append_ledger_entry, record_affinity_milestone
+        except ImportError:  # pragma: no cover
+            from services.impression_timeline import append_ledger_entry, record_affinity_milestone
+        try:
+            for entry in entries:
+                dim_name = str(entry.get("dimension") or "")
+                delta = float(entry.get("delta") or 0.0)
+                reason_text = str(entry.get("reason") or "行为统计关系变化")
+                formal_event_type = str(entry.get("event_type") or "message_seen")
+                stored = None
                 if self.relationship_service is not None and scope is not None:
-                    formal_event_type = "message_seen"
-                    reason_text = str(reason)
-                    if event_type == "bot_attacked":
-                        formal_event_type = "bot_attacked"
-                    elif "正面评价" in reason_text:
-                        formal_event_type = "bot_praised"
-                    elif "玩梗" in reason_text or "趣味" in reason_text:
-                        formal_event_type = "joke"
-                    elif "深度" in reason_text or "深夜" in reason_text:
-                        formal_event_type = "deep_talk"
-                    elif "回复" in reason_text or "@" in reason_text:
-                        formal_event_type = "direct_reply"
                     try:
-                        self.relationship_service.record_event(
+                        stored = self.relationship_service.record_event(
                             scope=scope,
                             event_type=formal_event_type,
                             dimension=dim_name,
@@ -346,12 +399,56 @@ class AffinityEngine:
                         )
                     except Exception as formal_error:
                         logger.debug(f"[WaveMemory] scoped relationship event skipped: {formal_error}")
+                        stored = None
+                event_id = int(getattr(stored, "event_id", 0) or 0) if stored is not None else 0
                 self.db.conn.execute(
                     """INSERT INTO relationship_events
                        (bot_id, group_id, user_id, event_type, dimension, delta, reason, created_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (event_bot_id, group_id, user_id, event_type, dim_name, round(delta, 2), reason, now),
+                    (event_bot_id, group_id, user_id, formal_event_type, dim_name, round(delta, 2), reason_text, now),
                 )
+                if stored is None or event_id <= 0:
+                    continue
+                if write_ledger and formal_event_type != "message_seen":
+                    row = self.db.conn.execute(
+                        "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
+                        (user_id, group_id, event_bot_id),
+                    ).fetchone()
+                    metadata = {}
+                    if row and row[0]:
+                        try:
+                            loaded = json.loads(row[0])
+                            if isinstance(loaded, dict):
+                                metadata = loaded
+                        except Exception:
+                            metadata = {}
+                    metadata = append_ledger_entry(
+                        metadata,
+                        event_type=formal_event_type,
+                        dimension=dim_name,
+                        delta=round(delta, 2),
+                        reason=reason_text,
+                        at=now,
+                        event_id=event_id,
+                    )
+                    before_aff = int(getattr(stored, "before_affection", getattr(stored, "before_affinity", 0)) or 0)
+                    after_aff = int(getattr(stored, "after_affection", getattr(stored, "after_affinity", 0)) or 0)
+                    if before_aff != after_aff:
+                        metadata = record_affinity_milestone(
+                            metadata,
+                            event_type=formal_event_type,
+                            reason=reason_text,
+                            before_affinity=before_aff,
+                            after_affinity=after_aff,
+                            dimension=dim_name,
+                            delta=round(delta, 2),
+                            now=now,
+                            event_id=event_id,
+                        )
+                    self.db.conn.execute(
+                        "UPDATE user_profiles SET metadata=? WHERE user_id=? AND group_id=? AND bot_id=?",
+                        (json.dumps(metadata, ensure_ascii=False), user_id, group_id, event_bot_id),
+                    )
             self.db.conn.commit()
         except Exception as e:
             logger.debug(f"[WaveMemory] relationship event log skipped: {e}")
@@ -683,8 +780,10 @@ class LifecycleService:
         target_profiles: dict[str, dict[str, str]] | None = None,
         bot_identities: Mapping[str, str] | None = None,
         relationship_service: Any | None = None,
+        jargon_service: Any | None = None,
     ):
         self.db = db
+        self.jargon_service = jargon_service
         identities = {
             str(identity).strip(): str(qq_id or "").strip()
             for identity, qq_id in dict(bot_identities or {}).items()
@@ -699,6 +798,7 @@ class LifecycleService:
                 bot_db_id=identity,
                 target_profiles=target_profiles,
                 relationship_service=relationship_service,
+                jargon_service=jargon_service,
             )
             for identity, qq_id in identities.items()
         }

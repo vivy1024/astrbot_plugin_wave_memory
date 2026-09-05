@@ -29,12 +29,33 @@ class BeliefLifecycleService:
             raise LookupError("scoped_object_not_found")
         if action == "approve":
             provenance = current.get("provenance") if isinstance(current.get("provenance"), dict) else {}
-            if current.get("status") != "pending":
+            if current.get("status") not in {"pending", "quarantined"}:
                 raise ValueError("invalid_belief_transition")
             if not current.get("source_memory_id"):
                 raise ValueError("belief_anchor_required")
             if not is_activation_eligible(provenance):
                 raise ValueError("belief_evidence_incomplete")
+            candidate = provenance.get("candidate") if isinstance(provenance.get("candidate"), dict) else None
+            relation = str(candidate.get("relation") or "") if candidate else ""
+            if candidate and relation in {"reinforce", "challenge"}:
+                merger = getattr(self.repository, "merge_scoped_belief_candidate", None)
+                if not callable(merger):
+                    raise ValueError("candidate_merge_unavailable")
+                try:
+                    return dict(merger(
+                        scope,
+                        int(belief_id),
+                        expected_target_revision=candidate.get("target_revision_at_capture"),
+                    ))
+                except Exception as exc:
+                    code = str(getattr(exc, "reason_code", None) or getattr(exc, "code", None) or str(exc))
+                    if code in {"candidate_target_unavailable", "candidate_relation_unsupported"}:
+                        resolver = getattr(self.repository, "resolve_scoped_belief_candidate", None)
+                        if callable(resolver):
+                            resolver(scope, int(belief_id), resolution="rejected", reason_code=code)
+                    raise ValueError(code) from exc
+            if candidate and relation not in {"", "new"}:
+                raise ValueError("candidate_relation_unsupported")
             target_status = "active"
         else:
             if current.get("status") == "archived":
@@ -42,6 +63,11 @@ class BeliefLifecycleService:
             target_status = "archived"
         provenance = dict(current.get("provenance") or {})
         provenance.update({"lifecycle_action": action, "lifecycle_actor": "webui"})
+        candidate = provenance.get("candidate")
+        if action == "approve" and isinstance(candidate, dict):
+            candidate = dict(candidate)
+            candidate.update({"resolution": "promoted", "resolution_reason": "manual_approved"})
+            provenance["candidate"] = candidate
         self.repository.upsert_scoped_belief(
             scope,
             belief_key=current["belief_key"],

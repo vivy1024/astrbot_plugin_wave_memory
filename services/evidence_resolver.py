@@ -163,6 +163,13 @@ def resolve_relationship_evidence(connection: Any, *, scope: RuntimeScope, value
             raise EvidenceResolutionError("relationship_evidence_object_required")
         if not math.isfinite(float(resolved["captured_at"])) or float(resolved["captured_at"]) < 0:
             raise EvidenceResolutionError("relationship_evidence_invalid")
+        summary = item.get("summary")
+        if summary is not None:
+            if not isinstance(summary, str):
+                raise EvidenceResolutionError("relationship_evidence_invalid")
+            summary = summary.strip()
+            if summary:
+                resolved["summary"] = summary[:500]
         normalized.append(resolved)
     return normalized
 

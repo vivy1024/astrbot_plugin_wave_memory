@@ -21,8 +21,19 @@ from .connection import ConnectionManager
 from .scoped_tag_projection import effective_tag_rows
 try:
     from ...services.facts_conflict import FactConflictClassifier
+    from ...services.belief_confidence import calculate_confidence
 except ImportError:  # pragma: no cover
     from services.facts_conflict import FactConflictClassifier
+    from services.belief_confidence import calculate_confidence
+
+
+def _belief_revision(row: Mapping[str, Any]) -> int:
+    """Keep candidate target revisions identical to the formal WebUI ObjectRef rule."""
+    try:
+        value = float(row.get("updated_at") or row.get("created_at") or 1)
+    except (TypeError, ValueError):
+        value = 1.0
+    return max(1, int(value * 1000))
 
 
 class ScopedKnowledgeScopeError(ValueError):
@@ -1012,6 +1023,76 @@ class ScopedKnowledgeRepo:
             (*_scope_params(scope), belief_id, window_key, polarity),
         )
 
+    def list_scoped_belief_ids_citing_memory(
+        self,
+        scope: RuntimeScope,
+        memory_id: int,
+        *,
+        statuses: Sequence[str] | None = None,
+        limit: int = 50,
+    ) -> list[int]:
+        """Return scoped beliefs whose stored evidence JSON cites this memory.
+
+        ``memory_ids`` is a compact JSON array of integers. SQLite has no JSON1
+        guarantee here, so the lookup uses exact integer tokens bounded by JSON
+        separators. Callers still re-validate membership after load.
+        """
+        scope = _require_group_scope(scope)
+        if isinstance(memory_id, bool):
+            raise ValueError("memory_id must be a positive integer")
+        try:
+            memory_id = int(memory_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("memory_id must be a positive integer") from exc
+        if memory_id <= 0:
+            raise ValueError("memory_id must be a positive integer")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        allowed = ("pending", "quarantined") if statuses is None else tuple(statuses)
+        if not allowed or any(not isinstance(status, str) or not status for status in allowed):
+            raise ValueError("statuses must be non-empty strings")
+        status_marks = ",".join("?" for _ in allowed)
+        token = str(memory_id)
+        rows = self.cm.execute_read(
+            f"""SELECT DISTINCT o.belief_id, o.memory_ids
+                  FROM scoped_belief_observations o
+                  JOIN scoped_beliefs b
+                    ON b.id=o.belief_id
+                   AND b.bot_id=o.bot_id
+                   AND b.session_id=o.session_id
+                   AND b.visibility=o.visibility
+                 WHERE o.bot_id=? AND o.session_id=? AND o.visibility=?
+                   AND b.status IN ({status_marks})
+                   AND instr(o.memory_ids, ?) > 0
+                 ORDER BY o.belief_id ASC
+                 LIMIT ?""",
+            (*_scope_params(scope), *allowed, token, max(limit * 8, 64)),
+        ).fetchall()
+        seen: list[int] = []
+        for row in rows:
+            if row is None or row[0] is None:
+                continue
+            try:
+                cited = json.loads(row[1] or "[]")
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(cited, list):
+                continue
+            cited_ids: list[int] = []
+            for item in cited:
+                try:
+                    cited_ids.append(int(item))
+                except (TypeError, ValueError):
+                    continue
+            if memory_id not in cited_ids:
+                continue
+            belief_id = int(row[0])
+            if belief_id not in seen:
+                seen.append(belief_id)
+            if len(seen) >= limit:
+                break
+        return seen
+
     def list_scoped_belief_observations(
         self, scope: RuntimeScope, *, belief_id: int | None = None, limit: int = 500,
     ) -> list[dict[str, Any]]:
@@ -1059,6 +1140,280 @@ class ScopedKnowledgeRepo:
                 "observed_at": row[10], "created_at": row[11], "updated_at": row[12],
             })
         return result
+
+    def get_scoped_belief(self, scope: RuntimeScope, belief_id: int) -> dict[str, Any] | None:
+        """Read one formal belief strictly inside the supplied group Scope."""
+        scope = _require_group_scope(scope)
+        if isinstance(belief_id, bool):
+            raise ValueError("belief_id must be a positive integer")
+        try:
+            belief_id = int(belief_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("belief_id must be a positive integer") from exc
+        if belief_id <= 0:
+            raise ValueError("belief_id must be a positive integer")
+        row = self.cm.execute_read(
+            """SELECT id, belief_key, content, belief_type, strength, status, source_memory_id,
+                      provenance, created_at, updated_at
+                 FROM scoped_beliefs
+                WHERE id=? AND bot_id=? AND session_id=? AND visibility=?""",
+            (belief_id, *_scope_params(scope)),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            provenance = json.loads(row[7] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            provenance = {}
+        return {
+            "id": row[0], "belief_key": row[1], "content": row[2], "belief_type": row[3],
+            "strength": row[4], "status": row[5], "source_memory_id": row[6],
+            "provenance": provenance if isinstance(provenance, dict) else {},
+            "created_at": row[8], "updated_at": row[9],
+        }
+
+    @staticmethod
+    def _belief_observation_from_row(row) -> dict[str, Any] | None:
+        try:
+            memory_ids = json.loads(row[4] or "[]")
+            participants = json.loads(row[5] or "[]")
+            source_tags = json.loads(row[6] or "[]")
+            metadata = json.loads(row[7] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return {
+            "id": row[0], "belief_id": row[1], "window_key": row[2], "polarity": row[3],
+            "memory_ids": memory_ids if isinstance(memory_ids, list) else [],
+            "participants": participants if isinstance(participants, list) else [],
+            "source_tags": source_tags if isinstance(source_tags, list) else [],
+            "metadata": metadata if isinstance(metadata, dict) else {},
+            "window_started_at": row[8], "window_ended_at": row[9],
+            "observed_at": row[10], "created_at": row[11], "updated_at": row[12],
+        }
+
+    def resolve_scoped_belief_candidate(
+        self,
+        scope: RuntimeScope,
+        candidate_id: int,
+        *,
+        resolution: str,
+        reason_code: str,
+    ) -> dict[str, Any]:
+        """Archive a gated candidate while retaining a bounded audit resolution."""
+        scope = _require_group_scope(scope)
+        if resolution not in {"rejected", "merged", "promoted"}:
+            raise ValueError("invalid_candidate_resolution")
+        candidate = self.get_scoped_belief(scope, candidate_id)
+        if candidate is None:
+            raise LookupError("scoped_object_not_found")
+        provenance = dict(candidate.get("provenance") or {})
+        candidate_meta = dict(provenance.get("candidate") or {})
+        candidate_meta.update({"resolution": resolution, "resolution_reason": str(reason_code or "")[:120]})
+        provenance["candidate"] = candidate_meta
+        self.upsert_scoped_belief(
+            scope,
+            belief_key=candidate["belief_key"],
+            content=candidate["content"],
+            belief_type=candidate["belief_type"],
+            strength=float(candidate.get("strength") or 0.0),
+            status="archived",
+            source_memory_id=candidate.get("source_memory_id"),
+            provenance=provenance,
+        )
+        return {"id": int(candidate_id), "status": "archived", "resolution": resolution, "reason_code": reason_code}
+
+    def merge_scoped_belief_candidate(
+        self,
+        scope: RuntimeScope,
+        candidate_id: int,
+        *,
+        expected_target_revision: int | None = None,
+    ) -> dict[str, Any]:
+        """Merge an approved reinforce/challenge candidate atomically into its target."""
+        scope = _require_group_scope(scope)
+        if isinstance(candidate_id, bool):
+            raise ValueError("belief_id must be a positive integer")
+        candidate_id = int(candidate_id)
+        if candidate_id <= 0:
+            raise ValueError("belief_id must be a positive integer")
+
+        with self.cm.write_transaction() as tx:
+            candidate_row = tx.execute(
+                """SELECT id, belief_key, content, belief_type, strength, status, source_memory_id,
+                          provenance, created_at, updated_at
+                     FROM scoped_beliefs
+                    WHERE id=? AND bot_id=? AND session_id=? AND visibility=?""",
+                (candidate_id, *_scope_params(scope)),
+            ).fetchone()
+            if candidate_row is None:
+                raise LookupError("scoped_object_not_found")
+            try:
+                candidate_provenance = json.loads(candidate_row[7] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                candidate_provenance = {}
+            candidate_provenance = candidate_provenance if isinstance(candidate_provenance, dict) else {}
+            candidate_meta = candidate_provenance.get("candidate")
+            if not isinstance(candidate_meta, Mapping):
+                raise ScopedKnowledgeScopeError("candidate_metadata_missing")
+            relation = str(candidate_meta.get("relation") or "").strip().lower()
+            if relation not in {"reinforce", "challenge"}:
+                raise ScopedKnowledgeScopeError("candidate_relation_unsupported")
+            if str(candidate_row[5]) not in {"pending", "quarantined"}:
+                raise ScopedKnowledgeScopeError("invalid_candidate_transition")
+            try:
+                target_id = int(candidate_meta.get("target_belief_id"))
+            except (TypeError, ValueError):
+                raise ScopedKnowledgeScopeError("candidate_target_unavailable") from None
+            target_row = tx.execute(
+                """SELECT id, belief_key, content, belief_type, strength, status, source_memory_id,
+                          provenance, created_at, updated_at
+                     FROM scoped_beliefs
+                    WHERE id=? AND bot_id=? AND session_id=? AND visibility=?""",
+                (target_id, *_scope_params(scope)),
+            ).fetchone()
+            if target_row is None or str(target_row[5]) == "archived":
+                raise ScopedKnowledgeScopeError("candidate_target_unavailable")
+            target = {
+                "id": target_row[0], "belief_key": target_row[1], "content": target_row[2],
+                "belief_type": target_row[3], "strength": target_row[4], "status": target_row[5],
+                "source_memory_id": target_row[6],
+            }
+            try:
+                target_provenance = json.loads(target_row[7] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                target_provenance = {}
+            target_provenance = target_provenance if isinstance(target_provenance, dict) else {}
+            current_target_revision = _belief_revision({"created_at": target_row[8], "updated_at": target_row[9]})
+            captured_revision = expected_target_revision
+            if captured_revision is None:
+                captured_revision = candidate_meta.get("target_revision_at_capture")
+            if captured_revision is not None and int(captured_revision) != current_target_revision:
+                raise ScopedKnowledgeScopeError("belief_candidate_target_revision_conflict")
+
+            candidate_observations = tx.execute(
+                """SELECT id, belief_id, window_key, polarity, memory_ids, participants,
+                          source_tags, metadata, window_started_at, window_ended_at,
+                          observed_at, created_at, updated_at
+                     FROM scoped_belief_observations
+                    WHERE bot_id=? AND session_id=? AND visibility=? AND belief_id=?
+                    ORDER BY observed_at ASC, id ASC""",
+                (*_scope_params(scope), candidate_id),
+            ).fetchall()
+            for row in candidate_observations:
+                copied_polarity = "challenge" if relation == "challenge" else str(row[3])
+                tx.execute(
+                    """INSERT INTO scoped_belief_observations(
+                           bot_id, session_id, visibility, belief_id, window_key, polarity,
+                           memory_ids, participants, source_tags, metadata, window_started_at,
+                           window_ended_at, observed_at, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(bot_id, session_id, visibility, belief_id, window_key, polarity)
+                       DO NOTHING""",
+                    (*_scope_params(scope), target_id, row[2], copied_polarity, *row[4:]),
+                )
+            target_observation_rows = tx.execute(
+                """SELECT id, belief_id, window_key, polarity, memory_ids, participants,
+                          source_tags, metadata, window_started_at, window_ended_at,
+                          observed_at, created_at, updated_at
+                     FROM scoped_belief_observations
+                    WHERE bot_id=? AND session_id=? AND visibility=? AND belief_id=?
+                    ORDER BY observed_at ASC, id ASC""",
+                (*_scope_params(scope), target_id),
+            ).fetchall()
+            observations = [
+                item for item in (self._belief_observation_from_row(row) for row in target_observation_rows)
+                if item is not None
+            ]
+            evaluation = calculate_confidence(observations)
+            evidence_ids: list[int] = []
+            support_ids: list[int] = []
+            challenge_ids: list[int] = []
+            source_tags: list[Any] = []
+            source_tag_keys: set[str] = set()
+            tagged_ids: set[int] = set()
+            for observation in observations:
+                destination = support_ids if observation.get("polarity") == "support" else challenge_ids
+                for raw_id in observation.get("memory_ids") or []:
+                    try:
+                        memory_id = int(raw_id)
+                    except (TypeError, ValueError):
+                        continue
+                    if memory_id > 0 and memory_id not in evidence_ids:
+                        evidence_ids.append(memory_id)
+                    if memory_id > 0 and memory_id not in destination:
+                        destination.append(memory_id)
+                for tag in observation.get("source_tags") or []:
+                    if not isinstance(tag, Mapping):
+                        continue
+                    try:
+                        memory_id = int(tag.get("memory_id"))
+                    except (TypeError, ValueError):
+                        memory_id = 0
+                    if memory_id > 0:
+                        tagged_ids.add(memory_id)
+                    marker = json.dumps(dict(tag), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                    if marker not in source_tag_keys:
+                        source_tag_keys.add(marker)
+                        source_tags.append(dict(tag))
+            tag_chain_status = "complete" if evidence_ids and set(evidence_ids) <= tagged_ids else "empty"
+            merged_provenance = dict(target_provenance)
+            merged_provenance.update({
+                "producer": "consolidation",
+                "confidence_policy_version": evaluation["policy_version"],
+                "confidence_components": evaluation["components"],
+                "confidence_evidence": evaluation["summary"],
+                "activation_eligible": bool(evaluation["activation_eligible"] and tag_chain_status == "complete"),
+                "source_memory_ids": support_ids,
+                "source_tags": source_tags,
+                "evidence": {
+                    "memory_ids": evidence_ids,
+                    "support_memory_ids": support_ids,
+                    "challenge_memory_ids": challenge_ids,
+                    "observation_ids": [item.get("id") for item in observations],
+                    "window_keys": [item.get("window_key") for item in observations],
+                },
+                "tag_chain_status": tag_chain_status,
+                "last_candidate_merge": {
+                    "candidate_id": candidate_id,
+                    "relation": relation,
+                    "candidate_revision": _belief_revision({"created_at": candidate_row[8], "updated_at": candidate_row[9]}),
+                },
+            })
+            target_source_memory_id = support_ids[0] if support_ids else target.get("source_memory_id")
+            now = time.time()
+            target_status = str(target.get("status") or "pending")
+            if bool(merged_provenance["activation_eligible"]):
+                target_status = "active"
+            tx.execute(
+                """UPDATE scoped_beliefs
+                      SET strength=?, status=?, source_memory_id=?, provenance=?, updated_at=?
+                    WHERE id=? AND bot_id=? AND session_id=? AND visibility=?""",
+                (float(evaluation["components"]["confidence"]), target_status, target_source_memory_id,
+                 _canonical_json(merged_provenance, "provenance"), now,
+                 target_id, *_scope_params(scope)),
+            )
+            candidate_meta = dict(candidate_meta)
+            candidate_meta.update({
+                "resolution": "merged",
+                "resolution_reason": "candidate_merged",
+                "merged_target_revision": _belief_revision({"updated_at": now}),
+            })
+            candidate_provenance["candidate"] = candidate_meta
+            tx.execute(
+                """UPDATE scoped_beliefs SET status='archived', provenance=?, updated_at=?
+                    WHERE id=? AND bot_id=? AND session_id=? AND visibility=?""",
+                (_canonical_json(candidate_provenance, "provenance"), now,
+                 candidate_id, *_scope_params(scope)),
+            )
+            return {
+                "id": candidate_id,
+                "status": "archived",
+                "resolution": "merged",
+                "target_id": target_id,
+                "target_status": target_status,
+                "target_confidence": float(evaluation["components"]["confidence"]),
+                "target_activation_eligible": bool(merged_provenance["activation_eligible"]),
+            }
 
     def get_scoped_consolidation_cursor(self, scope: RuntimeScope, *, cursor_name: str) -> str | None:
         scope = _require_group_scope(scope)

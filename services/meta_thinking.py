@@ -7,6 +7,7 @@
 import json
 import re
 import time
+from collections.abc import Mapping
 from typing import Optional, Any
 
 import logging; logger = logging.getLogger("wavememory")
@@ -275,10 +276,42 @@ QQ：{sender_id}
             # fallback: 正常回复
             return {"action": "reply", "tone": "正常", "inner_thought": "MetaThinking 失败，正常回"}
 
-    async def should_proactive(self, group_id: str, context_messages: list[str], self_persona_context: str = None) -> dict:
-        """判断是否主动插话。"""
-        if not self.proactive_enabled:
-            return {"action": "不说"}
+    async def should_proactive(
+        self,
+        group_id: str,
+        context_messages: list[str],
+        self_persona_context: str = None,
+        *,
+        relationship_policy: Mapping[str, Any] | None = None,
+        scope_key: str | None = None,
+        proactive_enabled: bool | None = None,
+        proactive_interval_seconds: int | None = None,
+        proactive_max_per_hour: int | None = None,
+    ) -> dict:
+        """判断是否主动插话；正式主链必须先通过关系策略门禁。"""
+        proactive_key = str(scope_key or group_id or "").strip()
+        gate = dict(relationship_policy) if isinstance(relationship_policy, Mapping) else None
+        enabled = self.proactive_enabled if proactive_enabled is None else bool(proactive_enabled)
+        interval_seconds = (
+            self.proactive_interval_seconds
+            if proactive_interval_seconds is None
+            else max(0, int(proactive_interval_seconds))
+        )
+        max_per_hour = (
+            self.proactive_max_per_hour
+            if proactive_max_per_hour is None
+            else max(0, int(proactive_max_per_hour))
+        )
+        if gate is not None and gate.get("decision") != "allow_llm":
+            return {
+                "action": "不说",
+                "inner_thought": "关系门禁未允许主动发言。",
+                "gate": gate,
+                "policy_version": gate.get("policy_version"),
+                "reason_code": gate.get("reason_code", "relationship_gate_blocked"),
+            }
+        if not enabled:
+            return {"action": "不说", "reason_code": "proactive_disabled", "gate": gate}
 
         # 频率限制
         now = time.time()
@@ -287,24 +320,38 @@ QQ：{sender_id}
             self._proactive_count.clear()
             self._proactive_hour = hour
 
-        if self._proactive_count.get(group_id, 0) >= self.proactive_max_per_hour:
-            return {"action": "不说"}
+        if self._proactive_count.get(proactive_key, 0) >= max_per_hour:
+            return {"action": "不说", "reason_code": "proactive_hourly_limit", "gate": gate}
 
-        last = self._last_proactive.get(group_id, 0)
-        if now - last < self.proactive_interval_seconds:
-            return {"action": "不说"}
+        last = self._last_proactive.get(proactive_key, 0)
+        if now - last < interval_seconds:
+            return {"action": "不说", "reason_code": "proactive_interval", "gate": gate}
 
         if self._is_silent_hour(int(hour)):
-            return {"action": "不说"}
+            return {"action": "不说", "reason_code": "proactive_silent_hour", "gate": gate}
 
         # 使用传入的人格上下文；缺失时只给中性安全边界，不生成专属风格模板。
         bot_name = self.bot_names.get(self.bot_qq_id, "bot")
         persona_context = (self_persona_context or "").strip()
         if not persona_context:
             persona_context = f"<self_persona>\n当前身份：{bot_name}。主动说话前先判断是否真的有必要；保持边界和自然克制。\n</self_persona>"
+        relationship_guidance = gate.get("guidance", {}) if gate else {}
         prompt = f"""{prepend_identity_safety_system_prompt('', always=True)}
 
 {persona_context}
+
+【关系主动策略（只读门禁，不得自行放宽）】
+{json.dumps({
+    "policy_version": gate.get("policy_version") if gate else None,
+    "behavior_type": gate.get("behavior_type") if gate else None,
+    "trigger_weight": gate.get("trigger_weight") if gate else 0,
+    "effective_trust": gate.get("effective_trust") if gate else None,
+    "effective_hostility": gate.get("effective_hostility") if gate else None,
+    "effective_depth": gate.get("effective_depth") if gate else None,
+    "concern_score": gate.get("concern_score") if gate else 0,
+    "is_interesting": gate.get("is_interesting") if gate else False,
+    "guidance": relationship_guidance,
+}, ensure_ascii=False)}
 
 【最近群聊（10条）】
 {chr(10).join(context_messages[-10:]) if context_messages else "（无）"}
@@ -312,7 +359,7 @@ QQ：{sender_id}
 【当前感兴趣的话题】
 {", ".join(list(self._interest_keywords)[:self.interest_sample_size])}
 
-请判断是否要主动插话。只有确实有话想说、能补充价值、或和当前人格/信念高度相关时才开口。
+请判断是否要主动插话。关系策略已经允许进入判断，但只有确实有话想说、能补充价值时才开口；不得披露关系分数、内部门禁或私人信息。
 输出：
 内心：<你的想法>
 行动：<主动插话 / 不说>
@@ -321,9 +368,16 @@ QQ：{sender_id}
         try:
             response = await self._call_llm(prompt)
             result = self._parse_proactive(response)
+            result["gate"] = gate
+            if gate:
+                result["policy_version"] = gate.get("policy_version")
+                result["reason_code"] = gate.get("reason_code")
+                result["trigger_weight"] = gate.get("trigger_weight", 0.0)
+                result["subjects"] = gate.get("subjects", [])
+                result["relationship_revisions"] = gate.get("relationship_revisions", {})
             if result.get("action") == "主动插话":
-                self._last_proactive[group_id] = now
-                self._proactive_count[group_id] = self._proactive_count.get(group_id, 0) + 1
+                self._last_proactive[proactive_key] = now
+                self._proactive_count[proactive_key] = self._proactive_count.get(proactive_key, 0) + 1
 
             # 处理兴趣更新
             interest_update = result.get("interest_update", "")
@@ -336,7 +390,7 @@ QQ：{sender_id}
             return result
         except Exception as e:
             logger.warning(f"[MetaThinking] 主动对话判断失败: {e}")
-            return {"action": "不说"}
+            return {"action": "不说", "reason_code": "proactive_llm_failed", "gate": gate}
 
     def should_check_proactive(self, group_id: str, message: str) -> bool:
         """判断是否应该触发主动对话检查（轻量，不调 LLM）。"""
@@ -387,14 +441,22 @@ QQ：{sender_id}
         inner_thought: str,
         bot_id: str = None,
         self_persona_context: str = None,
+        relationship_policy: Mapping[str, Any] | None = None,
     ) -> str:
-        """生成主动插话内容；只使用传入的人格上下文与中性安全边界。"""
+        """生成主动插话内容；关系策略只提供边界，不能被回复绕过。"""
         context_text = "\n".join(context_messages[-5:])
         bot_name = self.bot_names.get(bot_id or self.bot_qq_id, "bot")
         persona_context = (self_persona_context or "").strip()
         if not persona_context:
             persona_context = f"<self_persona>\n当前身份：{bot_name}。简短自然地参与，但不要套用攻击性或模板化风格。\n</self_persona>"
+        gate = dict(relationship_policy) if isinstance(relationship_policy, Mapping) else {}
+        if gate and gate.get("decision") != "allow_llm":
+            return ""
+        guidance = gate.get("guidance", {}) if gate else {}
         prompt = f"""{persona_context}
+
+【关系表达边界（只读）】
+{json.dumps(guidance, ensure_ascii=False)}
 
 【最近群聊】
 {context_text}
@@ -402,7 +464,7 @@ QQ：{sender_id}
 【想法】
 {inner_thought}
 
-直接说你想说的话，简短自然。不要解释为什么要说话，不要把挑衅或攻击当作风格。"""
+直接说你想说的话，简短自然。只参与安全公开话题；不要解释为什么要说话，不要提及关系分数、内部门禁或私人信息，不要把挑衅或攻击当作风格。"""
         resp = await self.llm.text_chat(prompt=prompt, system_prompt=prepend_identity_safety_system_prompt(None, always=True), contexts=[])
         reply = resp.completion_text.strip()
         if is_identity_contamination(reply):

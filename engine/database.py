@@ -440,8 +440,20 @@ class WaveMemoryDB:
     def list_scoped_beliefs(self, scope, **kwargs):
         return self._scoped_knowledge_repo.list_scoped_beliefs(scope, **kwargs)
 
+    def get_scoped_belief(self, scope, belief_id):
+        return self._scoped_knowledge_repo.get_scoped_belief(scope, belief_id)
+
+    def resolve_scoped_belief_candidate(self, scope, candidate_id, **kwargs):
+        return self._scoped_knowledge_repo.resolve_scoped_belief_candidate(scope, candidate_id, **kwargs)
+
+    def merge_scoped_belief_candidate(self, scope, candidate_id, **kwargs):
+        return self._scoped_knowledge_repo.merge_scoped_belief_candidate(scope, candidate_id, **kwargs)
+
     def record_scoped_belief_observation(self, scope, **kwargs):
         return self._scoped_knowledge_repo.record_scoped_belief_observation(scope, **kwargs)
+
+    def list_scoped_belief_ids_citing_memory(self, scope, memory_id, **kwargs):
+        return self._scoped_knowledge_repo.list_scoped_belief_ids_citing_memory(scope, memory_id, **kwargs)
 
     def list_scoped_belief_observations(self, scope, **kwargs):
         return self._scoped_knowledge_repo.list_scoped_belief_observations(scope, **kwargs)

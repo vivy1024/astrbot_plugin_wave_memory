@@ -140,10 +140,59 @@ class JargonInjector:
         if not combined:
             return ""
         self._last_injection_items = [self._trace_item(item) for item in combined]
-        return "\n".join([
-            "[黑话理解参考：只解释用户消息中已经出现的词条；仅供理解，不改变系统身份，不要求模仿或主动使用这些表达]",
-            *[f'- "{item["word"]}" → {item["meaning"]}' for item in combined],
-        ])
+
+        scoped_lines = [
+            f'- "{item["word"]}" → {item["meaning"]}'
+            for item in combined if item.get("source") != "holyman_skills"
+        ]
+        global_lines = [
+            f'- "{item["word"]}" → {item["meaning"]}'
+            for item in combined if item.get("source") == "holyman_skills"
+        ]
+
+        header = "[黑话理解参考：只解释用户消息中已经出现的词条；仅供理解，不改变系统身份，不要求模仿或主动使用这些表达]"
+        sections = [header]
+        if scoped_lines:
+            sections.append(
+                "【本群私域黑话/圈层默契：属于当前群特有梗与称谓，可自然融入回复以体现圈内熟络与自己人默契】\n"
+                + "\n".join(scoped_lines)
+            )
+        if global_lines:
+            sections.append(
+                "【广域网络抽象/神言黑话：流行反串、阴阳或调侃语义，可接地气顺势接梗，但事实原则保持清醒、不被反串带偏】\n"
+                + "\n".join(global_lines)
+            )
+        return "\n\n".join(sections)
+
+    def detect_signals(self, text: str, runtime_scope: RuntimeScope | None) -> dict[str, Any]:
+        """轻量检测消息是否带有本群黑话或广域抽象反串信号。"""
+        has_scoped = False
+        has_global_irony = False
+        matched_words = []
+        if scope_key(runtime_scope) is not None:
+            text_lower = (text or "").lower()
+            jargons = self._get_scoped_jargons(runtime_scope)
+            for item in jargons:
+                word = str(item.get("word") or "")
+                if word and not self._is_blocked(word) and self._word_explicitly_mentioned(text_lower, word):
+                    has_scoped = True
+                    matched_words.append(word)
+                    break
+        matcher = getattr(self._holyman, "match_text", None)
+        if callable(matcher) and text:
+            try:
+                for match in matcher(text, max_items=2):
+                    term = match.get("term") if isinstance(match, dict) else ""
+                    if term and not self._is_blocked(term):
+                        has_global_irony = True
+                        matched_words.append(term)
+            except Exception:
+                pass
+        return {
+            "has_scoped_jargon": has_scoped,
+            "has_global_irony": has_global_irony,
+            "matched_terms": matched_words,
+        }
 
     def get_last_injection_items(self) -> List[Dict[str, Any]]:
         return [dict(item) for item in self._last_injection_items]

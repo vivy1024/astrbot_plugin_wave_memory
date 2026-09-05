@@ -52,9 +52,40 @@ def _extract_belief_ids(text: str) -> list[int]:
     return [int(value) for value in re.findall(r"ID[:#]?(\d+)", text or "")[:10]]
 
 
+def _belief_ids_from_details(details: Any, text: str) -> list[int]:
+    """Prefer structured IDs from get_injection_details; fall back to prompt text."""
+    ids: list[int] = []
+    payload = details if isinstance(details, Mapping) else {}
+    for value in payload.get("belief_ids") or ():
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number not in ids:
+            ids.append(number)
+        if len(ids) >= 10:
+            return ids
+    return ids or _extract_belief_ids(text)
+
+
 def _preview(text: str | None, limit: int = 160) -> str:
     compact = str(text or "").replace("\n", " ").strip()
     return compact if len(compact) <= limit else compact[: limit - 1] + "…"
+
+
+def _scope_audit(scope: Any) -> dict[str, Any] | None:
+    """Persist only JSON-safe Scope identity; never the RuntimeScope object."""
+    session = getattr(scope, "session", None)
+    bot_id = str(getattr(scope, "bot_id", "") or "")
+    visibility = str(getattr(scope, "visibility", "") or "")
+    session_id = str(getattr(session, "id", "") or "")
+    if not bot_id or not visibility or not session_id:
+        return None
+    return {
+        "bot_id": bot_id,
+        "visibility": visibility,
+        "session_id": session_id,
+    }
 
 
 class BeliefChannel:
@@ -90,11 +121,21 @@ class BeliefChannel:
             if hasattr(self.belief_engine, "bot_id"):
                 self.belief_engine.bot_id = bot_profile_id
             keywords = _keywords(getattr(ctx, "message", "") or "")
-            text = self.belief_engine.get_injection(
-                scope=runtime_scope,
-                sender_id=getattr(ctx, "sender_id", "") or "",
-                keywords=keywords,
-            ) or ""
+            details = None
+            detail_getter = getattr(self.belief_engine, "get_injection_details", None)
+            if callable(detail_getter):
+                details = detail_getter(
+                    scope=runtime_scope,
+                    sender_id=getattr(ctx, "sender_id", "") or "",
+                    keywords=keywords,
+                )
+                text = str((details or {}).get("text") or "")
+            else:
+                text = self.belief_engine.get_injection(
+                    scope=runtime_scope,
+                    sender_id=getattr(ctx, "sender_id", "") or "",
+                    keywords=keywords,
+                ) or ""
             text = str(text).strip()
             if not text:
                 return InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="no active beliefs")
@@ -102,6 +143,7 @@ class BeliefChannel:
                 result = InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="no safe beliefs")
                 result.filtered = [self._audit_filtered(text, reason="identity_contamination")]
                 return result
+            belief_ids = _belief_ids_from_details(details, text)
             return InjectionResult.hit(
                 self.name,
                 text,
@@ -110,14 +152,16 @@ class BeliefChannel:
                     "bot_id": bot_profile_id,
                     "sender_id": getattr(ctx, "sender_id", "") or "",
                     "keywords": keywords,
-                    "belief_ids": _extract_belief_ids(text),
+                    "belief_ids": belief_ids,
                     "preview": _preview(text),
                     "trace_id": getattr(ctx, "trace_id", ""),
-                    "scope": runtime_scope,
+                    "scope": _scope_audit(runtime_scope),
                     "source_channel": "belief",
-                    "evidence": _extract_belief_ids(text),
+                    "evidence": belief_ids,
+                    "gating": (details or {}).get("gating", {}),
+                    "interaction_policy": (details or {}).get("interaction_policy", {}),
                     "rendered_text": text,
-                    "dedupe_key": "belief:" + (":".join(str(i) for i in _extract_belief_ids(text)) or _preview(text, 80)),
+                    "dedupe_key": "belief:" + (":".join(str(i) for i in belief_ids) or _preview(text, 80)),
                 }],
                 latency_ms=self._latency_ms(started),
             )

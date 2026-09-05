@@ -69,11 +69,22 @@ def _normalize_evidence(value: Any, scope: RuntimeScope) -> list[dict[str, Any]]
     for item in value:
         if not isinstance(item, Mapping):
             raise RelationshipCalibrationError("relationship_evidence_invalid")
+        # 必需键必须齐全；type/title/locator 是 resolver 产出的展示补充键，允许保留；
+        # summary 是人工校准补充说明，作为审计内容透传落盘
         required = {"kind", "id", "content_hash", "captured_at", "source_scope", "available"}
-        if set(item) != required:
+        optional = {"type", "title", "locator", "summary"}
+        keys = set(item)
+        if not required.issubset(keys):
+            raise RelationshipCalibrationError("relationship_evidence_invalid")
+        unknown = keys - required - optional
+        if unknown:
             raise RelationshipCalibrationError("relationship_evidence_invalid")
         if not all(isinstance(item[key], str) and item[key].strip() == item[key] and item[key] for key in ("kind", "id", "content_hash")):
             raise RelationshipCalibrationError("relationship_evidence_invalid")
+        summary = item.get("summary")
+        if summary is not None:
+            if not isinstance(summary, str) or summary != summary.strip() or not summary or len(summary) > 500:
+                raise RelationshipCalibrationError("relationship_evidence_invalid")
         if item["available"] is not True:
             raise RelationshipCalibrationError("relationship_evidence_invalid")
         source_scope = item["source_scope"]

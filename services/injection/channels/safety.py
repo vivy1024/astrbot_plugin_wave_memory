@@ -14,7 +14,7 @@ from typing import Any
 from ...identity_safety import build_identity_safety_injection, is_identity_contamination
 from ..channel_base import InjectionResult
 
-_ADVANCED_FULL_ONLY = frozenset({"persona", "belief", "jargon", "fewshot", "book_lore", "affinity"})
+_ADVANCED_FULL_ONLY = frozenset({"persona", "belief", "jargon", "fewshot", "book_lore", "affinity", "soul_state"})
 _MEMORY_ONLY_ALLOWED = frozenset({"safety", "memory", "timeline", "facts", "fts5"})
 _COMPAT_ONLY_ALLOWED = frozenset({"safety"})
 _KNOWN_CHANNELS = _MEMORY_ONLY_ALLOWED | _ADVANCED_FULL_ONLY

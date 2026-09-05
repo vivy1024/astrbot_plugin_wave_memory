@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from ...identity_safety import is_identity_contamination
+from ...belief_gating import snapshot_from_relationship
+from ...proactive_policy import relationship_behavior_guidance
 from ..channel_base import InjectionResult
 from .safety import is_channel_allowed_in_mode
 
@@ -63,30 +65,68 @@ class RelationshipChannel:
                 return InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="relationship_unknown")
             dimensions = _mapping(relationship.get("dimensions"))
             values = _mapping(relationship.get("values"))
+            history = list(_mapping(_mapping(state).get("relationship_history")).get("items") or [])
+            impression_meta: Mapping[str, Any] = {}
+            try:
+                sender_id = str(getattr(ctx, "sender_id", "") or "").strip()
+                group_id = str(getattr(ctx, "group_id", "") or getattr(scope.session, "conversation_id", "") or "").strip()
+                if sender_id and group_id:
+                    db = getattr(self.repository, "db", None) or getattr(self.repository, "_db", None)
+                    conn = getattr(db, "conn", None) if db else None
+                    if conn is None:
+                        cm = getattr(self.repository, "cm", None)
+                        conn = getattr(cm, "conn", None) if cm else None
+                    if conn is not None and hasattr(conn, "execute"):
+                        import json as _json
+                        row = conn.execute(
+                            "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
+                            (sender_id, group_id, scope.bot_id),
+                        ).fetchone()
+                        if row and row[0]:
+                            loaded = _json.loads(row[0])
+                            if isinstance(loaded, Mapping):
+                                impression_meta = loaded
+            except Exception:
+                impression_meta = {}
+            try:
+                from ...impression_timeline import injection_lines
+            except ImportError:  # pragma: no cover
+                from services.impression_timeline import injection_lines
+            impression_block = [
+                line for line in injection_lines(impression_meta, history=history)
+                if line and not is_identity_contamination(line)
+            ]
             labels = []
             for name in ("familiarity", "trust", "fun", "depth", "hostility"):
                 item = _mapping(values.get(name))
                 value = item.get("effective_value", dimensions.get(name))
                 if value is not None:
                     labels.append(f"{name}={round(float(value), 1)}")
-            text = (
+            parts = list(impression_block)
+            status = (
                 "[当前关系状态：仅用于调整对当前用户的自然回应，不代表必须改变事实或主动提及关系] "
                 f"态度={relationship.get('state') or 'unknown'}，综合值={relationship.get('affinity')}"
             )
             if labels:
-                text += "；" + "、".join(labels)
-            history = _mapping(_mapping(state).get("relationship_history")).get("items") or []
-            recent_events: list[str] = []
-            for item in history[:3]:
-                if not isinstance(item, Mapping):
-                    continue
-                reason = str(item.get("reason") or "").strip().replace("\n", " ")[:80]
-                event_type = str(item.get("event_type") or "互动").strip()[:30]
-                if reason and not is_identity_contamination(reason):
-                    recent_events.append(f"{event_type}：{reason}")
-            if recent_events:
-                text += "\n最近互动线索（仅用于保持连续性）：" + "；".join(recent_events)
-            # Prefer durable evidence summary if present; never affects affinity.
+                status += "；" + "、".join(labels)
+            parts.append(status)
+            guidance = relationship_behavior_guidance((snapshot_from_relationship(scope.subject_principal_id, relationship),))
+            parts.append(
+                "关系行为指导（只调节表达，不改变事实）："
+                f"模式={guidance.get('mode')}，开放度={guidance.get('openness')}，"
+                f"玩笑={guidance.get('playfulness')}，连续性={guidance.get('continuity')}。"
+                f"边界={guidance.get('boundary')}"
+            )
+            if not any(line.startswith("最近关系线索：") for line in impression_block):
+                try:
+                    from ...impression_timeline import meaningful_event_anchor
+                except ImportError:  # pragma: no cover
+                    from services.impression_timeline import meaningful_event_anchor
+                anchor = meaningful_event_anchor(history)
+                reason = str((anchor or {}).get("reason") or "").strip()
+                event_type = str((anchor or {}).get("event_type") or "").strip()
+                if anchor and reason and not is_identity_contamination(reason):
+                    parts.append(f"最近关系线索：{event_type}：{reason}")
             try:
                 from ...relationship_evidence_display import relationship_injection_summary_snippet
             except ImportError:  # pragma: no cover
@@ -94,56 +134,46 @@ class RelationshipChannel:
                     relationship_injection_summary_snippet,
                 )
             evidence_snip = relationship_injection_summary_snippet(
-                relationship.get("evidence"), max_chars=160
+                relationship.get("evidence"), max_chars=80
             )
             if evidence_snip and not is_identity_contamination(evidence_snip):
-                text += f"\n历史关系摘要（只读，不改变好感度）：{evidence_snip}"
-            timeline = _mapping(_mapping(state).get("timeline")).get("items") or []
-            shared_events: list[str] = []
-            for item in timeline[:2]:
-                if not isinstance(item, Mapping):
-                    continue
-                summary = str(item.get("event_summary") or "").strip().replace("\n", " ")[:100]
-                if summary and not is_identity_contamination(summary):
-                    shared_events.append(summary)
-            if shared_events:
-                text += "\n与当前用户相关的近期共同经历：" + "；".join(shared_events)
-            # 注入现有 impression（如果有）并请求更新
-            existing_impression = ""
+                parts.append(f"历史关系摘要（只读，不改变好感度）：{evidence_snip}")
             try:
-                _sender_id = getattr(ctx, "sender_id", "") or ""
-                _group_id = getattr(ctx, "group_id", "") or ""
-                _bot_db_id = scope.bot_id
-                if _sender_id and _group_id:
-                    # 尝试从 user_profiles 读 impression（兼容多种 repo 实现）
-                    _db = getattr(self.repository, "db", None) or getattr(self.repository, "_db", None)
-                    _conn_obj = getattr(_db, "conn", None) if _db else None
-                    if _conn_obj is None:
-                        _cm = getattr(self.repository, "cm", None)
-                        _conn_obj = getattr(_cm, "conn", None) if _cm else None
-                    if _conn_obj is not None and hasattr(_conn_obj, "execute"):
-                        _imp_row = _conn_obj.execute(
-                            "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
-                            (_sender_id, _group_id, _bot_db_id),
-                        ).fetchone()
-                        if _imp_row and _imp_row[0]:
-                            import json as _json
-                            _imp_meta = _json.loads(_imp_row[0])
-                            existing_impression = str(_imp_meta.get("impression") or "")
+                concern_items = list(_mapping(_mapping(state).get("concerns")).get("items") or [])
+                active_topics = [
+                    str(c.get("topic") or "").strip()
+                    for c in concern_items
+                    if isinstance(c, Mapping) and float(c.get("intensity") or 0.0) >= 0.4 and str(c.get("topic") or "").strip()
+                ]
+                if active_topics and not any(is_identity_contamination(t) for t in active_topics):
+                    parts.append(f"当前前情关切（可在适当时机自然承接，切忌突兀说教）：{'；'.join(active_topics[:2])}")
             except Exception:
                 pass
-            if existing_impression:
-                text += f"\n你对这个人的印象：{existing_impression}"
-            text = text[:900]
+            try:
+                timeline_items = list(_mapping(_mapping(state).get("timeline")).get("items") or [])
+                for item in timeline_items[:3]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    summary = str(item.get("event_summary") or "").strip()
+                    if summary and not is_identity_contamination(summary):
+                        parts.append(f"共同交往锚点：{summary}")
+            except Exception:
+                pass
+            text = "\n".join(part for part in parts if part)
+            if len(text) > 900:
+                kept: list[str] = []
+                used = 0
+                for part in parts:
+                    extra = len(part) + (1 if kept else 0)
+                    if used + extra > 900:
+                        break
+                    kept.append(part)
+                    used += extra
+                text = "\n".join(kept) if kept else text[:900]
             if is_identity_contamination(text):
                 result = InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="identity_contamination")
                 result.filtered = [{"filter_reason": "identity_contamination", "filter_channel": self.name}]
                 return result
-            # impression 更新请求放在 identity 检查之后，避免触发误判。
-            # 标记必须避开 [xxx] 形式：astrbot_plugin_meme_manager 会把非表情
-            # 标签的 [xxx] 当作无效 markup 在 on_llm_response 阶段直接删除，
-            # 那样 on_bot_sent 就永远读不到这段标记。
-            text += "\n(请在回复最末尾另起一行输出 <<impression:你对这个人当前最新的一句话印象>>，这行不会被用户看到。如果印象没有变化可以不输出。)"
             revision = relationship.get("revision") or _mapping(state).get("revision") or 0
             return InjectionResult.hit(
                 self.name,

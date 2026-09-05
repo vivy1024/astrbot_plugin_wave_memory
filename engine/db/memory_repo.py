@@ -346,8 +346,16 @@ class MemoryRepo:
         if not {"id", "group_id", "content"} <= columns:
             return []
         try:
-            normalized_ids = [int(value) for value in ids]
-        except (TypeError, ValueError):
+            normalized_ids = []
+            for value in ids:
+                try:
+                    ival = int(value)
+                    # 严格限制在合法 SQLite 64 位有符号整型范围内，杜绝 Python int too large 溢出崩溃
+                    if 0 < ival <= 9223372036854775807:
+                        normalized_ids.append(ival)
+                except (TypeError, ValueError):
+                    continue
+        except Exception:
             return []
         if not normalized_ids:
             return []
@@ -359,7 +367,7 @@ class MemoryRepo:
                     gid = int(raw)
                 except (TypeError, ValueError):
                     continue
-                if gid > 0 and gid not in seen_g:
+                if 0 < gid <= 9223372036854775807 and gid not in seen_g:
                     seen_g.add(gid)
                     grant_ids.append(gid)
                 if len(grant_ids) >= 5000:

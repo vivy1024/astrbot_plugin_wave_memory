@@ -6,6 +6,7 @@ AstrBot Wave Memory 插件 — 基于 VCP TagMemo 浪潮算法的高性能记忆
 import asyncio
 import hashlib
 import json
+import math
 import os
 import re
 import time
@@ -17,6 +18,7 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
+from .domain.scope import RuntimeScope
 from .engine.database import WaveMemoryDB
 from .engine.vector_index import VectorIndex
 from .engine.db.outbox_repo import OutboxRepository
@@ -69,6 +71,9 @@ from .tools.memory_feedback import WaveMemoryFeedbackMemoryTool
 from .tools.config_suggestion import WaveMemorySuggestConfigTool
 from .tools.review_candidate import WaveMemorySubmitReviewCandidateTool
 from .tools.affinity_update import WaveMemoryAffinityTool, WaveMemoryAffinityUpdateTool
+from .tools.social_impression import WaveMemoryRecordSocialImpressionTool
+from .tools.social_anchor import WaveMemoryNoteSocialAnchorTool
+from .tools.cultural_moment import WaveMemoryMarkCulturalMomentTool
 from .tools.livingmemory_compat_tools import build_livingmemory_compat_tools
 from .engine.book_lore_index import BookLoreIndex
 from .services.meta_thinking import MetaThinking
@@ -90,6 +95,15 @@ from .services.subjective_time import SubjectiveTime
 from .services.desire_engine import DesireEngine
 from .services.belief_engine import BeliefEngine
 from .services.belief_emergence import BeliefEmergenceService
+from .services.belief_gating import snapshot_from_relationship
+from .services.impression_timeline import append_impression, relationship_context
+from .services.proactive_audit import read_proactive_relationship_context, record_proactive_timeline
+from .services.proactive_policy import (
+    BEHAVIOR_AMBIENT,
+    BEHAVIOR_CONCERN_FOLLOWUP,
+    evaluate_proactive_policy,
+    relationship_behavior_guidance,
+)
 from .services.jargon.service import JargonService
 from .services.few_shot.service import FewShotService
 from .services.relationship_events import RelationshipEventService
@@ -827,6 +841,8 @@ class WaveMemoryPlugin(Star):
         self.belief_engine = None
         self.belief_emergence = None
         self._last_belief_emerge_ts = 0
+        self._belief_tag_refresh_delay_seconds = 0.4
+        self._pending_belief_tag_refresh: dict[tuple[str, str, str, int], asyncio.Task] = {}
         self.concern_tracker = None
         self.mood_trajectory = None
         self.subjective_time = None
@@ -1453,12 +1469,27 @@ class WaveMemoryPlugin(Star):
                 WaveMemorySubmitReviewCandidateTool(db=self.db),
             ])
         if runtime_capability_enabled(self.runtime_mode, "affinity_tools", True):
+            _bot_db_ids_map = {profile.qq_id: profile.db_id for profile in self._bot_registry.values()}
             llm_tools.extend([
                 WaveMemoryAffinityTool(db=self.db),
                 WaveMemoryAffinityUpdateTool(
                     db=self.db,
                     relationship_events=self.relationship_service,
-                    bot_db_ids={profile.qq_id: profile.db_id for profile in self._bot_registry.values()},
+                    bot_db_ids=_bot_db_ids_map,
+                ),
+                WaveMemoryRecordSocialImpressionTool(
+                    db=self.db,
+                    relationship_events=self.relationship_service,
+                    bot_db_ids=_bot_db_ids_map,
+                ),
+                WaveMemoryNoteSocialAnchorTool(
+                    db=self.db,
+                    concern_tracker=getattr(self, "concern_tracker", None),
+                    repository=getattr(self.db, "soul_repository", None),
+                ),
+                WaveMemoryMarkCulturalMomentTool(
+                    db=self.db,
+                    jargon_service=getattr(self, "jargon_service", None),
                 ),
             ])
         if runtime_capability_enabled(self.runtime_mode, "book_lore_tools", True):
@@ -1651,6 +1682,10 @@ class WaveMemoryPlugin(Star):
                     config=jargon_cfg,
                 )
                 logger.info("[WaveMemory] Jargon system initialized")
+                if getattr(self, "lifecycle", None):
+                    self.lifecycle.jargon_service = self.jargon_service
+                    for engine in getattr(self.lifecycle, "_affinities", {}).values():
+                        engine.jargon_service = self.jargon_service
                 if getattr(self, "webui", None):
                     from .webui.container import get_container
                     get_container().jargon_service = self.jargon_service
@@ -1785,7 +1820,12 @@ class WaveMemoryPlugin(Star):
                     provider_ids=self._llm_chain(),
                     log_prefix="[BeliefEngine]",
                 )
-                self.belief_engine = BeliefEngine(db=self.db, llm_client=belief_llm, bot_id=soul_bot_id)
+                self.belief_engine = BeliefEngine(
+                    db=self.db,
+                    llm_client=belief_llm,
+                    bot_id=soul_bot_id,
+                    soul_repository=self.db.soul_repository,
+                )
                 # 把信念引擎接到 consolidation，让摘要提取信念重新生效
                 if getattr(self, "consolidation", None):
                     self.consolidation.belief_engine = self.belief_engine
@@ -1849,13 +1889,6 @@ class WaveMemoryPlugin(Star):
             f"concern={bool(self.concern_tracker)} mood_traj={bool(self.mood_trajectory)} "
             f"time_anchor={bool(self.subjective_time)} desire={bool(self.desire_engine)}"
         )
-
-        # 学习中心必须在所有领域服务完成初始化后组装，复用主插件实例。
-        try:
-            self._configure_learning_center_services()
-        except Exception as exc:
-            logger.warning(f"[LearningCenter] production wiring failed: {exc}")
-            _record_err("LearningCenter", exc)
 
         # 新编排器影子链路：只写 trace，不改真实 ProviderRequest。
         self._setup_injection_shadow_pipeline()
@@ -1950,6 +1983,15 @@ class WaveMemoryPlugin(Star):
                 self.tag_worker.stop()
         except Exception as e:
             logger.debug(f"[WaveMemory] tag_worker stop error: {e}")
+
+        try:
+            pending = getattr(self, "_pending_belief_tag_refresh", None)
+            if isinstance(pending, dict):
+                pending.clear()
+            if hasattr(self, "task_supervisor") and self.task_supervisor:
+                await self.task_supervisor.cancel(owner="belief", timeout=5.0)
+        except Exception as e:
+            logger.debug(f"[WaveMemory] belief tag refresh cancel error: {e}")
 
         try:
             if hasattr(self, 'dream_service') and self.dream_service:
@@ -2188,12 +2230,12 @@ class WaveMemoryPlugin(Star):
         # 不再有独立 LLM 调用。bot 在主对话中用自己的人格自然思考态度。
         # 好感度变化靠 LifecycleService 互动频率 + 极端事件规则驱动。
 
-    async def _belief_emergence_task(self) -> None:
-        """后台关系事件信念涌现任务。"""
+    async def _belief_emergence_task(self, runtime_scope: RuntimeScope | None = None) -> None:
+        """后台从当前群 Scope 的 lived episode 涌现 pending 信念。"""
         try:
             if not getattr(self, "belief_emergence", None):
                 return
-            created = await self.belief_emergence.emerge_recent(days=14, limit=2)
+            created = await self.belief_emergence.emerge_recent(days=14, limit=2, scope=runtime_scope)
             if created:
                 logger.info(f"[WaveMemory] Belief emerged {len(created)} candidates")
         except Exception as e:
@@ -2692,7 +2734,7 @@ class WaveMemoryPlugin(Star):
                 )
                 if getattr(self, "belief_emergence", None) and time.time() - getattr(self, "_last_belief_emerge_ts", 0) > 900:
                     self._last_belief_emerge_ts = time.time()
-                    self._spawn(self._belief_emergence_task())
+                    self._spawn(self._belief_emergence_task(runtime_scope))
                 if getattr(self, "concern_tracker", None) and (is_at_bot or len(locked_message) > 80):
                     topic = locked_message[:60].strip()
                     if topic:
@@ -2723,42 +2765,122 @@ class WaveMemoryPlugin(Star):
                         ttl=30.0,
                     )
 
-            # 主动对话触发：兴趣词匹配 OR 关切命中，才调 LLM 判断
+            # 主动对话触发：兴趣词/关切只是候选信号；正式关系策略是不可绕过的前置门禁。
             bot_id = event.get_self_id() or ""
             bot_profile = self._get_bot(bot_id)
+            meta_thinking = getattr(self, "meta_thinking", None)
             proactive_ok = (
                 runtime_scope.visibility == "group"
-                and (bot_profile.proactive_enabled if bot_profile else self.meta_thinking.proactive_enabled if self.meta_thinking else False)
+                and bool(
+                    bot_profile.proactive_enabled
+                    if bot_profile is not None
+                    else getattr(meta_thinking, "proactive_enabled", False)
+                )
             )
             concern_score = (
                 self.concern_tracker.match(locked_message, scope=runtime_scope)
-                if runtime_scope.visibility == "group" and getattr(self, 'concern_tracker', None)
+                if runtime_scope.visibility == "group" and getattr(self, "concern_tracker", None)
                 else 0.0
             )
             is_interesting = (
-                self.meta_thinking.is_interesting(locked_message)
-                if runtime_scope.visibility == "group" and self.meta_thinking
+                meta_thinking.is_interesting(locked_message)
+                if runtime_scope.visibility == "group" and meta_thinking is not None
                 else False
             )
-            if (runtime_scope.visibility == "group" and self.meta_thinking
+            if (
+                runtime_scope.visibility == "group"
+                and meta_thinking is not None
                 and proactive_ok
                 and not getattr(event, "is_at_or_wake_command", False)
                 and group_id
-                and (is_interesting or concern_score > 0.3)):
+                and (is_interesting or concern_score > 0.3)
+            ):
                 try:
-                    bot_id = event.get_self_id() or ""
-                    context_messages = self._get_recent_messages(event, scope=runtime_scope, max_messages=10)
-                    result = await self.meta_thinking.should_proactive(group_id, context_messages)
-                    if result.get("action") == "主动插话":
-                        inner = result.get("inner_thought", "")
-                        reply_text = await self.meta_thinking.generate_proactive_reply(
-                            context_messages, inner, bot_id=bot_id
+                    relationship_context = await self._read_proactive_relationship_context(
+                        runtime_scope,
+                        event,
+                        now=time.time(),
+                    )
+                    snapshots = relationship_context.get("snapshots") or []
+                    behavior_type = (
+                        BEHAVIOR_CONCERN_FOLLOWUP
+                        if float(concern_score or 0.0) >= 0.30 and not is_interesting
+                        else BEHAVIOR_AMBIENT
+                    )
+                    if relationship_context.get("ok"):
+                        policy = evaluate_proactive_policy(
+                            snapshots,
+                            concern_score=concern_score,
+                            is_interesting=is_interesting,
+                            behavior_type=behavior_type,
+                            scope_available=True,
+                            subject_available=bool(relationship_context.get("subjects")),
                         )
-                        if reply_text:
-                            logger.info(f"[MetaThinking] 主动插话: {inner[:50]}")
-                            await event.send(event.plain_result(reply_text))
+                        policy["guidance"] = relationship_behavior_guidance(snapshots)
+                    else:
+                        policy = {
+                            "policy_version": "relationship-proactive-v1",
+                            "decision": "blocked",
+                            "reason_code": relationship_context.get("reason_code", "relationship_context_unavailable"),
+                            "behavior_type": behavior_type,
+                            "trigger_weight": 0.0,
+                            "fail_closed": True,
+                            "review_required": True,
+                            "concern_score": round(float(concern_score or 0.0), 3),
+                            "is_interesting": bool(is_interesting),
+                            "subjects": relationship_context.get("subjects", []),
+                            "relationship_revisions": {},
+                            "snapshots": [],
+                            "guidance": relationship_behavior_guidance(()),
+                        }
+                    if policy.get("decision") != "allow_llm":
+                        logger.info(
+                            "[MetaThinking] proactive blocked reason=%s subjects=%s",
+                            policy.get("reason_code"),
+                            policy.get("subjects", []),
+                        )
+                    else:
+                        context_messages = self._get_recent_messages(event, scope=runtime_scope, max_messages=10)
+                        current_context_line = f"{sender_name or sender_id}: {locked_message}"
+                        if not context_messages or context_messages[-1] != current_context_line:
+                            context_messages = [*context_messages, current_context_line][-10:]
+                        scope_key = f"{runtime_scope.bot_id}:{runtime_scope.visibility}:{runtime_scope.session.id}"
+                        result = await meta_thinking.should_proactive(
+                            group_id,
+                            context_messages,
+                            relationship_policy=policy,
+                            scope_key=scope_key,
+                            proactive_enabled=(bot_profile.proactive_enabled if bot_profile is not None else None),
+                            proactive_interval_seconds=(bot_profile.proactive_interval_seconds if bot_profile is not None else None),
+                            proactive_max_per_hour=(bot_profile.proactive_max_per_hour if bot_profile is not None else None),
+                        )
+                        if result.get("action") == "主动插话":
+                            inner = result.get("inner_thought", "")
+                            reply_text = await meta_thinking.generate_proactive_reply(
+                                context_messages,
+                                inner,
+                                bot_id=bot_id,
+                                relationship_policy={**policy, "guidance": policy.get("guidance", {})},
+                            )
+                            if reply_text:
+                                await event.send(event.plain_result(reply_text))
+                                try:
+                                    audit_policy = result.get("gate") if isinstance(result.get("gate"), dict) else policy
+                                    await self._record_proactive_timeline(
+                                        runtime_scope,
+                                        reply_text,
+                                        audit_policy,
+                                        relationship_context.get("source_memories") or [],
+                                    )
+                                except Exception as audit_exc:
+                                    logger.warning("[MetaThinking] proactive audit failed: %s", audit_exc)
+                                    _record_err("ProactiveAudit", audit_exc)
+                                    result["audit_status"] = "audit_failed"
+                                else:
+                                    result["audit_status"] = "audited"
+                                logger.info(f"[MetaThinking] 主动插话: {inner[:50]}")
                 except Exception as e:
-                    logger.debug(f"[MetaThinking] Proactive failed: {e}")
+                    logger.warning(f"[MetaThinking] Proactive failed: {e}")
                     _record_err("Proactive", e)
 
         # 锁保护下唤醒执行整个事件流
@@ -2811,23 +2933,21 @@ class WaveMemoryPlugin(Star):
                     bot_db_id = runtime_scope.bot_id
 
                     if sender_id and group_id and sender_id != "bot":
+                        repository = getattr(self.db, "soul_repository", None)
+                        snapshot, event_anchor = relationship_context(repository, runtime_scope)
                         _row = self.db.conn.execute(
                             "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
                             (sender_id, group_id, bot_db_id),
                         ).fetchone()
                         if _row is not None:
                             _meta = json.loads(_row[0]) if _row[0] else {}
-                            _meta["impression"] = extracted_impression
-                            _meta["impression_updated_at"] = time.time()
+                            _meta = append_impression(_meta, extracted_impression, actor="llm", snapshot=snapshot, event=event_anchor)
                             self.db.conn.execute(
                                 "UPDATE user_profiles SET metadata=? WHERE user_id=? AND group_id=? AND bot_id=?",
                                 (json.dumps(_meta, ensure_ascii=False), sender_id, group_id, bot_db_id),
                             )
                         else:
-                            _meta = {
-                                "impression": extracted_impression,
-                                "impression_updated_at": time.time(),
-                            }
+                            _meta = append_impression({}, extracted_impression, actor="llm", snapshot=snapshot, event=event_anchor)
                             self.db.conn.execute(
                                 "INSERT INTO user_profiles (user_id, group_id, bot_id, metadata, interaction_count, last_seen) VALUES (?, ?, ?, ?, 1, ?)",
                                 (sender_id, group_id, bot_db_id, json.dumps(_meta, ensure_ascii=False), time.time()),
@@ -2991,7 +3111,7 @@ class WaveMemoryPlugin(Star):
         logger.debug("[WaveMemory] persona cache warmup withheld: scope_migration_required")
 
     async def _on_memory_projection_refresh(self, event) -> None:
-        """Invalidate dependent reads only.
+        """Invalidate dependent reads and coalesce pending-belief evidence refresh.
 
         Capacity is handled inline by index resize (v4.2.1 semantics); a full
         index is a steady state, not a fault, so it no longer queues a rebuild.
@@ -3001,6 +3121,10 @@ class WaveMemoryPlugin(Star):
         every five minutes and was the dominant CPU/WAL amplifier.  Tag changes only
         invalidate the small read cache; a sparse rebuild runs at startup when the
         projection table is empty, or via an explicit maintenance request.
+
+        After TagWorker commits tags, pending beliefs that already cited the
+        memory must recompute evidence-v1.  This does not extract new beliefs
+        and never auto-approves quarantine / non-direct gates.
         """
         if event.event_type not in {
             "memory.tags_applied",
@@ -3014,6 +3138,79 @@ class WaveMemoryPlugin(Star):
             return
         # Drop stale O(1) lookups only.  Do not schedule a full pair rebuild here.
         self.pair_sim_service.clear_cache()
+        if event.event_type in {
+            "memory.tags_applied",
+            "memory.tags_corrected",
+            "memory.tags_correction_undone",
+        }:
+            self._schedule_belief_tag_refresh(event)
+
+    def _schedule_belief_tag_refresh(self, event) -> None:
+        """Debounce Tag-driven evidence refresh onto one pending belief at a time."""
+        engine = getattr(self, "belief_engine", None)
+        if engine is None:
+            return
+        payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}
+        try:
+            memory_id = int(payload.get("memory_id") or event.aggregate_id)
+        except (TypeError, ValueError):
+            return
+        if memory_id <= 0:
+            return
+        try:
+            scope = RuntimeScope.from_dict(payload.get("scope") or {})
+        except Exception:
+            return
+        if scope.visibility != "group" or scope.session is None:
+            return
+        try:
+            belief_ids = self.db.list_scoped_belief_ids_citing_memory(scope, memory_id)
+        except Exception as exc:
+            logger.debug("[WaveMemory] belief tag refresh lookup failed: %s", exc)
+            return
+        delay = float(getattr(self, "_belief_tag_refresh_delay_seconds", 0.4) or 0.4)
+        pending = getattr(self, "_pending_belief_tag_refresh", None)
+        if pending is None:
+            pending = {}
+            self._pending_belief_tag_refresh = pending
+        for belief_id in belief_ids:
+            key = (scope.bot_id, scope.session.id, scope.visibility, int(belief_id))
+            previous = pending.get(key)
+            if previous is not None and not previous.done():
+                previous.cancel()
+            try:
+                pending[key] = self._spawn(
+                    self._run_belief_tag_refresh(scope, int(belief_id), delay, key),
+                    owner="belief",
+                )
+            except Exception as exc:
+                logger.debug("[WaveMemory] belief tag refresh schedule failed: %s", exc)
+                pending.pop(key, None)
+
+    async def _run_belief_tag_refresh(
+        self,
+        scope: RuntimeScope,
+        belief_id: int,
+        delay: float,
+        key: tuple[str, str, str, int],
+    ) -> None:
+        pending = getattr(self, "_pending_belief_tag_refresh", {})
+        try:
+            if delay > 0:
+                await asyncio.sleep(delay)
+            engine = getattr(self, "belief_engine", None)
+            if engine is None:
+                return
+            await asyncio.to_thread(engine.refresh_evidence_after_tags, scope, belief_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.debug("[WaveMemory] belief tag refresh failed: %s", exc)
+        finally:
+            current = pending.get(key)
+            task = asyncio.current_task()
+            if current is task:
+                pending.pop(key, None)
 
     @staticmethod
     def _vector_backfill_predicate(*, after_id: int = 0) -> tuple[str, tuple[object, ...]]:
@@ -3429,6 +3626,40 @@ class WaveMemoryPlugin(Star):
             "db_watermark": int(watermark),
             "verified": manifest is not None and manifest.count == len(valid_rows),
         }
+
+    async def _read_proactive_relationship_context(
+        self,
+        scope: RuntimeScope | None,
+        event,
+        *,
+        now: float | None = None,
+    ) -> dict:
+        """Read formal relationship snapshots for the current human message turn."""
+        return await read_proactive_relationship_context(
+            scope,
+            event,
+            coordinator=getattr(getattr(self, "write_gateway", None), "coordinator", None),
+            repository=getattr(getattr(self, "db", None), "soul_repository", None),
+            bot_ids=getattr(self, "_bot_qq_ids", ()),
+            now=now,
+        )
+
+    async def _record_proactive_timeline(
+        self,
+        scope: RuntimeScope,
+        reply_text: str,
+        policy: dict,
+        source_memories: list[dict],
+    ) -> int:
+        """Audit a sent proactive reply through the writer-owned transaction."""
+        return await record_proactive_timeline(
+            scope,
+            reply_text,
+            policy,
+            source_memories,
+            coordinator=getattr(getattr(self, "write_gateway", None), "coordinator", None),
+            repository=getattr(getattr(self, "db", None), "soul_repository", None),
+        )
 
     def _get_recent_messages(
         self,
