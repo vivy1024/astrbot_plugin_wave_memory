@@ -182,6 +182,11 @@ def _normalize_evidence_items(connection, *, scope: RuntimeScope, values: Any, r
             if supplied_hash and item.get("content_hash") and supplied_hash != item["content_hash"]:
                 item["availability"] = "unavailable"
                 item["object_ref"] = None
+            # Memory evidence defaults to the memory text, but manual calibration
+            # evidence may carry an explicit audit summary that must survive reads.
+            supplied_summary = raw.get("summary")
+            if isinstance(supplied_summary, str) and supplied_summary.strip():
+                item["summary"] = supplied_summary.strip()
             normalized.append(item)
             continue
         evidence_type = str(raw.get("type") or raw.get("kind") or "evidence").strip() or "evidence"

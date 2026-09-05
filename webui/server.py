@@ -56,7 +56,7 @@ class Server:
     async def start(self) -> None:
         """启动 Hypercorn 守护线程。"""
         if self.host not in {"127.0.0.1", "localhost", "::1"} and not self.password:
-            raise RuntimeError("WebUI refuses non-loopback binding without a password")
+            logger.warning("[WaveMemory WebUI] 注意：正在以 0.0.0.0 免密模式启动 WebUI（适用于 Docker 内部端口映射/开发环境）。若部署于公网，请务必在配置中设置访问密码。")
         if self._thread and self._thread.is_alive():
             logger.info("[WaveMemory WebUI] 服务器已在运行中")
             return

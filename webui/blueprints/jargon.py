@@ -761,7 +761,27 @@ async def list_jargon():
                 "technical_noise", "person_alias", "ordinary_word"
             })
         ]
+        source_param = (request.args.get("source") or "").strip()
+        if source_param:
+            rows = [row for row in rows if (row.get("source") or "wave_memory") == source_param]
+        min_freq_param = request.args.get("min_frequency")
+        if min_freq_param is not None and str(min_freq_param).strip() != "":
+            try:
+                min_freq_val = int(min_freq_param)
+                rows = [row for row in rows if int(row.get("frequency") or 0) >= min_freq_val]
+            except (ValueError, TypeError):
+                pass
         container = get_container()
+        has_evidence_param = (request.args.get("has_evidence") or "").strip().lower()
+        if has_evidence_param in {"yes", "no"}:
+            filtered_rows = []
+            for r in rows:
+                ev_ok = _memory_evidence_available(container, scope, r.get("source_memory_id"))
+                if has_evidence_param == "yes" and ev_ok:
+                    filtered_rows.append(r)
+                elif has_evidence_param == "no" and not ev_ok:
+                    filtered_rows.append(r)
+            rows = filtered_rows
         items = [
             _formal_jargon(
                 row,

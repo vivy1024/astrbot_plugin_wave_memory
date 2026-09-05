@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
+import time
+from collections.abc import Mapping
 from typing import Any
 
 from quart import Blueprint, current_app, jsonify, request
@@ -188,6 +191,150 @@ def _profile_item(profile: dict[str, Any], registry: dict[str, dict[str, Any]], 
     item["affinity_status"] = "unavailable"
     item["affinity_reason_code"] = "scoped_affinity_projection_unavailable"
     return item
+
+
+def _optional_float(raw: Any, name: str) -> float | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError(f"invalid {name}")
+    return value
+
+
+def _optional_int(raw: Any, name: str) -> int | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    return int(text)
+
+
+def _people_query_from_request() -> dict[str, Any]:
+    return {
+        "search": str(request.args.get("search") or "").strip().casefold(),
+        "user_id": str(request.args.get("user_id") or "").strip(),
+        "relationship_state": str(request.args.get("relationship_state") or "all").strip().lower() or "all",
+        "alias_filter": str(request.args.get("alias_filter") or "all").strip().lower() or "all",
+        "sort_by": str(request.args.get("sort_by") or "name").strip().lower() or "name",
+        "sort_order": str(request.args.get("sort_order") or "asc").strip().lower() or "asc",
+        "min_affinity": _optional_float(request.args.get("min_affinity"), "min_affinity"),
+        "max_affinity": _optional_float(request.args.get("max_affinity"), "max_affinity"),
+        "min_interactions": _optional_int(request.args.get("min_interactions"), "min_interactions"),
+    }
+
+
+def _person_from_relationship(item: Mapping[str, Any]) -> dict[str, Any]:
+    person = item.get("person")
+    return dict(person) if isinstance(person, Mapping) else {}
+
+
+def _relationship_affinity(item: Mapping[str, Any]) -> float | None:
+    value = item.get("affinity")
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+        return None
+    return float(value)
+
+
+def _interaction_count(person: Mapping[str, Any]) -> int | None:
+    for candidate in (person.get("interaction_count"), (person.get("person_registry") or {}).get("message_count") if isinstance(person.get("person_registry"), Mapping) else None):
+        if isinstance(candidate, bool) or not isinstance(candidate, (int, float)) or not math.isfinite(float(candidate)):
+            continue
+        return int(candidate)
+    return None
+
+
+def _alias_count(person: Mapping[str, Any]) -> int:
+    aliases = person.get("aliases")
+    if not isinstance(aliases, list):
+        return 0
+    return sum(1 for alias in aliases if str(alias or "").strip())
+
+
+def _filter_people_rows(
+    items: list[dict[str, Any]],
+    *,
+    query: Mapping[str, Any] | None = None,
+    relationship_lookup: Mapping[str, Mapping[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    filters = dict(query or _people_query_from_request())
+    search = str(filters.get("search") or "").strip().casefold()
+    user_filter = str(filters.get("user_id") or "").strip()
+    relationship_state = str(filters.get("relationship_state") or "all").strip().lower() or "all"
+    alias_filter = str(filters.get("alias_filter") or "all").strip().lower() or "all"
+    sort_by = str(filters.get("sort_by") or "name").strip().lower() or "name"
+    sort_order = str(filters.get("sort_order") or "asc").strip().lower() or "asc"
+    min_affinity = filters.get("min_affinity")
+    max_affinity = filters.get("max_affinity")
+    min_interactions = filters.get("min_interactions")
+    if min_affinity is not None:
+        min_affinity = float(min_affinity)
+    if max_affinity is not None:
+        max_affinity = float(max_affinity)
+    if min_interactions is not None:
+        min_interactions = int(min_interactions)
+
+    filtered: list[dict[str, Any]] = []
+    for item in items:
+        nested_person = item.get("person") if isinstance(item.get("person"), Mapping) else None
+        person = dict(nested_person) if nested_person is not None else item
+        user_id = str(person.get("user_id") or "")
+        if user_filter and user_id != user_filter:
+            continue
+        relationship = item if nested_person is not None else ((relationship_lookup or {}).get(user_id) or item)
+        affinity = _relationship_affinity(relationship or {})
+        if relationship_state == "known" and affinity is None:
+            continue
+        if relationship_state == "unknown" and affinity is not None:
+            continue
+        if min_affinity is not None and (affinity is None or affinity < min_affinity):
+            continue
+        if max_affinity is not None and (affinity is None or affinity > max_affinity):
+            continue
+        interactions = _interaction_count(person)
+        if min_interactions is not None and (interactions is None or interactions < min_interactions):
+            continue
+        aliases = _alias_count(person)
+        if alias_filter == "has" and aliases <= 0:
+            continue
+        if alias_filter == "none" and aliases > 0:
+            continue
+        if search:
+            alias_text = " ".join(
+                str(alias).strip()
+                for alias in (person.get("aliases") or [])
+                if str(alias or "").strip()
+            ) if isinstance(person.get("aliases"), list) else str(person.get("aliases") or "")
+            haystack = " ".join(
+                str(part or "")
+                for part in (
+                    person.get("user_id"),
+                    person.get("display_name"),
+                    person.get("nickname"),
+                    alias_text,
+                    person.get("scope_key"),
+                )
+            ).casefold()
+            if search not in haystack:
+                continue
+        filtered.append(item)
+
+    reverse = sort_order == "desc"
+
+    def sort_key(item: Mapping[str, Any]) -> tuple:
+        nested_person = item.get("person") if isinstance(item.get("person"), Mapping) else None
+        person = dict(nested_person) if nested_person is not None else item
+        name = str(person.get("display_name") or "").casefold()
+        if sort_by == "interactions":
+            count = _interaction_count(person)
+            return ((count is None, count if count is not None else 0), name)
+        if sort_by == "affinity":
+            affinity = _relationship_affinity(item if nested_person is not None else ((relationship_lookup or {}).get(str(person.get("user_id") or "")) or item))
+            return ((affinity is None, affinity if affinity is not None else 0.0), name)
+        return (name, str(person.get("user_id") or ""))
+
+    filtered.sort(key=sort_key, reverse=reverse)
+    return filtered
 
 
 @people_bp.route("/people/legacy/audit", methods=["GET"])
@@ -503,12 +650,7 @@ async def list_relationships():
                     repository, scope, subject
                 )
             items.append(item)
-        search = str(request.args.get("search") or "").strip().casefold()
-        user_filter = str(request.args.get("user_id") or "").strip()
-        if user_filter:
-            items = [item for item in items if str(item.get("person", {}).get("user_id") or "") == user_filter]
-        if search:
-            items = [item for item in items if search in json.dumps(item.get("person", {}), ensure_ascii=False).casefold()]
+        items = _filter_people_rows(items)
         total = len(items)
         return jsonify({
             **page_response(items[offset:offset + limit], total=total, limit=limit, offset=offset),
@@ -655,6 +797,85 @@ async def calibrate_relationship():
         return jsonify(error_payload("relationship_request_invalid", str(exc))), 422
 
 
+def _clear_impression_on_connection(conn: Any, *, scope: RuntimeScope, user_id: str, reason: str) -> dict[str, Any]:
+    if scope.session is None or scope.visibility != "group":
+        raise ValueError("scope_required")
+    user_id = str(user_id or "").strip()
+    reason = str(reason or "").strip()
+    if not user_id:
+        raise ValueError("user_id_required")
+    if len(reason) < 4:
+        raise ValueError("impression_clear_reason_required")
+    if not _table_exists(conn, "user_profiles"):
+        raise LookupError("person_not_found")
+    row = conn.execute(
+        "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
+        (user_id, scope.session.conversation_id, scope.bot_id),
+    ).fetchone()
+    if row is None:
+        raise LookupError("person_not_found")
+    metadata = _json(row[0], {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+    previous = str(metadata.get("impression") or "").strip()
+    if not previous:
+        raise LookupError("impression_not_found")
+    now = time.time()
+    try:
+        from ...services.impression_timeline import clear_impression as _append_clear
+    except ImportError:  # pragma: no cover
+        from services.impression_timeline import clear_impression as _append_clear
+    metadata = _append_clear(metadata, reason=reason, now=now, actor="webui")
+    conn.execute(
+        "UPDATE user_profiles SET metadata=? WHERE user_id=? AND group_id=? AND bot_id=?",
+        (json.dumps(metadata, ensure_ascii=False), user_id, scope.session.conversation_id, scope.bot_id),
+    )
+    conn.commit()
+    return {
+        "user_id": user_id,
+        "group_id": scope.session.conversation_id,
+        "bot_id": scope.bot_id,
+        "cleared": True,
+        "previous_impression": previous,
+        "reason": reason,
+        "impression_updated_at": now,
+    }
+
+
+@people_bp.route("/people/commands/clear-impression", methods=["POST"])
+@require_auth
+async def clear_impression():
+    """Clear the current Bot impression for one person in the current group, with audit."""
+    scope = _request_scope()
+    if scope is None or scope.session is None or scope.visibility != "group":
+        return jsonify(error_payload("scope_required", "A complete group RuntimeScope is required")), 400
+    conn = _connection()
+    if conn is None:
+        return jsonify(error_payload("service_unavailable", "People store is unavailable", retryable=True)), 503
+    body = await request.get_json(silent=True) or {}
+    try:
+        item = _clear_impression_on_connection(
+            conn,
+            scope=scope,
+            user_id=str(body.get("user_id") or request.args.get("user_id") or ""),
+            reason=str(body.get("reason") or ""),
+        )
+        return jsonify(mutation_response(
+            operation_kind="people.impression.clear",
+            operation_id=f"{scope.bot_id}:{scope.session.conversation_id}:{item['user_id']}:{int(item['impression_updated_at'] * 1000)}",
+            status="succeeded",
+            revision=int(item["impression_updated_at"] * 1000),
+            item=item,
+            include_item=True,
+        ))
+    except LookupError as exc:
+        code = str(exc)
+        status = 404
+        return jsonify(error_payload(code, str(exc))), status
+    except ValueError as exc:
+        return jsonify(error_payload(str(exc), str(exc))), 422
+
+
 @people_bp.route("/people", methods=["GET"])
 @require_auth
 async def list_people():
@@ -680,27 +901,24 @@ async def list_people():
             )
             if (item := _profile_item(profile, registry, scope)) is not None
         ]
-
-        search = str(request.args.get("search") or "").strip().casefold()
-        if search:
-            items = [
-                item for item in items
-                if any(
-                    search in str(item.get(field, "")).casefold()
-                    for field in ("user_id", "display_name", "nickname", "aliases", "scope_key")
-                )
-            ]
-        for field in ("bot_id", "group_id", "user_id"):
-            value = str(request.args.get(field) or "").strip()
-            if value:
-                items = [item for item in items if str(item.get(field) or "") == value]
-
-        items.sort(key=lambda item: (
-            str(item.get("display_name") or "").casefold(),
-            str(item.get("bot_id") or ""),
-            str(item.get("group_id") or ""),
-            str(item.get("user_id") or ""),
-        ))
+        relationship_lookup: dict[str, Mapping[str, Any]] = {}
+        repository = getattr(get_container(), "soul_repository", None)
+        if repository is not None:
+            for row in _relationship_rows_for_scope(repository, scope, _alias_session_ids(conn, scope)).values():
+                subject = str(row.get("subject_principal_id") or "")
+                user_id = subject.rsplit(":user:", 1)[-1] if ":user:" in subject else ""
+                if user_id:
+                    relationship_lookup[user_id] = row
+            for item in items:
+                rel = relationship_lookup.get(str(item.get("user_id") or ""))
+                if rel is None:
+                    continue
+                affinity = _relationship_affinity(rel)
+                item["affinity"] = affinity
+                item["affinity_status"] = "available" if affinity is not None else item.get("affinity_status")
+                if affinity is not None:
+                    item["affinity_reason_code"] = "scoped_relationship"
+        items = _filter_people_rows(items, relationship_lookup=relationship_lookup)
         total = len(items)
         return jsonify(page_response(items[offset:offset + limit], total=total, limit=limit, offset=offset))
     except (TypeError, ValueError):

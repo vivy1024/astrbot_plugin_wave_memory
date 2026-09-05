@@ -221,20 +221,32 @@ def _fact_evidence(conn: Any, items: list[dict[str, Any]], scope: tuple[str, str
         for item in items
         if str(item.get("source_memory_id") or "").strip().isdigit()
     })
-    healthy: set[int] = set()
+    healthy_meta: dict[int, dict[str, Any]] = {}
     memory_columns = _columns(conn, "memories")
     required = {"id", "bot_id", "session_id", "visibility", "resolution_state", "quarantine"}
     if memory_ids and required <= memory_columns:
         placeholders = ",".join("?" for _ in memory_ids)
+        cols_to_select = ["id"]
+        for extra_col in ("content_hash", "timestamp", "created_at", "content"):
+            if extra_col in memory_columns:
+                cols_to_select.append(extra_col)
+        select_sql = f"SELECT {', '.join(cols_to_select)} FROM memories WHERE id IN ({placeholders}) AND bot_id=? AND session_id=? AND visibility=? AND resolution_state='resolved' AND COALESCE(quarantine, 0)=0"
         rows = conn.execute(
-            f"SELECT id FROM memories WHERE id IN ({placeholders}) "
-            "AND bot_id=? AND session_id=? AND visibility=? "
-            "AND resolution_state='resolved' AND COALESCE(quarantine, 0)=0",
+            select_sql,
             (*memory_ids, *scope),
         ).fetchall()
-        healthy = {int(row[0]) for row in rows}
+        for row in rows:
+            mid = int(row[0])
+            row_dict = dict(zip(cols_to_select, row))
+            captured_at = row_dict.get("timestamp") or row_dict.get("created_at")
+            content_str = str(row_dict.get("content") or "").strip()
+            summary = content_str[:120] if content_str else None
+            healthy_meta[mid] = {
+                "content_hash": row_dict.get("content_hash"),
+                "captured_at": captured_at,
+                "summary": summary,
+            }
 
-    source_scope = f"{scope[0]}|{scope[1]}|{scope[2]}"
     for item in items:
         if "provenance" in item:
             item["provenance"] = _json_value(item.get("provenance"), {})
@@ -243,12 +255,20 @@ def _fact_evidence(conn: Any, items: list[dict[str, Any]], scope: tuple[str, str
             source_id = int(source_id) if str(source_id or "").strip().isdigit() else None
         except (TypeError, ValueError):
             source_id = None
-        if source_id is not None and source_id in healthy:
+        if source_id is not None and source_id in healthy_meta:
+            meta = healthy_meta[source_id]
             item["evidence"] = [{
                 "type": "memory",
                 "id": str(source_id),
-                "source_scope": source_scope,
+                "source_scope": {
+                    "bot_id": scope[0],
+                    "session_id": scope[1],
+                    "visibility": scope[2],
+                },
                 "availability": "available",
+                "content_hash": meta.get("content_hash"),
+                "captured_at": meta.get("captured_at"),
+                "summary": meta.get("summary"),
             }]
         else:
             item["evidence"] = []

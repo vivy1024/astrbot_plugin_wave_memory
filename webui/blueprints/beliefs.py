@@ -398,6 +398,18 @@ def _formal_belief(
     item["confidence_components"] = provenance.get("confidence_components")
     item["confidence_policy_version"] = provenance.get("confidence_policy_version")
     item["confidence_evidence"] = provenance.get("confidence_evidence")
+    gating = provenance.get("gating") if isinstance(provenance.get("gating"), dict) else {}
+    item["gating"] = {
+        "decision": gating.get("decision"),
+        "reason_code": gating.get("reason_code"),
+        "trust": gating.get("effective_trust"),
+        "hostility": gating.get("effective_hostility"),
+        "subjects": list(gating.get("subjects") or []),
+        "policy_version": gating.get("policy_version"),
+        "review_required": bool(gating.get("review_required", item.get("status") != "active")),
+        "unknown_subjects": list(gating.get("unknown_subjects") or []),
+        "relationship_revisions": dict(gating.get("relationship_revisions") or {}),
+    }
     item["anchor_sentence"] = provenance.get("anchor_sentence")
     item["evidence_health"] = "available" if evidence_available else "unavailable"
     item["quarantine_reason"] = provenance.get("quarantine_reason")
@@ -441,7 +453,7 @@ def _formal_belief(
     item["evidence"] = evidence
     item["observation_count"] = len(observations or [])
     item["object_ref"] = _item_object_ref(item, scope)
-    can_activate = item.get("status") == "pending" and evidence_available and is_activation_eligible(provenance)
+    can_activate = item.get("status") in {"pending", "quarantined"} and evidence_available and is_activation_eligible(provenance)
     approve_reason = None if can_activate else (
         "belief_anchor_unavailable" if not evidence_available else "belief_evidence_incomplete"
     )
@@ -592,6 +604,15 @@ async def list_beliefs():
             rows = [row for row in rows if _normalize_belief_type(row.get("belief_type")) == belief_type]
         if search:
             rows = [row for row in rows if search in str(row.get("content") or "")]
+        evidence_health_param = (request.args.get("evidence_health") or "").strip().lower()
+        if evidence_health_param in {"available", "unavailable", "quarantined", "unknown"}:
+            filtered_rows = []
+            for r in rows:
+                ev_ok = _memory_evidence_available(container, scope, r.get("source_memory_id"))
+                ev_health = "available" if ev_ok else "unavailable"
+                if ev_health == evidence_health_param:
+                    filtered_rows.append(r)
+            rows = filtered_rows
         observations_by_belief: dict[int, list[dict]] = {}
         for observation in _belief_observations(repo, scope):
             try:
@@ -858,7 +879,7 @@ async def batch_transition_scoped_beliefs():
             current = _find_scoped_belief(repo, scope, belief_id)
             _require_object_ref(entry, kind="belief", locator=belief_id, scope=scope, item=current)
             if action == "approve":
-                if current.get("status") != "pending":
+                if current.get("status") not in {"pending", "quarantined"}:
                     raise ScopedKnowledgeScopeError("invalid_belief_transition")
                 if not _memory_evidence_available(container, scope, current.get("source_memory_id")):
                     raise ScopedKnowledgeScopeError("belief_anchor_unavailable")
