@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
 import re
 import time
 from collections import defaultdict
@@ -74,13 +73,6 @@ FUN_EMOTION_KW = frozenset([
     '玩笑', '段子', '梗',
 ])
 
-BOT_PRAISE_KW = re.compile(r'(厉害|牛|好用|聪明|强|可以的|不错|真棒|好厉害|太强了|nb|666)')
-BOT_ATTACK_KW = re.compile(r'(傻[逼比]|垃圾|废物|智障|弱智|滚|闭嘴|sb|脑残|人工智障)')
-CORRECTION_KW = re.compile(r'(我错了|说错了|更正一下|纠正一下|不是这个意思|我改口)')
-BOUNDARY_KW = re.compile(r'(你只是个?(工具|计算器|搜索引擎)|给我滚去干活|必须听我的|把.*隐私.*说出来|当众出丑)')
-GIFT_KW = re.compile(r'(红包|给你礼物|投喂|请你吃|送你)')
-REUNION_DAYS = 14.0
-
 
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
@@ -103,97 +95,6 @@ def _get_attitude_level(affection: int) -> str:
         return "cold"
     else:
         return "hostile"
-
-
-def classify_social_event(
-    *,
-    content: str = "",
-    is_at_bot: bool = False,
-    is_reply_to_bot: bool = False,
-    conversation_depth: int = 0,
-    hour: int = -1,
-    last_seen: float | None = None,
-    now: float | None = None,
-    directed_at_bot: bool | None = None,
-    jargon_signals: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Pick one primary social event. Stronger labels win; insult may emit two rows."""
-    text = str(content or "")
-    sample = text[:200]
-    directed = bool(directed_at_bot) if directed_at_bot is not None else bool(is_at_bot or is_reply_to_bot)
-    stamp = float(now if now is not None else time.time())
-    silent_days = None
-    if last_seen is not None:
-        try:
-            silent_days = (stamp - float(last_seen)) / 86400.0
-        except (TypeError, ValueError):
-            silent_days = None
-    reunion = silent_days is not None and silent_days >= REUNION_DAYS
-    if last_seen is None:
-        first_today = True
-    else:
-        last_day = time.localtime(float(last_seen))
-        now_day = time.localtime(stamp)
-        first_today = (last_day.tm_year, last_day.tm_yday) != (now_day.tm_year, now_day.tm_yday)
-
-    jargon_meta = dict(jargon_signals or {})
-    has_scoped_jargon = bool(jargon_meta.get("has_scoped_jargon"))
-    has_global_irony = bool(jargon_meta.get("has_global_irony"))
-    matched_terms = [str(t) for t in (jargon_meta.get("matched_terms") or []) if str(t)]
-
-    notice = []
-    if reunion:
-        notice.append("久别再逢")
-    elif first_today and directed:
-        notice.append("当天首次对上")
-    if has_scoped_jargon:
-        notice.append(f"熟练使用群黑话[{','.join(matched_terms[:2])}]")
-    elif has_global_irony:
-        notice.append(f"网络流行/反串梗[{','.join(matched_terms[:2])}]")
-
-    def pack(kind: str, event_type: str, rows: list[tuple[str, float, str]], ledger: bool) -> dict[str, Any]:
-        entries = []
-        for dimension, delta, reason in rows:
-            text_reason = reason
-            if notice and kind in {"direct_reply"}:
-                text_reason = "；".join([*notice, reason])
-            entries.append({"dimension": dimension, "delta": delta, "reason": text_reason, "event_type": event_type})
-        return {
-            "kind": kind,
-            "event_type": event_type,
-            "ledger": ledger,
-            "entries": entries,
-        }
-
-    if directed and BOT_ATTACK_KW.search(text):
-        return pack("insult", "bot_attacked", [
-            ("hostility", 8.0, "攻击或辱骂 bot"),
-            ("trust", -3.0, "攻击或辱骂 bot"),
-        ], True)
-    if directed and BOUNDARY_KW.search(text):
-        return pack("boundary", "ignored_boundary", [("hostility", 4.0, "越界或把 bot 当工具")], True)
-    if directed and BOT_PRAISE_KW.search(text):
-        return pack("praise", "bot_praised", [("trust", 3.0, "正面评价 bot")], True)
-    if directed and CORRECTION_KW.search(text):
-        return pack("correction", "correction", [("trust", 1.0, "纠正或改口")], True)
-    if directed and GIFT_KW.search(text):
-        return pack("gift", "gift_or_feed", [("fun", 2.0, "投喂或送礼")], True)
-    if conversation_depth >= 3 or (0 <= hour <= 4 and directed):
-        reason = "连续多轮深入对话" if conversation_depth >= 3 else "深夜陪聊"
-        delta = (2.0 + min(conversation_depth - 3, 5) * 0.5) if conversation_depth >= 3 else 1.0
-        return pack("deep_talk", "deep_talk", [("depth", delta, reason)], True)
-    if any(kw in sample for kw in FUN_EMOTION_KW) or has_scoped_jargon or has_global_irony:
-        term_hint = f"（匹配黑话/梗：{','.join(matched_terms[:2])}）" if matched_terms else ""
-        reason_text = "熟练使用群黑话，默契接梗" if has_scoped_jargon else ("广域网络反串接梗" if has_global_irony else "消息带来趣味感")
-        return pack("joke", "joke", [("fun", 2.0 if (directed or has_scoped_jargon) else 1.0, f"{reason_text}{term_hint}")], True)
-    if directed:
-        reason = "主动@或唤醒 bot" if is_at_bot else "回复 bot 消息"
-        return pack("direct_reply", "direct_reply", [("trust", 2.0 if is_at_bot else 1.5, reason)], True)
-    if directed and reunion:
-        return pack("reunion", "direct_reply", [("familiarity", 1.5, "久别再逢")], True)
-    if directed and first_today:
-        return pack("first_today", "direct_reply", [("familiarity", 0.5, "当天首次对上")], True)
-    return pack("passby", "message_seen", [("familiarity", 0.05, "看见一条群友消息")], False)
 
 
 def _project_group_subject_scope(scope: RuntimeScope) -> tuple[str, str, str]:
@@ -267,7 +168,7 @@ class AffinityEngine:
         *,
         scope: RuntimeScope | None = None,
     ) -> bool:
-        """处理一条消息，累加好感度增量到缓冲。
+        """处理一条消息：只记录触达，不把关键词增量写入正式五维。
 
         新事件路径必须携带 ingress 解析出的 Scope；旧调用暂保留裸键兼容，
         但不会由本方法从原始事件字段重新推断 Scope。
@@ -292,48 +193,8 @@ class AffinityEngine:
         if not sender_id or not group_id or sender_id == self.bot_qq_id:
             return False
 
-        key = (sender_id, group_id)
-        buf = self._buffer[key]
-        last_seen = None
-        try:
-            row = self.db.conn.execute(
-                "SELECT last_seen FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
-                (sender_id, group_id, self.bot_db_id),
-            ).fetchone()
-            if row and row[0] is not None:
-                last_seen = float(row[0])
-        except Exception:
-            last_seen = None
-        jargon_signals = None
-        injector = getattr(getattr(self, "jargon_service", None), "_injector", None)
-        if callable(getattr(injector, "detect_signals", None)):
-            try:
-                jargon_signals = injector.detect_signals(content, runtime_scope=scope)
-            except Exception:
-                jargon_signals = None
-        classified = classify_social_event(
-            content=content,
-            is_at_bot=is_at_bot,
-            is_reply_to_bot=is_reply_to_bot,
-            conversation_depth=conversation_depth,
-            hour=hour,
-            last_seen=last_seen,
-            jargon_signals=jargon_signals,
-        )
-        before = dict(buf)
-        event_reasons: dict[str, list[str]] = defaultdict(list)
-        for entry in classified["entries"]:
-            buf[entry["dimension"]] += float(entry["delta"])
-            event_reasons[entry["dimension"]].append(entry["reason"])
-        self._record_relationship_events(
-            user_id=sender_id,
-            group_id=group_id,
-            before=before,
-            after=buf,
-            reasons=event_reasons,
-            scope=scope,
-            classified=classified,
-        )
+        # 触达记录只更新缓冲，不把关键词增量写入正式五维。
+        self._buffer[(sender_id, group_id)].setdefault("_touched", 1.0)
         return True
 
     def _record_relationship_events(
@@ -364,29 +225,31 @@ class AffinityEngine:
                 return
             event_bot_id = scoped_bot_id
         now = time.time()
-        entries = list((classified or {}).get("entries") or [])
+        try:
+            from ..domain.relationship_policy import is_noisy_relationship_event
+        except ImportError:  # pragma: no cover
+            from domain.relationship_policy import is_noisy_relationship_event
+        entries = [
+            entry
+            for entry in list((classified or {}).get("entries") or [])
+            if isinstance(entry, Mapping)
+            and not is_noisy_relationship_event(entry.get("event_type"), entry.get("reason"))
+        ]
         if not entries:
-            for dim_name, after_value in after.items():
-                delta = float(after_value) - float(before.get(dim_name, 0))
-                if abs(delta) < 1e-9:
-                    continue
-                entries.append({
-                    "dimension": dim_name,
-                    "delta": delta,
-                    "reason": "；".join(reasons.get(dim_name, [])[:3]) or "行为统计关系变化",
-                    "event_type": "message_seen",
-                })
+            return
         write_ledger = bool((classified or {}).get("ledger"))
         try:
-            from .impression_timeline import append_ledger_entry, record_affinity_milestone
+            from .impression_timeline import persist_timeline_event, synthesize_milestone_phrase
         except ImportError:  # pragma: no cover
-            from services.impression_timeline import append_ledger_entry, record_affinity_milestone
+            from services.impression_timeline import persist_timeline_event, synthesize_milestone_phrase
         try:
             for entry in entries:
                 dim_name = str(entry.get("dimension") or "")
                 delta = float(entry.get("delta") or 0.0)
-                reason_text = str(entry.get("reason") or "行为统计关系变化")
-                formal_event_type = str(entry.get("event_type") or "message_seen")
+                reason_text = str(entry.get("reason") or "").strip()
+                formal_event_type = str(entry.get("event_type") or "").strip()
+                if not dim_name or not reason_text or is_noisy_relationship_event(formal_event_type, reason_text):
+                    continue
                 stored = None
                 if self.relationship_service is not None and scope is not None:
                     try:
@@ -410,45 +273,52 @@ class AffinityEngine:
                 if stored is None or event_id <= 0:
                     continue
                 if write_ledger and formal_event_type != "message_seen":
-                    row = self.db.conn.execute(
-                        "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
-                        (user_id, group_id, event_bot_id),
-                    ).fetchone()
-                    metadata = {}
-                    if row and row[0]:
-                        try:
-                            loaded = json.loads(row[0])
-                            if isinstance(loaded, dict):
-                                metadata = loaded
-                        except Exception:
-                            metadata = {}
-                    metadata = append_ledger_entry(
-                        metadata,
-                        event_type=formal_event_type,
-                        dimension=dim_name,
-                        delta=round(delta, 2),
-                        reason=reason_text,
-                        at=now,
-                        event_id=event_id,
-                    )
                     before_aff = int(getattr(stored, "before_affection", getattr(stored, "before_affinity", 0)) or 0)
                     after_aff = int(getattr(stored, "after_affection", getattr(stored, "after_affinity", 0)) or 0)
                     if before_aff != after_aff:
-                        metadata = record_affinity_milestone(
-                            metadata,
+                        phrase = synthesize_milestone_phrase(
                             event_type=formal_event_type,
                             reason=reason_text,
                             before_affinity=before_aff,
                             after_affinity=after_aff,
                             dimension=dim_name,
                             delta=round(delta, 2),
-                            now=now,
-                            event_id=event_id,
                         )
-                    self.db.conn.execute(
-                        "UPDATE user_profiles SET metadata=? WHERE user_id=? AND group_id=? AND bot_id=?",
-                        (json.dumps(metadata, ensure_ascii=False), user_id, group_id, event_bot_id),
-                    )
+                        persist_timeline_event(
+                            self.db,
+                            bot_id=event_bot_id,
+                            user_id=user_id,
+                            group_id=group_id,
+                            kind="affinity",
+                            summary=phrase,
+                            detail=reason_text,
+                            occurred_at=now,
+                            provenance={
+                                "actor": "affinity_milestone",
+                                "event_type": formal_event_type,
+                                "dimension": dim_name,
+                                "delta": round(delta, 2),
+                                "event_id": event_id,
+                            },
+                        )
+                    else:
+                        persist_timeline_event(
+                            self.db,
+                            bot_id=event_bot_id,
+                            user_id=user_id,
+                            group_id=group_id,
+                            kind="affinity",
+                            summary=f"{formal_event_type} {dim_name}{delta:+g}：{reason_text}"[:240],
+                            detail=reason_text,
+                            occurred_at=now,
+                            provenance={
+                                "actor": "relationship_ledger",
+                                "event_type": formal_event_type,
+                                "dimension": dim_name,
+                                "delta": round(delta, 2),
+                                "event_id": event_id,
+                            },
+                        )
             self.db.conn.commit()
         except Exception as e:
             logger.debug(f"[WaveMemory] relationship event log skipped: {e}")
@@ -499,51 +369,36 @@ class AffinityEngine:
                     else:
                         dims[dim_name] *= adjusted_decay ** effective_days
 
-            # 应用增量（边际递减：越接近上限涨越慢）
-            for dim_name, delta in deltas.items():
-                if dim_name not in dims:
-                    continue
-                if delta > 0:
-                    _, hi = DIM_RANGES.get(dim_name, (-100, 100))
-                    saturation = 1.0 / (1.0 + max(0, dims[dim_name]) / (hi * 0.6))
-                    dims[dim_name] += delta * saturation
-                else:
-                    dims[dim_name] += delta
-
-            # 维度耦合
-            # hostility 增加 → trust 惩罚性衰减
-            hostility_delta = deltas.get("hostility", 0)
-            if hostility_delta > 0:
-                dims["trust"] -= hostility_delta * 0.3
-            # depth 持续高 → trust 自然微涨
-            if dims.get("depth", 0) > 50:
-                dims["trust"] = dims.get("trust", 0) + 0.1
-            # fun 高 → familiarity 衰减补偿（已在衰减时处理，此处给微涨）
-            if dims.get("fun", 0) > 20:
-                dims["familiarity"] = dims.get("familiarity", 0) + 0.05
+            # 关键词增量不再并入正式五维；flush 只做时间衰减与档案触达。
 
             # 钳位
             for dim_name in dims:
                 lo, hi = DIM_RANGES.get(dim_name, (-100, 100))
                 dims[dim_name] = _clamp(dims[dim_name], lo, hi)
 
-            # 合成综合分
-            affection = _compute_affection(dims)
-            attitude = _get_attitude_level(affection)
-
-            # 构建 metadata（合并现有，不覆盖 MetaThinking 写入的 impression/tags）
+            # 读取现有用户档案
             existing_meta = {}
+            current_affection = 0
             existing_row = self.db.conn.execute(
-                "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
+                "SELECT metadata, affection FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
                 (user_id, group_id, self.bot_db_id),
             ).fetchone()
-            if existing_row and existing_row[0]:
-                try:
-                    existing_meta = json.loads(existing_row[0])
-                except Exception:
-                    pass
+            if existing_row:
+                if existing_row[0]:
+                    try:
+                        existing_meta = json.loads(existing_row[0])
+                    except Exception:
+                        pass
+                if existing_row[1] is not None:
+                    current_affection = existing_row[1]
 
-            # 只更新 dimensions 相关字段，保留 MetaThinking 的 impression/tags/meta_updated
+            # 态度等级与综合好感度：
+            # 严格废黜纯代码私自修改 affection 的旧逻辑。
+            # affection 只能由 LLM 显式调用 wave_memory_record_social_impression 工具裁决；
+            # lifecycle 仅维护 dimensions 特征蓄水池和衰减，绝对不私自覆盖 affection！
+            attitude = _get_attitude_level(current_affection)
+
+            # 只更新 dimensions 相关字段，保留 MetaThinking/LLM 的 impression/tags/ledger
             existing_meta["dimensions"] = {k: round(v, 2) for k, v in dims.items()}
             existing_meta["last_decay_at"] = now
             existing_meta["attitude_level"] = attitude
@@ -556,27 +411,15 @@ class AffinityEngine:
                 existing_meta.setdefault("target_type", "user")
             meta = existing_meta
 
-            # 写入（affection 取 MetaThinking 和 dimensions 的较高者，避免被行为积累降级）
-            meta_affection = None
-            if "meta_updated" in existing_meta:
-                # MetaThinking 有过写入，用 LLM 给的分数为准
-                meta_affection = self.db.conn.execute(
-                    "SELECT affection FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
-                    (user_id, group_id, self.bot_db_id),
-                ).fetchone()
-                if meta_affection:
-                    affection = max(affection, meta_affection[0])
-
-            # 写入
+            # 写入：affection 绝不在 ON CONFLICT 中被粗暴覆盖，保持当前 LLM 设定的正式分值
             self.db.conn.execute(
                 """INSERT INTO user_profiles (user_id, group_id, nickname, affection, interaction_count, first_seen, last_seen, personality_tags, notes, metadata, bot_id)
                    VALUES (?, ?, ?, ?, 0, ?, ?, '', '', ?, ?)
                    ON CONFLICT(user_id, group_id, bot_id) DO UPDATE SET
-                   affection = excluded.affection,
                    last_seen = excluded.last_seen,
                    metadata = excluded.metadata,
                    interaction_count = interaction_count + 1""",
-                (user_id, group_id, "", affection, now, now, json.dumps(meta, ensure_ascii=False), self.bot_db_id),
+                (user_id, group_id, "", current_affection, now, now, json.dumps(meta, ensure_ascii=False), self.bot_db_id),
             )
             updated += 1
 
@@ -1063,28 +906,21 @@ class LifecycleService:
                         dims_changed = True
                 
                 if dims_changed:
-                    # 重新计算好感分值和态度等级
-                    new_affection = _compute_affection(dims)
-                    new_attitude = _get_attitude_level(new_affection)
-                    
-                    # 检查是否降级
+                    # 正式 affection 只能由社交工具裁决；衰减只维护 dimensions 蓄水池。
+                    current_attitude = _get_attitude_level(int(old_affection or 0))
                     old_order = ATTITUDE_ORDER.get(old_attitude, 2)
-                    new_order = ATTITUDE_ORDER.get(new_attitude, 2)
-                    
+                    new_order = ATTITUDE_ORDER.get(current_attitude, 2)
                     if new_order < old_order:
                         meta["decay_downgrade_noted"] = True
                         meta["last_attitude_before_decay"] = old_attitude
-                    
                     meta["dimensions"] = dims
-                    meta["attitude_level"] = new_attitude
+                    meta["attitude_level"] = current_attitude
                     meta["last_decay_at"] = now
-                    
-                    # 写回 user_profiles
                     self.db.conn.execute(
-                        """UPDATE user_profiles 
-                           SET affection = ?, metadata = ? 
+                        """UPDATE user_profiles
+                           SET metadata = ?
                            WHERE user_id = ? AND group_id = ? AND bot_id = ?""",
-                        (new_affection, json.dumps(meta, ensure_ascii=False), user_id, group_id, bot_id)
+                        (json.dumps(meta, ensure_ascii=False), user_id, group_id, bot_id)
                     )
             
             self.db.conn.commit()
@@ -1112,10 +948,12 @@ class LifecycleService:
         meta = json.loads(row[1]) if row[1] else {}
         dims = meta.get("dimensions", {})
 
-        # 加上同 Bot 缓冲中的增量。
+        # 缓冲只记录触达，不再把关键词增量并入正式五维。
         key = (user_id, group_id)
         if affinity is not None and key in affinity._buffer:
             for dim, delta in affinity._buffer[key].items():
+                if dim.startswith("_"):
+                    continue
                 dims[dim] = dims.get(dim, 0) + delta
 
         return {

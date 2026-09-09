@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import Graph from 'graphology'
+import type Sigma from 'sigma'
 import { Maximize2Icon, Minimize2Icon, PlayIcon, PauseIcon, RotateCcwIcon, ZoomInIcon, ZoomOutIcon, SparklesIcon } from 'lucide-react'
 
 import type { TagGraphEdge, TagGraphNode } from '@/api/tagGraph'
@@ -44,6 +46,15 @@ interface SimNode {
   degree: number
 }
 
+function stableHash(value: string): number {
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
+
 interface SimEdge {
   id: string
   source: SimNode
@@ -71,10 +82,12 @@ export function TagGraphCanvas({
   const isMobile = useIsMobile()
   const reducedMotion = usePrefersReducedMotion()
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const sigmaRef = useRef<HTMLDivElement>(null)
+  const sigmaInstanceRef = useRef<Sigma | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const [isSimulating, setIsSimulating] = useState(true)
+  const [isSimulating, setIsSimulating] = useState(false)
   const [hoveredNode, setHoveredNode] = useState<TagGraphNode | null>(null)
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
 
@@ -99,12 +112,15 @@ export function TagGraphCanvas({
 
     sorted.forEach((node, index) => {
       const degree = node.in_degree + node.out_degree
-      const radius = Math.max(9, Math.min(26, 8 + Math.sqrt(degree + node.memory_count) * 2.2))
-      // 初始环形/螺旋分布
-      const angle = (index * 2.39996) // 黄金角散射
-      const dist = Math.min(width, height) * 0.12 * Math.sqrt(index + 1)
-      const x = centerX + Math.cos(angle) * dist + (Math.random() - 0.5) * 20
-      const y = centerY + Math.sin(angle) * dist + (Math.random() - 0.5) * 20
+      const radius = Math.max(9, Math.min(24, 8 + Math.sqrt(degree + node.memory_count) * 2))
+      // 按类型分组的确定性同心轨道布局：刷新后位置稳定，不再随机跳动。
+      const typeIndex = Math.max(0, [...new Set(sorted.map((item) => item.type || 'default'))].indexOf(node.type || 'default'))
+      const typeCount = Math.max(1, new Set(sorted.map((item) => item.type || 'default')).size)
+      const ring = Math.floor(index / Math.max(1, Math.ceil(sorted.length / Math.min(typeCount, 5))))
+      const angle = (stableHash(node.ref || node.id) % 360) * Math.PI / 180 + (index % 12) * 0.18
+      const dist = Math.min(width, height) * (0.16 + Math.min(0.28, ring * 0.045)) + typeIndex * 18
+      const x = centerX + Math.cos(angle) * dist
+      const y = centerY + Math.sin(angle) * dist * 0.68
 
       nodeMap.set(node.id, {
         id: node.id,
@@ -136,6 +152,27 @@ export function TagGraphCanvas({
 
     return { nodes: Array.from(nodeMap.values()), edges: simEdges, nodeMap, width, height }
   }, [nodes, edges])
+
+  useEffect(() => {
+    if (!sigmaRef.current || isMobile) return
+    const graph = new Graph({ multi: true, type: 'directed' })
+    simData.nodes.forEach((node) => graph.addNode(node.id, { x: node.x, y: node.y, size: node.radius, label: node.raw.name, color: paletteFor(node.raw.type).core }))
+    simData.edges.forEach((edge) => {
+      if (graph.hasNode(edge.source.id) && graph.hasNode(edge.target.id)) graph.addEdgeWithKey(edge.id, edge.source.id, edge.target.id, { size: Math.max(0.5, edge.weight * 1.4), color: edge.layer === 'relations' ? '#c4b5fd66' : '#67e8f966' })
+    })
+    let renderer: Sigma | null = null
+    let disposed = false
+    if (typeof WebGL2RenderingContext === 'undefined') return () => { disposed = true }
+    void import('sigma').then(({ default: SigmaRenderer }) => {
+      if (disposed || !sigmaRef.current) return
+      renderer = new SigmaRenderer(graph, sigmaRef.current, { renderLabels: false, defaultNodeColor: '#67e8f9', defaultEdgeColor: '#67e8f955', labelDensity: 0 })
+      renderer.on('clickNode', ({ node }) => { const selected = simData.nodeMap.get(node)?.raw; if (selected) onSelect(selected) })
+      sigmaInstanceRef.current = renderer
+    }).catch(() => {
+      // jsdom/无 WebGL 环境保留可访问列表，不阻断页面和测试。
+    })
+    return () => { disposed = true; renderer?.kill(); sigmaInstanceRef.current = null }
+  }, [isMobile, onSelect, simData])
 
   // 视口复位居中
   const resetView = useCallback(() => {
@@ -233,7 +270,7 @@ export function TagGraphCanvas({
     const render = () => {
       if (!isRunning) return
 
-      // 更新物理引擎
+      // 物理布局仅在用户显式点击播放时运行；默认保持静止便于阅读。
       if (isSimulating && !reducedMotion) {
         stepPhysics()
       }
@@ -252,15 +289,20 @@ export function TagGraphCanvas({
       ctx.scale(dpr, dpr)
       ctx.clearRect(0, 0, rect.width, rect.height)
 
-      // 背景太空网格与深空渐变
+      // 深空观测台背景：低对比度星尘与细网格只提供空间感，不抢数据层注意力。
       const bgGrad = ctx.createRadialGradient(
-        rect.width / 2, rect.height / 2, 50,
-        rect.width / 2, rect.height / 2, rect.width * 0.8
+        rect.width * 0.48, rect.height * 0.42, 20,
+        rect.width * 0.5, rect.height * 0.5, rect.width * 0.82
       )
-      bgGrad.addColorStop(0, '#0a0f1d')
-      bgGrad.addColorStop(1, '#04060a')
+      bgGrad.addColorStop(0, '#10233a')
+      bgGrad.addColorStop(0.52, '#091421')
+      bgGrad.addColorStop(1, '#050a12')
       ctx.fillStyle = bgGrad
       ctx.fillRect(0, 0, rect.width, rect.height)
+      ctx.strokeStyle = 'rgba(125, 211, 252, 0.035)'
+      ctx.lineWidth = 1
+      for (let x = 0; x < rect.width; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, rect.height); ctx.stroke() }
+      for (let y = 0; y < rect.height; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(rect.width, y); ctx.stroke() }
 
       // 应用视口矩阵 (Pan & Zoom)
       const { x: panX, y: panY, scale } = transformRef.current
@@ -288,9 +330,9 @@ export function TagGraphCanvas({
           : false
         const isPathEdge = pathEdgeIds.has(edge.id)
 
-        let strokeColor = edge.layer === 'relations' ? '#e879f9' : '#38bdf8'
-        let lineWidth = isPathEdge ? 3.5 : Math.max(1, edge.weight * 2.6)
-        let alpha = isPathEdge ? 0.95 : Math.max(0.12, Math.min(0.75, edge.weight * 0.8))
+        let strokeColor = edge.layer === 'relations' ? '#c4b5fd' : '#67e8f9'
+        let lineWidth = isPathEdge ? 3.2 : Math.max(0.7, edge.weight * 1.8)
+        let alpha = isPathEdge ? 0.95 : Math.max(0.08, Math.min(0.42, edge.weight * 0.52))
 
         if (selectedSimNode) {
           if (!isConnectedToActive && !isPathEdge) {
@@ -365,7 +407,7 @@ export function TagGraphCanvas({
         }
 
         // 标签文字 (Star Name Text)
-        const showText = !isDimmed || scale > 1.2
+        const showText = isSelected || isHovered || isNeighbor || (!selectedSimNode && (node.degree >= 3 || scale > 1.45))
         if (showText) {
           ctx.globalAlpha = isDimmed ? 0.3 : 0.95
           ctx.fillStyle = isSelected ? '#ffffff' : p.text
@@ -531,14 +573,15 @@ export function TagGraphCanvas({
     <div
       ref={containerRef}
       className={cn(
-        'relative overflow-hidden rounded-xl border border-slate-800 bg-[#06080d] shadow-2xl transition-all duration-300',
+        'relative overflow-hidden rounded-2xl border border-sky-950/80 bg-[#07101b] shadow-[0_24px_80px_rgba(2,8,23,.36)] transition-all duration-300',
         isFullscreen ? 'fixed inset-4 z-50 h-[calc(100vh-2rem)]' : 'h-[38rem] w-full'
       )}
       data-tag-graph-mode="neural-canvas svg"
     >
+      <div ref={sigmaRef} className="absolute inset-0 z-[1]" aria-label="Tag WebGL 关系图" />
       <canvas
         ref={canvasRef}
-        className="h-full w-full cursor-grab active:cursor-grabbing"
+        className="hidden h-full w-full cursor-grab active:cursor-grabbing"
         onMouseMove={handleMouseMove}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
@@ -546,7 +589,7 @@ export function TagGraphCanvas({
       />
 
       {/* 悬浮控制工具栏 */}
-      <div className="absolute bottom-3.5 left-3.5 flex items-center gap-1.5 rounded-lg border border-slate-800/80 bg-slate-950/75 p-1 backdrop-blur-md">
+      <div className="absolute bottom-4 left-4 flex items-center gap-1 rounded-xl border border-sky-300/10 bg-slate-950/70 p-1.5 shadow-lg backdrop-blur-xl">
         <Button
           type="button"
           size="icon-xs"
@@ -600,7 +643,7 @@ export function TagGraphCanvas({
       </div>
 
       {/* 状态徽章与图例 */}
-      <div className="absolute top-3.5 left-3.5 flex flex-wrap items-center gap-2 rounded-lg border border-slate-800/80 bg-slate-950/75 px-3 py-1.5 text-xs text-slate-300 backdrop-blur-md">
+      <div className="absolute left-4 top-4 flex max-w-[calc(100%-2rem)] flex-wrap items-center gap-2 rounded-xl border border-sky-300/10 bg-slate-950/70 px-3 py-2 text-xs text-slate-300 shadow-lg backdrop-blur-xl">
         <SparklesIcon className="size-3.5 text-sky-400" />
         <span>Tag 神经星云</span>
         <span className="text-slate-500">·</span>

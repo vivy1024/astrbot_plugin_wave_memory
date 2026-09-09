@@ -77,8 +77,9 @@ def test_trusted_subject_allows_person_judgment_and_safe_playfulness():
     result = engine.get_injection_details(scope(), sender_id="u1", keywords=["边界"])
 
     assert "值得认真回应" in result["text"]
-    assert "自然承接" in result["text"]
-    assert "轻度玩笑" in result["text"]
+    assert "自然承接" not in result["text"]
+    assert "轻度玩笑" not in result["text"]
+    assert "<relationship_guidance>" not in result["text"]
     assert result["interaction_policy"]["mode"] == "trusted"
     assert repo.calls[0][1] == "qq:user:u1"
 
@@ -91,8 +92,9 @@ def test_hostility_suppresses_person_judgment_and_deescalates():
     result = engine.get_injection_details(scope(), sender_id="u1", keywords=["边界"])
 
     assert "值得认真回应" not in result["text"]
-    assert "礼貌" in result["text"]
+    assert "礼貌" not in result["text"]
     assert "轻度玩笑" not in result["text"]
+    assert "<relationship_guidance>" not in result["text"]
     assert result["interaction_policy"]["mode"] == "deescalate"
 
 
@@ -106,4 +108,5 @@ def test_unknown_subject_keeps_self_and_general_beliefs_but_not_person_judgment(
     assert "先核实事实" in result["text"]
     assert "边界问题需要保持事实核实" in result["text"]
     assert "值得认真回应" not in result["text"]
+    assert "<relationship_guidance>" not in result["text"]
     assert result["interaction_policy"]["reason_code"] == "relationship_unknown"

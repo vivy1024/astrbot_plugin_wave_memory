@@ -431,17 +431,17 @@ class FTS5Channel:
 
     @staticmethod
     def _format(memories: list[dict[str, Any]]) -> str:
-        lines = ["<wave_memory>"]
+        lines = ["<exact_memory>"]
         for memory in memories:
             sender = memory.get("sender_name") or memory.get("sender_id") or "unknown"
             ts = time.strftime("%m-%d %H:%M", time.localtime(float(memory.get("timestamp") or 0)))
             private = memory.get("visibility") == "private"
-            location = "[记忆]" if private else f"[记忆][群 {memory.get('group_id') or 'unknown-group'}]"
+            location = "[原词命中]" if private else f"[原词命中][群 {memory.get('group_id') or 'unknown-group'}]"
             lines.append(
                 f"{location} {sender}({ts}): {memory.get('content', '')} "
                 f"(relevance: {float(memory.get('score') or 0):.2f})"
             )
-        lines.append("</wave_memory>")
+        lines.append("</exact_memory>")
         return "\n".join(lines)
 
     @staticmethod

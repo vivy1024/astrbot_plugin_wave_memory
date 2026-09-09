@@ -173,4 +173,37 @@ describe('SoulPage 仅加载正式 Scope 数据', () => {
     ))
     await waitFor(() => expect(api.formal.mock.calls.length).toBeGreaterThan(loadsBefore))
   })
+
+  it('只读展示关切状态标签，不提供结案或状态变更入口', async () => {
+    api.formal.mockResolvedValue({
+      source: { health: 'healthy', reason_code: null },
+      mood: { value: '平静', state: 'known', components: null, policy_version: 'v1', revision: 1, evidence: [] },
+      concerns: {
+        items: [{
+          id: 11,
+          topic: '考研结果还没公布',
+          status: 'active',
+          concern_type: 'follow_up',
+          last_triggered: 1720000000,
+          revision: 2,
+          evidence: [],
+        }],
+        page: { total: 1, total_status: 'exact', reason_code: null, limit: 25, offset: 0, page: 1, page_count: 1, has_more: false },
+      },
+      timeline: page,
+      relationship_history: page,
+      soul_context: { status: 'unavailable', reason_code: 'formal_soul_context_unavailable', timezone: null, circadian: null, energy: null, sleepiness: null },
+      relationship: { affinity: 0.5, state: 'known', revision: 1, evidence: [], people_ref: null },
+      capabilities: { mutate: { available: false, reason_code: 'readonly' }, runtime_refresh: { available: false, reason_code: 'unavailable' } },
+      runtime_refresh: { status: 'unavailable', operation: null, reason_code: 'unavailable' },
+    })
+
+    render(<MemoryRouter initialEntries={['/soul?bot_id=bot-a&session_id=session-a&visibility=group']}><SoulPage /></MemoryRouter>)
+
+    expect(await screen.findByText('考研结果还没公布')).toBeVisible()
+    expect(screen.getByText('激活')).toBeVisible()
+    expect(screen.getByText('follow_up')).toBeVisible()
+    expect(screen.getByText(/只读展示，可作为自然关心方向，不是强制回复指令/)).toBeVisible()
+    expect(screen.queryByRole('button', { name: /结案|归档|恢复|推进/ })).not.toBeInTheDocument()
+  })
 })

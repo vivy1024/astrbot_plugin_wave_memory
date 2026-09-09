@@ -12,9 +12,28 @@ class ScopedFactsRepo:
         return list(self.rows[:limit])
 
 
+class _Conn:
+    def __init__(self, rows=None):
+        self.rows = list(rows or [])
+        self.calls = []
+
+    def execute(self, sql, params=None):
+        self.calls.append((sql, params))
+
+        class _Result:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def fetchall(self):
+                return list(self._rows)
+
+        return _Result(self.rows)
+
+
 class DBBox:
-    def __init__(self, rows):
+    def __init__(self, rows, *, legacy_rows=None):
         self.scoped_knowledge = ScopedFactsRepo(rows)
+        self.conn = _Conn(legacy_rows or [])
 
 
 class FactsChannelTest(unittest.TestCase):
@@ -144,6 +163,18 @@ class FactsChannelTest(unittest.TestCase):
         self.assertEqual(zero.status, "empty")
         self.assertEqual(compat.status, "disabled")
         self.assertEqual(len(db.scoped_knowledge.calls), 1)
+
+    def test_reads_legacy_facts_table_when_scoped_empty(self):
+        from services.injection.channels.facts import FactsChannel
+
+        legacy = [(7, "用户", "喜欢", "手冲咖啡", 0.9, 1_700_000_000.0, 1_700_000_000.0, "FACTUAL")]
+        db = DBBox([], legacy_rows=legacy)
+        channel = FactsChannel(db=db)
+        result = asyncio.run(channel.build(self._ctx(message="咖啡")))
+        self.assertEqual(result.status, "hit")
+        self.assertIn("用户 喜欢 手冲咖啡", result.text)
+        self.assertTrue(db.conn.calls)
+        self.assertIn("FROM facts", db.conn.calls[0][0])
 
 
 if __name__ == "__main__":

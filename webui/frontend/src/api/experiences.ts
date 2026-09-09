@@ -13,7 +13,10 @@ export interface ExperienceEpisode {
   bot_reply?: string | null
   user_reaction?: string | null
   outcome?: string | null
-  source_memory_ids?: string | null
+  source_memory_ids?: string | number[] | null
+  origin_memory_id?: number | null
+  origin_episode_id?: number | null
+  reflection_candidate?: boolean | null
   emotional_weight?: number | null
   created_at?: number | null
 }

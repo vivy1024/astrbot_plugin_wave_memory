@@ -231,7 +231,14 @@ def test_main_production_wiring_passes_formal_repositories_writer_and_runtime_sc
     ) == 2
     assert "config['cross_group_enabled'] = self.cross_group_enabled" in context_config_source
     assert "config['shared_memory_grants_enabled'] = self.shared_memory_grants_enabled" in context_config_source
-    assert "self.concern_tracker.add(topic=topic" in on_message_source
+    # 后台盲抽已整体废除：on_message 不得自动创建关切或时间锚点，
+    # 两者都只能由模型现场基于证据经工具 / 命令链写入。
+    for blind_write in ("concern_tracker.add(", "subjective_time.add_anchor("):
+        assert blind_write not in on_message_source, f"on_message 不得后台盲抽: {blind_write}"
+    assert "WaveMemoryNoteConcernTool(" in initializer_source, "关切必须由现场工具显式提审"
+    assert "write_gateway=self.write_gateway" in initializer_source, "关切工具必须绑定正式写入网关"
     assert "scope=runtime_scope" in on_message_source
-    assert "self.concern_tracker.match(locked_message, scope=runtime_scope)" in on_message_source
-    assert "self.subjective_time.add_anchor" in on_message_source
+    # 注意：proactive 主动追问所需的 concern_score 目前无供数方，
+    # ConcernTracker.match/summary 与 SubjectiveTime.add_anchor 均无生产调用者，
+    # "关切驱动主动关心"尚未接线。此处刻意不断言其存在，
+    # 以免留下"主动行为已守护"的错觉（接线为独立待办，需产品决定）。

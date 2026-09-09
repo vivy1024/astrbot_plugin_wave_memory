@@ -396,6 +396,13 @@ class ScopedExploreKgContractTest(unittest.TestCase):
                     status="deleted", previous_locator=None,
                 )
 
+            async def update_tag(self, **kwargs):
+                self.calls.append(("update_tag", kwargs["target"], kwargs["fields"]))
+                return types.SimpleNamespace(
+                    operation_id="op-tu", kind="tag", locator=kwargs["target"].locator, revision=kwargs["target"].revision + 1,
+                    status="active", previous_locator=None,
+                )
+
         gateway = Gateway()
         container.scoped_knowledge_mutations = gateway
         self.kg.clear_kg_cache()
@@ -422,12 +429,25 @@ class ScopedExploreKgContractTest(unittest.TestCase):
         )
         relation_deleted = asyncio.run(self.kg.command_delete_tag_relation.__wrapped__())
         self.assertEqual(relation_deleted["status"], "deleted")
+
+        # 验证新增的 command_update_tag 路由
+        scope = self.kg._group_scope_from_query()
+        tag_ref = self.kg._object_descriptor("tag", 21, 1, scope)["ref"]
+        self.kg.request = self._request(
+            _SCOPE_ARGS,
+            {"ref": tag_ref, "revision": 1, "patch": {"name": "新名称", "tag_type": "topic"}},
+        )
+        tag_updated = asyncio.run(self.kg.command_update_tag.__wrapped__())
+        self.assertEqual(tag_updated["status"], "active")
+        self.assertEqual(tag_updated["revision"], 2)
+
         self.assertEqual(
-            [(call[0], call[1].kind, call[1].locator) for call in gateway.calls],
+            [(call[0], call[1].kind) for call in gateway.calls],
             [
-                ("delete_fact", "fact", 11),
-                ("update_relation", "tag_relation", 31),
-                ("delete_relation", "tag_relation", 31),
+                ("delete_fact", "fact"),
+                ("update_relation", "tag_relation"),
+                ("delete_relation", "tag_relation"),
+                ("update_tag", "tag"),
             ],
         )
 

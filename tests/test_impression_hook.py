@@ -2,13 +2,14 @@ import ast
 import asyncio
 import copy
 import json
-import sqlite3
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
 from domain.scope import RuntimeScope, SessionRef
-from services.impression_timeline import append_impression, relationship_context
+from engine.db.connection import ConnectionManager
+from engine.db.person_timeline_repo import PersonTimelineRepo
+from services.impression_timeline import parse_impression_mark, persist_unsettled_trace
 
 
 class _FakePlain:
@@ -90,8 +91,8 @@ def _load_method(method_name: str):
         "Image": _FakeImage,
         "json": json,
         "time": SimpleNamespace(time=lambda: 1700000000.0),
-        "append_impression": append_impression,
-        "relationship_context": relationship_context,
+        "persist_unsettled_trace": persist_unsettled_trace,
+        "parse_impression_mark": parse_impression_mark,
     }
     exec(compile(module, str(source_path), "exec"), namespace)
     return namespace[method_name]
@@ -99,7 +100,9 @@ def _load_method(method_name: str):
 
 class ImpressionHookTest(unittest.TestCase):
     def setUp(self):
-        self.conn = sqlite3.connect(":memory:")
+        self.manager = ConnectionManager(":memory:")
+        self.timeline = PersonTimelineRepo(self.manager)
+        self.conn = self.manager.conn
         self.conn.execute("""
             CREATE TABLE user_profiles (
                 user_id TEXT,
@@ -116,7 +119,7 @@ class ImpressionHookTest(unittest.TestCase):
             pass
 
         self.plugin = SimpleNamespace(
-            db=SimpleNamespace(conn=self.conn),
+            db=SimpleNamespace(conn=self.conn, person_timeline=self.timeline),
             ignore_bot_messages=False,
             _bot_registry={},
             _get_bot_name=lambda bot_id: "test_bot",
@@ -127,7 +130,7 @@ class ImpressionHookTest(unittest.TestCase):
         self.on_decorating_result = _load_method("on_decorating_result")
 
     def tearDown(self):
-        self.conn.close()
+        self.manager.close()
 
     def test_extract_and_clean_impression_brackets(self):
         # 1. 模拟 LLM 输出末尾携带 <<impression:...>>
@@ -141,12 +144,9 @@ class ImpressionHookTest(unittest.TestCase):
         # 验证文本中的 impression 标记被完全清洗
         self.assertEqual(chain[0].text, "你好呀，今天天气真不错！")
 
-        # 验证数据库中写入了画像 impression
-        row = self.conn.execute("SELECT metadata FROM user_profiles WHERE user_id='u1' AND group_id='g1' AND bot_id='b1'").fetchone()
-        self.assertIsNotNone(row)
-        meta = json.loads(row[0])
-        self.assertEqual(meta.get("impression"), "活泼开朗的朋友")
-        self.assertIn("impression_updated_at", meta)
+        state = self.timeline.get_unsettled_state(bot_id="b1", user_id="u1", group_id="g1")
+        self.assertEqual(state["traces"][0]["text"], "活泼开朗的朋友")
+        self.assertEqual(state["energy"], 1.0)
 
     def test_extract_and_clean_legacy_impression_square_brackets(self):
         # 2. 模拟兼容 [impression:...] 标记及多行与额外换行
@@ -160,11 +160,8 @@ class ImpressionHookTest(unittest.TestCase):
         # 验证文本清洗干净
         self.assertEqual(chain[0].text, "这是正文内容。")
 
-        # 验证数据库中写入了画像
-        row = self.conn.execute("SELECT metadata FROM user_profiles WHERE user_id='u2' AND group_id='g1' AND bot_id='b1'").fetchone()
-        self.assertIsNotNone(row)
-        meta = json.loads(row[0])
-        self.assertEqual(meta.get("impression"), "喜欢钻研技术的小伙伴")
+        state = self.timeline.get_unsettled_state(bot_id="b1", user_id="u2", group_id="g1")
+        self.assertEqual(state["traces"][0]["text"], "喜欢钻研技术的小伙伴")
 
     def test_no_impression_tag_leaves_chain_untouched(self):
         # 3. 正常消息不含 impression 标记
@@ -189,10 +186,8 @@ class ImpressionHookTest(unittest.TestCase):
         asyncio.run(self.on_decorating_result(self.plugin, event))
 
         self.assertEqual(chain[0].text, "收到！稍后我会详细为你解答。")
-        row = self.conn.execute("SELECT metadata FROM user_profiles WHERE user_id='u4' AND group_id='g1' AND bot_id='b1'").fetchone()
-        self.assertIsNotNone(row)
-        meta = json.loads(row[0])
-        self.assertEqual(meta.get("impression"), "很有礼貌的提问者")
+        state = self.timeline.get_unsettled_state(bot_id="b1", user_id="u4", group_id="g1")
+        self.assertEqual(state["traces"][0]["text"], "很有礼貌的提问者")
 
     def test_existing_profile_updated_safely(self):
         # 5. 用户已有 metadata（如 tags 等），更新 impression 时不覆盖已有字段
@@ -214,9 +209,10 @@ class ImpressionHookTest(unittest.TestCase):
         row = self.conn.execute("SELECT metadata FROM user_profiles WHERE user_id='u5' AND group_id='g1' AND bot_id='b1'").fetchone()
         self.assertIsNotNone(row)
         meta = json.loads(row[0])
-        self.assertEqual(meta.get("impression"), "最新深入讨论的新印象")
+        self.assertEqual(meta.get("impression"), "旧印象")
         self.assertEqual(meta.get("tags"), {"geek": 1})
-        self.assertEqual(meta.get("impression_history")[0]["text"], "旧印象")
+        state = self.timeline.get_unsettled_state(bot_id="b1", user_id="u5", group_id="g1")
+        self.assertEqual(state["traces"][0]["text"], "最新深入讨论的新印象")
 
     def test_impression_persistence_uses_package_relative_import(self):
         source_path = Path(__file__).resolve().parents[1] / "main.py"
@@ -232,29 +228,23 @@ class ImpressionHookTest(unittest.TestCase):
         module_imports = [
             node for node in tree.body
             if isinstance(node, ast.ImportFrom)
-            and any(alias.name == "append_impression" for alias in node.names)
+            and any(alias.name in {"persist_unsettled_trace", "parse_impression_mark"} for alias in node.names)
         ]
         self.assertEqual(len(module_imports), 1)
         self.assertEqual(module_imports[0].module, "services.impression_timeline")
         self.assertEqual(module_imports[0].level, 1)
+        imported = {alias.name for alias in module_imports[0].names}
+        self.assertIn("persist_unsettled_trace", imported)
+        self.assertIn("parse_impression_mark", imported)
         method_imports = [
             node for node in ast.walk(method)
             if isinstance(node, ast.ImportFrom)
             and any(alias.name == "append_impression" for alias in node.names)
         ]
         self.assertEqual(method_imports, [])
-        assigned: list[str] = []
-        for node in ast.walk(method):
-            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
-                continue
-            func = node.value.func
-            if not isinstance(func, ast.Name) or func.id != "relationship_context":
-                continue
-            target = node.targets[0]
-            names = target.elts if isinstance(target, ast.Tuple) else [target]
-            assigned.extend(item.id for item in names if isinstance(item, ast.Name))
-        self.assertIn("event_anchor", assigned)
-        self.assertNotIn("event", assigned)
+        source = source_path.read_text(encoding="utf-8")
+        self.assertNotIn("append_impression(_meta", source)
+        self.assertIn("persist_unsettled_trace(", source)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
-"""Append-only impression history helpers.
+"""Person timeline helpers.
 
-Current ``metadata.impression`` remains the latest pointer. History is stored in
-``metadata.impression_history`` and never used as relationship events.
+Formal history lives in ``person_timeline_events``. Unsettled energy lives in
+``person_unsettled_state``. Leftover JSON fields are projected into tables once.
 """
 
 from __future__ import annotations
@@ -11,9 +11,12 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 
-HISTORY_LIMIT = 20
-LEDGER_LIMIT = 50
-TRAJECTORY_LIMIT = 3
+INJECTION_SUMMARY_LIMIT = 12
+AFFINITY_STEP_CAP = 2.0
+AFFINITY_HOSTILITY_STEP_CAP = 3.0
+UNSETTLED_ENERGY_FULL = 10.0
+IMPACT_CAP = 5.0
+ALLOWED_AFFINITY_DIMENSIONS = ("trust", "fun", "depth", "hostility", "familiarity")
 DIMENSION_KEYS = ("familiarity", "trust", "fun", "depth", "hostility")
 MEANINGFUL_EVENT_TYPES = frozenset({
     "deep_talk",
@@ -28,6 +31,19 @@ MEANINGFUL_EVENT_TYPES = frozenset({
     "relationship.manual_calibration",
 })
 NOISY_EVENT_TYPES = frozenset({"message_seen"})
+_TIMELINE_JSON_KEYS = (
+    "impression",
+    "impression_history",
+    "impression_ledger",
+    "impression_event",
+    "impression_snapshot",
+    "impression_updated_at",
+    "impression_cleared_at",
+    "impression_cleared_reason",
+    "unsettled_traces",
+    "unsettled_energy",
+    "unsettled_interaction_count",
+)
 
 
 def _as_mapping(value: Any) -> dict[str, Any]:
@@ -144,6 +160,100 @@ def synthesize_milestone_phrase(
     return f"关系发生变化（{normalized_reason}），{diff_text}"
 
 
+def strip_timeline_json(metadata: Any) -> dict[str, Any]:
+    payload = _as_mapping(metadata)
+    for key in _TIMELINE_JSON_KEYS:
+        payload.pop(key, None)
+    return payload
+
+
+def persist_timeline_event(
+    db: Any,
+    *,
+    bot_id: str,
+    user_id: str,
+    group_id: str,
+    kind: str,
+    summary: str,
+    detail: str = "",
+    occurred_at: float | None = None,
+    provenance: Mapping[str, Any] | None = None,
+    connection=None,
+) -> None:
+    repo = getattr(db, "person_timeline", None)
+    if repo is None:
+        return
+    repo.add_event(
+        bot_id=bot_id,
+        user_id=user_id,
+        group_id=group_id,
+        kind=kind,
+        summary=summary,
+        detail=detail or summary,
+        occurred_at=occurred_at,
+        provenance=provenance,
+        connection=connection,
+    )
+
+
+def load_timeline_events(
+    db: Any,
+    *,
+    bot_id: str,
+    user_id: str,
+    group_id: str | None = None,
+    query: str = "",
+    limit: int = 50,
+    connection=None,
+) -> list[dict[str, Any]]:
+    repo = getattr(db, "person_timeline", None)
+    if repo is None:
+        return []
+    return repo.list_events(
+        bot_id=bot_id,
+        user_id=user_id,
+        group_id=group_id,
+        query=query,
+        limit=limit,
+        connection=connection,
+    )
+
+
+def migrate_and_strip_profile_metadata(
+    db: Any,
+    *,
+    bot_id: str,
+    user_id: str,
+    group_id: str,
+    metadata: Any,
+    connection=None,
+) -> dict[str, Any]:
+    payload = _as_mapping(metadata)
+    if not any(key in payload for key in _TIMELINE_JSON_KEYS):
+        return payload
+    repo = getattr(db, "person_timeline", None)
+    if repo is None or not hasattr(repo, "migrate_profile_metadata"):
+        return payload
+    return repo.migrate_profile_metadata(
+        bot_id=bot_id,
+        user_id=user_id,
+        group_id=group_id,
+        metadata=payload,
+        connection=connection,
+    )
+
+
+def current_impression_text(events: Sequence[Any] | None, metadata: Any = None) -> str:
+    for item in events or ():
+        if not isinstance(item, Mapping):
+            continue
+        if str(item.get("kind") or "") in {"impression", "affinity"}:
+            text = str(item.get("detail") or item.get("summary") or item.get("text") or "").strip()
+            if text:
+                return text
+    return str(_as_mapping(metadata).get("impression") or "").strip()
+
+
 def record_affinity_milestone(
     metadata: Any,
     *,
@@ -227,7 +337,7 @@ def append_impression(
         }
         archived.update(context)
         history.append(archived)
-    payload["impression_history"] = history[-HISTORY_LIMIT:]
+    payload["impression_history"] = history
     payload["impression"] = current
     payload["impression_updated_at"] = stamp
     if context.get("snapshot"):
@@ -259,7 +369,7 @@ def clear_impression(metadata: Any, *, reason: str, now: float | None = None, ac
             event=payload.get("impression_event") if isinstance(payload.get("impression_event"), Mapping) else None,
         ),
     })
-    payload["impression_history"] = history[-HISTORY_LIMIT:]
+    payload["impression_history"] = history
     payload["impression"] = ""
     payload["impression_updated_at"] = stamp
     payload["impression_cleared_at"] = stamp
@@ -332,7 +442,7 @@ def append_ledger_entry(
         except (TypeError, ValueError):
             pass
     ledger.append(entry)
-    payload["impression_ledger"] = ledger[-LEDGER_LIMIT:]
+    payload["impression_ledger"] = ledger
     return payload
 
 
@@ -346,41 +456,496 @@ def ledger_entries(metadata: Any, *, limit: int = 5) -> list[dict[str, Any]]:
     return [dict(item) for item in items[-cap:]]
 
 
+def affinity_shift_range(
+    metadata: Any | None = None,
+    *,
+    dimension: str = "trust",
+    energy: float | None = None,
+) -> dict[str, float]:
+    """本轮允许的好感增量区间：小步积累，禁止一次大跳。"""
+    dim = str(dimension or "trust").strip() or "trust"
+    if dim not in ALLOWED_AFFINITY_DIMENSIONS:
+        dim = "trust"
+    cap = AFFINITY_HOSTILITY_STEP_CAP if dim == "hostility" else AFFINITY_STEP_CAP
+    amount = energy if energy is not None else unsettled_energy(_as_mapping(metadata))
+    if amount >= UNSETTLED_ENERGY_FULL:
+        cap = min(cap + 0.5, AFFINITY_STEP_CAP + 0.5 if dim != "hostility" else AFFINITY_HOSTILITY_STEP_CAP)
+    return {"min": round(-cap, 2), "max": round(cap, 2), "dimension": dim}
+
+
+def propose_affinity_shift(
+    metadata: Any,
+    *,
+    dimension: str,
+    requested_delta: Any,
+    energy: float | None = None,
+) -> dict[str, Any]:
+    """校验模型提交的增量。越界不落盘。"""
+    bounds = affinity_shift_range(metadata, dimension=dimension, energy=energy)
+    dim = str(bounds["dimension"])
+    amount = _finite(requested_delta)
+    if amount is None:
+        return {"ok": False, "error": "affinity_delta_invalid", **bounds, "requested": requested_delta}
+    if amount < bounds["min"] or amount > bounds["max"]:
+        return {
+            "ok": False,
+            "error": "affinity_delta_out_of_range",
+            **bounds,
+            "requested": round(amount, 2),
+        }
+    return {"ok": True, "dimension": dim, "delta": round(amount, 2), "min": bounds["min"], "max": bounds["max"]}
+
+
+def event_type_for_shift(dimension: str, delta: float) -> str:
+    if dimension == "hostility" and delta > 0:
+        return "ignored_boundary"
+    if dimension == "depth" and delta > 0:
+        return "deep_talk"
+    if dimension == "fun" and delta > 0:
+        return "joke"
+    if delta < 0:
+        return "direct_reply"
+    return "direct_reply"
+
+
+def _item_summary(item: Mapping[str, Any], *, fallback_text: str = "") -> str:
+    summary = str(item.get("summary") or "").strip()
+    if summary:
+        return summary
+    event = item.get("event") if isinstance(item.get("event"), Mapping) else {}
+    before = _finite(event.get("before_affinity"))
+    after = _finite(event.get("after_affinity"))
+    text = str(item.get("text") or fallback_text or "").strip()
+    reason = str(event.get("reason") or "").strip().replace("\n", " ")
+    if before is not None and after is not None and before != after:
+        piece = f"好感 {before:g}→{after:g}"
+        if reason:
+            piece += f"（{reason[:60]}）"
+        if text and text not in piece:
+            piece += f"：{text[:80]}"
+        return piece
+    return text
+
+
+def _item_detail(item: Mapping[str, Any]) -> str:
+    detail = str(item.get("detail") or "").strip()
+    if detail:
+        return detail
+    return str(item.get("text") or "").strip()
+
+
+def _item_timestamp(item: Mapping[str, Any]) -> float:
+    for key in ("at", "updated_at", "superseded_at", "cleared_at", "ts"):
+        value = _finite(item.get(key))
+        if value is not None:
+            return value
+    return 0.0
+
+
+def _decay_score(item: Mapping[str, Any], *, now: float) -> float:
+    age_days = max(0.0, (now - _item_timestamp(item)) / 86400.0)
+    recency = max(0.15, 1.0 - age_days * 0.02)
+    kind = str(item.get("kind") or "").strip()
+    if not kind:
+        event = item.get("event") if isinstance(item.get("event"), Mapping) else {}
+        if _finite(event.get("before_affinity")) is not None and _finite(event.get("after_affinity")) is not None:
+            kind = "affinity"
+        else:
+            kind = "impression"
+    weight = {"affinity": 1.2, "impression": 1.0, "person_fact": 0.9}.get(kind, 1.0)
+    return recency * weight
+
+
+def impression_timeline_lines(
+    metadata: Any,
+    *,
+    limit: int = INJECTION_SUMMARY_LIMIT,
+    now: float | None = None,
+    query: str = "",
+    events: Sequence[Any] | None = None,
+) -> list[str]:
+    """衰减后的摘要时间线；关键词命中则把对应 detail 提前。"""
+    payload = _as_mapping(metadata)
+    items = [item for item in (events or ()) if isinstance(item, Mapping)]
+    if not items:
+        stored = payload.get("impression_history")
+        items = [item for item in stored if isinstance(item, Mapping)] if isinstance(stored, list) else []
+        current_event = payload.get("impression_event") if isinstance(payload.get("impression_event"), Mapping) else {}
+        current_text = str(payload.get("impression") or "").strip()
+        if current_event or current_text:
+            current = {
+                "kind": "impression",
+                "summary": _item_summary({"event": current_event, "text": current_text}, fallback_text=current_text),
+                "detail": current_text,
+                "text": current_text,
+                "event": current_event,
+                "at": payload.get("impression_updated_at"),
+            }
+            if current["summary"] and all(_item_summary(item) != current["summary"] for item in items):
+                items.append(current)
+    if not items:
+        return []
+    stamp = float(now if now is not None else time.time())
+    ranked = sorted(items, key=lambda item: _decay_score(item, now=stamp), reverse=True)
+    cap = max(1, int(limit or INJECTION_SUMMARY_LIMIT))
+    selected = ranked[:cap]
+    query_tokens = [token.casefold() for token in str(query or "").split() if len(token) >= 2]
+    if query_tokens:
+        boosted: list[Mapping[str, Any]] = []
+        for item in items:
+            blob = f"{_item_summary(item)} {_item_detail(item)}".casefold()
+            if any(token in blob for token in query_tokens) and item not in selected:
+                boosted.append(item)
+        selected = list(boosted[:3]) + [item for item in selected if item not in boosted][:cap]
+    lines = ["印象时间线（摘要，早→近；完整记录可检索）："]
+    chronological = sorted(selected, key=_item_timestamp)
+    for item in chronological:
+        summary = _item_summary(item)
+        if not summary:
+            continue
+        detail = _item_detail(item)
+        if query_tokens and detail and detail != summary and any(token in detail.casefold() for token in query_tokens):
+            lines.append(f"- {summary}｜{detail[:160]}")
+        else:
+            lines.append(f"- {summary}")
+    return lines if len(lines) > 1 else []
+
+
 def injection_lines(
     metadata: Any,
     *,
-    trajectory_limit: int = TRAJECTORY_LIMIT,
+    trajectory_limit: int = INJECTION_SUMMARY_LIMIT,
     history: Sequence[Any] | None = None,
+    now: float | None = None,
+    query: str = "",
+    events: Sequence[Any] | None = None,
 ) -> list[str]:
     payload = _as_mapping(metadata)
-    current = str(payload.get("impression") or "").strip()
+    current = current_impression_text(events, payload)
     lines: list[str] = []
     if current:
         lines.append(f"你对这个人的印象：{current}")
-    recent_ledger = ledger_entries(payload, limit=3)
-    if recent_ledger:
-        rendered = []
-        for item in recent_ledger:
-            amount = _finite(item.get("delta"))
-            sign = "+" if amount is not None and amount > 0 else ""
-            delta_text = f"{item.get('dimension')}{sign}{amount:g}" if amount is not None else str(item.get("dimension") or "")
-            reason = str(item.get("reason") or "").strip()
-            rendered.append(f"{item.get('event_type')} {delta_text}" + (f"：{reason}" if reason else ""))
-        if rendered:
-            lines.append("最近关系账本：" + "；".join(rendered))
+    timeline = impression_timeline_lines(payload, limit=trajectory_limit, now=now, query=query, events=events)
+    if timeline:
+        lines.extend(timeline)
     event = payload.get("impression_event") if isinstance(payload.get("impression_event"), Mapping) else meaningful_event_anchor(history)
     formatted = _format_event(event)
-    if formatted and formatted != "互动" and not recent_ledger:
+    if formatted and formatted != "互动" and not timeline:
         lines.append(f"最近关系线索：{formatted}")
-    stored = payload.get("impression_history")
-    if not isinstance(stored, list):
-        return lines
-    previous = [
-        str(item.get("text") or "").strip()
-        for item in stored
-        if isinstance(item, Mapping) and str(item.get("text") or "").strip() and str(item.get("text") or "").strip() != current
-    ]
-    previous = [text for text in previous if text][-trajectory_limit:]
-    if previous:
-        lines.append("印象演变：" + " → ".join(previous + ([current] if current else [])))
     return lines
+
+
+def parse_impression_mark(raw: str) -> tuple[str, float]:
+    """Parse `观感 | impact: 3` or a bare impression sentence. Empty/none marks are dropped."""
+    text = str(raw or "").strip().replace("\n", " ")
+    if not text:
+        return "", 0.0
+    lowered = text.casefold()
+    if lowered in {"无", "无新看法", "none", "n/a", "没有", "无变动"}:
+        return "", 0.0
+    impact = 1.0
+    body = text
+    for separator in ("|", "｜"):
+        if separator in text:
+            left, right = text.split(separator, 1)
+            body = left.strip()
+            digits = "".join(ch for ch in right if ch.isdigit() or ch in ".-")
+            parsed = _finite(digits)
+            if parsed is not None:
+                impact = parsed
+            break
+    if len(body) < 4:
+        return "", 0.0
+    return body[:120], max(0.0, min(IMPACT_CAP, impact))
+
+
+def load_unsettled_state(
+    db: Any,
+    *,
+    bot_id: str,
+    user_id: str,
+    group_id: str = "",
+    connection=None,
+) -> dict[str, Any]:
+    repo = getattr(db, "person_timeline", None)
+    if repo is None or not hasattr(repo, "get_unsettled_state"):
+        return {"energy": 0.0, "interaction_count": 0, "traces": []}
+    return repo.get_unsettled_state(bot_id=bot_id, user_id=user_id, group_id=group_id, connection=connection)
+
+
+def persist_unsettled_trace(
+    db: Any,
+    *,
+    bot_id: str,
+    user_id: str,
+    group_id: str,
+    text: str,
+    impact: float | int | None = 1.0,
+    now: float | None = None,
+    connection=None,
+) -> dict[str, Any]:
+    cleaned = str(text or "").strip().replace("\n", " ")[:120]
+    amount = _finite(impact)
+    if amount is None:
+        amount = 1.0
+    amount = max(0.0, min(IMPACT_CAP, amount))
+    if not cleaned or amount <= 0:
+        return load_unsettled_state(db, bot_id=bot_id, user_id=user_id, group_id=group_id, connection=connection)
+    repo = getattr(db, "person_timeline", None)
+    if repo is None:
+        return {"energy": amount, "interaction_count": 1, "traces": [{"text": cleaned, "impact": amount}]}
+    return repo.add_unsettled_trace(
+        bot_id=bot_id,
+        user_id=user_id,
+        group_id=group_id,
+        text=cleaned,
+        impact=amount,
+        now=now,
+        connection=connection,
+    )
+
+
+def clear_unsettled_state(
+    db: Any,
+    *,
+    bot_id: str,
+    user_id: str,
+    group_id: str,
+    connection=None,
+) -> None:
+    repo = getattr(db, "person_timeline", None)
+    if repo is None:
+        return
+    repo.clear_unsettled_state(bot_id=bot_id, user_id=user_id, group_id=group_id, connection=connection)
+
+
+def unsettled_energy(metadata: Any, state: Mapping[str, Any] | None = None) -> float:
+    if isinstance(state, Mapping) and "energy" in state:
+        return max(0.0, float(_finite(state.get("energy")) or 0.0))
+    payload = _as_mapping(metadata)
+    stored = _finite(payload.get("unsettled_energy"))
+    if stored is not None:
+        return max(0.0, stored)
+    traces = payload.get("unsettled_traces")
+    if not isinstance(traces, list):
+        return 0.0
+    total = 0.0
+    for item in traces:
+        if not isinstance(item, Mapping):
+            continue
+        total += float(_finite(item.get("impact")) or 1.0)
+    return total
+
+
+def unsettled_energy_line(
+    metadata: Any = None,
+    *,
+    energy: float | None = None,
+    traces: Sequence[Any] | None = None,
+) -> str:
+    payload = _as_mapping(metadata)
+    amount = energy if energy is not None else unsettled_energy(payload)
+    recent: list[str] = []
+    source = traces if traces is not None else payload.get("unsettled_traces")
+    if isinstance(source, list):
+        for item in source[-3:]:
+            if not isinstance(item, Mapping):
+                continue
+            text = str(item.get("text") or item.get("summary") or "").strip()
+            if text:
+                recent.append(text)
+    bounds = affinity_shift_range(payload, energy=amount)
+    line = (
+        f"【感知】未结算能量 {amount:g}/{UNSETTLED_ENERGY_FULL:g}。"
+        f"每轮在回复末尾写 <<impression:当下观感 | impact:1-5>>；无新看法不要写。"
+        f"若你认为该做阶段性定性，调用 wave_memory_record_social_impression，"
+        f"本轮增量须在 [{bounds['min']}, {bounds['max']}]，无变动填 0。"
+    )
+    if recent:
+        line += " 最近观感：" + " / ".join(recent)
+    return line
+
+
+def append_unsettled_trace(
+    metadata: Any,
+    text: str,
+    *,
+    now: float | None = None,
+    impact: float | int | None = 1.0,
+) -> dict[str, Any]:
+    """Compatibility helper for tests; production writes person_unsettled_state."""
+    payload = _as_mapping(metadata)
+    cleaned = str(text or "").strip().replace("\n", " ")[:120]
+    if not cleaned:
+        return payload
+    amount = _finite(impact)
+    if amount is None:
+        amount = 1.0
+    amount = max(0.0, min(IMPACT_CAP, amount))
+    if amount <= 0:
+        return payload
+    stamp = float(now if now is not None else time.time())
+    unsettled = payload.get("unsettled_traces")
+    if not isinstance(unsettled, list):
+        unsettled = []
+    current_energy = unsettled_energy(payload)
+    unsettled.append({
+        "text": cleaned,
+        "summary": cleaned,
+        "detail": cleaned,
+        "impact": amount,
+        "ts": stamp,
+    })
+    payload["unsettled_traces"] = unsettled
+    payload["unsettled_energy"] = round(current_energy + amount, 2)
+    payload["unsettled_interaction_count"] = int(payload.get("unsettled_interaction_count") or 0) + 1
+    return payload
+
+
+def clear_unsettled_traces(metadata: Any) -> dict[str, Any]:
+    payload = _as_mapping(metadata)
+    payload.pop("unsettled_traces", None)
+    payload.pop("unsettled_interaction_count", None)
+    payload.pop("unsettled_energy", None)
+    return payload
+
+
+def should_trigger_affinity_transition(
+    metadata: Any,
+    dimensions: Mapping[str, Any] | None = None,
+    *,
+    energy: float | None = None,
+) -> bool:
+    """能量攒满，或敌意/信任极端时点亮结算提示。模型也可提前自决。"""
+    payload = _as_mapping(metadata)
+    amount = energy if energy is not None else unsettled_energy(payload)
+    if amount >= UNSETTLED_ENERGY_FULL:
+        return True
+    dims = _as_mapping(dimensions)
+    hostility = _finite(dims.get("hostility"))
+    if hostility is not None and hostility >= 10.0:
+        return True
+    trust = _finite(dims.get("trust"))
+    if trust is not None and trust <= -10.0:
+        return True
+    return False
+
+
+_CUE_STOPWORDS = frozenset({
+    "一个", "我们", "他们", "你们", "什么", "这个", "那个", "还是", "没有",
+    "就是", "可以", "自己", "因为", "所以", "如果", "不是", "真的", "已经",
+    "还没", "一下", "怎么", "为啥", "然后", "现在", "之前", "之后",
+})
+_CUE_NOISY_KINDS = frozenset({"message_seen", "unsettled"})
+
+
+def _cue_tokens(text: str) -> set[str]:
+    import re
+
+    raw = str(text or "").casefold()
+    tokens: set[str] = set()
+    for part in re.findall(r"[A-Za-z0-9_]{2,24}", raw):
+        if part not in _CUE_STOPWORDS:
+            tokens.add(part)
+    chars = re.findall(r"[\u4e00-\u9fff]", raw)
+    for width in (2, 3, 4):
+        for index in range(0, max(0, len(chars) - width + 1)):
+            gram = "".join(chars[index:index + width])
+            if gram not in _CUE_STOPWORDS:
+                tokens.add(gram)
+    return tokens
+
+
+def _event_blob(item: Mapping[str, Any]) -> str:
+    return " ".join(
+        str(item.get(key) or "").strip()
+        for key in ("summary", "detail", "text", "kind")
+        if str(item.get(key) or "").strip()
+    )
+
+
+def match_timeline_cue(
+    events: Sequence[Any] | None,
+    message: str,
+    *,
+    min_hits: int = 2,
+) -> dict[str, Any] | None:
+    """本轮消息与该人时间线的词重叠。只返回最高分 1 条，不写库、不建关切。"""
+    text = str(message or "").strip()
+    if len(text) < 4:
+        return None
+    try:
+        from .identity_safety import is_identity_contamination
+    except ImportError:  # pragma: no cover
+        from services.identity_safety import is_identity_contamination
+    if is_identity_contamination(text):
+        return None
+    message_tokens = _cue_tokens(text)
+    if not message_tokens:
+        return None
+    best: dict[str, Any] | None = None
+    best_score = 0
+    for raw in events or ():
+        if not isinstance(raw, Mapping):
+            continue
+        kind = str(raw.get("kind") or raw.get("event_type") or "").strip()
+        if kind in _CUE_NOISY_KINDS or kind in NOISY_EVENT_TYPES:
+            continue
+        blob = _event_blob(raw)
+        if not blob or is_identity_contamination(blob):
+            continue
+        hits = message_tokens & _cue_tokens(blob)
+        strong = {hit for hit in hits if len(hit) >= 3}
+        score = len(hits) + len(strong)
+        if len(strong) < 1 and len(hits) < min_hits:
+            continue
+        if score > best_score:
+            best_score = score
+            summary = str(raw.get("summary") or raw.get("detail") or raw.get("text") or "").strip()[:80]
+            best = {
+                "summary": summary,
+                "hits": sorted(hits),
+                "score": score,
+                "kind": kind,
+                "event_id": raw.get("id") or raw.get("event_id"),
+            }
+    if not best or not best["summary"]:
+        return None
+    return best
+
+
+def timeline_cue_prompt(hit: Mapping[str, Any] | None) -> str:
+    """最多两行。明确不是必须回复的指令。"""
+    if not isinstance(hit, Mapping):
+        return ""
+    summary = str(hit.get("summary") or "").strip()
+    if not summary:
+        return ""
+    return (
+        f"【印象线索】此前与他有过：{summary}。\n"
+        "本轮提到了相关内容。若自然相关可接话；不是必须回复的指令。"
+    )
+
+
+def load_timeline_cue(
+    db: Any,
+    *,
+    bot_id: str,
+    user_id: str,
+    group_id: str,
+    message: str,
+    limit: int = 20,
+) -> dict[str, Any] | None:
+    """规则门热路径：读该人最近时间线，匹配本轮消息。失败则视为未命中。"""
+    bot_id = str(bot_id or "").strip()
+    user_id = str(user_id or "").strip()
+    group_id = str(group_id or "").strip()
+    if not bot_id or not user_id or not group_id:
+        return None
+    try:
+        events = load_timeline_events(
+            db, bot_id=bot_id, user_id=user_id, group_id=group_id, limit=limit
+        )
+    except Exception:
+        return None
+    return match_timeline_cue(events, message)

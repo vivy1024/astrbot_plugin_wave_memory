@@ -204,6 +204,8 @@ class WaveMemorySubmitReviewCandidateTool(FunctionTool[AstrAgentContext]):
             evidence=evidence,
             reason=reason,
             actor="agent",
+            scope=runtime_scope,
+            source_kind=candidate_type,
             metadata={
                 "promoted": False,
                 "policy": "review_required",

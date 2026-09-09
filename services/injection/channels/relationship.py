@@ -7,8 +7,6 @@ from collections.abc import Mapping
 from typing import Any
 
 from ...identity_safety import is_identity_contamination
-from ...belief_gating import snapshot_from_relationship
-from ...proactive_policy import relationship_behavior_guidance
 from ..channel_base import InjectionResult
 from .safety import is_channel_allowed_in_mode
 
@@ -42,8 +40,9 @@ class RelationshipChannel:
 
     name = "affinity"
 
-    def __init__(self, *, repository: Any = None):
+    def __init__(self, *, repository: Any = None, db: Any = None):
         self.repository = repository
+        self.db = db
 
     async def build(self, ctx: Any) -> InjectionResult:
         started = time.perf_counter()
@@ -67,35 +66,119 @@ class RelationshipChannel:
             values = _mapping(relationship.get("values"))
             history = list(_mapping(_mapping(state).get("relationship_history")).get("items") or [])
             impression_meta: Mapping[str, Any] = {}
+            timeline_events: list[Any] = []
+            sender_id = str(getattr(ctx, "sender_id", "") or "").strip()
+            group_id = str(getattr(ctx, "group_id", "") or getattr(scope.session, "conversation_id", "") or "").strip()
+            db = self.db or getattr(self.repository, "db", None) or getattr(self.repository, "_db", None)
+            timeline = getattr(db, "person_timeline", None) if db is not None else None
+            if timeline is None:
+                timeline = getattr(self.repository, "person_timeline", None)
+            cm = getattr(self.repository, "cm", None)
+            if cm is None and db is not None:
+                cm = getattr(db, "conn", None)
+            conn = getattr(db, "conn", None) if db else None
+            if conn is None and cm is not None:
+                conn = getattr(cm, "conn", None) or cm
+            if db is None and timeline is not None:
+                db = type("_TimelineFacade", (), {
+                    "person_timeline": timeline,
+                    "conn": conn,
+                })()
             try:
-                sender_id = str(getattr(ctx, "sender_id", "") or "").strip()
-                group_id = str(getattr(ctx, "group_id", "") or getattr(scope.session, "conversation_id", "") or "").strip()
-                if sender_id and group_id:
-                    db = getattr(self.repository, "db", None) or getattr(self.repository, "_db", None)
-                    conn = getattr(db, "conn", None) if db else None
-                    if conn is None:
-                        cm = getattr(self.repository, "cm", None)
-                        conn = getattr(cm, "conn", None) if cm else None
-                    if conn is not None and hasattr(conn, "execute"):
-                        import json as _json
-                        row = conn.execute(
-                            "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
-                            (sender_id, group_id, scope.bot_id),
-                        ).fetchone()
-                        if row and row[0]:
-                            loaded = _json.loads(row[0])
-                            if isinstance(loaded, Mapping):
-                                impression_meta = loaded
+                if sender_id and group_id and conn is not None and hasattr(conn, "execute"):
+                    import json as _json
+                    row = conn.execute(
+                        "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
+                        (sender_id, group_id, scope.bot_id),
+                    ).fetchone()
+                    if row and row[0]:
+                        loaded = _json.loads(row[0])
+                        if isinstance(loaded, Mapping):
+                            impression_meta = loaded
             except Exception:
                 impression_meta = {}
             try:
-                from ...impression_timeline import injection_lines
+                from ...impression_timeline import (
+                    affinity_shift_range,
+                    injection_lines,
+                    load_timeline_events,
+                    load_unsettled_state,
+                    migrate_and_strip_profile_metadata,
+                    should_trigger_affinity_transition,
+                    unsettled_energy_line,
+                )
             except ImportError:  # pragma: no cover
-                from services.impression_timeline import injection_lines
+                from services.impression_timeline import (
+                    affinity_shift_range,
+                    injection_lines,
+                    load_timeline_events,
+                    load_unsettled_state,
+                    migrate_and_strip_profile_metadata,
+                    should_trigger_affinity_transition,
+                    unsettled_energy_line,
+                )
+            if db is not None and sender_id and group_id:
+                try:
+                    cleaned = migrate_and_strip_profile_metadata(
+                        db,
+                        bot_id=scope.bot_id,
+                        user_id=sender_id,
+                        group_id=group_id,
+                        metadata=impression_meta,
+                        connection=conn,
+                    )
+                    if cleaned != impression_meta and conn is not None and hasattr(conn, "execute"):
+                        import json as _json
+                        conn.execute(
+                            "UPDATE user_profiles SET metadata=? WHERE user_id=? AND group_id=? AND bot_id=?",
+                            (_json.dumps(cleaned, ensure_ascii=False), sender_id, group_id, scope.bot_id),
+                        )
+                        commit = getattr(conn, "commit", None)
+                        if callable(commit):
+                            commit()
+                    impression_meta = cleaned
+                except Exception:
+                    pass
+                try:
+                    timeline_events = load_timeline_events(
+                        db,
+                        bot_id=scope.bot_id,
+                        user_id=sender_id,
+                        query=str(getattr(ctx, "message", "") or ""),
+                        limit=20,
+                        connection=conn,
+                    )
+                except Exception:
+                    timeline_events = []
+            unsettled = {"energy": 0.0, "traces": []}
+            if db is not None and sender_id and group_id:
+                try:
+                    unsettled = load_unsettled_state(
+                        db,
+                        bot_id=scope.bot_id,
+                        user_id=sender_id,
+                        group_id=group_id,
+                        connection=conn,
+                    )
+                except Exception:
+                    unsettled = {"energy": 0.0, "traces": []}
             impression_block = [
-                line for line in injection_lines(impression_meta, history=history)
+                line for line in injection_lines(
+                    impression_meta,
+                    history=history,
+                    now=float(getattr(ctx, "now", 0.0) or time.time()),
+                    query=str(getattr(ctx, "message", "") or ""),
+                    events=timeline_events,
+                )
                 if line and not is_identity_contamination(line)
             ]
+            energy_line = unsettled_energy_line(
+                impression_meta,
+                energy=float(unsettled.get("energy") or 0.0),
+                traces=list(unsettled.get("traces") or []),
+            )
+            if energy_line and not is_identity_contamination(energy_line):
+                impression_block.append(energy_line)
             labels = []
             for name in ("familiarity", "trust", "fun", "depth", "hostility"):
                 item = _mapping(values.get(name))
@@ -110,14 +193,7 @@ class RelationshipChannel:
             if labels:
                 status += "；" + "、".join(labels)
             parts.append(status)
-            guidance = relationship_behavior_guidance((snapshot_from_relationship(scope.subject_principal_id, relationship),))
-            parts.append(
-                "关系行为指导（只调节表达，不改变事实）："
-                f"模式={guidance.get('mode')}，开放度={guidance.get('openness')}，"
-                f"玩笑={guidance.get('playfulness')}，连续性={guidance.get('continuity')}。"
-                f"边界={guidance.get('boundary')}"
-            )
-            if not any(line.startswith("最近关系线索：") for line in impression_block):
+            if not any(line.startswith("最近关系线索：") or line.startswith("印象时间线") for line in impression_block):
                 try:
                     from ...impression_timeline import meaningful_event_anchor
                 except ImportError:  # pragma: no cover
@@ -138,17 +214,7 @@ class RelationshipChannel:
             )
             if evidence_snip and not is_identity_contamination(evidence_snip):
                 parts.append(f"历史关系摘要（只读，不改变好感度）：{evidence_snip}")
-            try:
-                concern_items = list(_mapping(_mapping(state).get("concerns")).get("items") or [])
-                active_topics = [
-                    str(c.get("topic") or "").strip()
-                    for c in concern_items
-                    if isinstance(c, Mapping) and float(c.get("intensity") or 0.0) >= 0.4 and str(c.get("topic") or "").strip()
-                ]
-                if active_topics and not any(is_identity_contamination(t) for t in active_topics):
-                    parts.append(f"当前前情关切（可在适当时机自然承接，切忌突兀说教）：{'；'.join(active_topics[:2])}")
-            except Exception:
-                pass
+            # 关切常驻句已移除：未决事项只通过时间线线索在规则门命中时出现。
             try:
                 timeline_items = list(_mapping(_mapping(state).get("timeline")).get("items") or [])
                 for item in timeline_items[:3]:
@@ -159,17 +225,37 @@ class RelationshipChannel:
                         parts.append(f"共同交往锚点：{summary}")
             except Exception:
                 pass
-            text = "\n".join(part for part in parts if part)
-            if len(text) > 900:
-                kept: list[str] = []
-                used = 0
-                for part in parts:
-                    extra = len(part) + (1 if kept else 0)
-                    if used + extra > 900:
-                        break
-                    kept.append(part)
-                    used += extra
-                text = "\n".join(kept) if kept else text[:900]
+            trigger_dims: dict[str, Any] = {}
+            for name in ("familiarity", "trust", "fun", "depth", "hostility"):
+                item = _mapping(values.get(name))
+                value = item.get("effective_value", dimensions.get(name))
+                if value is not None:
+                    trigger_dims[name] = value
+            transition_hint = ""
+            if should_trigger_affinity_transition(impression_meta, trigger_dims or dimensions, energy=float(unsettled.get("energy") or 0.0)):
+                bounds = affinity_shift_range(impression_meta, dimension="trust", energy=float(unsettled.get("energy") or 0.0))
+                transition_hint = (
+                    "【该结算了】未结算能量已满或关系可能质变。"
+                    f"若做阶段性定性，调用 wave_memory_record_social_impression，"
+                    f"本轮增量须在 [{bounds['min']}, {bounds['max']}]，无变动填 0。"
+                    "日常观感继续写 <<impression:当下观感 | impact:1-5>>，不要覆盖这句结算。"
+                )
+
+            # 优先保证裁决节点指令完整注入，不被历史冗余背景截断
+            max_total = 900
+            reserved_len = len(transition_hint) + (1 if transition_hint else 0)
+            history_budget = max(200, max_total - reserved_len)
+            kept: list[str] = []
+            used = 0
+            for part in parts:
+                extra = len(part) + (1 if kept else 0)
+                if used + extra > history_budget:
+                    break
+                kept.append(part)
+                used += extra
+            if transition_hint:
+                kept.append(transition_hint)
+            text = "\n".join(kept) if kept else ""
             if is_identity_contamination(text):
                 result = InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="identity_contamination")
                 result.filtered = [{"filter_reason": "identity_contamination", "filter_channel": self.name}]

@@ -83,7 +83,7 @@ class FTS5ChannelTest(unittest.TestCase):
             trace_id="trace-fts5",
         )
 
-    def test_exact_matches_return_wave_memory_text_and_audit_items(self):
+    def test_exact_matches_return_exact_memory_text_and_audit_items(self):
         from services.injection.channels.fts5 import FTS5Channel
 
         db = self._db()
@@ -95,7 +95,9 @@ class FTS5ChannelTest(unittest.TestCase):
 
         self.assertEqual(result.channel, "fts5")
         self.assertEqual(result.status, "hit")
-        self.assertIn("<wave_memory>", result.text)
+        self.assertIn("<exact_memory>", result.text)
+        self.assertNotIn("<wave_memory>", result.text)
+        self.assertIn("[原词命中]", result.text)
         self.assertIn("用户提到明光甲", result.text)
         self.assertNotIn("其他群也提过明光甲", result.text)
         self.assertEqual([item["id"] for item in result.items], [1])

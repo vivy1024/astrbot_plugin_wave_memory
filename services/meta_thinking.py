@@ -335,7 +335,6 @@ QQ：{sender_id}
         persona_context = (self_persona_context or "").strip()
         if not persona_context:
             persona_context = f"<self_persona>\n当前身份：{bot_name}。主动说话前先判断是否真的有必要；保持边界和自然克制。\n</self_persona>"
-        relationship_guidance = gate.get("guidance", {}) if gate else {}
         prompt = f"""{prepend_identity_safety_system_prompt('', always=True)}
 
 {persona_context}
@@ -350,7 +349,6 @@ QQ：{sender_id}
     "effective_depth": gate.get("effective_depth") if gate else None,
     "concern_score": gate.get("concern_score") if gate else 0,
     "is_interesting": gate.get("is_interesting") if gate else False,
-    "guidance": relationship_guidance,
 }, ensure_ascii=False)}
 
 【最近群聊（10条）】
@@ -452,11 +450,14 @@ QQ：{sender_id}
         gate = dict(relationship_policy) if isinstance(relationship_policy, Mapping) else {}
         if gate and gate.get("decision") != "allow_llm":
             return ""
-        guidance = gate.get("guidance", {}) if gate else {}
         prompt = f"""{persona_context}
 
 【关系表达边界（只读）】
-{json.dumps(guidance, ensure_ascii=False)}
+{json.dumps({
+    "policy_version": gate.get("policy_version"),
+    "behavior_type": gate.get("behavior_type"),
+    "reason_code": gate.get("reason_code"),
+}, ensure_ascii=False)}
 
 【最近群聊】
 {context_text}

@@ -1,10 +1,13 @@
 from services.impression_timeline import (
+    affinity_shift_range,
     append_impression,
     append_ledger_entry,
     clear_impression,
+    current_impression_text,
     injection_lines,
     ledger_entries,
     meaningful_event_anchor,
+    propose_affinity_shift,
     relationship_context,
     snapshot_from_relationship,
 )
@@ -28,13 +31,25 @@ def test_clear_impression_archives_current_pointer():
     assert cleared["impression_history"][-1]["text"] == "说话谨慎"
 
 
-def test_injection_lines_include_bounded_trajectory():
-    metadata = append_impression({}, "旧印象", now=1.0)
-    metadata = append_impression(metadata, "新印象", now=2.0)
-    lines = injection_lines(metadata)
+def test_injection_lines_include_decayed_trajectory_summaries():
+    metadata = append_impression(
+        {},
+        "刚进群挺活跃",
+        now=1.0,
+        event={"before_affinity": 0, "after_affinity": 5, "reason": "直接回复"},
+    )
+    metadata = append_impression(
+        metadata,
+        "聊了考研其实挺有想法",
+        now=2.0,
+        event={"before_affinity": 5, "after_affinity": 12, "reason": "深夜长谈"},
+        actor="social_verdict",
+    )
+    lines = injection_lines(metadata, now=3.0)
 
-    assert lines[0] == "你对这个人的印象：新印象"
-    assert "印象演变：旧印象 → 新印象" in lines[1]
+    assert lines[0] == "你对这个人的印象：聊了考研其实挺有想法"
+    assert any(line.startswith("印象时间线") for line in lines)
+    assert any("好感 5→12" in line for line in lines)
 
 
 def test_append_impression_stores_snapshot_and_event_on_archive():
@@ -76,7 +91,8 @@ def test_injection_lines_prefer_stored_event_then_history_anchor():
     )
     lines = injection_lines(metadata, history=[{"event_type": "joke", "reason": "接梗"}])
     assert lines[0] == "你对这个人的印象：愿意核对事实"
-    assert lines[1] == "最近关系线索：bot_praised：被感谢"
+    assert any(line.startswith("印象时间线") for line in lines)
+    assert any("愿意核对事实" in line for line in lines[1:])
 
 
 def test_relationship_context_reads_repository_snapshot():
@@ -119,4 +135,75 @@ def test_ledger_skips_passby_and_keeps_scored_rows():
     rows = ledger_entries(third, limit=5)
     assert [item["event_type"] for item in rows] == ["bot_praised", "direct_reply"]
     lines = injection_lines(third)
-    assert any(line.startswith("最近关系账本：") for line in lines)
+    assert not any(line.startswith("最近关系账本：") for line in lines)
+
+
+def test_unsettled_energy_and_threshold_transition():
+    from services.impression_timeline import (
+        append_unsettled_trace,
+        clear_unsettled_traces,
+        parse_impression_mark,
+        should_trigger_affinity_transition,
+        unsettled_energy,
+    )
+
+    assert parse_impression_mark("无新看法") == ("", 0.0)
+    body, impact = parse_impression_mark("文史功底扎实 | impact: 4")
+    assert body == "文史功底扎实"
+    assert impact == 4.0
+
+    meta = {}
+    assert not should_trigger_affinity_transition(meta)
+    meta = append_unsettled_trace(meta, "日常观察", impact=4)
+    meta = append_unsettled_trace(meta, "又聊了一轮", impact=4)
+    assert unsettled_energy(meta) == 8.0
+    assert not should_trigger_affinity_transition(meta)
+    meta = append_unsettled_trace(meta, "深夜长谈", impact=3)
+    assert unsettled_energy(meta) == 11.0
+    assert should_trigger_affinity_transition(meta)
+    assert should_trigger_affinity_transition({}, {"hostility": 12.0})
+
+    cleaned = clear_unsettled_traces(meta)
+    assert "unsettled_traces" not in cleaned
+    assert "unsettled_energy" not in cleaned
+    assert not should_trigger_affinity_transition(cleaned)
+
+
+def test_history_is_not_truncated_at_twenty():
+    events = [{"kind": "impression", "summary": f"印象节点{i:02d}足够长", "detail": f"印象节点{i:02d}足够长", "occurred_at": float(i + 1)} for i in range(25)]
+    lines = injection_lines({}, events=events, now=30.0)
+    assert any("印象节点00足够长" in line or "印象节点24足够长" in line for line in lines)
+    assert current_impression_text(list(reversed(events))) == "印象节点24足够长"
+
+
+def test_affinity_shift_range_rejects_big_jumps():
+    bounds = affinity_shift_range({}, dimension="trust")
+    assert bounds["min"] == -2.0
+    assert bounds["max"] == 2.0
+    ok = propose_affinity_shift({}, dimension="trust", requested_delta=1.5)
+    assert ok["ok"] is True
+    assert ok["delta"] == 1.5
+    denied = propose_affinity_shift({}, dimension="trust", requested_delta=6)
+    assert denied["ok"] is False
+    assert denied["error"] == "affinity_delta_out_of_range"
+
+
+def test_match_timeline_cue_requires_overlap_and_stays_read_only():
+    from services.impression_timeline import match_timeline_cue, timeline_cue_prompt
+
+    events = [
+        {"kind": "impression", "summary": "通宵帮排查毕业设计死锁", "detail": "一起看锁等待"},
+        {"kind": "message_seen", "summary": "看见一条群友消息"},
+        {"kind": "impression", "summary": "刚进群挺活跃"},
+    ]
+    hit = match_timeline_cue(events, "还记得毕业设计那个死锁吗")
+    assert hit is not None
+    assert "死锁" in hit["summary"]
+    prompt = timeline_cue_prompt(hit)
+    assert "印象线索" in prompt
+    assert "不是必须回复的指令" in prompt
+
+    assert match_timeline_cue(events, "午饭吃什么") is None
+    assert match_timeline_cue(events, "短") is None
+    assert match_timeline_cue(events, "今天天气不错啊") is None
+

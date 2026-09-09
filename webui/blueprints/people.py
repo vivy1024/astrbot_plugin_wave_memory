@@ -30,6 +30,81 @@ except ImportError:  # pragma: no cover - focused tests import webui as top-leve
 people_bp = Blueprint("people", __name__, url_prefix="/api")
 
 
+def _timeline_metadata_projection(metadata: Any, *, bot_id: str, user_id: str, group_id: str) -> dict[str, Any]:
+    payload = dict(metadata) if isinstance(metadata, dict) else {}
+    db = getattr(get_container(), "db", None)
+    if db is None:
+        return payload
+    try:
+        from ...services.impression_timeline import (
+            current_impression_text,
+            load_timeline_events,
+            load_unsettled_state,
+            migrate_and_strip_profile_metadata,
+        )
+    except ImportError:  # pragma: no cover
+        from services.impression_timeline import (
+            current_impression_text,
+            load_timeline_events,
+            load_unsettled_state,
+            migrate_and_strip_profile_metadata,
+        )
+    conn = getattr(db, "conn", None)
+    try:
+        cleaned = migrate_and_strip_profile_metadata(
+            db,
+            bot_id=bot_id,
+            user_id=user_id,
+            group_id=group_id,
+            metadata=payload,
+            connection=conn,
+        )
+        if cleaned != payload and conn is not None and hasattr(conn, "execute"):
+            conn.execute(
+                "UPDATE user_profiles SET metadata=? WHERE user_id=? AND group_id=? AND bot_id=?",
+                (json.dumps(cleaned, ensure_ascii=False), user_id, group_id, bot_id),
+            )
+            commit = getattr(conn, "commit", None)
+            if callable(commit):
+                commit()
+        payload = cleaned
+    except Exception:
+        pass
+    events = load_timeline_events(db, bot_id=bot_id, user_id=user_id, limit=40, connection=conn)
+    if events:
+        payload["impression"] = current_impression_text(events, payload)
+        payload["impression_history"] = [
+            {
+                "text": str(item.get("summary") or item.get("detail") or "").strip(),
+                "detail": str(item.get("detail") or "").strip(),
+                "kind": item.get("kind"),
+                "updated_at": item.get("occurred_at"),
+                "event": (item.get("provenance") or {}).get("event") if isinstance(item.get("provenance"), Mapping) else {},
+            }
+            for item in reversed(events)
+            if str(item.get("summary") or item.get("detail") or "").strip()
+        ]
+        payload["impression_ledger"] = [
+            {
+                "event_type": str(((item.get("provenance") or {}).get("event_type") if isinstance(item.get("provenance"), Mapping) else "") or item.get("kind") or ""),
+                "dimension": str((item.get("provenance") or {}).get("dimension") or "") if isinstance(item.get("provenance"), Mapping) else "",
+                "delta": (item.get("provenance") or {}).get("delta") if isinstance(item.get("provenance"), Mapping) else None,
+                "reason": str(item.get("detail") or item.get("summary") or ""),
+                "at": item.get("occurred_at"),
+            }
+            for item in reversed(events)
+            if str(item.get("kind") or "") == "affinity"
+        ]
+    try:
+        unsettled = load_unsettled_state(db, bot_id=bot_id, user_id=user_id, group_id=group_id, connection=conn)
+    except Exception:
+        unsettled = {"energy": 0.0, "interaction_count": 0, "traces": []}
+    payload["unsettled_energy"] = float(unsettled.get("energy") or 0.0)
+    payload["unsettled_interaction_count"] = int(unsettled.get("interaction_count") or 0)
+    payload["unsettled_traces"] = list(unsettled.get("traces") or [])
+    return payload
+
+
 def _page_args() -> tuple[int, int]:
     limit = max(1, min(500, int(request.args.get("limit", request.args.get("size", 25)))))
     if request.args.get("offset") is not None:
@@ -190,6 +265,7 @@ def _profile_item(profile: dict[str, Any], registry: dict[str, dict[str, Any]], 
     item["affinity"] = None
     item["affinity_status"] = "unavailable"
     item["affinity_reason_code"] = "scoped_affinity_projection_unavailable"
+    item["metadata"] = _timeline_metadata_projection(item["metadata"], bot_id=bot_id, user_id=user_id, group_id=group_id)
     return item
 
 
@@ -817,18 +893,42 @@ def _clear_impression_on_connection(conn: Any, *, scope: RuntimeScope, user_id: 
     metadata = _json(row[0], {})
     if not isinstance(metadata, dict):
         metadata = {}
-    previous = str(metadata.get("impression") or "").strip()
-    if not previous:
-        raise LookupError("impression_not_found")
     now = time.time()
     try:
-        from ...services.impression_timeline import clear_impression as _append_clear
+        from ...services.impression_timeline import (
+            current_impression_text,
+            load_timeline_events,
+            persist_timeline_event,
+        )
     except ImportError:  # pragma: no cover
-        from services.impression_timeline import clear_impression as _append_clear
-    metadata = _append_clear(metadata, reason=reason, now=now, actor="webui")
-    conn.execute(
-        "UPDATE user_profiles SET metadata=? WHERE user_id=? AND group_id=? AND bot_id=?",
-        (json.dumps(metadata, ensure_ascii=False), user_id, scope.session.conversation_id, scope.bot_id),
+        from services.impression_timeline import (
+            current_impression_text,
+            load_timeline_events,
+            persist_timeline_event,
+        )
+    db = getattr(get_container(), "db", None)
+    events = load_timeline_events(
+        db,
+        bot_id=scope.bot_id,
+        user_id=user_id,
+        group_id=scope.session.conversation_id,
+        limit=5,
+        connection=conn,
+    ) if db is not None else []
+    previous = current_impression_text(events, metadata)
+    if not previous:
+        raise LookupError("impression_not_found")
+    persist_timeline_event(
+        db,
+        bot_id=scope.bot_id,
+        user_id=user_id,
+        group_id=scope.session.conversation_id,
+        kind="impression",
+        summary=f"已清除当前印象：{reason}"[:240],
+        detail=previous,
+        occurred_at=now,
+        provenance={"actor": "webui", "cleared_reason": reason},
+        connection=conn,
     )
     conn.commit()
     return {

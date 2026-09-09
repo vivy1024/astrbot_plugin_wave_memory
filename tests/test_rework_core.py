@@ -75,7 +75,30 @@ if "astrbot.core.agent.tool" not in sys.modules:
     sys.modules.setdefault("astrbot.core.agent", agent_mod)
     sys.modules["astrbot.core.agent.tool"] = tool_mod
     sys.modules["astrbot.core.agent.run_context"] = run_ctx_mod
+    sys.modules["astrbot.core.agent.astr_agent_context"] = astr_ctx_mod
     sys.modules["astrbot.core.astr_agent_context"] = astr_ctx_mod
+
+
+class _DirectCoordinator:
+    """在调用方连接上直接执行写事务，模拟 WriteCoordinator 的 transaction_blocking 契约。
+
+    写入口要求 coordinator，因此写入测试必须显式提供事务执行器；
+    失败时回滚，与真实协调器的单事务语义一致。
+    """
+
+    def __init__(self, conn):
+        self.conn = conn
+        self.calls = 0
+
+    def transaction_blocking(self, function):
+        self.calls += 1
+        try:
+            result = function(self.conn)
+            self.conn.commit()
+            return result
+        except Exception:
+            self.conn.rollback()
+            raise
 
 
 class ReworkCoreTest(unittest.TestCase):
@@ -132,7 +155,7 @@ class ReworkCoreTest(unittest.TestCase):
         """)
         conn.commit()
 
-        svc = ExperienceEpisodeService(conn)
+        svc = ExperienceEpisodeService(conn, _DirectCoordinator(conn))
         episode_id = svc.record_episode(
             bot_id="yushu",
             group_id="g1",
@@ -480,10 +503,15 @@ class ReworkCoreTest(unittest.TestCase):
             ("bot-a", "g1", "user-1"),
             ("bot-b", "g1", "user-1"),
         ])
-        event_bots = {
-            row[0] for row in conn.execute("SELECT bot_id FROM relationship_events").fetchall()
-        }
-        self.assertEqual(event_bots, {"bot-a", "bot-b"})
+        # 反机械累加契约：普通消息不得再产生 legacy relationship_events 流水。
+        # _record_relationship_events 在生产的唯一入口已随"按消息数累加好感"一并废除，
+        # 正式关系事件改由 scoped relationship_service 按 RuntimeScope 记录；
+        # 本用例的 Scope 不串台仍由上方 user_profiles 断言守护。
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM relationship_events").fetchone()[0],
+            0,
+            "普通消息不应再写入 legacy relationship_events 机械流水",
+        )
         aliases = json.loads(
             conn.execute("SELECT aliases FROM person_registry WHERE qq_id='user-1'").fetchone()[0]
         )
@@ -682,7 +710,7 @@ class ReworkCoreTest(unittest.TestCase):
                 return created_ids[-1]
 
         scope = RuntimeScope("yushu", "group", SessionRef("qq:group:g1", "qq", "group", "g1"))
-        ExperienceEpisodeService(conn).record_episode(
+        ExperienceEpisodeService(conn, _DirectCoordinator(conn)).record_episode(
             bot_id="yushu",
             group_id="g1",
             episode_type="bot_reply",
@@ -1208,7 +1236,7 @@ git clone https://github.com/ykdeso/holyman-skills.git
             )
         """)
         conn.commit()
-        svc = ExperienceEpisodeService(conn)
+        svc = ExperienceEpisodeService(conn, _DirectCoordinator(conn))
         svc.record_episode(bot_id="baizz", group_id="g1", user_id="u1", episode_type="bot_reply", bot_reply="白真真刚说的话", created_at=20)
         svc.record_episode(bot_id="yushu", group_id="g1", user_id="u1", episode_type="bot_reply", bot_reply="羽书对 u1 说的话", created_at=10)
         svc.record_episode(bot_id="yushu", group_id="g2", user_id="u1", episode_type="bot_reply", bot_reply="羽书其他群的话", created_at=30)
@@ -1239,7 +1267,7 @@ git clone https://github.com/ykdeso/holyman-skills.git
                 created_at REAL NOT NULL
             )
         """)
-        svc = ExperienceEpisodeService(conn)
+        svc = ExperienceEpisodeService(conn, _DirectCoordinator(conn))
         svc.record_episode(
             bot_id="yushu",
             group_id="g1",

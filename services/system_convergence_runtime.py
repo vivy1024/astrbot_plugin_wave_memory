@@ -17,23 +17,54 @@ try:
     from ..domain.quality import QualityDecision, QualityProposal
     from ..domain.scope import RuntimeScope
     from ..engine.db.migrations.memories_v2 import MEMORIES_V2_VERSION
-    from ..engine.write_coordinator import MutationOutcome, OutboxEventDraft, WriteCoordinator
+    from ..engine.write_coordinator import (
+        CommandRejectedError,
+        MutationOutcome,
+        OutboxEventDraft,
+        WriteCoordinator,
+    )
+    from ..services.soul_concerns import apply_concern_transition
     from .outbox_dispatcher import OutboxDispatcher
     from .durable_jobs import DurableJobService
+    from .relationship_calibration import (
+        RELATIONSHIP_CALIBRATE_COMMAND,
+        apply_relationship_calibration,
+    )
+    from .tag_governance import TAG_GOVERNANCE_COMMANDS, apply_tag_governance_command
 except ImportError:  # pragma: no cover - focused repository tests import top-level packages
     from domain.commands import DomainCommand, EntityChange
     from domain.quality import QualityDecision, QualityProposal
     from domain.scope import RuntimeScope
     from engine.db.migrations.memories_v2 import MEMORIES_V2_VERSION
-    from engine.write_coordinator import MutationOutcome, OutboxEventDraft, WriteCoordinator
+    from engine.write_coordinator import (
+        CommandRejectedError,
+        MutationOutcome,
+        OutboxEventDraft,
+        WriteCoordinator,
+    )
+    from services.soul_concerns import apply_concern_transition
     from services.outbox_dispatcher import OutboxDispatcher
     from services.durable_jobs import DurableJobService
+    from services.relationship_calibration import (
+        RELATIONSHIP_CALIBRATE_COMMAND,
+        apply_relationship_calibration,
+    )
+    from services.tag_governance import TAG_GOVERNANCE_COMMANDS, apply_tag_governance_command
 
 
 _APPEND_MEMORY = "memory.append.v1"
 _BACKFILL_MEMORY_VECTOR = "memory.vector_backfill.v1"
 _APPLY_TAG_EXTRACTION = "tag_extraction.apply.v1"
 _MUTATE_MEMORIES = "memory.mutate.v1"
+_RECORD_EPISODE = "experience_episode.record.v1"
+_CONCERN_TRANSITION = "soul_concern.transition.v1"
+_CALIBRATE_RELATIONSHIP = RELATIONSHIP_CALIBRATE_COMMAND
+
+# 关切的唯一合法动作集合。note 只负责记录/强化未决挂念；结案、重开、归档必须显式
+# 走对应动作，由领域状态机校验跳转合法性，禁止任何路径隐式改状态。
+_CONCERN_ACTIONS = frozenset({"note", "progress", "resolve", "reopen", "expire", "archive"})
+_CONCERN_REINFORCABLE_STATUSES = frozenset({"active", "dormant", "progressing"})
+_CONCERN_REINFORCE_STEP = 0.3
 
 
 def _json_default(value: Any) -> Any:
@@ -470,6 +501,245 @@ def _apply_tag_extraction_handler(connection, command: DomainCommand, now: float
     )
 
 
+_CONCERN_COLUMNS = """id, topic, intensity, origin_memory_id, origin_episode_id, concern_type,
+                        status, urgency, last_progress_at, expected_resolution_at,
+                        resolution_note, created_at, last_triggered, revision"""
+
+
+def _concern_row_to_dict(row) -> dict[str, Any]:
+    return {
+        "id": int(row[0]),
+        "topic": str(row[1] or ""),
+        "intensity": float(row[2] or 0.0),
+        "origin_memory_id": row[3],
+        "origin_episode_id": row[4],
+        "concern_type": str(row[5] or ""),
+        "status": str(row[6] or "active"),
+        "urgency": float(row[7] or 0.0),
+        "last_progress_at": row[8],
+        "expected_resolution_at": row[9],
+        "resolution_note": str(row[10] or ""),
+        "created_at": row[11],
+        "last_triggered": row[12],
+        "revision": int(row[13] or 1),
+    }
+
+
+def _find_concern(connection, scope: RuntimeScope, *, concern_id: Any, topic: str) -> dict[str, Any] | None:
+    """按 id 或 topic 定位当前 Scope 内的关切；跨 Scope 一律视为不存在。"""
+    selector = "id=?" if concern_id is not None else "topic=?"
+    value = int(concern_id) if concern_id is not None else topic
+    row = connection.execute(
+        f"SELECT {_CONCERN_COLUMNS} FROM scoped_soul_concerns "
+        f"WHERE bot_id=? AND session_id=? AND visibility=? AND {selector}",
+        (*_scope_tuple(scope), value),
+    ).fetchone()
+    return None if row is None else _concern_row_to_dict(row)
+
+
+def _concern_mutation(
+    *, concern_id: int, revision: int, action: str, before: str, after: str, scope: RuntimeScope
+) -> MutationOutcome:
+    return MutationOutcome(
+        entities=(EntityChange("soul_concern", str(concern_id), revision, action),),
+        events=(
+            OutboxEventDraft(
+                "soul_concern",
+                str(concern_id),
+                revision,
+                f"soul_concern.{action}",
+                {
+                    "concern_id": concern_id,
+                    "from_status": before,
+                    "to_status": after,
+                    "scope": scope.to_dict(),
+                },
+            ),
+        ),
+    )
+
+
+def _concern_transition_handler(connection, command: DomainCommand, now: float) -> MutationOutcome:
+    """Concern 的唯一写入口：记录/强化未决挂念，或按领域状态机推进其生命周期。
+
+    刻意不做全量替换：任何动作只碰自己那一行，并发下不同关切不会互相覆盖；
+    非法跳转由领域状态机拒绝，archived 是终态。
+    """
+    scope = _require_group_scope(command.scope)
+    payload = dict(command.payload)
+    action = str(payload.get("action") or "").strip().lower()
+    if action not in _CONCERN_ACTIONS:
+        raise CommandRejectedError("unsupported_concern_action", f"unsupported concern action: {action}")
+
+    concern_id = payload.get("concern_id")
+    topic = str(payload.get("topic") or "").strip()
+    if concern_id is None and not topic:
+        raise CommandRejectedError("concern_target_required", "concern_id or topic is required")
+    current = _find_concern(connection, scope, concern_id=concern_id, topic=topic)
+
+    new_evidence = payload.get("evidence")
+    evidence_json = (
+        json.dumps(list(new_evidence), ensure_ascii=False, sort_keys=True)
+        if new_evidence
+        else None
+    )
+
+    if action == "note":
+        intensity = payload.get("intensity")
+        intensity = 0.7 if intensity is None else max(0.0, min(1.0, float(intensity)))
+        expected_resolution_at = payload.get("expected_resolution_at")
+        if current is not None:
+            if current["status"] not in _CONCERN_REINFORCABLE_STATUSES:
+                # 已结案/已归档的挂念不因再次提及而悄悄复活，必须由显式 reopen 走状态机。
+                return _concern_mutation(
+                    concern_id=int(current["id"]),
+                    revision=int(current["revision"]),
+                    action="note_ignored_closed",
+                    before=current["status"],
+                    after=current["status"],
+                    scope=scope,
+                )
+            next_status = "active" if current["status"] == "dormant" else current["status"]
+            new_revision = int(current["revision"]) + 1
+            connection.execute(
+                """UPDATE scoped_soul_concerns
+                      SET intensity=?, status=?, urgency=MAX(urgency, ?), last_triggered=?,
+                          last_progress_at=COALESCE(last_progress_at, ?), revision=?,
+                          expected_resolution_at=COALESCE(?, expected_resolution_at),
+                          evidence=COALESCE(?, evidence)
+                    WHERE id=? AND bot_id=? AND session_id=? AND visibility=?""",
+                (
+                    min(1.0, float(current["intensity"]) + _CONCERN_REINFORCE_STEP),
+                    next_status,
+                    intensity,
+                    now,
+                    now,
+                    new_revision,
+                    expected_resolution_at,
+                    evidence_json,
+                    int(current["id"]),
+                    *_scope_tuple(scope),
+                ),
+            )
+            return _concern_mutation(
+                concern_id=int(current["id"]),
+                revision=new_revision,
+                action="reinforced",
+                before=current["status"],
+                after=next_status,
+                scope=scope,
+            )
+        if not topic:
+            raise CommandRejectedError("concern_note_requires_topic", "new concern requires a topic")
+        created = connection.execute(
+            """INSERT INTO scoped_soul_concerns
+               (bot_id, session_id, visibility, topic, intensity, origin_memory_id, origin_episode_id,
+                concern_type, status, urgency, last_progress_at, expected_resolution_at,
+                resolution_note, created_at, last_triggered, revision, evidence)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, '', ?, ?, 1, ?)""",
+            (
+                scope.bot_id,
+                scope.session.id,
+                scope.visibility,
+                topic,
+                intensity,
+                payload.get("origin_memory_id"),
+                payload.get("origin_episode_id"),
+                str(payload.get("concern_type") or "").strip(),
+                intensity,
+                now,
+                expected_resolution_at,
+                now,
+                now,
+                evidence_json or "[]",
+            ),
+        )
+        return _concern_mutation(
+            concern_id=int(created.lastrowid),
+            revision=1,
+            action="created",
+            before="",
+            after="active",
+            scope=scope,
+        )
+
+    if current is None:
+        raise CommandRejectedError("concern_not_found_in_scope")
+    try:
+        updated = apply_concern_transition(
+            current, action=action, now=now, resolution_note=str(payload.get("note") or "")
+        )
+    except ValueError as exc:
+        raise CommandRejectedError(
+            "invalid_concern_transition",
+            f"concern {current['status']} cannot accept action {action}",
+        ) from exc
+    new_revision = int(current["revision"]) + 1
+    connection.execute(
+        """UPDATE scoped_soul_concerns
+              SET status=?, urgency=?, last_progress_at=?, resolution_note=?,
+                  last_triggered=?, revision=?, evidence=COALESCE(?, evidence)
+            WHERE id=? AND bot_id=? AND session_id=? AND visibility=?""",
+        (
+            updated["status"],
+            float(updated.get("urgency") or current.get("urgency") or 0.0),
+            updated.get("last_progress_at"),
+            str(updated.get("resolution_note") or ""),
+            float(updated.get("last_triggered") or now),
+            new_revision,
+            evidence_json,
+            int(current["id"]),
+            *_scope_tuple(scope),
+        ),
+    )
+    return _concern_mutation(
+        concern_id=int(current["id"]),
+        revision=new_revision,
+        action=action,
+        before=current["status"],
+        after=str(updated["status"]),
+        scope=scope,
+    )
+
+
+def _record_episode_handler(connection, command: DomainCommand, now: float) -> MutationOutcome:
+    scope = _require_group_scope(command.scope)
+    assert scope.session is not None
+    payload = {**dict(command.payload), **dict(command.payload.get("fields") or {})}
+    if str(payload.get("group_id") or "") != scope.session.conversation_id:
+        raise ValueError("group_id does not match RuntimeScope")
+    source_ids = tuple(dict.fromkeys(int(value) for value in payload.get("source_memory_ids") or ()))
+    if source_ids:
+        placeholders = ",".join("?" for _ in source_ids)
+        rows = connection.execute(
+            f"""SELECT id FROM memories WHERE id IN ({placeholders})
+                AND bot_id=? AND session_id=? AND visibility=?
+                AND group_id=? AND resolution_state='resolved' AND COALESCE(quarantine, 0)=0""",
+            (*source_ids, *_scope_tuple(scope), scope.session.conversation_id),
+        ).fetchall()
+        if {int(row[0]) for row in rows} != set(source_ids):
+            raise ValueError("episode source memory is outside RuntimeScope")
+    idem = str(command.idempotency_key)
+    existing = connection.execute(
+        "SELECT id FROM experience_episodes WHERE bot_id=? AND group_id=? AND idempotency_key=?",
+        (scope.bot_id, scope.session.conversation_id, idem),
+    ).fetchone()
+    if existing:
+        episode_id = int(existing[0])
+        return MutationOutcome(
+            entities=(EntityChange("experience_episode", str(episode_id), 1, "replayed"),),
+            events=(),
+        )
+    columns = ("bot_id", "group_id", "user_id", "episode_type", "trigger_text", "bot_inner_thought", "bot_action", "bot_reply", "user_reaction", "outcome", "source_memory_ids", "emotional_weight", "idempotency_key", "created_at", "updated_at")
+    values = (scope.bot_id, scope.session.conversation_id, payload.get("user_id"), payload.get("episode_type"), payload.get("trigger_text"), payload.get("bot_inner_thought"), payload.get("bot_action"), payload.get("bot_reply"), payload.get("user_reaction"), payload.get("outcome"), json.dumps(list(source_ids), ensure_ascii=False), float(payload.get("emotional_weight") or 0), idem, now, now)
+    cur = connection.execute(f"INSERT INTO experience_episodes ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})", values)
+    episode_id = int(cur.lastrowid)
+    return MutationOutcome(
+        entities=(EntityChange("experience_episode", str(episode_id), 1, "created"),),
+        events=(OutboxEventDraft("experience_episode", str(episode_id), 1, "experience_episode.created", {"episode_id": episode_id, "scope": scope.to_dict()}),),
+    )
+
+
 def _mutate_memories_handler(connection, command: DomainCommand, now: float) -> MutationOutcome:
     scope = _require_memory_scope(command.scope)
     payload = command.payload
@@ -639,14 +909,22 @@ class ProductionWriteGateway:
         self._clock = clock or _SystemClock()
         self._consumers = dict(consumers or {})
         self._closing = False
+        self._relationship_repository = None
+        self._tag_governance = None
+        handlers = {
+            _APPEND_MEMORY: _append_memory_handler,
+            _BACKFILL_MEMORY_VECTOR: _backfill_memory_vector_handler,
+            _APPLY_TAG_EXTRACTION: _apply_tag_extraction_handler,
+            _MUTATE_MEMORIES: _mutate_memories_handler,
+            _RECORD_EPISODE: _record_episode_handler,
+            _CONCERN_TRANSITION: _concern_transition_handler,
+            _CALIBRATE_RELATIONSHIP: self._calibrate_relationship_handler,
+        }
+        for command_type in TAG_GOVERNANCE_COMMANDS:
+            handlers[command_type] = self._tag_governance_handler
         self.coordinator = WriteCoordinator(
             database_path,
-            command_handlers={
-                _APPEND_MEMORY: _append_memory_handler,
-                _BACKFILL_MEMORY_VECTOR: _backfill_memory_vector_handler,
-                _APPLY_TAG_EXTRACTION: _apply_tag_extraction_handler,
-                _MUTATE_MEMORIES: _mutate_memories_handler,
-            },
+            command_handlers=handlers,
             consumer_names=tuple(self._consumers),
             clock=self._clock,
         )
@@ -660,6 +938,59 @@ class ProductionWriteGateway:
             clock=self._clock,
         )
         self.jobs = DurableJobService(self.coordinator, clock=self._clock)
+
+    def bind_relationship_repository(self, repository: Any) -> None:
+        self._relationship_repository = repository
+
+    def bind_tag_governance(self, gateway: Any, mutate=None) -> None:
+        self._tag_governance = gateway
+        self._tag_governance_mutate = mutate
+
+    def _calibrate_relationship_handler(self, connection, command: DomainCommand, now: float) -> MutationOutcome:
+        repository = self._relationship_repository or command.payload.get("repository")
+        if repository is None:
+            raise CommandRejectedError("relationship_repository_unavailable")
+        payload = dict(command.payload)
+        return apply_relationship_calibration(
+            connection,
+            repository=repository,
+            scope=command.scope,  # type: ignore[arg-type]
+            operation_id=command.operation_id,
+            now=now,
+            subject=str(payload["subject_principal_id"]),
+            expected_revision=int(payload["expected_revision"]),
+            action=str(payload["action"]),
+            dimension=str(payload["dimension"]),
+            delta=payload.get("delta"),
+            value=payload.get("value"),
+            reason=str(payload["reason"]),
+            evidence=list(payload.get("evidence") or ()),
+        )
+
+    def _tag_governance_handler(self, connection, command: DomainCommand, now: float) -> MutationOutcome:
+        gateway = self._tag_governance or getattr(self.coordinator, "gateway", None)
+        mutate = getattr(self, "_tag_governance_mutate", None) or getattr(self.coordinator, "mutate", None)
+        if gateway is None or mutate is None:
+            raise CommandRejectedError("tag_governance_unavailable")
+        return gateway.apply_mutate(connection, command, now, mutate)
+
+    async def calibrate_relationship(self, *, scope: RuntimeScope, **payload: Any):
+        repository = payload.pop("repository", None)
+        if repository is not None:
+            self.bind_relationship_repository(repository)
+        request_hash = str(payload.pop("request_hash") or "")
+        idempotency_key = str(payload.pop("idempotency_key") or "")
+        operation_id = str(payload.pop("operation_id") or "")
+        command = DomainCommand(
+            operation_id=operation_id,
+            idempotency_key=idempotency_key,
+            actor="webui.relationship.calibration",
+            scope=scope,
+            command_type=_CALIBRATE_RELATIONSHIP,
+            payload=payload,
+            request_hash=request_hash,
+        )
+        return await self.coordinator.submit(command)
 
     @staticmethod
     def _command(
@@ -793,6 +1124,99 @@ class ProductionWriteGateway:
         )
         result = await self.coordinator.submit(command)
         return sum(1 for item in result.entities if item.aggregate_kind == "scoped_tag")
+
+    async def record_episode(
+        self,
+        *,
+        scope: RuntimeScope,
+        group_id: str,
+        user_id: str | None,
+        episode_type: str,
+        fields: Mapping[str, Any],
+        source_memory_ids: Sequence[int] = (),
+        emotional_weight: float = 0.0,
+        idempotency_hint: str | None = None,
+    ) -> int:
+        request_shape = {
+            "scope": scope.to_dict(), "group_id": str(group_id), "user_id": user_id,
+            "episode_type": str(episode_type), "fields": dict(fields),
+            "source_memory_ids": [int(value) for value in source_memory_ids],
+            "emotional_weight": float(emotional_weight),
+        }
+        stable_hint = str(idempotency_hint or _digest(request_shape)).strip()
+        command = self._command(
+            command_type=_RECORD_EPISODE,
+            actor="agent_episode_tool",
+            scope=scope,
+            payload={**request_shape, "source_memory_ids": list(request_shape["source_memory_ids"])},
+            idempotency_key=f"experience_episode.record:{stable_hint}",
+            request_shape=request_shape,
+        )
+        result = await self.coordinator.submit(command)
+        entity = next(item for item in result.entities if item.aggregate_kind == "experience_episode")
+        return int(entity.aggregate_id)
+
+    async def transition_concern(
+        self,
+        *,
+        scope: RuntimeScope,
+        action: str,
+        concern_id: int | None = None,
+        topic: str | None = None,
+        note: str = "",
+        intensity: float | None = None,
+        concern_type: str = "",
+        origin_memory_id: int | None = None,
+        origin_episode_id: int | None = None,
+        expected_resolution_at: float | None = None,
+        evidence: Sequence[Mapping[str, Any]] = (),
+        idempotency_hint: str | None = None,
+        actor: str = "concern_tool",
+    ) -> dict[str, Any]:
+        """记录或推进一条灵魂关切，必须经命令链落库并产出 outbox 事件。
+
+        幂等边界：``idempotency_hint`` 传本轮请求标识（trace/轮次），使同一轮内的
+        重试被折叠，而跨轮次再次提及仍可强化；缺省时退化为按请求体摘要幂等。
+        """
+        action = str(action or "").strip().lower()
+        if action not in _CONCERN_ACTIONS:
+            raise ValueError(f"unsupported concern action: {action}")
+        request_shape = {
+            "scope": scope.to_dict(),
+            "action": action,
+            "concern_id": int(concern_id) if concern_id is not None else None,
+            "topic": str(topic or "").strip(),
+            "note": str(note or "").strip(),
+            "intensity": None if intensity is None else float(intensity),
+            "concern_type": str(concern_type or "").strip(),
+            "origin_memory_id": origin_memory_id,
+            "origin_episode_id": origin_episode_id,
+            "expected_resolution_at": (
+                None if expected_resolution_at is None else float(expected_resolution_at)
+            ),
+            "evidence": [dict(item) for item in evidence if isinstance(item, Mapping)],
+        }
+        stable_hint = str(idempotency_hint or "").strip()
+        idempotency_key = (
+            f"soul_concern.transition:{action}:{stable_hint}"
+            if stable_hint
+            else f"soul_concern.transition:{_digest(request_shape)}"
+        )
+        command = self._command(
+            command_type=_CONCERN_TRANSITION,
+            actor=actor,
+            scope=scope,
+            payload=request_shape,
+            idempotency_key=idempotency_key,
+            request_shape=request_shape,
+        )
+        result = await self.coordinator.submit(command)
+        entity = next(item for item in result.entities if item.aggregate_kind == "soul_concern")
+        return {
+            "concern_id": int(entity.aggregate_id),
+            "action": str(entity.change_type),
+            "revision": int(entity.aggregate_version),
+        }
 
     async def mutate_memories(
         self,

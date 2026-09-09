@@ -491,6 +491,14 @@ async def _execute_scoped_command(*, kind: str, action: str):
             result = await gateway.delete_fact(
                 scope=scope, target=target, idempotency_key=idempotency_key,
             )
+        elif kind == "tag" and action == "update":
+            fields = _command_fields(body, (
+                "name", "tag_type", "description", "aliases",
+            ))
+            result = await gateway.update_tag(
+                scope=scope, target=target, fields=fields,
+                idempotency_key=idempotency_key,
+            )
         elif action == "update":
             fields = _command_fields(body, (
                 "relation_type", "weight", "confidence",
@@ -518,6 +526,12 @@ async def _execute_scoped_command(*, kind: str, action: str):
         return _scope_error("invalid_request", 400)
     except (RuntimeError, sqlite3.Error):
         return _scope_error("scoped_knowledge_mutation_gateway_unavailable", 503)
+
+
+@kg_bp.route("/commands/tags/update", methods=["POST"])
+@require_auth
+async def command_update_tag():
+    return await _execute_scoped_command(kind="tag", action="update")
 
 
 @kg_bp.route("/commands/facts/update", methods=["POST"])

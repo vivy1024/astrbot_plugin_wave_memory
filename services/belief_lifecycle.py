@@ -9,8 +9,10 @@ except ImportError:  # pragma: no cover
 
 try:
     from .belief_confidence import is_activation_eligible
+    from .belief_engine import approved_source_fact_ids, first_memory_id_from_facts
 except ImportError:  # pragma: no cover
     from services.belief_confidence import is_activation_eligible
+    from services.belief_engine import approved_source_fact_ids, first_memory_id_from_facts
 
 
 class BeliefLifecycleService:
@@ -31,13 +33,13 @@ class BeliefLifecycleService:
             provenance = current.get("provenance") if isinstance(current.get("provenance"), dict) else {}
             if current.get("status") not in {"pending", "quarantined"}:
                 raise ValueError("invalid_belief_transition")
-            if not current.get("source_memory_id"):
-                raise ValueError("belief_anchor_required")
-            if not is_activation_eligible(provenance):
-                raise ValueError("belief_evidence_incomplete")
             candidate = provenance.get("candidate") if isinstance(provenance.get("candidate"), dict) else None
             relation = str(candidate.get("relation") or "") if candidate else ""
             if candidate and relation in {"reinforce", "challenge"}:
+                if not current.get("source_memory_id"):
+                    raise ValueError("belief_anchor_required")
+                if not is_activation_eligible(provenance):
+                    raise ValueError("belief_evidence_incomplete")
                 merger = getattr(self.repository, "merge_scoped_belief_candidate", None)
                 if not callable(merger):
                     raise ValueError("candidate_merge_unavailable")
@@ -56,6 +58,15 @@ class BeliefLifecycleService:
                     raise ValueError(code) from exc
             if candidate and relation not in {"", "new"}:
                 raise ValueError("candidate_relation_unsupported")
+            fact_ids = approved_source_fact_ids(self.repository, scope, provenance.get("source_fact_ids"))
+            if len(fact_ids) < 2:
+                raise ValueError("belief_facts_required")
+            if not current.get("source_memory_id"):
+                memory_id = first_memory_id_from_facts(self.repository, scope, fact_ids)
+                if not memory_id:
+                    raise ValueError("belief_anchor_required")
+                current = dict(current)
+                current["source_memory_id"] = memory_id
             target_status = "active"
         else:
             if current.get("status") == "archived":

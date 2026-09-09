@@ -2,14 +2,14 @@
 
 # Wave Memory
 
-[![Version](https://img.shields.io/badge/version-v4.7.2-blue.svg)](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
+[![Version](https://img.shields.io/badge/version-v5.0.0-blue.svg)](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![AstrBot](https://img.shields.io/badge/AstrBot-≥4.14-green.svg)](https://github.com/AstrBotDevs/AstrBot)
 
 **给长期群 Bot 用的记忆层：记住这个群说过什么、谁是谁、关系好不好；回复时把相关记忆和其他通道一起注入。**
 
-日常检索只依赖 Embedding，本地 SQLite 毫秒级召回，不装 Neo4j / Elasticsearch / 独立向量库。黑话、风格、信念等才需要再配一个 LLM。
+v5 起，事实 / 黑话 / 信念 / 风格不再靠后台定时盲抽，而是对话现场由模型调工具提审，管理台人工审核后再注入。日常检索仍只依赖 Embedding，本地 SQLite 毫秒级召回。
 
 [快速开始](#快速开始) · [为什么选我们](#为什么选我们) · [适合谁](#适合谁不适合谁) · [检索引擎](#-检索引擎) · [灵魂系统](#-灵魂系统) · [WebUI](#-webui-管理面板) · [Releases](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
 
@@ -21,8 +21,9 @@
 
 - **记住群聊**：把对话写成长期记忆，按当前 Bot 和群检索，注入到下一次回复。说「昨天 / 上周」会加时间过滤。
 - **记住群友**：昵称、别名、互动次数、好感；同名用户不跨 Bot、不跨群合并。
-- **像群友一样说话**：学本群黑话和 Bot 自己的回复风格；黑话、信念、风格样例都可以在管理台审核后再用。
-- **有心情和关系**：心情、关切、时间线、好感；可看历史关系事件，也能人工校准（必须挂一条本群真实记忆）。
+- **像群友一样说话**：本群黑话和 Bot 回复风格由现场工具提审，管理台通过后才注入。
+- **有心情和关系**：印象时间线、五维好感（有限范围自选）；人情账可写备忘但不注入账单。关切是人味临场发挥，不再按字数截句入库。
+- **事实要原话，信念要二次审**：提事实必须带群友原话；黑话只用来听懂原话，反串不升格为认真事实。信念必须挂至少两条已审事实。
 - **能看见一次回复用了什么**：注入观测台按通道列出命中、跳过、错误和最终文本。
 - **中文管理台 + 3D 图谱**：记忆、人物、标签、事实、黑话、心智都在 9876 端口；神经云图看记忆和关系。
 
@@ -67,6 +68,7 @@
 
 | 版本 | 日期 | 重点 |
 |------|------|------|
+| **v5.0.0** | 2026-09-06 | 现场提审取代后台盲抽：印象积攒→反思调工具；事实带原话；信念二审需 ≥2 条已审事实；关切不再截词 |
 | **v4.7.2** | 2026-08-29 | 中文管理台与心智自省：人物历史关系审计、表格/筛选重构、去掉后端黑话 |
 | **v4.7.1** | 2026-08-06 | 稳定性修复与好感度平滑：发送前拦截清洗印象标记防泄露、WriteCoordinator死锁与共现循环防御、关系衰减优化、向量索引恢复 Inline Resize |
 | **v4.7.0** | 2026-07-26 | 瘦身重构 + 3D 增强：清理学习中心空壳(−11K行)、CDN 本地化、力导向聚类、节点降噪、经历/时间锚点/Outbox 新页面 |
@@ -157,20 +159,21 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 
 ### 并行注入通道
 
-`InjectionOrchestrator` 并发运行通道；每通道独立 `timeout_ms`，单通道 timeout/error 不阻塞整体注入。总耗时超过 500ms 输出通道耗时分解。
+`InjectionOrchestrator` 并发运行 **12** 条通道；每通道独立 `timeout_ms`，单通道 timeout/error 不阻塞整体注入。总耗时超过 2000ms 打慢注入警告。
 
 ```
 ├─ safety（近期上下文去重 · 身份污染过滤）
 ├─ memory（五阶段语义召回）
-├─ fts5（人名/专有名词精确召回）
+├─ fts5（人名/专有名词精确命中）
 ├─ timeline（相关时间线事件）
 ├─ facts（三元组事实）
-├─ persona（自我人格/经历/对象画像）
+├─ persona（自我人格 / 精选经历 / 当前发言者统计）
 ├─ belief（已审核信念）
 ├─ jargon（已确认黑话）
 ├─ fewshot（已批准健康风格样本）
 ├─ book_lore（世界观知识）
-└─ affinity（关系/互动摘要）
+├─ affinity（关系、印象时间线、人情账、已审事实）
+└─ soul_state（当前群情绪 valence/arousal、关切、时间线）
 ```
 
 通道配置在 9876 WebUI「通道配置」热更新：`enabled`、`priority`、`top_k/max_items`、`token_budget`、`timeout_ms`、`min_score`。
@@ -198,28 +201,27 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 
 | 模块 | 功能 |
 |------|------|
-| PersonaComposer | 自我人格 / 信念 / 经历 / 风格样本分层编排，控制主 prompt 优先级 |
-| PersonaEvolution | 认知+互动+facts 驱动的对话对象画像注入 |
-| BeliefEngine | 从对话中涌现稳定判断（信念），只注入 active 信念 |
-| BeliefEmergenceService | 从关系事件与经历中生成待审核信念候选 |
-| ExperienceEpisodeService | 记录 bot 经历片段、回复、内心、结果和来源记忆 |
-| DesireEngine | 事件触发冲动 → 与信念博弈 → 决定行为 |
-| MoodTrajectory | valence/arousal 二维情绪轨迹，走势摘要注入对话 |
-| SubjectiveTime | 用重要事件锚定时间感，替代机械时间戳 |
+| PersonaComposer | 只编自我人格、精选自我经历、当前发言者统计；不读未迁移的全局对象画像 |
+| BeliefEngine | 维护已审核稳定判断；只注入当前群 active 信念 |
+| 现场提审工具 | 印象 / 人情 / 黑话 / 事实 / 信念由主对话 LLM 按需调用，进入 pending 审核 |
+| MoodTrajectory | 群聊密度与情绪 tag 写 valence/arousal；由 `soul_state` 通道注入 |
+| SubjectiveTime | 重要事件作时间锚点；由 `soul_state` 通道注入近期时间线 |
+| ConcernTracker | 关切只读展示；v5 不再从入站消息截词入库 |
+| DesireEngine | 代码仍初始化，**当前回复路径不调用** `trigger` / `resolve` |
 
 ### 社交认知（v1.5）
 
 | 功能 | 说明 |
 |------|------|
-| 认知度 | bot 在群里看到过此人多少条消息（被动认知） |
+| 认知度 | bot 在本群看到过此人多少条消息（被动认知） |
 | 互动度 | bot 直接和此人对话过几次（主动互动） |
-| Facts 画像 | 从 facts 表零 LLM 组装"关于他"（如"纠正 xxx / 计划 300小时学AI"） |
-| 跨群画像合并 | 同一用户在不同群的数据自动聚合 |
-| 绰号识别 | Consolidation 自动提取"A 被叫做 B"写入 facts + person_registry |
-| 多 Bot 支持 | 2+ Bot 共存，独立互动数据，`bot_id` 使用 db_id 隔离 |
-| 防骚扰 | 辱骂 N 次 → 自动冷却静默（翻倍机制，上限 1 小时） |
+| Facts 画像 | 注入已审核事实；提审必须带原话，反串黑话不得当认真事实 |
+| 跨群记忆 | `cross_group_enabled` 控制检索能否看到其他群；画像主键仍是 `(user_id, group_id, bot_id)`，不是自动把所有群合成一个人 |
+| 别名 | `person_registry` 在好感 flush 时从本群发言名更新；不再由 Consolidation 后台盲抽绰号写 facts |
+| 多 Bot 支持 | 2+ Bot 共存，独立互动数据，`bot_id` 使用 `BotProfile.db_id` 隔离 |
+| 防骚扰 | 辱骂累计到阈值后冷却静默（翻倍，上限 1 小时） |
 | 身份安全 | 拦截认爹/认主/契约/猫娘/RP 等身份污染，不写入长期人格 |
-| 攻击边界 | 极端辱骂只注入安全边界，不把“怼回去”当默认风格 |
+| 攻击边界 | 身份污染走安全守卫；针对 Bot 的极端辱骂前几次会注入强硬语气，达到阈值后冷却不回 |
 
 ### 自主学习
 
@@ -227,16 +229,16 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 |------|------|
 | SelfReflect | 检测群友纠正信号 → 搜索已有记忆 → 内化为高权重记忆 |
 | DreamService | 6h 周期离线联想，强化近期重要记忆 |
-| Consolidation | 4h 周期 LLM 摘要 → 事实 / 关系 / 社交 / 绰号 |
+| Consolidation | **v5 默认不自动循环**；事实/信念改由现场工具提审。服务可保留供手工排障 |
 
 ### 文化融入
 
 | 模块 | 功能 |
 |------|------|
-| 黑话系统 | 统计预筛 → LLM 三步推断 → 自动挖掘群内梗 → 注入可用词汇 |
+| 黑话系统 | 入站只记账；新梗由 `mark_cultural_moment` 提审；Holyman 广域词典只读理解 |
 | Holyman 知识库 | 精选词条 / 文化概念 / 语录证据 / 原始语料 / 候选 / 屏蔽项分层管理 |
-| Few-Shot 风格 | 每天提取高代表性回复入库，仅注入已批准且无攻击/身份污染的健康范例 |
-| ConcernTracker | 维护当前在意的话题，影响主动插话决策 |
+| Few-Shot 风格 | 高光回复写入正式 `review_candidates`（须带当轮消息 id），仅注入已批准健康范例 |
+| 关切 / 人味 | 不入库截词。注入提供人情账与已审事实，模型自己决定要不要问吃饭、认投喂、回礼 |
 
 ### 记忆生命周期
 
@@ -294,6 +296,11 @@ cd webui/frontend && npm run build
 | wave_memory_explain_injection | 读取 trace，解释通道命中/过滤/预算/耗时 | read-only |
 | wave_memory_feedback_memory | 对 trace 中命中的 memory 记录 useful/useless/misleading/duplicate | 低风险 useful 可软提升 |
 | wave_memory_suggest_config | 基于 trace 证据提交配置建议 | pending_review，不自动应用 |
+| wave_memory_record_social_impression | 记录主观印象并在动态范围内裁决好感 | full，群 Scope |
+| wave_memory_note_social_anchor | 人情借还 / 承诺 / 越界备忘，可挂未了往来 | full，群 Scope |
+| wave_memory_mark_cultural_moment | 提审本群黑话或高光回复（style 进审查队列） | full，群 Scope |
+| wave_memory_propose_fact | 提审客观事实，必填原话 | full，群 Scope |
+| wave_memory_propose_belief | 提审稳定判断，须 ≥2 条已审事实 | full，群 Scope |
 | wave_memory_submit_review_candidate | 提交 memory/fact/belief/style/jargon 候选 | pending_review，不自动提升 |
 | book_lore_search | 书设知识库语义搜索 | full |
 | book_lore_graph | 书设实体关系图谱 | full |
@@ -409,12 +416,12 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| enable_persona_evolution | true | 对话对象画像注入 |
+| enable_persona_evolution | true | 仍控制是否启用人格通道；正式注入只走 PersonaComposer，不再读 PersonaEvolution 全局画像 |
 | enable_mood | true | Bot 情绪 |
 | enable_dream | true | 做梦系统 |
 | dream_interval_hours | 6.0 | 做梦间隔 |
-| enable_consolidation | true | LLM 摘要整合 |
-| consolidation_interval_hours | 4.0 | 整合间隔 |
+| enable_consolidation | true | 可实例化整合服务；**v5 默认不启动 4h 自动循环** |
+| consolidation_interval_hours | 4.0 | 仅手工/排障时有意义 |
 
 ### 多 Bot / MetaThinking
 
@@ -519,14 +526,13 @@ Runtime_Settings.runtime_mode = memory_only
 | 服务 | 周期 | 功能 |
 |------|------|------|
 | TagWorker | 持续 | 新消息自动 Tag 提取（batch 100） |
-| ConsolidationService | 4h | LLM 摘要整合 → facts + relations + social + nicknames |
+| ConsolidationService | 默认关闭自动循环 | 不再定时抽事实/信念；现场工具提审 |
 | DreamService | 6h | 记忆巩固（三层时间线涟漪浪潮） |
 | LifecycleService | 30min | 互动统计 + 记忆衰减 |
 | EvictionService | 6h | noise/chat 过期清理 |
-| StudyService | 6h | 从 BookLore 主动学习 |
-| BeliefEmergence | 15min 触发 | 关系事件 → 待审核信念候选 |
-| JargonMining | 每 10 条消息 | 黑话候选挖掘 |
-| FewShot Extract | 每天 | 健康风格范例提取 |
+| BeliefEmergence | 默认不自动 spawn | 信念改由 `propose_belief` + 已审事实二审 |
+| JargonMining | 入站只 feed | 新梗由文化瞬间工具提审 |
+| FewShot Extract | 现场高光提审 | 写入 `review_candidates.style`，须带消息 id |
 | PersonaComposer | 每次注入 | 自我人格 / 信念 / 经历 / 风格样本排序编排 |
 
 ---
@@ -548,9 +554,9 @@ Runtime_Settings.runtime_mode = memory_only
 | Trace Store | 自动 | 6185: Trace_Settings / 9876: 注入观察台 |
 | Agent 反馈 | full/memory_only | Agent 工具提交，管理台审核相关对象 |
 | LivingMemory-compatible facade | 自动 | 6185: Compatibility_Settings / 9876: 兼容模式 |
-| 记忆整合 | LLM Provider 可用且 full 模式 | 6185: enable_consolidation |
+| 记忆整合 | 服务可建；自动循环默认关 | 6185: enable_consolidation |
 | PersonaComposer | full 模式 | 自动 |
-| 信念引擎 | 记忆整合就绪且 full 模式 | 自动 |
+| 信念引擎 | 现场提审 + 管理台二审 | 须 ≥2 条已审事实 |
 | 经历片段 | v2.2 schema 已迁移且 full 模式 | 自动 |
 | 做梦系统 | enable_dream=true 且 full 模式 | 6185: enable_dream |
 | 黑话系统 | LLM + 聊天积累且 full 模式 | 6185: Jargon_Settings |
@@ -591,12 +597,20 @@ Runtime_Settings.runtime_mode = memory_only
 │   ├── self_reflect.py          # 自省系统
 │   ├── jargon/                  # 黑话 / 内置口癖资产
 │   └── few_shot/                # 健康风格学习
-├── tools/                       # 9 个 Agent 工具
+├── tools/                       # Agent 工具（含印象/人情/黑话/事实/信念提审）
 ├── webui/                       # Web 管理面板
 └── main.py                      # 插件入口
 ```
 
 ---
+
+## 内测群
+
+扫码加入 WaveMemory 内测群，反馈现场提审、审核台和群聊注入问题。
+
+<div align="center">
+<img src="docs/wavememory-beta-group.jpg" alt="WaveMemory 内测群" width="280" />
+</div>
 
 ## 致谢
 

@@ -43,7 +43,7 @@ class WaveMemoryAffinityUpdateTool(FunctionTool[AstrAgentContext]):
             "event_type": {
                 "type": "string",
                 "enum": [
-                    "message_seen", "direct_reply", "bot_praised", "bot_attacked", "correction",
+                    "direct_reply", "bot_praised", "bot_attacked", "correction",
                     "gift_or_feed", "confession", "joke", "deep_talk", "ignored_boundary", "manual_adjustment",
                 ],
                 "description": "关系事件类型",

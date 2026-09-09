@@ -102,7 +102,7 @@ function moduleLabel(key: unknown): string {
     exp_memories_tokens: '时间线/经历',
     book_lore_tokens: '书设知识',
     timeline_tokens: '时间线',
-    fts5_tokens: '全文检索',
+    fts5_tokens: '全文原词命中',
     fewshot_tokens: '风格范例',
   }
   if (value === 'unknown') return '未知模块'

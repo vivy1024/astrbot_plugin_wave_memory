@@ -11,7 +11,7 @@ import queue
 import sqlite3
 import threading
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Mapping
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,7 @@ class MutationOutcome:
     entities: tuple[EntityChange, ...]
     events: tuple[OutboxEventDraft, ...]
     warnings: tuple[str, ...] = ()
+    details: Mapping[str, Any] = field(default_factory=dict)
 
 
 CommandHandler = Callable[[sqlite3.Connection, DomainCommand, float], MutationOutcome]
@@ -353,6 +354,7 @@ class WriteCoordinator:
             entities=outcome.entities,
             effects=tuple(effects),
             warnings=outcome.warnings,
+            details=dict(outcome.details or {}),
         )
         encoded = self._encode_result(result)
         connection.execute(
@@ -376,6 +378,7 @@ class WriteCoordinator:
             entities=tuple(EntityChange(**item) for item in value.get("entities", ())),
             effects=tuple(OutboxEventRef(**item) for item in value.get("effects", ())),
             warnings=tuple(value.get("warnings", ())),
+            details=dict(value.get("details") or {}),
         )
 
     async def committed_watermark(self) -> int:

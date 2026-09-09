@@ -512,7 +512,7 @@ function setupBloom() {
             composer = new THREE.EffectComposer(webglRenderer);
             composer.addPass(new THREE.RenderPass(scene, camera));
             // 优雅的太空发光后处理：通透微光，不糊镜
-            const bloom = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.95, 0.65, 0.18);
+            const bloom = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.48, 0.52, 0.24);
             composer.addPass(bloom);
         }
     } catch (e) {
@@ -717,10 +717,12 @@ function animate() {
     if (starField) starField.rotation.y = t * 0.006;
     if (starFieldOuter) starFieldOuter.rotation.y = -t * 0.003;
     
-    if (graphGroup && !actionRingNode) graphGroup.rotation.y += 0.00035;
-    if (edgeGroup) edgeGroup.rotation.y = graphGroup.rotation.y;
+    // 默认保持拓扑静止，让用户在阅读和选中时不会被持续自转打断。
+    // 背景星尘仍保持极慢视差，保留空间感但不移动数据对象。
+    if (graphGroup && graphGroup.rotation.y !== 0) graphGroup.rotation.y = 0;
+    if (edgeGroup) edgeGroup.rotation.y = graphGroup?.rotation.y || 0;
     if (edgeLabelGroup) {
-        edgeLabelGroup.rotation.y = graphGroup.rotation.y;
+        edgeLabelGroup.rotation.y = graphGroup?.rotation.y || 0;
         edgeLabelGroup.children.forEach(sprite => sprite.lookAt(camera.position));
     }
     if (labelGroup) {
@@ -1025,13 +1027,13 @@ function createNodeObject(record) {
         depthWrite: false,
     });
     const haloSprite = new THREE.Sprite(haloMat);
-    const haloScale = isCore ? 4.2 : 2.6;
+    const haloScale = isCore ? 3.0 : 1.8;
     haloSprite.scale.set(haloScale, haloScale, 1);
     mesh.add(haloSprite);
 
     // 3. 核心恒星增加双重旋转轨道环 (Orbital Rings)
-    if (isCore) {
-        const ringGeo = new THREE.RingGeometry(record.radius * 1.5, record.radius * 1.62, 32);
+    if (isCore && (record.raw.isSource || record.type === 'bot' || record.degree >= 12)) {
+        const ringGeo = new THREE.RingGeometry(record.radius * 1.5, record.radius * 1.58, 32);
         const ringMat = new THREE.MeshBasicMaterial({
             color: new THREE.Color(record.color),
             side: THREE.DoubleSide,
@@ -1076,7 +1078,7 @@ function createEdgeObject(record) {
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
     // Cosmograph 级极细微光光纤丝（平时极克制，不遮挡星系）
-    const baseOpacity = record.isPath ? 0.95 : (record.raw.kind === 'fact' ? 0.22 : 0.08);
+    const baseOpacity = record.isPath ? 0.92 : (record.raw.kind === 'fact' ? 0.16 : 0.045);
     const mat = new THREE.LineBasicMaterial({
         vertexColors: true,
         transparent: true,
@@ -1172,7 +1174,7 @@ function createImportantEdgeLabels() {
     while (edgeLabelGroup.children.length) disposeSceneObject(edgeLabelGroup.children.pop());
     graphState.edges.forEach(record => { record.labelObject = null; });
     const records = Array.from(graphState.edges.values()).sort((a, b) => (Number(b.weight || 0) - Number(a.weight || 0)));
-    const limit = labelDensity === 'all' ? Math.min(220, records.length) : labelDensity === 'focus' ? Math.min(72, records.length) : Math.min(28, records.length);
+    const limit = labelDensity === 'all' ? Math.min(90, records.length) : labelDensity === 'focus' ? Math.min(28, records.length) : Math.min(12, records.length);
     records.slice(0, limit).forEach(record => createEdgeLabelObject(record));
 }
 

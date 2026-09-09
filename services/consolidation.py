@@ -17,12 +17,9 @@ from astrbot.api import logger
 try:
     from ..domain.scope import RuntimeScope, SessionRef
     from ..engine.database import WaveMemoryDB
-    from ..engine.fact_classifier import classify_fact
 except ImportError:  # pragma: no cover - direct service imports in focused tests
     from domain.scope import RuntimeScope, SessionRef
     from engine.database import WaveMemoryDB
-    from engine.fact_classifier import classify_fact
-from .identity_safety import is_identity_contamination
 from .llm_fallback import (
     build_provider_chain,
     call_first_available_provider,
@@ -42,17 +39,13 @@ CONSOLIDATION_PROMPT = """从以下群聊消息中提取结构化知识。
 {{
   "summary": "一句话概括这段对话的核心内容",
   "topics": ["话题1", "话题2"],
-  "facts": [{{"subject": "人名或事物", "predicate": "动作或关系", "object": "对象或属性"}}],
-  "relations": [{{"source": "人物或话题", "target": "人物/话题/事物", "type": "关系类型"}}],
-  "social": [{{"person_a": "人名A", "person_b": "人名B", "relation": "朋友/互怼/师徒/情侣/对立/合作/认识"}}],
-  "nicknames": [{{"person": "QQ号或当前昵称", "called": "群友给的绰号或别称"}}]
+  "relations": [{{"source": "人物或话题", "target": "人物/话题/事物", "type": "关系类型"}}]
 }}
 
 规则：
 - topics 最多 3 个，用简短名词短语
-- facts 最多 5 个，必须是三元组格式，subject 必须包含具体人名
 - relations 最多 4 条；type 从 discusses、mentions、decides、supports、opposes、reacts_to、creates、uses、knows、relates_to 中选择
-- social 最多 2 条，nicknames 最多 3 条；没有则留空数组
+- 不要输出 facts / social / nicknames；客观事实与信念只能由对话现场工具提审
 - 如果对话是无意义灌水，summary 写"日常灌水"，其他字段留空数组
 - 直接输出 JSON，不要 markdown 代码块"""
 
@@ -282,44 +275,20 @@ class ConsolidationService:
             return {"messages": 0, "relations": 0}
 
         summary = structured.get("summary", "")
-        facts = structured.get("facts", [])
         topics = structured.get("topics", [])
         relations = structured.get("relations", [])
+        # 事实/信念不得从摘要盲抽入库；只保留话题标签与关系边，供检索。
         relations_written = await asyncio.to_thread(
-            self._write_relations, scope, topics, facts, relations,
+            self._write_relations, scope, topics, [], relations,
         )
-        facts_written = await asyncio.to_thread(
-            self._write_facts, scope, facts, message_ids[0],
-        )
-        social = [
-            {"subject": item.get("person_a", ""), "predicate": item.get("relation", ""), "object": item.get("person_b", "")}
-            for item in (structured.get("social") or [])[:3]
-            if isinstance(item, dict)
-        ]
-        nickname_facts = [
-            {"subject": item.get("person", ""), "predicate": "被称为", "object": item.get("called", "")}
-            for item in (structured.get("nicknames") or [])[:3]
-            if isinstance(item, dict)
-        ]
-        facts_written += await asyncio.to_thread(self._write_facts, scope, social + nickname_facts, message_ids[0])
         if self.topic_backfill:
             await asyncio.to_thread(self._backfill_topic_tags, scope, message_ids, topics)
-
-        if self.belief_engine and summary and summary != "日常灌水":
-            try:
-                full_text = f"{summary}\n事实: {json.dumps(facts, ensure_ascii=False)}" if facts else summary
-                beliefs = await self.belief_engine.extract_from_summary(
-                    full_text, scope, source_memory_ids=message_ids,
-                )
-                logger.info("[Consolidation] Scoped belief extraction: %s new beliefs", len(beliefs or []))
-            except Exception as exc:
-                logger.warning(f"[Consolidation] Scoped belief extraction failed: {exc}")
 
         # This is deliberately the final operation: failed LLM/output work is retried.
         self.db.advance_scoped_consolidation_cursor(
             scope, cursor_name=_CURSOR_NAME, cursor_value=str(message_ids[-1]),
         )
-        return {"messages": len(message_ids), "relations": relations_written, "facts": facts_written}
+        return {"messages": len(message_ids), "relations": relations_written, "facts": 0, "summary": summary}
 
     def _fetch_messages(self, scope: RuntimeScope, cursor: int) -> list:
         """Read only records exactly matching the resolved Scope tuple."""
@@ -398,47 +367,6 @@ class ConsolidationService:
                     metadata={"producer": "consolidation"},
                 )
                 written += 1
-        return written
-
-    def _write_facts(self, scope: RuntimeScope, facts: list, source_memory_id: int) -> int:
-        """Write fact triples through the scoped facade only."""
-        written = 0
-        for fact in facts or []:
-            if isinstance(fact, dict):
-                subject = str(fact.get("subject", "")).strip()
-                predicate = str(fact.get("predicate", "")).strip()
-                obj = str(fact.get("object", "")).strip()
-            elif isinstance(fact, str):
-                parts = re.split(r"(是|喜欢|认为|说了|决定|提到|觉得|想要|正在|已经)", fact, maxsplit=1)
-                if len(parts) != 3:
-                    continue
-                subject, predicate, obj = (part.strip() for part in parts)
-            else:
-                continue
-            if (not subject or not predicate or not obj or len(subject) > 50 or len(obj) > 200
-                    or is_identity_contamination(f"{subject} {predicate} {obj}")
-                    or (self._bot_identifiers and subject in self._bot_identifiers)):
-                continue
-            trace_id = fact.get("trace_id") if isinstance(fact, dict) else None
-            provenance = {"producer": "consolidation", "fact_type": classify_fact(subject, predicate, obj)}
-            if trace_id:
-                provenance["trace_id"] = str(trace_id)
-            fact_status = "observed" if trace_id else "pending"
-            formal_writer = getattr(self.db.scoped_knowledge, "record_scoped_fact_observation", None)
-            if callable(formal_writer):
-                # formal writer 的异常必须向上抛出，避免静默回退造成双写或丢失审核历史。
-                formal_writer(
-                    scope, subject=subject, predicate=predicate, object=obj,
-                    confidence=0.7, review_status="pending", query_trace_id=str(trace_id or ""),
-                    source_memory_id=source_memory_id, provenance=provenance,
-                )
-            else:
-                self.db.upsert_scoped_fact(
-                    scope, subject=subject, predicate=predicate, object=obj,
-                    confidence=0.7, status="pending", source_memory_id=source_memory_id,
-                    provenance=provenance,
-                )
-            written += 1
         return written
 
     def _backfill_topic_tags(self, scope: RuntimeScope, memory_ids: list[int], topics: list[str]) -> None:

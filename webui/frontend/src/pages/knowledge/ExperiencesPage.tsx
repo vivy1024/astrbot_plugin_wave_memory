@@ -17,6 +17,21 @@ const EPISODE_TYPE_LABELS: Record<string, string> = {
   bot_reply: 'Bot 回复',
   correction: '被纠正',
   proactive: '主动发起',
+  shared_event: '共同经历',
+  shared_problem_solving: '共同解决问题',
+  group_turning_point: '群事件转折',
+}
+
+function sourceMemoryIds(value: ExperienceEpisode['source_memory_ids']): string[] {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean)
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean)
+    } catch { /* 兼容旧数据 */ }
+    return value.split(',').map((item) => item.trim()).filter(Boolean)
+  }
+  return []
 }
 
 export function ExperiencesPage() {
@@ -81,7 +96,7 @@ export function ExperiencesPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">经历片段</h1>
           <p className="text-sm text-muted-foreground">
-            按当前 Bot 与群查看经历片段：触发内容、内心活动、实际回复与用户反馈（共 {total} 条）
+            按当前 Bot 与群查看结构化群经历与反思证据（共 {total} 条）；经历不是事实、信念或社交锚点，也不会作为独立通道注入
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => void loadData()} disabled={loading}>
@@ -204,6 +219,11 @@ export function ExperiencesPage() {
                   </div>
                 ) : null}
                 <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-border/40 pt-2 text-[11px] text-muted-foreground">
+                  <span className="font-mono">episode:{item.id}</span>
+                  {item.reflection_candidate ? <Badge variant="secondary">反思候选</Badge> : null}
+                  {sourceMemoryIds(item.source_memory_ids).length ? <span>来源 memory: {sourceMemoryIds(item.source_memory_ids).join(', ')}</span> : <span>暂无来源记忆</span>}
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
                   {item.user_id ? (
                     <span className="flex items-center gap-1 truncate">
                       <UserIcon className="size-3" aria-hidden="true" />{item.user_id}

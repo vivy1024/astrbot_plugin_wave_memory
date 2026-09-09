@@ -286,7 +286,7 @@ def evaluate_proactive_policy(
 
 
 def relationship_behavior_guidance(snapshots: Sequence[Any]) -> dict[str, Any]:
-    """Return bounded response guidance for injection and proactive prompts."""
+    """Return bounded, non-injected policy metadata for proactive gating tests."""
     snapshots = tuple(snapshots or ())
     if not snapshots or any(not _snapshot_available(item) for item in snapshots):
         return {

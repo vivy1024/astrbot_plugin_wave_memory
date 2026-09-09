@@ -82,6 +82,12 @@ def run_migration(db_path: str) -> bool:
             """
         )
 
+        if _table_exists(cur, "experience_episodes"):
+            _add_column(cur, "experience_episodes", "idempotency_key", "TEXT")
+            _add_column(cur, "experience_episodes", "updated_at", "REAL")
+            cur.execute("UPDATE experience_episodes SET updated_at=COALESCE(updated_at, created_at)")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_experience_episode_idempotency ON experience_episodes(bot_id, group_id, idempotency_key) WHERE idempotency_key IS NOT NULL")
+
         if _table_exists(cur, "jargon"):
             _add_column(cur, "jargon", "status", "TEXT DEFAULT 'pending'")
             _add_column(cur, "jargon", "scope", "TEXT DEFAULT 'local'")

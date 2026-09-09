@@ -24,7 +24,6 @@ DIMENSION_RANGES: Mapping[str, tuple[float, float]] = {
 }
 VALID_DIMENSIONS = frozenset(DIMENSION_RANGES)
 VALID_EVENT_TYPES = frozenset({
-    "message_seen",
     "direct_reply",
     "bot_praised",
     "bot_attacked",
@@ -35,6 +34,12 @@ VALID_EVENT_TYPES = frozenset({
     "deep_talk",
     "ignored_boundary",
     "manual_adjustment",
+})
+NOISY_EVENT_TYPES = frozenset({"message_seen"})
+NOISY_EVENT_REASONS = frozenset({
+    "看见一条群友消息",
+    "消息带来趣味感",
+    "行为统计关系变化",
 })
 SINGLE_DELTA_CAP = 5.0
 HOSTILITY_DELTA_CAP = 8.0
@@ -65,11 +70,18 @@ def attitude_level(affection: int) -> str:
     return "hostile"
 
 
+def is_noisy_relationship_event(event_type: Any, reason: Any = "") -> bool:
+    """路过触达与关键词空跑不算正式关系事件。"""
+    normalized_event = str(event_type or "").strip()
+    normalized_reason = str(reason or "").strip()
+    return normalized_event in NOISY_EVENT_TYPES or normalized_reason in NOISY_EVENT_REASONS
+
+
 def validate_event(event_type: Any, dimension: Any, reason: Any, delta: Any) -> tuple[str, str, str, float]:
     normalized_event = str(event_type or "").strip()
     normalized_dimension = str(dimension or "").strip()
     normalized_reason = str(reason or "").strip()
-    if normalized_event not in VALID_EVENT_TYPES:
+    if normalized_event not in VALID_EVENT_TYPES or is_noisy_relationship_event(normalized_event, normalized_reason):
         raise ValueError("invalid_relationship_event_type")
     if normalized_dimension not in VALID_DIMENSIONS:
         raise ValueError("invalid_relationship_dimension")

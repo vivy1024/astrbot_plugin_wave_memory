@@ -147,20 +147,20 @@ class FactsChannel:
                 reason=scope_decision.reason_code or "scope_rejected",
             )
         repo = getattr(self.db, "scoped_knowledge", None)
-        if repo is None:
-            return InjectionResult.empty(
-                self.name,
-                latency_ms=self._latency_ms(started),
-                reason="scoped_repository_unavailable",
-            )
 
         try:
             keywords = _keywords(str(getattr(ctx, "message", "") or ""))
             if not keywords:
                 return InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="no fact keywords")
-            # The repository performs the Scope predicate.  Filtering and one-hop
-            # expansion below operate only on that already isolated DTO set.
-            rows = repo.list_scoped_facts(scope, limit=max(max_items * 12, 100))
+            fetch_limit = max(max_items * 12, 100)
+            rows: list[Mapping[str, Any]] = []
+            if repo is not None:
+                try:
+                    rows = list(repo.list_scoped_facts(scope, limit=fetch_limit) or [])
+                except Exception:
+                    rows = []
+            if len(rows) < fetch_limit:
+                rows.extend(self._legacy_fact_rows(ctx, scope, limit=fetch_limit - len(rows)))
             now = float(getattr(ctx, "now", 0.0) or time.time())
             facts, filtered = self._query_primary(rows, keywords=keywords, now=now)
             facts, budget_filtered = self._select_with_budget(facts, max_items=max_items, token_budget=token_budget)
@@ -306,6 +306,71 @@ class FactsChannel:
         payload["filter_reason"] = fact.get("filter_reason", "filtered")
         payload["filter_channel"] = fact.get("filter_channel", "facts")
         return payload
+
+    def _legacy_fact_rows(self, ctx: Any, scope: Any, *, limit: int) -> list[dict[str, Any]]:
+        """Read-only fallback to the existing facts table. Does not copy rows."""
+        if limit <= 0:
+            return []
+        conn = getattr(self.db, "conn", None)
+        if conn is None or not hasattr(conn, "execute"):
+            return []
+        group_id = ""
+        session = getattr(scope, "session", None)
+        if session is not None:
+            group_id = str(getattr(session, "conversation_id", "") or "")
+        if not group_id:
+            group_id = str(getattr(ctx, "group_id", "") or "")
+        sender_id = str(getattr(ctx, "sender_id", "") or "").strip()
+        sender_name = str(getattr(ctx, "sender_name", "") or "").strip()
+        keywords = _keywords(str(getattr(ctx, "message", "") or ""), limit=6)
+        now = float(getattr(ctx, "now", 0.0) or time.time())
+        clauses = [
+            "COALESCE(fact_type, '') != 'QUARANTINED_ROLEPLAY'",
+            "(valid_until IS NULL OR valid_until > ?)",
+        ]
+        params: list[Any] = [now]
+        if group_id:
+            clauses.append("COALESCE(group_id, '') = ?")
+            params.append(group_id)
+        match_clauses: list[str] = []
+        if sender_id:
+            match_clauses.append("subject = ?")
+            params.append(sender_id)
+        if sender_name:
+            match_clauses.append("subject = ?")
+            params.append(sender_name)
+        for token in keywords:
+            like = f"%{token}%"
+            match_clauses.append("(subject LIKE ? OR object LIKE ?)")
+            params.extend((like, like))
+        if match_clauses:
+            clauses.append(f"({' OR '.join(match_clauses)})")
+        sql = f"""SELECT id, subject, predicate, object, confidence, created_at, last_reinforced, fact_type
+                    FROM facts
+                   WHERE {' AND '.join(clauses)}
+                   ORDER BY confidence DESC, id DESC
+                   LIMIT ?"""
+        params.append(limit)
+        try:
+            fetched = conn.execute(sql, tuple(params)).fetchall()
+        except Exception:
+            return []
+        rows: list[dict[str, Any]] = []
+        for row in fetched:
+            rows.append({
+                "id": row[0],
+                "subject": row[1],
+                "predicate": row[2],
+                "object": row[3],
+                "confidence": row[4],
+                "created_at": row[5],
+                "updated_at": row[6] or row[5],
+                "status": "active",
+                "review_status": "approved",
+                "relation": "compatible",
+                "provenance": {"source_table": "facts", "legacy": True},
+            })
+        return rows
 
     @staticmethod
     def _latency_ms(started: float) -> float:

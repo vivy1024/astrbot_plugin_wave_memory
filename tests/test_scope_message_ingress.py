@@ -77,6 +77,22 @@ class _FakeLifecycle:
         return True
 
 
+class _FakeConcernTracker:
+    def __init__(self):
+        self.added = []
+
+    def add(self, **kwargs):
+        self.added.append(dict(kwargs))
+
+
+class _FakeSubjectiveTime:
+    def __init__(self):
+        self.anchors = []
+
+    def add_anchor(self, *args, **kwargs):
+        self.anchors.append((args, dict(kwargs)))
+
+
 class _FakeEvent:
     def __init__(self, *, message="作用域入口测试", sender_id="user-event", group_id="group-event", self_id="bot-event"):
         self.message_str = message
@@ -163,8 +179,35 @@ class _CountingResolver:
         return self.resolver.resolve_event(event)
 
 
+class _FakeJargon:
+    def __init__(self):
+        self.fed = []
+        self.mine_calls = []
+
+    def feed_message(self, *args, **kwargs):
+        self.fed.append((args, dict(kwargs)))
+
+    def should_mine(self, runtime_scope):
+        return True
+
+    async def mine(self, runtime_scope):
+        self.mine_calls.append(runtime_scope)
+        return [{"word": "垃圾黑话"}]
+
+
+class _FakeBeliefEmergence:
+    def __init__(self):
+        self.calls = []
+
+    async def emerge_recent(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        return ["pending-belief"]
+
+
 class _IngressPlugin:
     def __init__(self, resolver):
+        from services.inbound_message_handler import InboundMessagePipeline
+
         self.scope_resolver = resolver
         self.writer = _FakeWriter()
         self.db = SimpleNamespace(scoped_knowledge=_FakeScopedKnowledge())
@@ -177,11 +220,21 @@ class _IngressPlugin:
         self.jargon_service = None
         self.self_reflect = None
         self.lifecycle = None
+        self.belief_emergence = None
         self.desire_engine = None
         self.meta_thinking = None
         self.concern_tracker = None
+        self.subjective_time = None
         self._scope_resolution_failed_total = {}
         self._scope_resolution_last_warning = {}
+        self._spawned = []
+        self.inbound_pipeline = InboundMessagePipeline(self)
+
+    def _spawn(self, coro, **kwargs):
+        self._spawned.append((coro, dict(kwargs)))
+        if hasattr(coro, "close"):
+            coro.close()
+        return None
 
     @staticmethod
     def _get_bot(_bot_id):
@@ -396,6 +449,46 @@ class ScopeMessageIngressTest(unittest.TestCase):
         self.assertEqual(kwargs["bot_id"], "bot-profile")
         self.assertIs(kwargs["scope"], event._wave_memory_runtime_scope)
         self.assertEqual(kwargs["scope"].session.id, "qq:group:group-event")
+
+    def test_auto_extract_tasks_are_not_spawned_from_inbound_path(self):
+        on_message, _, _ = _load_on_message()
+        resolver = self._resolver()
+        plugin = _IngressPlugin(resolver)
+        plugin.lifecycle = _FakeLifecycle()
+        plugin.jargon_service = _FakeJargon()
+        plugin.belief_emergence = _FakeBeliefEmergence()
+        event = _FakeEvent()
+
+        asyncio.run(on_message(plugin, event))
+
+        self.assertEqual(len(plugin.writer.items), 1)
+        self.assertEqual(len(plugin.jargon_service.fed), 1)
+        self.assertEqual(plugin._spawned, [])
+        self.assertEqual(plugin.jargon_service.mine_calls, [])
+        self.assertEqual(plugin.belief_emergence.calls, [])
+
+    def test_main_does_not_auto_start_consolidation_loop(self):
+        source = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
+        self.assertNotIn("self.consolidation.start(", source)
+        self.assertNotIn("from .services.consolidation import ConsolidationService", source)
+        self.assertIn("ConsolidationService removed", source)
+
+    def test_long_inbound_message_does_not_guess_concern_or_time_anchor(self):
+        on_message, _, _ = _load_on_message()
+        resolver = self._resolver()
+        plugin = _IngressPlugin(resolver)
+        plugin.lifecycle = _FakeLifecycle()
+        plugin.concern_tracker = _FakeConcernTracker()
+        plugin.subjective_time = _FakeSubjectiveTime()
+        plugin._bot_qq_ids = ["bot-event"]
+        event = _FakeEvent(message="这是一条超过八十字的群聊灌水，用来确认入站不会再靠字数截出关切或主观时间锚点。" + ("哈" * 40))
+
+        asyncio.run(on_message(plugin, event))
+
+        self.assertEqual(len(plugin.writer.items), 1)
+        self.assertEqual(plugin.concern_tracker.added, [])
+        self.assertEqual(plugin.subjective_time.anchors, [])
+        self.assertEqual(len(plugin.lifecycle.calls), 1)
 
     def test_lifecycle_receives_event_resolved_scope_without_first_bot_fallback(self):
         on_message, _, _ = _load_on_message()

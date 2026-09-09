@@ -67,8 +67,8 @@ export function RelationshipRadarCard({ values }: { values: RelationshipItem['va
       <ChartContainer config={radarChartConfig} className="mx-auto aspect-square max-h-60 w-full">
         <RadarChart data={points} cx="50%" cy="50%" outerRadius="68%">
           <PolarGrid strokeDasharray="3 3" className="stroke-border/60" />
-          <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 11 }} className="fill-muted-foreground" />
-          <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
+          <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+          <PolarRadiusAxis type="number" domain={[0, 100]} tick={false} axisLine={false} allowDataOverflow />
           <Radar dataKey="value" stroke="var(--chart-4)" fill="var(--chart-4)" fillOpacity={0.25} connectNulls={false} isAnimationActive={false} />
           <ChartTooltip content={<RadarTooltip />} />
         </RadarChart>

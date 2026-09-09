@@ -477,10 +477,10 @@
         "default": 3
       },
       "enable_consolidation": {
-        "description": "启用定时长语篇摘要整合",
-        "hint": "调用 LLM 定时扫描原始对话快照，将长篇大论的消息流提炼成极其精简的结构化知识三元组（Subject-Predicate-Object），并持久化写回图谱。极其推荐开启，这是沉淀“生平大事记”的唯一源头。",
+        "description": "已废弃：定时长语篇摘要整合不再装配",
+        "hint": "保留配置键以免旧 config.json 报未知字段。话题标签由 TagWorker 负责，事实/信念由对话现场工具提审。",
         "type": "bool",
-        "default": true
+        "default": false
       },
       "consolidation_interval_hours": {
         "description": "长语篇摘要整合间隔",

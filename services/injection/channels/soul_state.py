@@ -59,7 +59,6 @@ class SoulStateChannel:
         try:
             state = _mapping(self.repository.get_state(scope, limit=25, offset=0))
             mood = _mapping(state.get("mood"))
-            concerns = _mapping(state.get("concerns")).get("items") or []
             timeline = _mapping(state.get("timeline")).get("items") or []
             lines: list[str] = []
             if mood.get("state") == "known":
@@ -69,15 +68,7 @@ class SoulStateChannel:
                     f"arousal={round(float(components.get('arousal', 0.0)), 2)}"
                     + (f"（原因：{str(mood.get('cause'))[:80]}）" if mood.get("cause") else "")
                 )
-            active_concerns = [
-                item for item in concerns
-                if isinstance(item, Mapping) and float(item.get("intensity", 0.0) or 0.0) > 0.3
-            ][:3]
-            if active_concerns:
-                topics = [str(item.get("topic") or "").strip()[:80] for item in active_concerns]
-                topics = [topic for topic in topics if topic and not is_identity_contamination(topic)]
-                if topics:
-                    lines.append("当前关切：" + "、".join(topics))
+            # 关切不再常驻注入：本轮是否惦记由 MetaThinking × 印象时间线线索决定。
             recent_timeline = []
             for item in timeline[:2]:
                 if not isinstance(item, Mapping):

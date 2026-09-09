@@ -10,17 +10,27 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 try:
+    from ..domain.commands import CommandRejectedError, DomainCommand, EntityChange, IdempotencyConflictError
     from ..domain.scope import RuntimeScope, scope_to_dict
-    from ..engine.db.outbox_repo import OutboxRepository
     from ..engine.db.scoped_tag_projection import rebuild_scope_effective_tags
+    from ..engine.write_coordinator import MutationOutcome, OutboxEventDraft
 except ImportError:  # pragma: no cover
+    from domain.commands import CommandRejectedError, DomainCommand, EntityChange, IdempotencyConflictError
     from domain.scope import RuntimeScope, scope_to_dict
-    from engine.db.outbox_repo import OutboxRepository
     from engine.db.scoped_tag_projection import rebuild_scope_effective_tags
+    from engine.write_coordinator import MutationOutcome, OutboxEventDraft
 
 
 _ACTIONS = frozenset({"merge", "retype", "alias", "deactivate"})
 _STATUSES = frozenset({"pending", "approved", "rejected", "conflict", "expired"})
+TAG_GOVERNANCE_COMMANDS = frozenset({
+    "tags.governance.suggestion.create.v1",
+    "tags.governance.approve.v1",
+    "tags.governance.reject.v1",
+    "tags.governance.compensate.v1",
+    "tags.governance.batch.approve.v1",
+    "tags.governance.batch.reject.v1",
+})
 
 
 class TagGovernanceError(ValueError):
@@ -234,13 +244,10 @@ class TagGovernanceGateway:
         coordinator = getattr(write_gateway, "coordinator", None)
         if coordinator is None:
             raise ValueError("write gateway coordinator is required")
+        self._write_gateway = write_gateway
         self._coordinator = coordinator
         self._clock = clock
-        consumers = getattr(write_gateway, "_consumers", None)
-        if isinstance(consumers, Mapping):
-            self._consumer_names = tuple(sorted(str(name) for name in consumers))
-        else:
-            self._consumer_names = tuple(sorted(str(name) for name in getattr(coordinator, "_consumer_names", ())))
+        self._pending_events: list[OutboxEventDraft] = []
 
     def _now(self) -> float:
         if self._clock is not None and callable(getattr(self._clock, "now", None)):
@@ -414,21 +421,65 @@ class TagGovernanceGateway:
         return row
 
     def _event(self, connection, *, operation_id: str, index: int, aggregate_kind: str, aggregate_id: str, version: int, event_type: str, payload: Mapping[str, Any], now: float) -> None:
-        event_id = uuid.uuid5(uuid.NAMESPACE_URL, f"wave-memory:{operation_id}:{index}").hex
-        connection.execute(
-            """INSERT INTO domain_outbox(
-                   event_id, operation_id, aggregate_kind, aggregate_id,
-                   aggregate_version, event_type, payload_version, payload_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)""",
-            (event_id, operation_id, aggregate_kind, aggregate_id, int(version), event_type, _json(payload), now),
+        del connection, operation_id, index, now
+        self._pending_events.append(
+            OutboxEventDraft(aggregate_kind, str(aggregate_id), int(version), event_type, dict(payload))
         )
-        OutboxRepository.add_deliveries(connection, event_id, self._consumer_names, now)
+
+    def apply_mutate(self, connection, command: DomainCommand, now: float, mutate) -> MutationOutcome:
+        """Run one governance mutation and return coordinator-owned events."""
+        self._pending_events = []
+        result = mutate(connection, command.operation_id, now)
+        details = {
+            "operation_id": command.operation_id,
+            "suggestion_id": result.suggestion_id,
+            "revision": result.revision,
+            "status": result.status,
+            "impact": result.impact,
+        }
+        entity_id = str(result.suggestion_id or command.operation_id)
+        version = int(result.revision or 1)
+        return MutationOutcome(
+            entities=(EntityChange("tag_audit_suggestion", entity_id, version, str(result.status)),),
+            events=tuple(self._pending_events),
+            details=details,
+        )
 
     async def _commit(self, *, scope: RuntimeScope, command_type: str, request_shape: Mapping[str, Any], mutate) -> TagGovernanceResult:
         request_hash = _digest(request_shape)
         idempotency_key = f"{command_type}:{request_hash}"
         operation_id = uuid.uuid5(uuid.NAMESPACE_URL, f"wave-memory:{command_type}:{request_hash}").hex
-        now = self._now()
+        command = DomainCommand(
+            operation_id=operation_id,
+            idempotency_key=idempotency_key,
+            actor="webui.tag.governance",
+            scope=scope,
+            command_type=command_type,
+            payload=dict(request_shape),
+            request_hash=request_hash,
+        )
+        submit = getattr(self._coordinator, "submit", None)
+        if callable(submit):
+            bound = getattr(self._write_gateway, "bind_tag_governance", None)
+            if callable(bound):
+                bound(self, mutate)
+            self._coordinator.gateway = self
+            self._coordinator.mutate = mutate
+            try:
+                result = await submit(command)
+            except CommandRejectedError as exc:
+                raise TagGovernanceError(exc.code, str(exc)) from exc
+            except IdempotencyConflictError as cop:
+                raise TagGovernanceError("idempotency_conflict", str(cop)) from cop
+            details = dict(getattr(result, "details", None) or {})
+            if details:
+                return TagGovernanceResult(
+                    operation_id=str(details.get("operation_id") or result.operation_id),
+                    suggestion_id=details.get("suggestion_id"),
+                    revision=details.get("revision"),
+                    status=str(details.get("status") or "committed"),
+                    impact=dict(details.get("impact") or {}),
+                )
 
         def transaction(connection):
             existing = connection.execute(
@@ -441,37 +492,27 @@ class TagGovernanceGateway:
                 if str(existing[1]) != "committed" or not existing[2]:
                     raise TagGovernanceError("operation_incomplete")
                 payload = json.loads(str(existing[2]))
+                details = dict(payload.get("details") or payload)
                 return TagGovernanceResult(
-                    operation_id=str(payload["operation_id"]),
-                    suggestion_id=payload.get("suggestion_id"),
-                    revision=payload.get("revision"),
-                    status=str(payload.get("status", "committed")),
-                    impact=dict(payload.get("impact") or {}),
+                    operation_id=str(details.get("operation_id") or payload.get("operation_id") or operation_id),
+                    suggestion_id=details.get("suggestion_id"),
+                    revision=details.get("revision"),
+                    status=str(details.get("status", "committed")),
+                    impact=dict(details.get("impact") or {}),
                 )
-            sequence = OutboxRepository.next_write_sequence(connection)
-            connection.execute(
-                """INSERT INTO write_operations(
-                       operation_id, idempotency_key, request_hash, command_type,
-                       scope_json, status, write_sequence, created_at)
-                   VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)""",
-                (operation_id, idempotency_key, request_hash, command_type, _json(scope_to_dict(scope)), sequence, now),
+            outcome = self.apply_mutate(connection, command, self._now(), mutate)
+            return TagGovernanceResult(
+                operation_id=command.operation_id,
+                suggestion_id=outcome.details.get("suggestion_id"),
+                revision=outcome.details.get("revision"),
+                status=str(outcome.details.get("status") or "committed"),
+                impact=dict(outcome.details.get("impact") or {}),
             )
-            result = mutate(connection, operation_id, now)
-            payload = {
-                "operation_id": operation_id,
-                "suggestion_id": result.suggestion_id,
-                "revision": result.revision,
-                "status": result.status,
-                "impact": result.impact,
-                "write_sequence": sequence,
-            }
-            connection.execute(
-                "UPDATE write_operations SET status='committed', result_json=?, committed_at=? WHERE operation_id=?",
-                (_json(payload), now, operation_id),
-            )
-            return result
 
-        return await self._coordinator.transaction(transaction, actor=command_type)
+        transaction_fn = getattr(self._coordinator, "transaction", None)
+        if not callable(transaction_fn):
+            raise TagGovernanceError("tag_writer_unavailable")
+        return await transaction_fn(transaction, actor=command_type)
 
     async def create_suggestion(self, *, scope: RuntimeScope, action: str, tag_ids: Sequence[Any], target_tag_id: int | None = None, target_name: str | None = None, target_type: str | None = None, aliases: Sequence[Any] = (), reason: str, evidence: Mapping[str, Any] | None = None, expires_in: float = 86400.0) -> TagGovernanceResult:
         action = _normalize_action(action)
@@ -912,4 +953,14 @@ class TagGovernanceGateway:
         return await self._commit(scope=scope, command_type=f"tags.governance.batch.{decision}.v1", request_shape=request_shape, mutate=mutate)
 
 
-__all__ = ["TagGovernanceError", "TagGovernanceGateway", "TagGovernanceResult"]
+def apply_tag_governance_command(connection, command: DomainCommand, now: float, *, gateway: Any, mutate) -> MutationOutcome:
+    return gateway.apply_mutate(connection, command, now, mutate)
+
+
+__all__ = [
+    "TAG_GOVERNANCE_COMMANDS",
+    "TagGovernanceError",
+    "TagGovernanceGateway",
+    "TagGovernanceResult",
+    "apply_tag_governance_command",
+]

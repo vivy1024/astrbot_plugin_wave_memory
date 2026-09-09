@@ -1,5 +1,49 @@
 # Changelog
 
+## v5.0.0 (2026-09-06)
+
+认知来源从后台盲抽改为现场提审；关系与知识分层审核。这是不兼容的主版本跃迁：旧 pending 事实/信念/黑话/经历不再当作可用积攒，需按新契约重新沉淀。
+
+### 破坏性变更
+
+- **停掉自动抽取循环**：不再每 4 小时 consolidation 抽事实/信念，不再定时 belief emerge，不再按消息计数自动 jargon mine。服务对象可保留，默认不 `start()` 后台循环。
+- **关切不再截词**：入站不再因 `@` 或字数截前 60/80 字写关切或主观时间锚点。人味（问安、投喂、回礼）由注入看见人情账/事实/印象后临场发挥，不设关切专用工具。
+- **事实必须带原话**：`wave_memory_propose_fact` 必填 `source_quote`。黑话只用于理解原话；已有元数据明确反串/阴阳则拒绝升格为认真事实。
+- **信念是已审事实的二审**：提审与 WebUI 批准统一要求当前群 ≥2 条仍为已批准的 `source_fact_ids`。不是信仰，不是人生感悟。
+- **风格高光进正式审查队列**：`exemplar_reply` 写入 `review_candidates`（`style`），必须带当轮 message id；废弃旁路表 `exemplar_reply_candidates`。
+
+### 认知与社交
+
+- 日常 `<<impression:...>>` 仍作一手感知流水；积攒够厚度后关系通道注入反思契机，引导调用现场工具。
+- 新增/收口现场工具：`record_social_impression`、`note_social_anchor`、`mark_cultural_moment`、`propose_fact`、`propose_belief`。
+- 好感由工具在系统算出的有限范围（默认约 ±2）内自选；真实变动或重要印象才钉时间线锚点。
+- 人情账工具可写备忘，**不作为注入规格**；关系通道注入当前分 + 印象时间线，不塞未了账单，不给 cautious/trusted 面具。
+- `AffinityEngine` 不再关键词加减正式五维；`classify_social_event` 与 `extract_from_summary` 已从正式路径删除。
+- 信念批准与提审同一道门：WebUI 通过必须仍挂 ≥2 条本群已批准事实；标签刷新只重算证据，不自动升格。
+- 关系通道优先保证反思指令预算；删除截词「前情关切」墙。
+- 正式注入现为 12 通道：在原有 11 条之外，`soul_state` 只读注入当前群 mood / concern / timeline。
+- `PersonaChannel` 不再读取 `PersonaEvolution` 全局对象画像；对象侧写改由关系通道的已审事实、印象和人情账承担。
+- `DesireEngine` 仍会初始化并出现在健康面板，但回复路径不调用 `trigger` / `resolve`，不能当成已上线的冲动博弈。
+
+### 架构与运行时
+
+- 数据库备份改为 `DatabaseBackupManager`，不在 `main.py` 前台 `shutil.copy2`。
+- 入站并发锁、命令前缀、抢词咽回收到 `InboundMessagePipeline`。
+- 群名预热收到 `PlatformContextManager`。
+- `on_message` 防抖后正确传递 `message_ts` / `sender_name`。
+
+### WebUI
+
+- Tag 图改 Sigma.js + Graphology + ForceAtlas2，默认全屏工作台。
+- 宽表改为卡片/抽屉；路由代码分割减轻首包。
+- 人物页：印象时间线、人情账、五维雷达与轨迹；信念/黑话审核契约对齐 scoped 表。
+
+### 数据与运维提示
+
+- 旧 `scoped_facts` / `scoped_beliefs` pending 海量候选与后台抽取产物应清空后按新工具重新积攒。核心 `memories` 与 `user_profiles` 不要删。
+- `enable_consolidation` 仍可实例化服务，但自动循环默认关闭。
+- 旧好感流水（`scoped_soul_relationships*`、`relationship_events`、画像 `affection` / `dimensions`）如需从零积攒，应单独清空关系表并重置画像分数；不要删 `memories`。
+
 ## v4.7.2 (2026-08-29)
 
 ### 管理台与心智运行时

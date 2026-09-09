@@ -243,9 +243,21 @@ def _profile_db() -> sqlite3.Connection:
                PRIMARY KEY(user_id, group_id, bot_id)
            )"""
     )
+    conn.execute("INSERT INTO user_profiles VALUES ('u1', 'g1', 'bot-alpha', '甲', '{}')")
     conn.execute(
-        "INSERT INTO user_profiles VALUES ('u1', 'g1', 'bot-alpha', '甲', ?)",
-        ('{"impression": "说话谨慎，常纠正事实"}',),
+        """CREATE TABLE person_timeline_events (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               bot_id TEXT, user_id TEXT, group_id TEXT, kind TEXT,
+               summary TEXT, detail TEXT, subject TEXT, predicate TEXT, object TEXT,
+               confidence REAL, occurred_at REAL, legacy_fact_id INTEGER,
+               provenance TEXT, created_at REAL
+           )"""
+    )
+    conn.execute(
+        """INSERT INTO person_timeline_events (
+               bot_id, user_id, group_id, kind, summary, detail, subject, predicate, object,
+               confidence, occurred_at, provenance, created_at
+           ) VALUES ('bot-alpha', 'u1', 'g1', 'impression', '说话谨慎，常纠正事实', '说话谨慎，常纠正事实', '', '', '', NULL, 1000, '{}', 1000)"""
     )
     conn.commit()
     return conn
@@ -254,9 +266,25 @@ def _profile_db() -> sqlite3.Connection:
 @pytest.mark.asyncio
 async def test_clear_impression_requires_reason_and_writes_audit(route_app):
     app, _scope, _gateway = route_app
+    from engine.db.person_timeline_repo import PersonTimelineRepo
+
     container = ServiceContainer()
     conn = _profile_db()
-    container.db = SimpleNamespace(conn=conn)
+
+    class _CM:
+        def execute_write(self, sql, params=None):
+            return conn.execute(sql, params or ())
+        def execute_read(self, sql, params=None):
+            return conn.execute(sql, params or ())
+        def migration_transaction(self):
+            from contextlib import contextmanager
+            @contextmanager
+            def _tx():
+                yield conn
+                conn.commit()
+            return _tx()
+
+    container.db = SimpleNamespace(conn=conn, person_timeline=PersonTimelineRepo(_CM()))
     client = app.test_client()
 
     missing = await client.post("/api/people/commands/clear-impression", json={"user_id": "u1"})
@@ -275,11 +303,8 @@ async def test_clear_impression_requires_reason_and_writes_audit(route_app):
     assert payload["item"]["cleared"] is True
     assert payload["item"]["previous_impression"] == "说话谨慎，常纠正事实"
 
-    row = conn.execute(
-        "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
-        ("u1", "g1", "bot-alpha"),
-    ).fetchone()
-    metadata = __import__("json").loads(row[0])
-    assert metadata["impression"] == ""
-    assert metadata["impression_cleared_reason"] == "印象过期，需要重新观察"
-    assert metadata["impression_history"][0]["text"] == "说话谨慎，常纠正事实"
+    rows = conn.execute(
+        "SELECT kind, summary, detail FROM person_timeline_events WHERE user_id='u1' ORDER BY id"
+    ).fetchall()
+    assert rows[0][1] == "说话谨慎，常纠正事实"
+    assert any("已清除当前印象" in str(row[1]) for row in rows)

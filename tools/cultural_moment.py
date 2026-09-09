@@ -22,10 +22,20 @@ except Exception:  # pragma: no cover
 
 try:
     from ..domain.scope import RuntimeScope
+    from ..services.review.candidate_store import ReviewCandidateStore
     from .scope_boundary import require_group_runtime_scope, scope_error_message
 except ImportError:  # pragma: no cover
     from domain.scope import RuntimeScope
+    from services.review.candidate_store import ReviewCandidateStore
     from tools.scope_boundary import require_group_runtime_scope, scope_error_message
+
+
+def _event_message_id(ctx: Any) -> str:
+    event = getattr(getattr(ctx, "context", None), "event", None)
+    raw = getattr(event, "message_id", None)
+    if raw in {None, ""}:
+        raw = getattr(getattr(event, "message_obj", None), "message_id", None)
+    return str(raw or "").strip()
 
 
 @dataclass
@@ -105,25 +115,30 @@ class WaveMemoryMarkCulturalMomentTool(FunctionTool[AstrAgentContext]):
                     return f"黑话候选标记失败: {e}"
             return f"已将潜在黑话「{target_phrase}」提交至本群待审候选区：{context_note}"
 
-        # 2. 高光风骨回复 -> 记录为候选 FewShot 提审
+        # 2. 高光风骨回复 -> 正式 style 审查队列；证据只能来自当轮消息 id
         if moment_type == "exemplar_reply":
+            event_id = _event_message_id(ctx)
+            if not event_id:
+                return "风骨范式提审被拒绝：当前事件没有 message id，无法提交审查证据"
             try:
-                self.db.conn.execute(
-                    """CREATE TABLE IF NOT EXISTS exemplar_reply_candidates (
-                           id INTEGER PRIMARY KEY AUTOINCREMENT,
-                           bot_id TEXT, group_id TEXT,
-                           snippet TEXT, context_note TEXT,
-                           created_at REAL
-                       )"""
+                store = ReviewCandidateStore(self.db.conn)
+                candidate_id = store.create(
+                    candidate_type="style",
+                    content=target_phrase,
+                    evidence=[f"event:{event_id}"],
+                    reason=context_note,
+                    actor="bot_marked_moment",
+                    metadata={
+                        "bot_id": runtime_scope.bot_id,
+                        "session_id": runtime_scope.session.id,
+                        "visibility": runtime_scope.visibility,
+                        "group_id": runtime_scope.session.conversation_id,
+                        "marked_at": now,
+                    },
+                    now=now,
                 )
-                self.db.conn.execute(
-                    """INSERT INTO exemplar_reply_candidates (bot_id, group_id, snippet, context_note, created_at)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (runtime_scope.bot_id, runtime_scope.session.conversation_id, target_phrase, context_note, now),
-                )
-                self.db.conn.commit()
             except Exception as e:
                 return f"风骨范式标记失败: {e}"
-            return f"已标记高光回复范式「{target_phrase[:40]}...」：{context_note}"
+            return f"已将高光回复范式提交审查（候选ID: {candidate_id}）：{context_note}"
 
         return "未知的标记类型"

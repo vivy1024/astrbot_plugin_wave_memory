@@ -12,11 +12,14 @@ try:
     from ...domain.relationship_policy import (
         DIMENSION_RANGES,
         DIMENSION_WEIGHTS,
+        NOISY_EVENT_REASONS,
+        NOISY_EVENT_TYPES,
         attitude_level,
         cap_automatic_delta,
         cap_manual_adjustment_delta,
         clamp_dimension,
         compute_affinity,
+        is_noisy_relationship_event,
         validate_event,
     )
     from ...domain.scope import RuntimeScope
@@ -24,11 +27,14 @@ except ImportError:  # pragma: no cover
     from domain.relationship_policy import (
         DIMENSION_RANGES,
         DIMENSION_WEIGHTS,
+        NOISY_EVENT_REASONS,
+        NOISY_EVENT_TYPES,
         attitude_level,
         cap_automatic_delta,
         cap_manual_adjustment_delta,
         clamp_dimension,
         compute_affinity,
+        is_noisy_relationship_event,
         validate_event,
     )
     from domain.scope import RuntimeScope
@@ -286,11 +292,21 @@ class ScopedSoulRepository:
             intensity = max(0.0, min(1.0, float(item.get("intensity", 0.7))))
             created_at = float(item.get("created_at") or time.time())
             last_triggered = float(item.get("last_triggered") or created_at)
+            status = str(item.get("status") or "active").strip() or "active"
+            if status not in {"active", "dormant", "progressing", "resolved", "expired", "archived"}:
+                raise ValueError("invalid_concern_status")
             item_evidence = item.get("evidence")
             normalized.append((
                 topic,
                 intensity,
                 item.get("origin_memory_id") or None,
+                item.get("origin_episode_id") or None,
+                str(item.get("concern_type") or "").strip(),
+                status,
+                max(0.0, min(1.0, float(item.get("urgency") or 0.0))),
+                item.get("last_progress_at"),
+                item.get("expected_resolution_at"),
+                str(item.get("resolution_note") or "").strip(),
                 created_at,
                 last_triggered,
                 _json_evidence(item_evidence) if item_evidence is not None else encoded_default_evidence,
@@ -307,9 +323,11 @@ class ScopedSoulRepository:
                 tx.execute(
                     """INSERT INTO scoped_soul_concerns
                            (bot_id, session_id, visibility, topic, intensity, origin_memory_id,
-                            created_at, last_triggered, revision, evidence)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (*_scope_params(scope), *row[:5], revision, row[5]),
+                            origin_episode_id, concern_type, status, urgency, last_progress_at,
+                            expected_resolution_at, resolution_note, created_at, last_triggered,
+                            revision, evidence)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (*_scope_params(scope), *row[:12], revision, row[12]),
                 )
             return revision
 
@@ -786,12 +804,20 @@ class ScopedSoulRepository:
         scope_params = (*_scope_params(scope), subject)
         auto_time, auto_times = time_filter("created_at")
         manual_time, manual_times = time_filter("created_at")
+        noise_types = tuple(sorted(NOISY_EVENT_TYPES))
+        noise_reasons = tuple(sorted(NOISY_EVENT_REASONS))
+        type_placeholders = ",".join("?" for _ in noise_types) or "NULL"
+        reason_placeholders = ",".join("?" for _ in noise_reasons) or "NULL"
+        noise_filter = (
+            f" AND event_type NOT IN ({type_placeholders})"
+            f" AND COALESCE(reason, '') NOT IN ({reason_placeholders})"
+        )
         auto_count = int(self.cm.execute_read(
             f"""SELECT COUNT(*)
                     FROM scoped_soul_relationship_events
                    WHERE bot_id=? AND session_id=? AND visibility=? AND subject_principal_id=?
-                         {auto_time}""",
-            (*scope_params, *auto_times),
+                         {auto_time}{noise_filter}""",
+            (*scope_params, *auto_times, *noise_types, *noise_reasons),
         ).fetchone()[0])
         manual_count = int(self.cm.execute_read(
             f"""SELECT COUNT(*)
@@ -807,9 +833,9 @@ class ScopedSoulRepository:
                          value_layer, before_json, after_json
                     FROM scoped_soul_relationship_events
                    WHERE bot_id=? AND session_id=? AND visibility=? AND subject_principal_id=?
-                         {auto_time}
+                         {auto_time}{noise_filter}
                    ORDER BY created_at DESC, id DESC LIMIT ?""",
-            (*scope_params, *auto_times, history_window),
+            (*scope_params, *auto_times, *noise_types, *noise_reasons, history_window),
         ).fetchall()
         manual_rows = self.cm.execute_read(
             f"""SELECT calibration_id, operation_id, dimension, action, reason, evidence,
@@ -824,8 +850,8 @@ class ScopedSoulRepository:
             f"""SELECT MAX(revision)
                     FROM scoped_soul_relationship_events
                    WHERE bot_id=? AND session_id=? AND visibility=? AND subject_principal_id=?
-                         {auto_time}""",
-            (*scope_params, *auto_times),
+                         {auto_time}{noise_filter}""",
+            (*scope_params, *auto_times, *noise_types, *noise_reasons),
         ).fetchone()[0]
         manual_revision = self.cm.execute_read(
             f"""SELECT MAX(relationship_revision)
@@ -862,6 +888,8 @@ class ScopedSoulRepository:
             if not isinstance(evidence, list):
                 evidence = []
             memory_id, episode_id = source_ids(evidence)
+            if is_noisy_relationship_event(row[1], row[4]):
+                continue
             items.append({
                 "id": f"relationship-event:{row[0]}",
                 "event_id": row[0],
@@ -1114,8 +1142,9 @@ class ScopedSoulRepository:
             (*params, *concern_time_params),
         ).fetchone()[0])
         concern_rows = self.cm.execute_read(
-            f"""SELECT id, topic, intensity, origin_memory_id, created_at, last_triggered,
-                      revision, evidence
+            f"""SELECT id, topic, intensity, origin_memory_id, origin_episode_id, concern_type,
+                      status, urgency, last_progress_at, expected_resolution_at, resolution_note,
+                      created_at, last_triggered, revision, evidence
                FROM scoped_soul_concerns
                WHERE bot_id=? AND session_id=? AND visibility=?{concern_time}
                ORDER BY intensity DESC, last_triggered DESC, id DESC LIMIT ? OFFSET ?""",
@@ -1123,8 +1152,12 @@ class ScopedSoulRepository:
         ).fetchall()
         concerns = [{
             "id": row[0], "topic": row[1], "intensity": row[2],
-            "origin_memory_id": row[3], "created_at": row[4], "last_triggered": row[5],
-            "revision": row[6], "evidence": json.loads(row[7]),
+            "origin_memory_id": row[3], "origin_episode_id": row[4],
+            "concern_type": row[5] or "", "status": row[6] or "active",
+            "urgency": row[7] or 0, "last_progress_at": row[8],
+            "expected_resolution_at": row[9], "resolution_note": row[10] or "",
+            "created_at": row[11], "last_triggered": row[12],
+            "revision": row[13], "evidence": json.loads(row[14]),
         } for row in concern_rows]
 
         timeline_total = int(self.cm.execute_read(

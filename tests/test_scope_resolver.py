@@ -450,6 +450,7 @@ def test_formal_command_scope_matrix_declares_runtime_catalog_and_bot_private_bo
     for command in (
         "affinity.read", "tag.graph.read", "person.search", "injection.trace.read",
         "feedback.record", "review.candidate.submit", "config.suggest", "catalog.read",
+        "fact_proposal.propose", "belief_proposal.propose",
     ):
         assert command in COMMAND_SCOPE_MATRIX
 

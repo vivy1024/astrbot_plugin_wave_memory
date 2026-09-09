@@ -35,7 +35,9 @@ vi.mock('recharts', async (importOriginal) => {
     LineChart: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
     PolarAngleAxis: ({ dataKey }: { dataKey: string }) => <div data-testid="polar-angle-axis" data-key={dataKey} />,
     PolarGrid: () => null,
-    PolarRadiusAxis: () => null,
+    PolarRadiusAxis: (props: { type?: string; domain?: unknown; allowDataOverflow?: boolean }) => (
+      <div data-testid="polar-radius-axis" data-type={props.type} data-domain={JSON.stringify(props.domain)} data-allow-overflow={String(Boolean(props.allowDataOverflow))} />
+    ),
     Radar: () => null,
     RadarChart: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
     Tooltip: () => null,
@@ -75,6 +77,9 @@ describe('RelationshipRadarCard 五维快照', () => {
     expect(screen.getByText('五维关系快照')).toBeInTheDocument()
     expect(screen.getByText('轴按各维度范围归一化到 0–100')).toBeInTheDocument()
     expect(screen.getByTestId('polar-angle-axis')).toHaveAttribute('data-key', 'dimension')
+    expect(screen.getByTestId('polar-radius-axis')).toHaveAttribute('data-type', 'number')
+    expect(screen.getByTestId('polar-radius-axis')).toHaveAttribute('data-domain', '[0,100]')
+    expect(screen.getByTestId('polar-radius-axis')).toHaveAttribute('data-allow-overflow', 'true')
   })
 
   it('全部未建立时不渲染雷达图', () => {
@@ -135,6 +140,28 @@ describe('GroupRelationshipRadarCard 群级只读对照', () => {
     expect(screen.getByText('第四条')).toBeInTheDocument()
     expect(screen.queryByText('第一条')).not.toBeInTheDocument()
     expect(screen.queryByText('导致变化的真实来源')).not.toBeInTheDocument()
+  })
+
+  it('最近正式事件丢掉路过噪音，半径轴锁死 0–100', () => {
+    const history = [
+      { id: 'noise-1', dimension: 'familiarity', timestamp: 1720000400, reason: '看见一条群友消息', event_type: 'message_seen', kind: 'automatic', action: null, revision: 4, source_memory_id: null, source_episode_id: null, operation_id: null, actor: null, evidence: [], after: null },
+      { id: 'noise-2', dimension: 'familiarity', timestamp: 1720000300, reason: '消息带来趣味感', event_type: 'joke', kind: 'automatic', action: null, revision: 3, source_memory_id: null, source_episode_id: null, operation_id: null, actor: null, evidence: [], after: null },
+      { id: 'real-1', dimension: 'familiarity', timestamp: 1720000200, reason: '连续直接互动后更熟了', event_type: 'direct_reply', kind: 'automatic', action: null, revision: 2, source_memory_id: 12, source_episode_id: null, operation_id: null, actor: null, evidence: [], after: null },
+    ] as never
+
+    render(
+      <MemoryRouter>
+        <GroupRelationshipRadarCard
+          relationships={[relationship('群友甲', 'u1', 'rel-u1')]}
+          history={history}
+        />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTestId('polar-radius-axis')).toHaveAttribute('data-domain', '[0,100]')
+    expect(screen.getByText('连续直接互动后更熟了')).toBeInTheDocument()
+    expect(screen.queryByText('看见一条群友消息')).not.toBeInTheDocument()
+    expect(screen.queryByText('消息带来趣味感')).not.toBeInTheDocument()
   })
 
   it('名单展示全部传入对象，雷达只解释当前选中的人，缺少对象引用时不伪造人物页链接', () => {

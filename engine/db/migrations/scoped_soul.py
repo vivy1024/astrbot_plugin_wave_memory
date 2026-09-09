@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS scoped_soul_concerns (
     topic TEXT NOT NULL,
     intensity REAL NOT NULL,
     origin_memory_id INTEGER,
+    origin_episode_id INTEGER,
+    concern_type TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'dormant', 'progressing', 'resolved', 'expired', 'archived')),
+    urgency REAL NOT NULL DEFAULT 0,
+    last_progress_at REAL,
+    expected_resolution_at REAL,
+    resolution_note TEXT NOT NULL DEFAULT '',
     created_at REAL NOT NULL,
     last_triggered REAL NOT NULL,
     revision INTEGER NOT NULL,
@@ -105,6 +112,24 @@ CREATE INDEX IF NOT EXISTS idx_scoped_soul_relationship_events_scope_subject
 """
 
 
+def _upgrade_scoped_soul_concerns(tx) -> None:
+    columns = {str(row[1]) for row in tx.execute("PRAGMA table_info(scoped_soul_concerns)").fetchall()}
+    if not columns:
+        return
+    additions = (
+        ("origin_episode_id", "INTEGER"),
+        ("concern_type", "TEXT NOT NULL DEFAULT ''"),
+        ("status", "TEXT NOT NULL DEFAULT 'active'"),
+        ("urgency", "REAL NOT NULL DEFAULT 0"),
+        ("last_progress_at", "REAL"),
+        ("expected_resolution_at", "REAL"),
+        ("resolution_note", "TEXT NOT NULL DEFAULT ''"),
+    )
+    for name, definition in additions:
+        if name not in columns:
+            tx.execute(f"ALTER TABLE scoped_soul_concerns ADD COLUMN {name} {definition}")
+
+
 def ensure_scoped_soul_schema(cm: ConnectionManager) -> None:
     """建立全新的正式 Soul 数据面，绝不猜测 legacy 行的 Scope。"""
     if not isinstance(cm, ConnectionManager):
@@ -117,6 +142,7 @@ def ensure_scoped_soul_schema(cm: ConnectionManager) -> None:
     with cm.migration_transaction() as tx:
         for statement in statements:
             tx.execute(statement)
+        _upgrade_scoped_soul_concerns(tx)
 
 
 __all__ = ["ensure_scoped_soul_schema"]

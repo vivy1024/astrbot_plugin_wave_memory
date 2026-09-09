@@ -29,6 +29,13 @@ except ImportError:  # pragma: no cover
     from tools.person_identity import display_name_for_user, resolve_user_id
     from tools.scope_boundary import require_group_runtime_scope, scope_error_message
 
+try:
+    from astrbot.api import logger
+except ImportError:  # pragma: no cover - repository tests run without AstrBot
+    import logging
+
+    logger = logging.getLogger(__name__)
+
 
 @dataclass
 class WaveMemoryNoteSocialAnchorTool(FunctionTool[AstrAgentContext]):
@@ -66,6 +73,7 @@ class WaveMemoryNoteSocialAnchorTool(FunctionTool[AstrAgentContext]):
     db: Any = field(default=None, repr=False)
     concern_tracker: Any = field(default=None, repr=False)
     repository: Any = field(default=None, repr=False)
+    write_gateway: Any = field(default=None, repr=False)
 
     async def call(self, ctx: ContextWrapper[AstrAgentContext], **kwargs) -> str:
         if not self.db:
@@ -102,17 +110,33 @@ class WaveMemoryNoteSocialAnchorTool(FunctionTool[AstrAgentContext]):
         )
         now = time.time()
 
-        # 1. 如果标为活跃关切，挂入 ConcernTracker
-        if is_active_concern and self.concern_tracker is not None:
-            try:
-                concern_topic = f"{display}：{summary}".replace("\n", " ").strip()[:80]
-                self.concern_tracker.add(
-                    topic=concern_topic,
-                    intensity=0.75,
-                    scope=runtime_scope,
+        # 1. 如果标为活跃关切，经正式写入链挂入灵魂关切投影
+        if is_active_concern:
+            concern_topic = f"{display}：{summary}".replace("\n", " ").strip()[:80]
+            gateway = self.write_gateway or getattr(self.db, "write_gateway", None)
+            if gateway is None or not callable(getattr(gateway, "transition_concern", None)):
+                logger.warning(
+                    "[WaveMemory] social anchor concern skipped: concern_writer_unavailable"
                 )
-            except Exception:
-                pass
+            else:
+                try:
+                    await gateway.transition_concern(
+                        scope=runtime_scope,
+                        action="note",
+                        topic=concern_topic,
+                        intensity=0.75,
+                        concern_type="social_anchor",
+                        evidence=[{"kind": "social_anchor", "summary": summary[:80]}],
+                        actor="social_anchor_tool",
+                    )
+                    tracker = self.concern_tracker
+                    if tracker is not None and hasattr(tracker, "invalidate"):
+                        tracker.invalidate(runtime_scope)
+                except Exception as concern_error:
+                    # 关切挂接失败不得回滚已成立的锚点，但必须可见，不能静默吞掉。
+                    logger.warning(
+                        f"[WaveMemory] social anchor concern failed: {concern_error}"
+                    )
 
         # 2. 写入 scoped_soul_timeline 作为社交人情锚点
         repo = self.repository or getattr(self.db, "soul_repository", None)

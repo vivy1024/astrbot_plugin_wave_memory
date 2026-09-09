@@ -1,4 +1,4 @@
-"""Focused formal-path tests for scoped consolidation and belief extraction."""
+"""Focused formal-path tests for scoped consolidation without belief extraction."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ if "astrbot.api" not in sys.modules:
 
 from domain.scope import RuntimeScope, SessionRef
 from engine.database import WaveMemoryDB
-from services.belief_engine import BeliefEngine
 from services.consolidation import ConsolidationService
 
 
@@ -42,24 +41,6 @@ class _Provider:
 class _Context:
     def get_provider_by_id(self, provider_id):
         return _Provider() if provider_id == "provider" else None
-
-
-class _BeliefRecorder:
-    def __init__(self):
-        self.calls = []
-
-    async def extract_from_summary(self, summary, scope, source_memory_ids=None):
-        self.calls.append((summary, scope, source_memory_ids))
-        return []
-
-
-class _BeliefLLM:
-    def __init__(self):
-        self.calls = 0
-
-    async def text_chat(self, **kwargs):
-        self.calls += 1
-        return _Completion('[{"content":"小明对照顾动物一直很有责任感", "type":"person_judgment", "evidence_memory_ids":[1], "challenge_memory_ids":[], "match_id":null, "relation":"new", "challenges":[], "anchor_sentence":"alpha 第 0 条关于领养流浪猫的消息"}]')
 
 
 def _scope(bot_id="bot-alpha", group_id="group-1"):
@@ -99,9 +80,8 @@ def test_consolidation_uses_exact_scope_cursor_and_never_writes_legacy_tables(tm
         beta_ids = _add_messages(db, beta, 5, "beta")
         db.add_memory("group-1", "隔离消息", sender_id="q", scope=alpha, quarantine=True)
         before = _legacy_counts(db)
-        beliefs = _BeliefRecorder()
         service = ConsolidationService(
-            db, context=_Context(), provider_id="provider", belief_engine=beliefs,
+            db, context=_Context(), provider_id="provider",
         )
 
         result = asyncio.run(service.consolidate_once())
@@ -109,11 +89,10 @@ def test_consolidation_uses_exact_scope_cursor_and_never_writes_legacy_tables(tm
         assert result["messages"] == 10
         assert db.get_scoped_consolidation_cursor(alpha, cursor_name="messages_v2_id") == str(alpha_ids[-1])
         assert db.get_scoped_consolidation_cursor(beta, cursor_name="messages_v2_id") == str(beta_ids[-1])
-        assert len(db.list_scoped_facts(alpha)) == 3
-        assert len(db.list_scoped_facts(beta)) == 3
-        assert len(beliefs.calls) == 2
-        assert all(call[1] in {alpha, beta} for call in beliefs.calls)
-        assert all(set(call[2]).issubset(set(alpha_ids) | set(beta_ids)) for call in beliefs.calls)
+        assert db.list_scoped_facts(alpha) == []
+        assert db.list_scoped_facts(beta) == []
+        assert db.list_scoped_beliefs(alpha) == []
+        assert db.list_scoped_beliefs(beta) == []
         assert _legacy_counts(db) == before
 
         # Per-scope cursors prevent a second run from reprocessing the same messages.
@@ -122,30 +101,10 @@ def test_consolidation_uses_exact_scope_cursor_and_never_writes_legacy_tables(tm
         db.close()
 
 
-def test_belief_extraction_requires_scope_and_rejects_cross_scope_source_ids(tmp_path):
-    db = WaveMemoryDB(str(tmp_path / "wave-memory.sqlite3"), dimension=4)
-    try:
-        alpha, beta = _scope(), _scope(bot_id="bot-beta")
-        alpha_id = _add_messages(db, alpha, 1, "alpha")[0]
-        beta_id = _add_messages(db, beta, 1, "beta")[0]
-        llm = _BeliefLLM()
-        engine = BeliefEngine(db, llm, bot_id="bot-alpha")
-        summary = "小明多次主动照顾流浪猫，大家认可他的责任感。"
-        before = _legacy_counts(db)
-
-        assert asyncio.run(engine.extract_from_summary(summary, alpha, source_memory_ids=[beta_id])) == []
-        assert llm.calls == 0
-        created = asyncio.run(engine.extract_from_summary(summary, alpha, source_memory_ids=[alpha_id]))
-
-        assert len(created) == 1
-        scoped = db.list_scoped_beliefs(alpha)
-        assert len(scoped) == 1
-        assert scoped[0]["source_memory_id"] == alpha_id
-        assert scoped[0]["status"] == "pending"
-        assert db.list_scoped_beliefs(beta) == []
-        assert _legacy_counts(db) == before
-    finally:
-        db.close()
+def test_belief_engine_no_longer_extracts_from_summary():
+    import services.belief_engine as belief_engine
+    assert not hasattr(belief_engine.BeliefEngine, "extract_from_summary")
+    assert not hasattr(belief_engine, "EXTRACT_PROMPT")
 
 
 class _FailingProvider:
@@ -227,7 +186,7 @@ def test_consolidation_skips_unrecoverable_provider_and_uses_next(tmp_path):
 
         assert result["messages"] == 5
         assert broke.calls == 1
-        assert len(db.list_scoped_facts(alpha)) == 3
+        assert db.list_scoped_facts(alpha) == []
     finally:
         db.close()
 

@@ -162,7 +162,7 @@ function impressionLedgerOf(item: PersonItem): Array<{ eventType: string; dimens
       reason: typeof entry.reason === 'string' ? entry.reason.trim() : '',
       at: formatImpressionTime(entry.at),
     }))
-    .filter((entry) => entry.eventType && entry.eventType !== 'message_seen')
+    .filter((entry) => entry.eventType && entry.eventType !== 'message_seen' && entry.reason !== '看见一条群友消息' && entry.reason !== '消息带来趣味感' && entry.reason !== '行为统计关系变化')
     .reverse()
 }
 

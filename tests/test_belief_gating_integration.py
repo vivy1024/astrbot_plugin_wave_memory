@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import ast
 import asyncio
-import json
-import re
 import sys
 import types
 from pathlib import Path
@@ -27,43 +25,7 @@ from services.belief_engine import BeliefEngine
 from services.belief_lifecycle import BeliefLifecycleService
 
 
-class Completion:
-    def __init__(self, text: str):
-        self.completion_text = text
-
-
-class DynamicBeliefLLM:
-    async def text_chat(self, *, prompt: str, **kwargs):
-        ids = [int(value) for value in re.findall(r"\[memory_id:(\d+)\]", prompt)]
-        memory_id = ids[0]
-        return Completion(json.dumps([{
-            "content": "小明对照顾动物一直很有责任感",
-            "type": "person_judgment",
-            "evidence_memory_ids": [memory_id],
-            "challenge_memory_ids": [],
-            "match_id": None,
-            "relation": "new",
-            "challenges": [],
-            "anchor_sentence": f"消息 {memory_id}",
-        }], ensure_ascii=False))
-
-
-class ReinforceLLM:
-    def __init__(self, target_id: int):
-        self.target_id = target_id
-
-    async def text_chat(self, *, prompt: str, **kwargs):
-        memory_id = int(re.search(r"\[memory_id:(\d+)\]", prompt).group(1))
-        return Completion(json.dumps([{
-            "content": "小明对照顾动物一直很有责任感",
-            "type": "person_judgment",
-            "evidence_memory_ids": [memory_id],
-            "challenge_memory_ids": [],
-            "match_id": self.target_id,
-            "relation": "reinforce",
-            "challenges": [],
-            "anchor_sentence": f"消息 {memory_id}",
-        }], ensure_ascii=False))
+CONTENT = "小明对照顾动物一直很有责任感"
 
 
 def group_scope() -> RuntimeScope:
@@ -105,7 +67,101 @@ def add_tag(db: WaveMemoryDB, scope: RuntimeScope, memory_id: int) -> None:
     db.link_scoped_memory_tag(scope, memory_id=memory_id, tag_id=tag_id)
 
 
-def test_high_trust_requires_two_windows_before_auto_activation(tmp_path):
+def record_window(
+    db: WaveMemoryDB,
+    scope: RuntimeScope,
+    belief_id: int,
+    memory_id: int,
+    *,
+    polarity: str = "support",
+) -> None:
+    db.record_scoped_belief_observation(
+        scope,
+        belief_id=belief_id,
+        window_key=f"window-{memory_id}",
+        polarity=polarity,
+        memory_ids=[memory_id],
+        participants=["u1"],
+        window_started_at=1000.0 + memory_id,
+        window_ended_at=1000.0 + memory_id,
+        observed_at=1000.0 + memory_id,
+    )
+
+
+def _revision(row: dict) -> int:
+    return max(1, int(float(row.get("updated_at") or row.get("created_at") or 1) * 1000))
+
+
+def attach_approved_facts(db: WaveMemoryDB, scope: RuntimeScope, belief_id: int, memory_ids: list[int]) -> list[int]:
+    fact_ids: list[int] = []
+    for index, memory_id in enumerate(list(memory_ids)[:2]):
+        fact_ids.append(db.scoped_knowledge.upsert_scoped_fact(
+            scope,
+            subject="小明",
+            predicate=f"照顾{index}",
+            object="动物",
+            status="approved",
+            source_memory_id=memory_id,
+        ))
+    if len(fact_ids) == 1:
+        fact_ids.append(db.scoped_knowledge.upsert_scoped_fact(
+            scope,
+            subject="小明",
+            predicate="复证",
+            object="动物",
+            status="approved",
+            source_memory_id=memory_ids[0],
+        ))
+    row = db.get_scoped_belief(scope, belief_id)
+    provenance = dict(row.get("provenance") or {})
+    provenance["source_fact_ids"] = fact_ids
+    db.upsert_scoped_belief(
+        scope,
+        belief_key=row["belief_key"],
+        content=row["content"],
+        belief_type=row["belief_type"],
+        strength=float(row.get("strength") or 0.0),
+        status=row["status"],
+        source_memory_id=row.get("source_memory_id"),
+        provenance=provenance,
+    )
+    return fact_ids
+
+
+def seed_belief(
+    db: WaveMemoryDB,
+    scope: RuntimeScope,
+    *,
+    key: str,
+    memory_ids: list[int],
+    status: str = "pending",
+    gating: dict | None = None,
+    candidate: dict | None = None,
+    tagged: bool = True,
+) -> int:
+    provenance: dict = {"anchor_sentence": CONTENT}
+    if gating:
+        provenance["gating"] = gating
+    if candidate:
+        provenance["candidate"] = candidate
+    belief_id = db.upsert_scoped_belief(
+        scope,
+        belief_key=key,
+        content=CONTENT,
+        belief_type="person_judgment",
+        strength=0.0,
+        status=status,
+        source_memory_id=memory_ids[0],
+        provenance=provenance,
+    )
+    for memory_id in memory_ids:
+        record_window(db, scope, belief_id, memory_id)
+        if tagged:
+            add_tag(db, scope, memory_id)
+    return belief_id
+
+
+def test_high_trust_requires_two_windows_before_manual_activation(tmp_path):
     db = WaveMemoryDB(str(tmp_path / "belief-gating.db"), dimension=4)
     try:
         scope = group_scope()
@@ -114,14 +170,26 @@ def test_high_trust_requires_two_windows_before_auto_activation(tmp_path):
         second_id = add_message(db, scope, "小明又安排了流浪猫的领养。")
         add_tag(db, scope, first_id)
         add_tag(db, scope, second_id)
-        engine = BeliefEngine(db, DynamicBeliefLLM(), bot_id="bot-alpha")
+        engine = BeliefEngine(db, None, bot_id="bot-alpha")
+        belief_id = seed_belief(db, scope, key="person:care", memory_ids=[first_id], tagged=False)
 
-        first = asyncio.run(engine.extract_from_summary("小明持续照顾动物，并在后续安排中体现了稳定的责任感。", scope, [first_id]))
-        assert first[0]["status"] == "pending"
+        first = engine.refresh_evidence_after_tags(scope, belief_id)
+        assert first["status"] == "pending"
         assert db.list_scoped_beliefs(scope)[0]["status"] == "pending"
+        assert not first["provenance"]["activation_eligible"]
 
-        asyncio.run(engine.extract_from_summary("小明持续照顾动物，并在后续安排中体现了稳定的责任感。", scope, [second_id]))
-        assert db.list_scoped_beliefs(scope)[0]["status"] == "active"
+        record_window(db, scope, belief_id, second_id)
+        second = engine.refresh_evidence_after_tags(scope, belief_id)
+        assert second["status"] == "pending"
+        assert second["provenance"]["activation_eligible"]
+        try:
+            BeliefLifecycleService(db.scoped_knowledge).transition(scope, belief_id, "approve")
+            assert False, "should fail without approved facts"
+        except ValueError as exc:
+            assert "belief_facts_required" in str(exc)
+        attach_approved_facts(db, scope, belief_id, [first_id, second_id])
+        approved = BeliefLifecycleService(db.scoped_knowledge).transition(scope, belief_id, "approve")
+        assert approved["status"] == "active"
     finally:
         db.close()
 
@@ -134,32 +202,40 @@ def test_pending_reinforce_candidate_is_idempotent_and_guarded_merge(tmp_path):
         first_id = add_message(db, scope, "小明照顾了流浪猫。")
         second_id = add_message(db, scope, "小明安排了领养。")
         third_id = add_message(db, scope, "小明继续跟进领养。")
-        for memory_id in (first_id, second_id, third_id):
-            add_tag(db, scope, memory_id)
-
-        base_engine = BeliefEngine(db, DynamicBeliefLLM(), bot_id="bot-alpha")
-        created = asyncio.run(base_engine.extract_from_summary("小明持续照顾动物，并在多次后续安排中体现了稳定而明确的责任感。", scope, [first_id]))
-        target_id = created[0]["id"]
-        # Seed a second independent window so the target itself is a valid active belief.
-        prepare_relationship(db, scope, trust=80, hostility=10)
-        asyncio.run(base_engine.extract_from_summary("小明持续照顾动物，并在多次后续安排中体现了稳定而明确的责任感。", scope, [second_id]))
+        engine = BeliefEngine(db, None, bot_id="bot-alpha")
+        target_id = seed_belief(
+            db,
+            scope,
+            key="person:care",
+            memory_ids=[first_id, second_id],
+            gating={"decision": "direct", "reason_code": "relationship_direct"},
+        )
+        engine.refresh_evidence_after_tags(scope, target_id)
+        attach_approved_facts(db, scope, target_id, [first_id, second_id])
+        BeliefLifecycleService(db.scoped_knowledge).transition(scope, target_id, "approve")
         assert db.get_scoped_belief(scope, target_id)["status"] == "active"
 
-        prepare_relationship(db, scope, trust=50, hostility=10)
-        pending_engine = BeliefEngine(db, ReinforceLLM(target_id), bot_id="bot-alpha")
-        first_candidate = asyncio.run(pending_engine.extract_from_summary("小明持续照顾动物，并在多次后续安排中体现了稳定而明确的责任感。", scope, [third_id]))
-        candidate_id = first_candidate[0]["id"]
-        assert first_candidate[0]["candidate"] is True
-        assert first_candidate[0]["status"] == "pending"
+        target = db.get_scoped_belief(scope, target_id)
+        candidate_id = seed_belief(
+            db,
+            scope,
+            key="person:care-reinforce",
+            memory_ids=[third_id],
+            candidate={
+                "relation": "reinforce",
+                "target_belief_id": target_id,
+                "target_revision_at_capture": _revision(target),
+            },
+        )
+        refreshed_candidate = engine.refresh_evidence_after_tags(scope, candidate_id)
+        assert refreshed_candidate["status"] == "pending"
         assert candidate_id != target_id
         assert len(db.list_scoped_beliefs(scope)) == 2
 
-        # Replaying the same window updates the same candidate/observation row.
-        replay = asyncio.run(pending_engine.extract_from_summary("小明持续照顾动物，并在多次后续安排中体现了稳定而明确的责任感。", scope, [third_id]))
-        assert replay[0]["id"] == candidate_id
+        record_window(db, scope, candidate_id, third_id)
+        engine.refresh_evidence_after_tags(scope, candidate_id)
         assert len(db.list_scoped_belief_observations(scope, belief_id=candidate_id)) == 1
 
-        # A candidate with only one support window is not approvable.
         try:
             BeliefLifecycleService(db.scoped_knowledge).transition(scope, candidate_id, "approve")
         except ValueError as exc:
@@ -168,10 +244,10 @@ def test_pending_reinforce_candidate_is_idempotent_and_guarded_merge(tmp_path):
             raise AssertionError("candidate without evidence-v1 support must not be approved")
         assert db.get_scoped_belief(scope, target_id)["status"] == "active"
 
-        # Add a second candidate window and approve: only then merge into target.
         fourth_id = add_message(db, scope, "小明继续负责后续照顾。")
         add_tag(db, scope, fourth_id)
-        asyncio.run(pending_engine.extract_from_summary("小明持续照顾动物，并在多次后续安排中体现了稳定而明确的责任感。", scope, [fourth_id]))
+        record_window(db, scope, candidate_id, fourth_id)
+        engine.refresh_evidence_after_tags(scope, candidate_id)
         merged = BeliefLifecycleService(db.scoped_knowledge).transition(scope, candidate_id, "approve")
         assert merged["resolution"] == "merged"
         assert merged["target_id"] == target_id
@@ -179,10 +255,9 @@ def test_pending_reinforce_candidate_is_idempotent_and_guarded_merge(tmp_path):
         assert db.get_scoped_belief(scope, target_id)["status"] == "active"
         assert len(db.list_scoped_belief_observations(scope, belief_id=target_id)) == 4
 
-        # A promoted/active belief remains the canonical similar target; no duplicate active row.
         fifth_id = add_message(db, scope, "小明继续负责后续照顾并完成了复盘。")
         add_tag(db, scope, fifth_id)
-        asyncio.run(base_engine.extract_from_summary("小明持续照顾动物，并在多次后续安排中体现了稳定而明确的责任感。", scope, [fifth_id]))
+        record_window(db, scope, target_id, fifth_id)
         active_rows = [row for row in db.list_scoped_beliefs(scope) if row["status"] == "active"]
         assert [row["id"] for row in active_rows] == [target_id]
     finally:
@@ -195,17 +270,22 @@ def test_low_trust_candidate_is_quarantined_without_touching_active_target(tmp_p
         scope = group_scope()
         prepare_relationship(db, scope, trust=80, hostility=10)
         first_id = add_message(db, scope, "小明持续照顾动物，并在多次后续安排中体现了稳定而明确的责任感。")
-        add_tag(db, scope, first_id)
-        base_engine = BeliefEngine(db, DynamicBeliefLLM(), bot_id="bot-alpha")
-        target_id = asyncio.run(base_engine.extract_from_summary("小明持续照顾动物，并在多次后续安排中体现了稳定而明确的责任感。", scope, [first_id]))[0]["id"]
+        engine = BeliefEngine(db, None, bot_id="bot-alpha")
+        target_id = seed_belief(db, scope, key="person:care", memory_ids=[first_id])
+        engine.refresh_evidence_after_tags(scope, target_id)
         second_id = add_message(db, scope, "小明提出了新的看法。")
-        add_tag(db, scope, second_id)
-
         prepare_relationship(db, scope, trust=20, hostility=10)
-        hostile_engine = ReinforceLLM(target_id)
-        result = asyncio.run(BeliefEngine(db, hostile_engine, bot_id="bot-alpha").extract_from_summary("小明持续照顾动物，并在多次后续安排中体现了稳定而明确的责任感。", scope, [second_id]))
-        candidate_id = result[0]["id"]
-        assert result[0]["status"] == "quarantined"
+        candidate_id = seed_belief(
+            db,
+            scope,
+            key="person:care-low-trust",
+            memory_ids=[second_id],
+            status="quarantined",
+            gating={"decision": "quarantine", "reason_code": "relationship_low_trust"},
+            candidate={"relation": "reinforce", "target_belief_id": target_id},
+        )
+        result = engine.refresh_evidence_after_tags(scope, candidate_id)
+        assert result["status"] == "quarantined"
         assert db.get_scoped_belief(scope, target_id)["status"] == "pending"
         assert db.get_scoped_belief(scope, candidate_id)["status"] == "quarantined"
         assert db.get_scoped_belief(scope, candidate_id)["provenance"]["gating"]["reason_code"] == "relationship_low_trust"
@@ -220,38 +300,46 @@ def test_refresh_after_tags_promotes_direct_pending_and_keeps_quarantine(tmp_pat
         prepare_relationship(db, scope, trust=80, hostility=10)
         first_id = add_message(db, scope, "小明主动照顾了流浪猫。")
         second_id = add_message(db, scope, "小明又安排了流浪猫的领养。")
-        engine = BeliefEngine(db, DynamicBeliefLLM(), bot_id="bot-alpha")
-
-        asyncio.run(engine.extract_from_summary("小明持续照顾动物，并在后续安排中体现了稳定的责任感。", scope, [first_id]))
-        asyncio.run(engine.extract_from_summary("小明持续照顾动物，并在后续安排中体现了稳定的责任感。", scope, [second_id]))
-        belief = db.list_scoped_beliefs(scope)[0]
-        assert belief["status"] == "pending"
-        assert belief["provenance"]["tag_chain_status"] == "empty"
-        assert db.list_scoped_belief_ids_citing_memory(scope, first_id) == [belief["id"]]
-        assert db.list_scoped_belief_ids_citing_memory(scope, second_id) == [belief["id"]]
+        engine = BeliefEngine(db, None, bot_id="bot-alpha")
+        belief_id = seed_belief(
+            db,
+            scope,
+            key="person:care",
+            memory_ids=[first_id, second_id],
+            gating={"decision": "direct", "reason_code": "relationship_direct"},
+            tagged=False,
+        )
+        pending = engine.refresh_evidence_after_tags(scope, belief_id)
+        assert pending["status"] == "pending"
+        assert pending["provenance"]["tag_chain_status"] == "empty"
+        assert db.list_scoped_belief_ids_citing_memory(scope, first_id) == [belief_id]
+        assert db.list_scoped_belief_ids_citing_memory(scope, second_id) == [belief_id]
 
         add_tag(db, scope, first_id)
-        first_refresh = engine.refresh_evidence_after_tags(scope, belief["id"])
+        first_refresh = engine.refresh_evidence_after_tags(scope, belief_id)
         assert first_refresh["status"] == "pending"
         assert first_refresh["provenance"]["tag_chain_status"] == "empty"
 
         add_tag(db, scope, second_id)
-        second_refresh = engine.refresh_evidence_after_tags(scope, belief["id"])
-        assert second_refresh["status"] == "active"
+        second_refresh = engine.refresh_evidence_after_tags(scope, belief_id)
+        assert second_refresh["status"] == "pending"
         assert second_refresh["provenance"]["tag_chain_status"] == "complete"
-        assert db.get_scoped_belief(scope, belief["id"])["status"] == "active"
+        assert db.get_scoped_belief(scope, belief_id)["status"] == "pending"
+        attach_approved_facts(db, scope, belief_id, [first_id, second_id])
+        approved = BeliefLifecycleService(db.scoped_knowledge).transition(scope, belief_id, "approve")
+        assert approved["status"] == "active"
 
         hostile_id = add_message(db, scope, "小明继续跟进领养。")
         prepare_relationship(db, scope, trust=20, hostility=10)
-        hostile = asyncio.run(
-            BeliefEngine(db, DynamicBeliefLLM(), bot_id="bot-alpha").extract_from_summary(
-                "小明持续照顾动物，并在后续安排中体现了稳定的责任感。",
-                scope,
-                [hostile_id],
-            )
+        candidate_id = seed_belief(
+            db,
+            scope,
+            key="person:care-hostile",
+            memory_ids=[hostile_id],
+            status="quarantined",
+            gating={"decision": "quarantine", "reason_code": "relationship_low_trust"},
+            tagged=False,
         )
-        candidate_id = hostile[0]["id"]
-        assert hostile[0]["status"] == "quarantined"
         add_tag(db, scope, hostile_id)
         quarantined = engine.refresh_evidence_after_tags(scope, candidate_id)
         assert quarantined["status"] == "quarantined"
@@ -316,10 +404,17 @@ def test_tag_applied_event_debounces_and_promotes_pending_belief(tmp_path):
         prepare_relationship(db, scope, trust=80, hostility=10)
         first_id = add_message(db, scope, "小明主动照顾了流浪猫。")
         second_id = add_message(db, scope, "小明又安排了流浪猫的领养。")
-        engine = BeliefEngine(db, DynamicBeliefLLM(), bot_id="bot-alpha")
-        asyncio.run(engine.extract_from_summary("小明持续照顾动物，并在后续安排中体现了稳定的责任感。", scope, [first_id]))
-        asyncio.run(engine.extract_from_summary("小明持续照顾动物，并在后续安排中体现了稳定的责任感。", scope, [second_id]))
-        belief = db.list_scoped_beliefs(scope)[0]
+        engine = BeliefEngine(db, None, bot_id="bot-alpha")
+        belief_id = seed_belief(
+            db,
+            scope,
+            key="person:care",
+            memory_ids=[first_id, second_id],
+            gating={"decision": "direct", "reason_code": "relationship_direct"},
+            tagged=False,
+        )
+        engine.refresh_evidence_after_tags(scope, belief_id)
+        belief = db.get_scoped_belief(scope, belief_id)
         assert belief["status"] == "pending"
         add_tag(db, scope, first_id)
         add_tag(db, scope, second_id)
@@ -338,7 +433,9 @@ def test_tag_applied_event_debounces_and_promotes_pending_belief(tmp_path):
             return host
 
         host = asyncio.run(_run())
-        assert db.get_scoped_belief(scope, belief["id"])["status"] == "active"
+        refreshed = db.get_scoped_belief(scope, belief["id"])
+        assert refreshed["status"] == "pending"
+        assert refreshed["provenance"]["tag_chain_status"] == "complete"
         assert host.pair_sim_service.cleared >= 1
     finally:
         db.close()

@@ -2,11 +2,28 @@ from __future__ import annotations
 
 import sqlite3
 
-from domain.relationship_policy import cap_automatic_delta, compute_affinity
+import pytest
+
+from domain.relationship_policy import (
+    cap_automatic_delta,
+    compute_affinity,
+    is_noisy_relationship_event,
+    validate_event,
+)
 from engine.db.connection import ConnectionManager
 from engine.db.migrations.scoped_relationship_calibration import (
     ensure_scoped_relationship_calibration_schema,
 )
+
+
+def test_passing_noise_is_rejected_as_formal_event():
+    assert is_noisy_relationship_event("message_seen", "看见一条群友消息") is True
+    assert is_noisy_relationship_event("joke", "消息带来趣味感") is True
+    assert is_noisy_relationship_event("direct_reply", "连续直接互动后更熟了") is False
+    with pytest.raises(ValueError, match="invalid_relationship_event_type"):
+        validate_event("message_seen", "familiarity", "看见一条群友消息", 0.05)
+    with pytest.raises(ValueError, match="invalid_relationship_event_type"):
+        validate_event("joke", "fun", "消息带来趣味感", 1.0)
 
 
 def test_legacy_five_dimension_snapshot_recomputes_original_affinity():

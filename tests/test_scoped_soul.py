@@ -78,6 +78,7 @@ def test_repository_returns_real_state_with_exact_scope_and_subject_isolation(tm
         assert state["mood"]["revision"] == 1
         assert state["mood"]["evidence"] == [{"memory_id": 11}]
         assert state["concerns"]["items"][0]["topic"] == "发布"
+        assert state["concerns"]["items"][0]["status"] == "active"
         assert state["timeline"]["items"][0]["event_summary"] == "完成发布"
         assert state["relationship"]["affinity"] == 42
         assert state["relationship"]["revision"] == 1
@@ -150,8 +151,10 @@ def test_runtime_services_use_injected_coordinator_and_repository():
     mood.record(0.4, 0.2, "cause", scope=scope, evidence=[{"memory_id": 1}])
     mood.record(-0.4, 0.1, "other", scope=other_scope, evidence=[{"memory_id": 5}])
     concerns = ConcernTracker(db, bot_id="bot-alpha", repository=repo, coordinator=coordinator)
-    concerns.add("topic", scope=scope, evidence=[{"memory_id": 2}])
-    concerns.add("other topic", scope=other_scope, evidence=[{"memory_id": 6}])
+    # 关切写入已迁出 tracker：只能经 ProductionWriteGateway.transition_concern 命令链落库，
+    # 旧的全量替换（_persist）与物理剔除（tick）不得回流。
+    for removed_writer in ("add", "tick", "_persist"):
+        assert not hasattr(concerns, removed_writer), f"ConcernTracker 不应保留写路径: {removed_writer}"
     subjective_time = SubjectiveTime(db, bot_id="bot-alpha", repository=repo, coordinator=coordinator)
     subjective_time.add_anchor("anchor", timestamp=10.0, scope=scope, evidence=[{"memory_id": 3}])
     subjective_time.add_anchor("other anchor", timestamp=20.0, scope=other_scope, evidence=[{"memory_id": 7}])
@@ -166,12 +169,12 @@ def test_runtime_services_use_injected_coordinator_and_repository():
         source_memory_id=4,
     )
 
-    assert coordinator.calls == 7
+    assert coordinator.calls == 5
     assert [call[0] for call in repo.calls] == [
-        "mood", "mood", "concerns", "concerns", "timeline", "timeline", "relationship"
+        "mood", "mood", "timeline", "timeline", "relationship"
     ]
-    assert [call[1] for call in repo.calls[:6]] == [
-        scope, other_scope, scope, other_scope, scope, other_scope
+    assert [call[1] for call in repo.calls[:4]] == [
+        scope, other_scope, scope, other_scope
     ]
     assert all("connection" in call[2] for call in repo.calls)
     assert result.after_affection == 2

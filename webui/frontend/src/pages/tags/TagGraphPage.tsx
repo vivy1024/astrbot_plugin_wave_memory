@@ -67,11 +67,21 @@ export function TagGraphPage() {
     graphRequest.current = controller
     setLoading(true)
     setError(undefined)
+    const timeoutId = setTimeout(() => {
+      controller.abort(new Error('API 请求超时（30 秒上限），请检查网络或刷新重试'))
+    }, 30_000)
+
     getTagGraph(scope, { layers, includePulse, maxNodes: isMobile ? 120 : 400, signal: controller.signal })
       .then((payload) => { if (!controller.signal.aborted && graphRequest.current === controller) setGraph(payload) })
       .catch((reason: unknown) => { if (!controller.signal.aborted && graphRequest.current === controller && !isRequestCancelled(reason)) { setGraph(null); setError(reason) } })
-      .finally(() => { if (!controller.signal.aborted && graphRequest.current === controller) setLoading(false) })
-    return () => controller.abort()
+      .finally(() => {
+        clearTimeout(timeoutId)
+        if (!controller.signal.aborted && graphRequest.current === controller) setLoading(false)
+      })
+    return () => {
+      clearTimeout(timeoutId)
+      controller.abort()
+    }
   }, [includePulse, isMobile, layers, reload, scope])
 
   const graphNode = graph?.nodes.find((node) => node.ref === selectedRef) ?? null
@@ -107,10 +117,10 @@ export function TagGraphPage() {
   const clearPath = () => { pathRequest.current?.abort(); setPath(null); setQuery({ source_ref: null, target_ref: null }) }
   const pathEdgeIds = useMemo(() => new Set(path?.edges.map((edge) => edge.id) ?? []), [path])
 
-  return <div className="flex flex-col gap-4" data-page="tag-graph">
+  return <div className="fixed inset-0 z-40 flex h-[100svh] w-[100vw] flex-col gap-3 overflow-hidden bg-[#050914] p-3 md:p-4" data-page="tag-graph">
     <div className="flex flex-wrap items-start justify-between gap-3"><header className="max-w-3xl"><div className="flex items-center gap-2"><BrainCircuitIcon className="size-5 text-primary" aria-hidden="true" /><h1 className="text-xl font-bold tracking-tight">标签关系图</h1></div><p className="mt-1 text-xs text-muted-foreground">用当前群里的标签、记忆和关系画只读图，不能在这里改或删标签。</p></header><div className="flex gap-2"><Button asChild size="sm" variant="outline"><Link to="/tags"><ArrowLeftIcon aria-hidden="true" />返回标签总览</Link></Button><Button type="button" size="sm" variant="outline" disabled={!scope || loading} onClick={() => setReload((value) => value + 1)}><RefreshCwIcon aria-hidden="true" />刷新</Button></div></div>
-    <Alert><ShieldCheckIcon aria-hidden="true" /><AlertTitle>当前群与路径</AlertTitle><AlertDescription>标签和记忆跳转只走当前群。找路径时只走你勾选的图层，隐藏图层不会被偷偷用来连通。</AlertDescription></Alert>
-    <TagGraphControls botId={botId} sessionId={sessionId} layers={layers} includePulse={includePulse} loading={loading} onScopeChange={({ botId: nextBot, sessionId: nextSession }) => setQuery({ bot_id: nextBot ?? botId, session_id: nextSession ?? sessionId, visibility: 'group', ref: null, source_ref: null, target_ref: null })} onLayersChange={changeLayers} onPulseChange={(enabled) => setQuery({ pulse: enabled ? '1' : null })} />
+    <Alert className="border-sky-400/15 bg-sky-400/[.035]"><ShieldCheckIcon aria-hidden="true" /><AlertTitle>当前群 · 只读观测</AlertTitle><AlertDescription>图谱只展示当前群的真实标签关系。选中节点后会突出一跳邻域；路径查询只使用已开启的图层。</AlertDescription></Alert>
+    <div className="shrink-0"><TagGraphControls botId={botId} sessionId={sessionId} layers={layers} includePulse={includePulse} loading={loading} onScopeChange={({ botId: nextBot, sessionId: nextSession }) => setQuery({ bot_id: nextBot ?? botId, session_id: nextSession ?? sessionId, visibility: 'group', ref: null, source_ref: null, target_ref: null })} onLayersChange={changeLayers} onPulseChange={(enabled) => setQuery({ pulse: enabled ? '1' : null })} /></div>
 
     {!scope ? (
       <Card><CardContent className="p-6 text-sm text-muted-foreground">请先选择 Bot 和群。没选完整之前不会去猜标签图。</CardContent></Card>
@@ -138,7 +148,7 @@ export function TagGraphPage() {
         {graph.nodes.length ? (
           <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_23rem]">
             <TagGraphCanvas nodes={graph.nodes} edges={graph.edges} selectedRef={selectedRef} pathEdgeIds={pathEdgeIds} onSelect={selectNode} />
-            <TagGraphDetail node={selectedNode} sourceRef={sourceRef} targetRef={targetRef} path={path} pathLoading={pathLoading} onSetSource={(node) => setQuery({ source_ref: node.ref })} onSetTarget={(node) => setQuery({ target_ref: node.ref })} onRunPath={runPath} onClearPath={clearPath} />
+            <TagGraphDetail scope={scope} node={selectedNode} sourceRef={sourceRef} targetRef={targetRef} path={path} pathLoading={pathLoading} onSetSource={(node) => setQuery({ source_ref: node.ref })} onSetTarget={(node) => setQuery({ target_ref: node.ref })} onRunPath={runPath} onClearPath={clearPath} onMutated={() => setReload((value) => value + 1)} />
           </div>
         ) : (
           <Card><CardContent className="p-6 text-sm text-muted-foreground">当前 Scope 与可见图层下没有正式 Tag 节点；未使用演示数据填充。</CardContent></Card>

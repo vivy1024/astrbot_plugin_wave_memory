@@ -286,6 +286,15 @@ class ScopedKnowledgeMutationGateway:
         ).fetchone()
 
     @staticmethod
+    def _tag_row(connection, scope: RuntimeScope, locator: int):
+        return connection.execute(
+            """SELECT id, name, tag_type, description, confidence, metadata, status, revision
+                 FROM scoped_tags
+                WHERE id=? AND bot_id=? AND session_id=? AND visibility=?""",
+            (locator, *_scope_params(scope)),
+        ).fetchone()
+
+    @staticmethod
     def _require_current(row, expected_revision: int) -> None:
         if row is None:
             raise ScopedKnowledgeNotFound()
@@ -581,6 +590,100 @@ class ScopedKnowledgeMutationGateway:
             command_type="scoped.tag_relation.delete.v1",
             actor="webui.kg.tag_relation.delete",
             event_type="scoped_tag_relation.deleted",
+            request_shape=request_shape,
+            mutate=mutate,
+            idempotency_key=idempotency_key,
+        )
+
+    async def update_tag(
+        self,
+        *,
+        scope: RuntimeScope,
+        target: ScopedKnowledgeMutationTarget,
+        fields: Mapping[str, Any],
+        idempotency_key: str | None = None,
+    ) -> ScopedKnowledgeMutationResult:
+        if target.kind != "tag":
+            raise ValueError("tag target is required")
+        locator = _positive_int(target.locator, "locator")
+        revision = _positive_int(target.revision, "revision")
+        if not isinstance(fields, Mapping):
+            raise ValueError("fields must be an object")
+        allowed = {"name", "tag_type", "description", "aliases"}
+        if set(fields) - allowed:
+            raise ValueError("unsupported tag mutation fields")
+        normalized: dict[str, Any] = {}
+        if "name" in fields:
+            normalized["name"] = _exact_string(fields["name"], "name", maximum_length=120)
+        if "tag_type" in fields:
+            normalized["tag_type"] = _exact_string(fields["tag_type"], "tag_type", maximum_length=60)
+        if "description" in fields:
+            desc = fields["description"]
+            normalized["description"] = "" if desc is None else str(desc).strip()
+        if "aliases" in fields:
+            aliases_raw = fields["aliases"]
+            if not isinstance(aliases_raw, (list, tuple)):
+                raise ValueError("aliases must be a list of strings")
+            normalized["aliases"] = [str(item).strip() for item in aliases_raw if str(item).strip()]
+        if not normalized:
+            raise ValueError("at least one mutable tag field is required")
+        request_shape = {
+            "scope": scope_to_dict(scope),
+            "target": {"kind": "tag", "locator": locator, "revision": revision},
+            "fields": normalized,
+        }
+
+        def mutate(connection, now):
+            row = self._tag_row(connection, scope, locator)
+            if row is None:
+                raise ScopedKnowledgeNotFound()
+            if int(row[7] or 1) != revision:
+                raise ScopedKnowledgeRevisionConflict()
+            current_name = str(row[1])
+            new_name = normalized.get("name", current_name)
+            if new_name != current_name:
+                conflict = connection.execute(
+                    """SELECT 1 FROM scoped_tags
+                        WHERE bot_id=? AND session_id=? AND visibility=? AND name=? AND id!=?""",
+                    (*_scope_params(scope), new_name, locator),
+                ).fetchone()
+                if conflict is not None:
+                    raise ScopedKnowledgeIdentityConflict()
+            metadata_raw = row[5]
+            metadata = json.loads(metadata_raw) if metadata_raw and isinstance(metadata_raw, str) else {}
+            if "aliases" in normalized:
+                metadata["aliases"] = normalized["aliases"]
+            assignments = ["revision=revision+1", "updated_at=?"]
+            params = [now]
+            if "name" in normalized:
+                assignments.append("name=?")
+                params.append(normalized["name"])
+            if "tag_type" in normalized:
+                assignments.append("tag_type=?")
+                params.append(normalized["tag_type"])
+            if "description" in normalized:
+                assignments.append("description=?")
+                params.append(normalized["description"])
+            assignments.append("metadata=?")
+            params.append(_canonical_json(metadata, "metadata"))
+            params.extend([locator, *_scope_params(scope), revision])
+            cursor = connection.execute(
+                f"""UPDATE scoped_tags SET {', '.join(assignments)}
+                     WHERE id=? AND bot_id=? AND session_id=? AND visibility=? AND revision=?""",
+                params,
+            )
+            if cursor.rowcount != 1:
+                raise ScopedKnowledgeRevisionConflict()
+            return {
+                "kind": "tag", "locator": locator, "revision": revision + 1, "status": "active",
+            }
+
+        return await self._commit(
+            scope=scope,
+            target=target,
+            command_type="scoped.tag.update.v1",
+            actor="webui.kg.tag.update",
+            event_type="scoped_tag.updated",
             request_shape=request_shape,
             mutate=mutate,
             idempotency_key=idempotency_key,

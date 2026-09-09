@@ -79,7 +79,7 @@ _CHANNEL_DESCRIPTORS = {
     "jargon": ("解释显式命中的群聊黑话", ["jargon_service"], "medium", "/jargon"),
     "fewshot": ("提供已审核且健康的 Bot 风格样例", ["fewshot_service"], "high", "/knowledge/style-examples"),
     "book_lore": ("检索已审核的 BookLore projection", ["book_lore_adapter"], "medium", "/knowledge/book-lore"),
-    "fts5": ("使用 FTS5 补充文字召回", ["fts_memories"], "medium", "/diagnostics/indexes"),
+    "fts5": ("全文原词命中（FTS5），与向量记忆分开", ["fts_memories"], "medium", "/diagnostics/indexes"),
     "affinity": ("读取当前关系投影；未知值保持为空", ["relationship_projection"], "medium", "/people"),
     "soul_state": ("注入当前 Scope 的 Mood、Concern、Timeline 与 Soul 状态", ["soul_repository"], "high", "/soul"),
 }

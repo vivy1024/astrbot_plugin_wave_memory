@@ -87,7 +87,6 @@ def test_metathinking_passes_relationship_guidance_only_after_allow_gate():
         "effective_depth": 60,
         "concern_score": 0.0,
         "is_interesting": True,
-        "guidance": {"mode": "trusted", "boundary": "只参与安全公开话题"},
         "subjects": ["qq:user:u1"],
         "relationship_revisions": {"qq:user:u1": 3},
     }
@@ -105,7 +104,8 @@ def test_metathinking_passes_relationship_guidance_only_after_allow_gate():
     assert result["relationship_revisions"] == {"qq:user:u1": 3}
     assert llm.calls
     assert "relationship-proactive-v1" in llm.calls[0]["prompt"]
-    assert "只参与安全公开话题" in llm.calls[0]["prompt"]
+    assert "只参与安全公开话题" not in llm.calls[0]["prompt"]
+    assert '"mode": "trusted"' not in llm.calls[0]["prompt"]
 
 
 def test_formal_repository_timeline_audit_uses_group_scope_and_evidence(tmp_path):

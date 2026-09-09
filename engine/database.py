@@ -34,9 +34,11 @@ from .db.migrations.scoped_tag_governance import ensure_scoped_tag_governance_sc
 from .db.migrations.scoped_relationship_calibration import ensure_scoped_relationship_calibration_schema
 from .db.migrations.scoped_soul import ensure_scoped_soul_schema
 from .db.migrations.scoped_fact_history import ensure_scoped_fact_history_schema
+from .db.migrations.person_timeline import ensure_person_timeline_schema
 from .db.migrations.shared_memory_grants import ensure_shared_memory_grants_schema
 from .db.scoped_knowledge_repo import ScopedKnowledgeRepo
 from .db.scoped_learning_projection_repo import ScopedFewShotRepository
+from .db.person_timeline_repo import PersonTimelineRepo
 from .db.scoped_soul_repo import ScopedSoulRepository
 from .db.shared_memory_grant_repo import SharedMemoryGrantRepository
 from .db.tag_repo import TagRepo
@@ -75,6 +77,7 @@ class WaveMemoryDB:
             ensure_scoped_soul_schema(self._cm)
             ensure_scoped_relationship_calibration_schema(self._cm)
             ensure_scoped_fact_history_schema(self._cm)
+            ensure_person_timeline_schema(self._cm)
             ensure_scoped_learning_projection_schema(self._cm)
             # Shared-memory grants: read authorization only; never physical fanout.
             ensure_shared_memory_grants_schema(self._cm)
@@ -84,6 +87,7 @@ class WaveMemoryDB:
                 self._cm,
                 soul_context_provider=self._soul_context_provider,
             )
+            self._person_timeline = PersonTimelineRepo(self._cm)
             self._fewshot_repository = ScopedFewShotRepository(self._cm, ensure_schema=False)
             self._injection_metrics = InjectionMetricStore(self._cm)
 
@@ -106,6 +110,15 @@ class WaveMemoryDB:
     def scoped_knowledge(self):
         """正式 scoped 派生知识边界；禁止调用方回退 legacy 表。"""
         return self._scoped_knowledge_repo
+
+    @property
+    def belief_repo(self) -> BeliefRepo:
+        """信念系统持久化仓储。"""
+        return self._belief_repo
+
+    @property
+    def person_timeline(self) -> PersonTimelineRepo:
+        return self._person_timeline
 
     def record_scoped_fact_observation(self, scope, **kwargs):
         return self._scoped_knowledge_repo.record_scoped_fact_observation(scope, **kwargs)

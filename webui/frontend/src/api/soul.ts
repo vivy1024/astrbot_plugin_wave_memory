@@ -17,6 +17,15 @@ export interface SoulRecord {
   emotional_weight?: number | null
   timestamp?: number | null
   last_triggered?: number | null
+  status?: 'active' | 'dormant' | 'progressing' | 'resolved' | 'expired' | 'archived' | string | null
+  concern_type?: string | null
+  intensity?: number | null
+  urgency?: number | null
+  last_progress_at?: number | null
+  expected_resolution_at?: number | null
+  resolution_note?: string | null
+  origin_memory_id?: number | string | null
+  origin_episode_id?: number | string | null
   revision?: number | string | null
   policy_version?: string | null
   evidence: EvidenceRef[]

@@ -57,10 +57,13 @@ from .services.pair_similarity import PairSimilarityService
 from .services.hot_config import HotConfig
 from .services.memory_index_policy import memory_index_policy_from_settings, select_hot_memory_candidates
 from .services.maintenance_tokens import maintenance_repair_token
+from .services.platform_context import PlatformContextManager
+from .services.inbound_message_handler import InboundMessagePipeline
+from .services.backup_lifecycle import DatabaseBackupManager
 from .services.runtime_mode import effective_native_injection_enabled, effective_query_feature, resolve_runtime_mode, runtime_capability_enabled, should_self_heal_advanced_query
 from .services.compat import build_duplicate_memory_warnings, build_livingmemory_compat_surface, detect_memory_plugins
+from .services.impression_timeline import parse_impression_mark, persist_unsettled_trace
 from .services.lifecycle import LifecycleService
-from .services.consolidation import ConsolidationService
 from .services.persona_evolution import PersonaEvolution
 from .tools.memory_search import WaveMemorySearchTool, WaveMemoryRememberTool
 from .tools.deep_search import WaveMemoryDeepSearchTool
@@ -74,6 +77,10 @@ from .tools.affinity_update import WaveMemoryAffinityTool, WaveMemoryAffinityUpd
 from .tools.social_impression import WaveMemoryRecordSocialImpressionTool
 from .tools.social_anchor import WaveMemoryNoteSocialAnchorTool
 from .tools.cultural_moment import WaveMemoryMarkCulturalMomentTool
+from .tools.fact_proposal import WaveMemoryProposeFactTool
+from .tools.belief_proposal import WaveMemoryProposeBeliefTool
+from .tools.episode import WaveMemoryNoteEpisodeTool
+from .tools.concern import WaveMemoryNoteConcernTool
 from .tools.livingmemory_compat_tools import build_livingmemory_compat_tools
 from .engine.book_lore_index import BookLoreIndex
 from .services.meta_thinking import MetaThinking
@@ -96,16 +103,10 @@ from .services.desire_engine import DesireEngine
 from .services.belief_engine import BeliefEngine
 from .services.belief_emergence import BeliefEmergenceService
 from .services.belief_gating import snapshot_from_relationship
-from .services.impression_timeline import append_impression, relationship_context
 from .services.proactive_audit import read_proactive_relationship_context, record_proactive_timeline
-from .services.proactive_policy import (
-    BEHAVIOR_AMBIENT,
-    BEHAVIOR_CONCERN_FOLLOWUP,
-    evaluate_proactive_policy,
-    relationship_behavior_guidance,
-)
 from .services.jargon.service import JargonService
 from .services.few_shot.service import FewShotService
+from .services.reflection_trigger import ReflectionTriggerService
 from .services.relationship_events import RelationshipEventService
 from .domain.scope import CatalogScope, RuntimeScope, SessionRef
 from .services.identity_safety import (
@@ -216,7 +217,7 @@ def _build_bot_registry(config: dict) -> dict[str, BotProfile]:
     "astrbot_plugin_wave_memory",
     "vivy1024",
     "群聊长期记忆插件。日常检索只依赖向量模型，本地 SQLite 毫秒级召回，不装 Neo4j/ES。记忆注入和黑话、风格、信念、好感、时间线一起进回复，通道和预算可单独调。适合长期陪聊群 Bot；不是只塞最近几条的轻量摘要。",
-    "4.7.2",
+    "5.0.0",
     "https://github.com/vivy1024/astrbot_plugin_wave_memory",
 )
 class WaveMemoryPlugin(Star):
@@ -480,61 +481,19 @@ class WaveMemoryPlugin(Star):
         self.dream_recent_k = int(lifecycle_cfg.get("dream_recent_k", 5))
         self.dream_mid_seeds = int(lifecycle_cfg.get("dream_mid_seeds", 2))
         self.dream_mid_k = int(lifecycle_cfg.get("dream_mid_k", 3))
-        self.enable_consolidation = runtime_capability_enabled(self.runtime_mode, "consolidation", lifecycle_cfg.get("enable_consolidation", True))
-        self.consolidation_interval_hours = float(lifecycle_cfg.get("consolidation_interval_hours", "4.0"))
-        self.consolidation_topic_backfill = lifecycle_cfg.get("consolidation_topic_backfill", True)
-        self.consolidation_skip_topics = [t.strip() for t in tag_cfg.get("consolidation_skip_topics", "日常闲聊,日常灌水,闲聊,灌水,群聊,聊天,日常").split(",") if t.strip()]
+        # Consolidation（后台自动巩固 / 盲抽升格为事实与信念）已按架构决定永久停用：
+        # 认知只能由模型现场基于证据提审，再经人工转正。configured 固定 False，使任何
+        # 运行模式或遗留配置都无法重新打开它，同时保留能力 gate 以维持运行模式契约。
+        self.enable_consolidation = runtime_capability_enabled(self.runtime_mode, "consolidation", False)
 
         # 初始化数据目录
         data_path = get_astrbot_data_path() or os.path.dirname(__file__)
         self.data_dir = os.path.join(data_path, "plugin_data", "astrbot_plugin_wave_memory")
         os.makedirs(self.data_dir, exist_ok=True)
 
-        # 自动备份 DB（仅距上次备份 > 1 小时才执行，避免热重载重复备份大文件）
-        import shutil
-        from pathlib import Path
-        from datetime import datetime
-
-        _db_file = Path(self.data_dir) / "wave_memory.db"
-        if _db_file.exists():
-            _backup_dir = Path(self.data_dir) / "backups"
-            _backup_dir.mkdir(exist_ok=True)
-            # 检查最近一次备份时间
-            _existing_backups = sorted(_backup_dir.glob("wave_memory_*.db"))
-            _skip_backup = False
-            if _existing_backups:
-                _last_backup_mtime = _existing_backups[-1].stat().st_mtime
-                if (time.time() - _last_backup_mtime) < 3600:  # 1 小时内有备份则跳过
-                    _skip_backup = True
-            if not _skip_backup:
-                _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                _backup_file = _backup_dir / f"wave_memory_{_ts}.db"
-                try:
-                    shutil.copy2(str(_db_file), str(_backup_file))
-                    logger.info(f"[WaveMemory] DB backup created: {_backup_file.name}")
-                except Exception as _e:
-                    logger.warning(f"[WaveMemory] DB backup failed (non-fatal): {_e}")
-                # 保留最近 N 个自动备份。只匹配严格时间戳命名并按 mtime 排序：
-                # 泛化 glob 曾把 wave_memory_stage6_*.db 之类手工备份卷进来，
-                # 字典序还会让最新时间戳排到切片外，导致刚创建的备份被误删。
-                try:
-                    _max_backups = max(1, int(self.config.get("backup_max_count", 1)))
-                except (TypeError, ValueError):
-                    _max_backups = 1
-                _auto_backups = sorted(
-                    (
-                        _f for _f in _backup_dir.glob("wave_memory_*.db")
-                        if re.fullmatch(r"wave_memory_\d{8}_\d{6}\.db", _f.name)
-                    ),
-                    key=lambda _f: _f.stat().st_mtime,
-                )
-                for _old in _auto_backups[:-_max_backups]:
-                    try:
-                        _old.unlink()
-                    except OSError as _e:
-                        logger.warning(f"[WaveMemory] stale backup cleanup failed: {_e}")
-            else:
-                logger.debug("[WaveMemory] Backup skipped (recent backup exists)")
+        # 数据库备份生命周期安全管理（由 DatabaseBackupManager 统一负责，零阻塞主线程）
+        self.backup_manager = DatabaseBackupManager(self.data_dir, config=self.config)
+        self.backup_manager.run_backup_safe()
 
         # 初始化核心组件
         db_path = os.path.join(self.data_dir, "wave_memory.db")
@@ -840,7 +799,7 @@ class WaveMemoryPlugin(Star):
         self.eviction_service = None
         self.belief_engine = None
         self.belief_emergence = None
-        self._last_belief_emerge_ts = 0
+        self.reflection_trigger = ReflectionTriggerService(self.db)
         self._belief_tag_refresh_delay_seconds = 0.4
         self._pending_belief_tag_refresh: dict[tuple[str, str, str, int], asyncio.Task] = {}
         self.concern_tracker = None
@@ -853,6 +812,9 @@ class WaveMemoryPlugin(Star):
         self.injection_trace_store = None
         self.injection_shadow_channels = []
         self._terminated = False
+
+        self.inbound_pipeline = InboundMessagePipeline(self)
+        self.platform_context_manager = PlatformContextManager(self.context, self._bot_registry)
 
         logger.info(
             f"[WaveMemory] Init: {self.db.get_memory_count()} memories, "
@@ -936,16 +898,20 @@ class WaveMemoryPlugin(Star):
         return p.name if p else "bot"
 
     def _remember_group_name(self, bot_id: str, group_id: str, group_name: str | None) -> None:
-        """缓存运行时事件携带的群名，供 WebUI Scope 选项复用。"""
-        normalized_bot = str(bot_id or "").strip()
-        normalized_group = str(group_id or "").strip()
-        normalized_name = str(group_name or "").strip()
-        if not normalized_bot or not normalized_group or not normalized_name:
-            return
-        self._group_names[(normalized_bot, normalized_group)] = normalized_name
+        """委托给 PlatformContextManager 统一维护。"""
+        if hasattr(self, "platform_context_manager"):
+            self.platform_context_manager.remember_group_name(bot_id, group_id, group_name)
+        else:
+            normalized_bot = str(bot_id or "").strip()
+            normalized_group = str(group_id or "").strip()
+            normalized_name = str(group_name or "").strip()
+            if normalized_bot and normalized_group and normalized_name:
+                self._group_names[(normalized_bot, normalized_group)] = normalized_name
 
     def _get_group_name(self, bot_id: str, group_id: str) -> str | None:
-        """返回真实群名；同群仅有一个已确认名称时允许跨 Bot 复用。"""
+        """委托给 PlatformContextManager。"""
+        if hasattr(self, "platform_context_manager"):
+            return self.platform_context_manager.get_group_name(bot_id, group_id)
         normalized_bot = str(bot_id or "").strip()
         normalized_group = str(group_id or "").strip()
         direct = self._group_names.get((normalized_bot, normalized_group))
@@ -959,43 +925,14 @@ class WaveMemoryPlugin(Star):
         return next(iter(names)) if len(names) == 1 else None
 
     async def _refresh_group_names_from_platforms(self) -> None:
-        """从已连接 OneBot 平台读取真实群列表，为 WebUI 首屏预热群名。"""
-        manager = getattr(self.context, "platform_manager", None)
-        get_insts = getattr(manager, "get_insts", None)
-        platforms = get_insts() if callable(get_insts) else getattr(manager, "platform_insts", ())
-        profiles_by_name = {
-            str(profile.name or "").strip(): profile
-            for profile in self._bot_registry.values()
-            if str(profile.name or "").strip()
-        }
-        for platform in platforms or ():
-            try:
-                metadata = platform.meta()
-                profile = profiles_by_name.get(str(getattr(metadata, "id", "") or "").strip())
-                call_action = getattr(getattr(platform, "bot", None), "call_action", None)
-                if profile is None or not callable(call_action):
-                    continue
-                groups = await asyncio.wait_for(call_action("get_group_list"), timeout=8.0)
-                for item in groups or ():
-                    if not isinstance(item, dict):
-                        continue
-                    self._remember_group_name(
-                        profile.db_id,
-                        str(item.get("group_id") or ""),
-                        item.get("group_name") or item.get("name"),
-                    )
-            except Exception as exc:
-                logger.debug("[WaveMemory] group name prefetch skipped for platform: %s", exc)
+        """委托给 PlatformContextManager。"""
+        if hasattr(self, "platform_context_manager"):
+            await self.platform_context_manager.refresh_group_names_from_platforms()
 
     async def _warm_group_names_when_platforms_ready(self) -> None:
-        """平台适配器晚于插件初始化时，后台短轮询并预热群名。"""
-        for _ in range(15):
-            await self._refresh_group_names_from_platforms()
-            if self._group_names:
-                logger.info("[WaveMemory] group names ready: %s", len(self._group_names))
-                return
-            await asyncio.sleep(2.0)
-        logger.warning("[WaveMemory] group name prefetch timed out; Scope options will fall back to group ids")
+        """委托给 PlatformContextManager。"""
+        if hasattr(self, "platform_context_manager"):
+            await self.platform_context_manager.warm_group_names_when_platforms_ready()
 
     def _setup_injection_shadow_pipeline(self) -> None:
         """初始化新注入编排器通道链；失败不影响旧 inject_memory fallback。"""
@@ -1057,7 +994,7 @@ class WaveMemoryPlugin(Star):
                 BeliefChannel(belief_engine=getattr(self, "belief_engine", None)),
                 JargonChannel(jargon_service=getattr(self, "jargon_service", None)),
                 FewShotChannel(few_shot_service=getattr(self, "few_shot_service", None)),
-                RelationshipChannel(repository=self.db.soul_repository),
+                RelationshipChannel(repository=self.db.soul_repository, db=self.db),
                 SoulStateChannel(repository=self.db.soul_repository),
                 BookLoreChannel(
                     book_lore_index=self.book_lore_index,
@@ -1486,10 +1423,22 @@ class WaveMemoryPlugin(Star):
                     db=self.db,
                     concern_tracker=getattr(self, "concern_tracker", None),
                     repository=getattr(self.db, "soul_repository", None),
+                    write_gateway=self.write_gateway,
                 ),
                 WaveMemoryMarkCulturalMomentTool(
                     db=self.db,
                     jargon_service=getattr(self, "jargon_service", None),
+                ),
+                WaveMemoryProposeFactTool(
+                    db=self.db,
+                    jargon_service=getattr(self, "jargon_service", None),
+                ),
+                WaveMemoryProposeBeliefTool(db=self.db),
+                WaveMemoryNoteEpisodeTool(db=self.db, writer=self.writer, write_gateway=self.write_gateway),
+                WaveMemoryNoteConcernTool(
+                    db=self.db,
+                    concern_tracker=getattr(self, "concern_tracker", None),
+                    write_gateway=self.write_gateway,
                 ),
             ])
         if runtime_capability_enabled(self.runtime_mode, "book_lore_tools", True):
@@ -1617,32 +1566,8 @@ class WaveMemoryPlugin(Star):
                 relationship_service=self.relationship_service,
             )
             self.lifecycle.start(self.task_supervisor)
-            # LLM 摘要整合
-            if self.enable_consolidation and self.tag_llm_provider_id:
-                # 构建 bot 标识集合，用于排除 bot 自己作为 fact subject
-                _bot_ids_set = set()
-                for _bp in self._bot_registry.values():
-                    _bot_ids_set.add(_bp.qq_id)
-                    if _bp.db_id:
-                        _bot_ids_set.add(_bp.db_id)
-                    if _bp.name:
-                        _bot_ids_set.add(_bp.name)
-                    _bot_ids_set.update(_bp.aliases)
-                _bot_ids_set.discard("")
-
-                self.consolidation = ConsolidationService(
-                    db=self.db,
-                    context=self.context,
-                    provider_id=self.tag_llm_provider_id,
-                    interval_hours=self.consolidation_interval_hours,
-                    topic_backfill=self.consolidation_topic_backfill,
-                    skip_topics=self.consolidation_skip_topics,
-                    bot_identifiers=_bot_ids_set,
-                    provider_fallback_ids=self.llm_fallback_provider_ids,
-                )
-                self.consolidation.start(self.task_supervisor)
-            else:
-                self.consolidation = None
+            self.consolidation = None
+            logger.info("[WaveMemory] ConsolidationService removed; topic tags stay with TagWorker")
         else:
             self.consolidation = None
 
@@ -1805,11 +1730,6 @@ class WaveMemoryPlugin(Star):
             self.self_reflect = None
 
         # ─── BDI / 灵魂子系统实例化（修复 06-12 集体停摆：原代码仅有 hasattr 守卫调用，缺实例化）───
-        # ⚠ 顺序约束：belief_engine 必须在 consolidation 之后实例化，
-        #   因为 belief_engine 要挂到已存在的 self.consolidation 上。
-        #   如果 consolidation 未就绪（LLM 缺失等），belief_engine 仍可独立运行，只是不会被 consolidation 调用。
-        if self.enable_consolidation and not getattr(self, "consolidation", None):
-            logger.warning("[WaveMemory] consolidation 未就绪（LLM 不可用？），belief_engine 将独立运行")
         soul_bot = experience_bot or reflect_bot
         soul_bot_id = soul_bot.db_id if soul_bot else ""
         # 信念引擎（提取在 consolidation 内触发，注入在 on_llm_request）
@@ -1826,9 +1746,6 @@ class WaveMemoryPlugin(Star):
                     bot_id=soul_bot_id,
                     soul_repository=self.db.soul_repository,
                 )
-                # 把信念引擎接到 consolidation，让摘要提取信念重新生效
-                if getattr(self, "consolidation", None):
-                    self.consolidation.belief_engine = self.belief_engine
             else:
                 self.belief_engine = None
         except Exception as e:
@@ -1923,22 +1840,8 @@ class WaveMemoryPlugin(Star):
         soul_state_off_reason = missing_bot_profile_reason if not soul_bot_id else "初始化失败或未启用"
 
         _reg("自省系统", "ok" if getattr(self, 'self_reflect', None) else "off", "" if getattr(self, 'self_reflect', None) else self_reflect_off_reason, dependency="LLM Provider + Bot Profile")
-        _consolidation = getattr(self, 'consolidation', None)
-        if _consolidation is None:
-            _consolidation_status, _consolidation_detail = "off", "enable_consolidation=false 或 LLM 不可用"
-        else:
-            # Report real summary output, not just that the service object exists:
-            # a provider outage previously stalled summaries for weeks while this
-            # panel still showed "ok".
-            try:
-                _snapshot = _consolidation.health_snapshot()
-                _consolidation_status = _snapshot.get("status", "ok")
-                _consolidation_detail = _snapshot.get("detail", "")
-            except Exception as _exc:  # pragma: no cover - defensive health path
-                _consolidation_status, _consolidation_detail = "degraded", f"健康快照读取失败: {_exc}"
-        _reg("记忆整合", _consolidation_status, _consolidation_detail, dependency="LLM Provider")
         _reg("记忆淘汰", "ok" if getattr(self, 'eviction_service', None) else "off", "" if getattr(self, 'eviction_service', None) else "Eviction 未启用", dependency="自动启用")
-        _reg("信念引擎", "ok" if self.belief_engine else "off", "" if self.belief_engine else soul_off_reason, dependency="LLM Provider + Bot Profile + 记忆整合")
+        _reg("信念引擎", "ok" if self.belief_engine else "off", "" if self.belief_engine else soul_off_reason, dependency="LLM Provider + Bot Profile")
         _reg("关切追踪", "ok" if self.concern_tracker else "off", "" if self.concern_tracker else f"concern_tracker {soul_state_off_reason}", dependency="Bot Profile")
         _reg("情绪轨迹", "ok" if self.mood_trajectory else "off", "" if self.mood_trajectory else f"mood_trajectory {soul_state_off_reason}", dependency="Bot Profile")
         _reg("黑话系统", "ok" if getattr(self, 'jargon_service', None) else "off", "" if getattr(self, 'jargon_service', None) else "Jargon 未启用", dependency="LLM Provider + 聊天记录积累")
@@ -1998,12 +1901,6 @@ class WaveMemoryPlugin(Star):
                 self.dream_service.stop()
         except Exception as e:
             logger.debug(f"[WaveMemory] dream_service stop error: {e}")
-
-        try:
-            if hasattr(self, 'consolidation') and self.consolidation:
-                self.consolidation.stop()
-        except Exception as e:
-            logger.debug(f"[WaveMemory] consolidation stop error: {e}")
 
         try:
             if hasattr(self, 'eviction_service') and self.eviction_service:
@@ -2120,8 +2017,49 @@ class WaveMemoryPlugin(Star):
         if self.meta_thinking and self.meta_thinking.is_interesting(message):
             return "may_reply"
 
-        # 6. 其他 → skip
+        # 6. 本轮消息命中该人印象时间线 → may_reply（不强制回复，不建关切）
+        if self._timeline_cue_hit(event, message, sender_id, group_id) is not None:
+            return "may_reply"
+
+        # 7. 其他 → skip
         return "skip"
+
+    def _timeline_cue_bot_id(self, event) -> str:
+        qq_id = ""
+        getter = getattr(event, "get_self_id", None)
+        if callable(getter):
+            qq_id = str(getter() or "").strip()
+        registry = getattr(self, "_bot_registry", None) or {}
+        profile = registry.get(qq_id) if qq_id else None
+        db_id = str(getattr(profile, "db_id", "") or "").strip()
+        return db_id or qq_id
+
+    def _timeline_cue_hit(self, event, message: str, sender_id: str, group_id: str) -> dict | None:
+        """复用 MetaThinking 规则门。结果挂在 event 上，避免主 hook 再读一次库。"""
+        cached = getattr(event, "_wave_memory_timeline_cue", None)
+        if isinstance(cached, dict) or cached is False:
+            return cached or None
+        db = getattr(self, "db", None)
+        if db is None or not sender_id or not group_id:
+            return None
+        try:
+            from .services.impression_timeline import load_timeline_cue
+        except Exception:
+            return None
+        bot_id = self._timeline_cue_bot_id(event)
+        if not bot_id:
+            return None
+        try:
+            hit = load_timeline_cue(
+                db, bot_id=bot_id, user_id=sender_id, group_id=group_id, message=message
+            )
+        except Exception:
+            hit = None
+        try:
+            event._wave_memory_timeline_cue = hit or False
+        except Exception:
+            pass
+        return hit
 
     @filter.on_llm_request(priority=1)
     async def meta_thinking_check(self, event: AstrMessageEvent, req=None):
@@ -2153,6 +2091,22 @@ class WaveMemoryPlugin(Star):
         if engage == "skip":
             # 不相关消息，不做任何处理（AstrBot 不会调 LLM 因为没 @）
             return
+        cue = getattr(event, "_wave_memory_timeline_cue", None)
+        if isinstance(cue, dict):
+            try:
+                from .services.impression_timeline import timeline_cue_prompt
+                prompt = timeline_cue_prompt(cue)
+            except Exception:
+                prompt = ""
+            if prompt:
+                try:
+                    from astrbot.core.agent.message import TextPart
+                    req.extra_user_content_parts.append(TextPart(text=prompt))
+                except Exception:
+                    extra = getattr(req, "extra_user_content_parts", None)
+                    if extra is None:
+                        req.extra_user_content_parts = extra = []
+                    extra.append({"type": "text", "text": prompt})
 
         # ─── 硬规则：极端攻击 + 辱骂冷却 ───
         from .services.meta_thinking import EXTREME_ATTACK
@@ -2231,7 +2185,7 @@ class WaveMemoryPlugin(Star):
         # 好感度变化靠 LifecycleService 互动频率 + 极端事件规则驱动。
 
     async def _belief_emergence_task(self, runtime_scope: RuntimeScope | None = None) -> None:
-        """后台从当前群 Scope 的 lived episode 涌现 pending 信念。"""
+        """手工/排障入口：不再由入站消息自动调度。"""
         try:
             if not getattr(self, "belief_emergence", None):
                 return
@@ -2243,7 +2197,7 @@ class WaveMemoryPlugin(Star):
             _record_err("BeliefEmergence", e)
 
     async def _jargon_mine_task(self, runtime_scope: RuntimeScope) -> None:
-        """后台黑话挖掘任务；只接受入口已解析的群 RuntimeScope。"""
+        """手工/排障入口：不再由入站消息自动调度。"""
         if runtime_scope.visibility != "group" or runtime_scope.session is None:
             return
         try:
@@ -2299,6 +2253,22 @@ class WaveMemoryPlugin(Star):
         )
         if not handled:
             logger.error("[WaveMemory] canonical injection failed closed; historical injection was not invoked")
+            return
+        try:
+            reflection_prompt = self.reflection_trigger.build_prompt(
+                scope=runtime_scope,
+                message=message,
+                sender_id=sender_id,
+                trace_id=f"active-{getattr(req, 'trace_id', '')}",
+            )
+            if reflection_prompt:
+                try:
+                    from astrbot.core.agent.message import TextPart
+                    req.extra_user_content_parts.append(TextPart(text=reflection_prompt))
+                except Exception:
+                    req.extra_user_content_parts.append({"type": "text", "text": reflection_prompt})
+        except Exception as exc:
+            logger.debug("[WaveMemory] reflection trigger skipped: %s", exc)
 
     # ─── Hook: 捕获消息 ───
 
@@ -2441,9 +2411,10 @@ class WaveMemoryPlugin(Star):
         # ─── 4s 消息合并防抖机制 (Debounce Coalescing) ───
         # 不重写 event.message_obj.message：底层组件链由 AstrBot/适配器维护，
         # 插件越级替换会让后续引用/发送阶段把组件结构当作 Plain 文本嵌套序列化。
-        sender_name_val = ""
+        sender_name = ""
         if event.message_obj and event.message_obj.sender:
-            sender_name_val = event.message_obj.sender.nickname or ""
+            sender_name = event.message_obj.sender.nickname or ""
+        message_ts = time.time()
 
         debounce_key = (
             f"{runtime_scope.bot_id}:{runtime_scope.visibility}:"
@@ -2460,7 +2431,7 @@ class WaveMemoryPlugin(Star):
             buffer["updated_ts"] = now_ms
             buffer["last_event_id"] = id(event)
             buffer["messages"].append({
-                "sender_name": sender_name_val,
+                "sender_name": sender_name,
                 "text": message,
                 "images": images
             })
@@ -2474,7 +2445,7 @@ class WaveMemoryPlugin(Star):
                 "first_ts": now_ms,
                 "updated_ts": now_ms,
                 "messages": [{
-                    "sender_name": sender_name_val,
+                    "sender_name": sender_name,
                     "text": message,
                     "images": images
                 }],
@@ -2530,364 +2501,20 @@ class WaveMemoryPlugin(Star):
             # 放行给后面的逻辑使用
             message = merged_content
 
-        # ─── 抢词被打断检测 (Hesitation Memory Capture) ───
-        if (
-            runtime_scope.visibility == "group"
-            and hasattr(self, "_pending_proactive_plans")
-            and self._pending_proactive_plans.get(group_id)
-        ):
-            active_plan = self._pending_proactive_plans[group_id]
-            self._pending_proactive_plans[group_id] = None
-            try:
-                bot_id_temp = event.get_self_id() or ""
-                bot_prof_temp = self._get_bot(bot_id_temp)
-                pe_bot_id_temp = bot_prof_temp.db_id if bot_prof_temp else "bot"
-                
-                user_prof_row = self.db.conn.execute(
-                    "SELECT metadata FROM user_profiles WHERE user_id = ? AND group_id = ? AND bot_id = ?",
-                    (sender_id, group_id, pe_bot_id_temp)
-                ).fetchone()
-                
-                meta_to_write = {}
-                if user_prof_row and user_prof_row[0]:
-                    meta_to_write = json.loads(user_prof_row[0])
-                
-                hesitations_list = meta_to_write.setdefault("recent_hesitations", [])
-                hesitations_list.append({
-                    "ts": time.time(),
-                    "topic": active_plan.get("topic", "闲聊"),
-                    "motive": active_plan.get("motive", "想和你交谈"),
-                })
-                del hesitations_list[:-5]
-                
-                self.db.conn.execute(
-                    "UPDATE user_profiles SET metadata = ? WHERE user_id = ? AND group_id = ? AND bot_id = ?",
-                    (json.dumps(meta_to_write, ensure_ascii=False), sender_id, group_id, pe_bot_id_temp)
-                )
-                self.db.conn.commit()
-                logger.info(f"[MetaThinking] 抢词咽回成功：用户 {sender_id} 在群组 {group_id} 抢答，原计划的主动插话“{active_plan.get('topic', '闲聊')}”已被咽回，写为犹豫记忆。")
-            except Exception as e:
-                logger.debug(f"[MetaThinking] 咽回犹豫记忆写入失败: {e}")
-
-        # 每个正式 Scope 单独串行，避免群聊与私聊同 conversation id 时互相阻塞。
-        if not hasattr(self, "_group_concurrency_locks"):
-            self._group_concurrency_locks = {}
-        scope_key = f"{runtime_scope.bot_id}:{runtime_scope.visibility}:{runtime_scope.session.id}"
-        group_lock = self._group_concurrency_locks.setdefault(scope_key, asyncio.Lock())
-
-        async def _process_in_lock(locked_message: str):
-            # ─── /teach 命令（管理员灌入知识 → facts + 高权重记忆）───
-            sender_name = ""
-            if event.message_obj and event.message_obj.sender:
-                sender_name = event.message_obj.sender.nickname or ""
-            msg_stripped = locked_message.strip()
-            if (
-                runtime_scope.visibility == "group"
-                and (msg_stripped.startswith("/teach ") or msg_stripped.startswith("/teach:"))
-            ):
-                # 只有管理员能用
-                admin_ids = self._get_admin_ids() if hasattr(self, '_get_admin_ids') else set()
-                if sender_id in admin_ids:
-                    content = msg_stripped[7:].strip(":： \n")
-                    if content and len(content) >= 4:
-                        await self.writer.enqueue({
-                            "scope": runtime_scope,
-                            "group_id": group_id,
-                            "content": f"[管理员教导] {content}",
-                            "sender_id": sender_id,
-                            "sender_name": sender_name,
-                            "timestamp": time.time(),
-                            "event_id": getattr(event, "message_id", None),
-                            "importance": 2.5,
-                            "source": "teach",
-                        })
-                        # 尝试解析为 facts（格式：A是B / A的B是C）
-                        import re as _re
-                        fact_match = _re.match(r'^(.+?)(是|的|=|→)(.+)$', content)
-                        if fact_match:
-                            subject = fact_match.group(1).strip()
-                            predicate = fact_match.group(2).strip() or "是"
-                            obj = fact_match.group(3).strip()
-                            if subject and obj:
-                                scoped_repo = getattr(self.db, "scoped_knowledge", None)
-                                if scoped_repo is None:
-                                    _record_err("teach.fact", "scoped_repository_unavailable")
-                                else:
-                                    scoped_repo.upsert_scoped_fact(
-                                        runtime_scope,
-                                        subject=subject,
-                                        predicate=predicate,
-                                        object=obj,
-                                        confidence=0.95,
-                                        status="pending",
-                                        provenance={
-                                            "source": "teach",
-                                            "event_id": str(getattr(event, "message_id", "") or ""),
-                                        },
-                                    )
-                        logger.info(f"[WaveMemory] /teach: {content[:50]}")
-                    return
-
-            # ─── "记住/忘记" 显式命令（用户主动触发,不依赖 LLM 判断）───
-            _remember_prefixes = ("记住", "记下", "remember")
-            _forget_prefixes = ("忘记", "忘掉", "forget", "别记")
-            msg_stripped = locked_message.strip()
-            for prefix in _remember_prefixes:
-                if msg_stripped.startswith(prefix):
-                    content = msg_stripped[len(prefix):].strip(":： \n")
-                    if content and len(content) >= 4:
-                        await self.writer.enqueue({
-                            "scope": runtime_scope,
-                            "group_id": group_id,
-                            "content": f"[用户要求记住] {content}",
-                            "sender_id": sender_id,
-                            "sender_name": sender_name if sender_name else "",
-                            "timestamp": time.time(),
-                            "event_id": getattr(event, "message_id", None),
-                            "importance": 2.0,
-                            "source": "explicit",
-                        })
-                        logger.info(f"[WaveMemory] 显式记住 queued: {sender_name}: {content[:30]}")
-                    return
-            for prefix in _forget_prefixes:
-                if msg_stripped.startswith(prefix):
-                    content = msg_stripped[len(prefix):].strip(":： \n")
-                    if content and len(content) >= 2:
-                        rows = self.db.conn.execute(
-                            """SELECT id FROM memories
-                               WHERE content LIKE ? AND sender_id = ?
-                                 AND bot_id = ? AND session_id = ? AND visibility = ?
-                                 AND resolution_state = 'resolved' AND quarantine = 0
-                               ORDER BY id DESC LIMIT 5""",
-                            (
-                                f"%{content}%",
-                                sender_id,
-                                runtime_scope.bot_id,
-                                runtime_scope.session.id if runtime_scope.session else "",
-                                runtime_scope.visibility,
-                            ),
-                        ).fetchall()
-                        if rows:
-                            await self.write_gateway.set_memory_importance(
-                                scope=runtime_scope,
-                                memory_ids=[int(row[0]) for row in rows],
-                                importance=0.01,
-                                idempotency_hint=(
-                                    f"explicit-forget:{getattr(event, 'message_id', '') or content}"
-                                ),
-                            )
-                            logger.info(f"[WaveMemory] 显式忘记: {sender_name}: {content[:30]} ({len(rows)} 条降权)")
-                    return
-
-            if len(locked_message) > self.max_message_length:
-                locked_message = locked_message[:self.max_message_length]
-
-            message_ts = time.time()
-            await self.writer.enqueue({
-                "scope": runtime_scope,
-                "group_id": group_id,
-                "sender_id": sender_id,
-                "sender_name": sender_name,
-                "content": locked_message,
-                "timestamp": message_ts,
-                "event_id": getattr(event, "message_id", None),
-                "is_at_bot": getattr(event, "is_at_or_wake_command", False),
-            })
-
-            # 黑话词频与挖掘是群聊专属派生能力，私聊只保留原始记忆。
-            if runtime_scope.visibility == "group" and self.jargon_service:
-                self.jargon_service.feed_message(locked_message, runtime_scope, sender_id, timestamp=message_ts)
-                if self.jargon_service.should_mine(runtime_scope):
-                    self._spawn(self._jargon_mine_task(runtime_scope))
-
-            # 自省候选依赖群聊 read-model，私聊不得进入该派生链路。
-            if runtime_scope.visibility == "group" and self.self_reflect and group_id:
-                try:
-                    correction_message_id = getattr(event, "message_id", None)
-                    await self.self_reflect.check_correction(
-                        locked_message,
-                        sender_name,
-                        group_id,
-                        bot_id=runtime_scope.bot_id,
-                        scope=runtime_scope,
-                        message_id=correction_message_id,
-                    )
-                except Exception:
-                    pass
-
-            if runtime_scope.visibility == "group" and hasattr(self, 'lifecycle') and self.lifecycle:
-                bot_ids = self._bot_qq_ids
-                is_at_bot = any(bid in (event.message_str or '') for bid in bot_ids)
-                # 检测是否回复 bot（引用消息的发送者是 bot）
-                is_reply_to_bot = False
-                if hasattr(event, 'message_obj') and event.message_obj:
-                    raw = event.message_str or ""
-                    if "[引用消息" in raw and any(bid in raw for bid in bot_ids):
-                        is_reply_to_bot = True
-                hour = int(time.strftime('%H', time.localtime()))
-                self.lifecycle.process_scoped_message(
-                    scope=runtime_scope,
-                    content=locked_message,
-                    is_at_bot=is_at_bot,
-                    is_reply_to_bot=is_reply_to_bot,
-                    hour=hour,
-                )
-                if getattr(self, "belief_emergence", None) and time.time() - getattr(self, "_last_belief_emerge_ts", 0) > 900:
-                    self._last_belief_emerge_ts = time.time()
-                    self._spawn(self._belief_emergence_task(runtime_scope))
-                if getattr(self, "concern_tracker", None) and (is_at_bot or len(locked_message) > 80):
-                    topic = locked_message[:60].strip()
-                    if topic:
-                        self.concern_tracker.add(
-                            topic=topic,
-                            intensity=0.55 if is_at_bot else 0.4,
-                            scope=runtime_scope,
-                        )
-                if getattr(self, "subjective_time", None) and (is_at_bot or is_reply_to_bot or len(locked_message) > 120):
-                    summary = f"{sender_name or sender_id}: {locked_message[:80]}"
-                    self.subjective_time.add_anchor(
-                        summary,
-                        emotional_weight=0.6 if is_at_bot or is_reply_to_bot else 0.45,
-                        timestamp=message_ts,
-                        scope=runtime_scope,
-                    )
-
-            # 欲望触发：检测红包等特殊事件
-            desire_engine = getattr(self, 'desire_engine', None)
-            if desire_engine:
-                raw_msg = event.message_str or ""
-                if "redbag" in raw_msg or "红包" in locked_message:
-                    desire_engine.trigger(
-                        desire_type="想抢红包",
-                        trigger_desc=f"{sender_name}发了红包",
-                        intensity=0.6,
-                        action="react_to_hongbao",
-                        ttl=30.0,
-                    )
-
-            # 主动对话触发：兴趣词/关切只是候选信号；正式关系策略是不可绕过的前置门禁。
-            bot_id = event.get_self_id() or ""
-            bot_profile = self._get_bot(bot_id)
-            meta_thinking = getattr(self, "meta_thinking", None)
-            proactive_ok = (
-                runtime_scope.visibility == "group"
-                and bool(
-                    bot_profile.proactive_enabled
-                    if bot_profile is not None
-                    else getattr(meta_thinking, "proactive_enabled", False)
-                )
-            )
-            concern_score = (
-                self.concern_tracker.match(locked_message, scope=runtime_scope)
-                if runtime_scope.visibility == "group" and getattr(self, "concern_tracker", None)
-                else 0.0
-            )
-            is_interesting = (
-                meta_thinking.is_interesting(locked_message)
-                if runtime_scope.visibility == "group" and meta_thinking is not None
-                else False
-            )
-            if (
-                runtime_scope.visibility == "group"
-                and meta_thinking is not None
-                and proactive_ok
-                and not getattr(event, "is_at_or_wake_command", False)
-                and group_id
-                and (is_interesting or concern_score > 0.3)
-            ):
-                try:
-                    relationship_context = await self._read_proactive_relationship_context(
-                        runtime_scope,
-                        event,
-                        now=time.time(),
-                    )
-                    snapshots = relationship_context.get("snapshots") or []
-                    behavior_type = (
-                        BEHAVIOR_CONCERN_FOLLOWUP
-                        if float(concern_score or 0.0) >= 0.30 and not is_interesting
-                        else BEHAVIOR_AMBIENT
-                    )
-                    if relationship_context.get("ok"):
-                        policy = evaluate_proactive_policy(
-                            snapshots,
-                            concern_score=concern_score,
-                            is_interesting=is_interesting,
-                            behavior_type=behavior_type,
-                            scope_available=True,
-                            subject_available=bool(relationship_context.get("subjects")),
-                        )
-                        policy["guidance"] = relationship_behavior_guidance(snapshots)
-                    else:
-                        policy = {
-                            "policy_version": "relationship-proactive-v1",
-                            "decision": "blocked",
-                            "reason_code": relationship_context.get("reason_code", "relationship_context_unavailable"),
-                            "behavior_type": behavior_type,
-                            "trigger_weight": 0.0,
-                            "fail_closed": True,
-                            "review_required": True,
-                            "concern_score": round(float(concern_score or 0.0), 3),
-                            "is_interesting": bool(is_interesting),
-                            "subjects": relationship_context.get("subjects", []),
-                            "relationship_revisions": {},
-                            "snapshots": [],
-                            "guidance": relationship_behavior_guidance(()),
-                        }
-                    if policy.get("decision") != "allow_llm":
-                        logger.info(
-                            "[MetaThinking] proactive blocked reason=%s subjects=%s",
-                            policy.get("reason_code"),
-                            policy.get("subjects", []),
-                        )
-                    else:
-                        context_messages = self._get_recent_messages(event, scope=runtime_scope, max_messages=10)
-                        current_context_line = f"{sender_name or sender_id}: {locked_message}"
-                        if not context_messages or context_messages[-1] != current_context_line:
-                            context_messages = [*context_messages, current_context_line][-10:]
-                        scope_key = f"{runtime_scope.bot_id}:{runtime_scope.visibility}:{runtime_scope.session.id}"
-                        result = await meta_thinking.should_proactive(
-                            group_id,
-                            context_messages,
-                            relationship_policy=policy,
-                            scope_key=scope_key,
-                            proactive_enabled=(bot_profile.proactive_enabled if bot_profile is not None else None),
-                            proactive_interval_seconds=(bot_profile.proactive_interval_seconds if bot_profile is not None else None),
-                            proactive_max_per_hour=(bot_profile.proactive_max_per_hour if bot_profile is not None else None),
-                        )
-                        if result.get("action") == "主动插话":
-                            inner = result.get("inner_thought", "")
-                            reply_text = await meta_thinking.generate_proactive_reply(
-                                context_messages,
-                                inner,
-                                bot_id=bot_id,
-                                relationship_policy={**policy, "guidance": policy.get("guidance", {})},
-                            )
-                            if reply_text:
-                                await event.send(event.plain_result(reply_text))
-                                try:
-                                    audit_policy = result.get("gate") if isinstance(result.get("gate"), dict) else policy
-                                    await self._record_proactive_timeline(
-                                        runtime_scope,
-                                        reply_text,
-                                        audit_policy,
-                                        relationship_context.get("source_memories") or [],
-                                    )
-                                except Exception as audit_exc:
-                                    logger.warning("[MetaThinking] proactive audit failed: %s", audit_exc)
-                                    _record_err("ProactiveAudit", audit_exc)
-                                    result["audit_status"] = "audit_failed"
-                                else:
-                                    result["audit_status"] = "audited"
-                                logger.info(f"[MetaThinking] 主动插话: {inner[:50]}")
-                except Exception as e:
-                    logger.warning(f"[MetaThinking] Proactive failed: {e}")
-                    _record_err("Proactive", e)
-
-        # 锁保护下唤醒执行整个事件流
-        async with group_lock:
-            await _process_in_lock(message)
+        # 委托给 InboundMessagePipeline 管道执行抢词咽回、串行处理、命令拦截与生命周期派发
+        await self.inbound_pipeline.process_message(
+            event=event,
+            runtime_scope=runtime_scope,
+            message=message,
+            message_ts=message_ts,
+            group_id=group_id,
+            sender_id=sender_id,
+            sender_name=sender_name,
+            bot_id=bot_id,
+        )
 
     # ─── Hook: 发送前清理并提取 impression 标记 ───
+
 
     @filter.on_decorating_result()
     async def on_decorating_result(self, event: AstrMessageEvent):
@@ -2901,6 +2528,7 @@ class WaveMemoryPlugin(Star):
 
         _IMPRESSION_RE = r'(?:<<\s*impression\s*[:：](.+?)>>|\[\s*impression\s*[:：](.+?)\])'
         extracted_impression = None
+        extracted_impact = 1.0
 
         # 遍历 Plain 组件，提取并移除标记
         for comp in result.chain:
@@ -2909,13 +2537,15 @@ class WaveMemoryPlugin(Star):
                 if matches:
                     for m in matches:
                         imp_val = (m.group(1) or m.group(2) or "").strip()
-                        if imp_val and len(imp_val) >= 4:
-                            extracted_impression = imp_val[:120]
+                        body, impact = parse_impression_mark(imp_val)
+                        if body:
+                            extracted_impression = body
+                            extracted_impact = impact
                     # 清除文本中所有 impression 标记（包括前置换行和多余空白）
                     cleaned_text = _re.sub(r'\s*' + _IMPRESSION_RE + r'\s*', '', comp.text, flags=_re.DOTALL)
                     comp.text = cleaned_text
 
-        # 如果提取到 impression，更新用户画像
+        # 日常标记只攒未结算能量，不覆盖正式印象指针、不钉时间线。
         if extracted_impression:
             try:
                 runtime_scope = getattr(event, "_wave_memory_runtime_scope", None)
@@ -2924,7 +2554,7 @@ class WaveMemoryPlugin(Star):
                     if resolver is not None:
                         resolved_context = resolver.resolve_event(event)
                         runtime_scope = getattr(resolved_context, "scope", None)
-                
+
                 if isinstance(runtime_scope, RuntimeScope) and runtime_scope.visibility == "group" and runtime_scope.session:
                     group_id = runtime_scope.session.conversation_id
                     principal = runtime_scope.subject_principal_id or ""
@@ -2933,26 +2563,24 @@ class WaveMemoryPlugin(Star):
                     bot_db_id = runtime_scope.bot_id
 
                     if sender_id and group_id and sender_id != "bot":
-                        repository = getattr(self.db, "soul_repository", None)
-                        snapshot, event_anchor = relationship_context(repository, runtime_scope)
-                        _row = self.db.conn.execute(
-                            "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
+                        persist_unsettled_trace(
+                            self.db,
+                            bot_id=bot_db_id,
+                            user_id=sender_id,
+                            group_id=group_id,
+                            text=extracted_impression,
+                            impact=extracted_impact,
+                        )
+                        exists = self.db.conn.execute(
+                            "SELECT 1 FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
                             (sender_id, group_id, bot_db_id),
                         ).fetchone()
-                        if _row is not None:
-                            _meta = json.loads(_row[0]) if _row[0] else {}
-                            _meta = append_impression(_meta, extracted_impression, actor="llm", snapshot=snapshot, event=event_anchor)
-                            self.db.conn.execute(
-                                "UPDATE user_profiles SET metadata=? WHERE user_id=? AND group_id=? AND bot_id=?",
-                                (json.dumps(_meta, ensure_ascii=False), sender_id, group_id, bot_db_id),
-                            )
-                        else:
-                            _meta = append_impression({}, extracted_impression, actor="llm", snapshot=snapshot, event=event_anchor)
+                        if exists is None:
                             self.db.conn.execute(
                                 "INSERT INTO user_profiles (user_id, group_id, bot_id, metadata, interaction_count, last_seen) VALUES (?, ?, ?, ?, 1, ?)",
-                                (sender_id, group_id, bot_db_id, json.dumps(_meta, ensure_ascii=False), time.time()),
+                                (sender_id, group_id, bot_db_id, "{}", time.time()),
                             )
-                        self.db.conn.commit()
+                            self.db.conn.commit()
             except Exception as _e:
                 logger.debug(f"[WaveMemory] impression update in on_decorating_result failed: {_e}")
 
@@ -3070,27 +2698,23 @@ class WaveMemoryPlugin(Star):
             "event_id": getattr(event, "message_id", None),
         })
 
-        # 兜底：若在 on_decorating_result 未能处理（例如非标准生命周期），在此二次提取并记录画像
+        # 兜底：decorating 未跑时，日常观感只进未结算表，不写 metadata.impression。
         import re as _re
         _IMPRESSION_RE = r'(?:<<\s*impression\s*[:：](.+?)>>|\[\s*impression\s*[:：](.+?)\])'
         _impression_matches = list(_re.finditer(_IMPRESSION_RE, bot_text, _re.DOTALL))
         if _impression_matches and sender_id and group_id and sender_id != "bot":
             for _match in _impression_matches:
-                _impression_text = (_match.group(1) or _match.group(2) or "").strip()[:120]
-                if _impression_text and len(_impression_text) >= 4:
+                _body, _impact = parse_impression_mark((_match.group(1) or _match.group(2) or "").strip())
+                if _body:
                     try:
-                        _row = self.db.conn.execute(
-                            "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
-                            (sender_id, group_id, bot_db_id),
-                        ).fetchone()
-                        _meta = json.loads(_row[0]) if _row and _row[0] else {}
-                        _meta["impression"] = _impression_text
-                        _meta["impression_updated_at"] = time.time()
-                        self.db.conn.execute(
-                            "UPDATE user_profiles SET metadata=? WHERE user_id=? AND group_id=? AND bot_id=?",
-                            (json.dumps(_meta, ensure_ascii=False), sender_id, group_id, bot_db_id),
+                        persist_unsettled_trace(
+                            self.db,
+                            bot_id=bot_db_id,
+                            user_id=sender_id,
+                            group_id=group_id,
+                            text=_body,
+                            impact=_impact,
                         )
-                        self.db.conn.commit()
                     except Exception as _e:
                         logger.debug(f"[WaveMemory] impression update fallback failed: {_e}")
 

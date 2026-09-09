@@ -688,9 +688,9 @@ def _live_memory_rows(conn: Any, scope: RuntimeScope, memory_ids: Iterable[int])
     return {int(row["id"]): row for row in rows}
 
 
-def _effective_links(conn: Any, scope: RuntimeScope) -> list[dict[str, Any]]:
+def _effective_links(conn: Any, scope: RuntimeScope, tag_ids: Iterable[Any] | None = None) -> list[dict[str, Any]]:
     try:
-        return effective_tag_rows(conn, scope=scope)
+        return effective_tag_rows(conn, scope=scope, tag_ids=tag_ids)
     except Exception:
         columns = _columns(conn, "scoped_memory_tags")
         required = {"bot_id", "session_id", "visibility", "memory_id", "tag_id"}
@@ -698,14 +698,23 @@ def _effective_links(conn: Any, scope: RuntimeScope) -> list[dict[str, Any]]:
             return []
         position = "position" if "position" in columns else "0 AS position"
         relevance = "relevance" if "relevance" in columns else "1.0 AS relevance"
+        where_tag = ""
+        params = list(_scope_params(scope))
+        if tag_ids is not None:
+            clean_tags = [int(x) for x in tag_ids if int(x) > 0]
+            if not clean_tags:
+                return []
+            placeholders = ",".join("?" for _ in clean_tags)
+            where_tag = f" AND tag_id IN ({placeholders})"
+            params.extend(clean_tags)
         return _rows(
             conn,
             f"""SELECT bot_id, session_id, visibility, memory_id, tag_id,
                        {position}, {relevance}, 'automatic' AS source, NULL AS correction_id
                   FROM scoped_memory_tags
-                 WHERE bot_id=? AND session_id=? AND visibility=?
+                 WHERE bot_id=? AND session_id=? AND visibility=?{where_tag}
                  ORDER BY memory_id, position, tag_id""",
-            _scope_params(scope),
+            params,
         )
 
 
@@ -742,9 +751,18 @@ def build_tag_graph_projection(
 
     tag_rows = _active_tag_rows(conn, scope)
     tags = {int(row["id"]): row for row in tag_rows}
-    links = [row for row in _effective_links(conn, scope) if row.get("tag_id") is not None]
+    # 1. 节点前置收敛：避免对几千个全量标签做全矩阵扫描
+    candidate_cap = max(80, min(len(tag_rows), int(max_nodes * 1.5)))
+    candidate_tags = sorted(tag_rows, key=lambda r: float(r.get("confidence") or 0.0), reverse=True)[:candidate_cap]
+    candidate_ids = [int(r["id"]) for r in candidate_tags]
+
+    # 2. 链接查询下推 candidate_ids，大幅缩减 link 数量
+    links = [row for row in _effective_links(conn, scope, tag_ids=candidate_ids) if row.get("tag_id") is not None]
     links = [row for row in links if int(row["tag_id"]) in tags]
-    memories = _live_memory_rows(conn, scope, (int(row["memory_id"]) for row in links))
+
+    # 3. 记忆查询前置收敛为最新活跃记忆，避免数万参数 SQL 溢出
+    active_mids = sorted({int(row["memory_id"]) for row in links}, reverse=True)[:1500]
+    memories = _live_memory_rows(conn, scope, active_mids)
     links = [row for row in links if int(row["memory_id"]) in memories]
 
     links_by_memory: dict[int, list[dict[str, Any]]] = defaultdict(list)
@@ -792,7 +810,15 @@ def build_tag_graph_projection(
                     source_kind = "manual" if "manual" in {str(source_link.get("source")), str(target_link.get("source"))} else "automatic"
                     item["source_counts"][source_kind] += 1
         max_raw = max((float(item["raw_weight"]) for item in aggregates.values()), default=0.0)
-        for (source_id, target_id), item in aggregates.items():
+        max_edges_limit = min(600, int(max_nodes * 2.5))
+        # 按共现权重排序，只保留前 max_edges_limit 条强关联骨干突触
+        sorted_aggregates = sorted(
+            aggregates.items(),
+            key=lambda pair: float(pair[1]["raw_weight"]),
+            reverse=True,
+        )[:max_edges_limit]
+
+        for (source_id, target_id), item in sorted_aggregates:
             weight = float(item["raw_weight"]) / max_raw if max_raw > 0 else 0.0
             tag_confidence = min(float(tags[source_id].get("confidence") or 0.0), float(tags[target_id].get("confidence") or 0.0))
             evidence_confidence = float(item["confidence_sum"]) / max(1, int(item["frequency"]))

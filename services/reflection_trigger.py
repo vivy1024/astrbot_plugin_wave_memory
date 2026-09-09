@@ -1,0 +1,332 @@
+"""现场反思候选上下文：只读聚合证据，不执行任何资产提升。
+
+可观测性契约（reflection-trigger/v1）：
+- 每条跳过路径给出结构化 ``skip_reason``；
+- 每个证据源独立采集，依赖故障记录进 ``dependency_failures`` 并告警，
+  不再静默吞异常；
+- 任一依赖失败只降级该源，绝不影响普通回复，也不阻塞主链路。
+"""
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+from typing import Any
+
+from .experience_episodes import fetch_recent_episodes
+from .identity_safety import is_identity_contamination
+
+try:
+    from ..domain.scope import RuntimeScope
+except ImportError:  # pragma: no cover
+    from domain.scope import RuntimeScope
+
+try:
+    from astrbot.api import logger
+except ImportError:  # pragma: no cover - repository tests run without AstrBot
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+STRATEGY_VERSION = "reflection-trigger/v1"
+
+SKIP_NOT_GROUP_SCOPE = "not_group_scope"
+SKIP_TOO_SHORT = "too_short"
+SKIP_POLLUTED = "polluted_content"
+SKIP_COOLDOWN = "cooldown"
+SKIP_NO_CANDIDATES = "no_candidates"
+SKIP_BUDGET_EXHAUSTED = "budget_exhausted"
+SKIP_DEPENDENCY_ERROR = "dependency_error"
+
+SKIP_REASONS = frozenset({
+    SKIP_NOT_GROUP_SCOPE,
+    SKIP_TOO_SHORT,
+    SKIP_POLLUTED,
+    SKIP_COOLDOWN,
+    SKIP_NO_CANDIDATES,
+    SKIP_BUDGET_EXHAUSTED,
+    SKIP_DEPENDENCY_ERROR,
+})
+
+_MIN_MESSAGE_CHARS = 4
+_DEFAULT_CANDIDATE_LIMIT = 25
+
+
+@dataclass
+class ReflectionOutcome:
+    """一次现场反思采集的可观测结果。"""
+
+    strategy_version: str = STRATEGY_VERSION
+    triggered: bool = False
+    skip_reason: str = ""
+    prompt: str = ""
+    candidate_counts: dict[str, int] = field(default_factory=dict)
+    filtered_counts: dict[str, int] = field(default_factory=dict)
+    dependency_failures: list[dict[str, str]] = field(default_factory=list)
+    budget_truncated: bool = False
+    duration_ms: float = 0.0
+
+    def record_failure(self, source: str, error: BaseException | str) -> None:
+        detail = error if isinstance(error, str) else f"{type(error).__name__}: {str(error)[:200]}"
+        self.dependency_failures.append({"source": source, "error": detail})
+        logger.warning(f"[WaveMemory] reflection_trigger source degraded: {source} -> {detail}")
+
+    def to_log_fields(self) -> dict[str, Any]:
+        return {
+            "strategy_version": self.strategy_version,
+            "triggered": self.triggered,
+            "skip_reason": self.skip_reason,
+            "candidate_counts": dict(self.candidate_counts),
+            "filtered_counts": dict(self.filtered_counts),
+            "dependency_failures": [item["source"] for item in self.dependency_failures],
+            "budget_truncated": self.budget_truncated,
+            "duration_ms": self.duration_ms,
+        }
+
+
+class ReflectionTriggerService:
+    """为当前群聊请求生成有证据的认知资产提审提示。"""
+
+    def __init__(self, db: Any, *, cooldown_seconds: float = 180.0, max_candidates: int = 6, max_chars: int = 1200):
+        self.db = db
+        self.cooldown_seconds = float(cooldown_seconds)
+        self.max_candidates = max(1, int(max_candidates))
+        self.max_chars = max(240, int(max_chars))
+        self._last: dict[str, float] = {}
+
+    def build_prompt(self, *, scope: RuntimeScope, message: str, sender_id: str = "", trace_id: str = "") -> str:
+        """兼容既有调用方：只返回提示文本。"""
+        return self.collect(scope=scope, message=message, sender_id=sender_id, trace_id=trace_id).prompt
+
+    def collect(
+        self,
+        *,
+        scope: RuntimeScope,
+        message: str,
+        sender_id: str = "",
+        trace_id: str = "",
+    ) -> ReflectionOutcome:
+        started = time.perf_counter()
+        outcome = ReflectionOutcome()
+        try:
+            self._evaluate(scope=scope, message=message, sender_id=sender_id, outcome=outcome)
+        except Exception as exc:  # 兜底：现场链路任何情况下都不得抛出到主回复
+            outcome.record_failure("strategy", exc)
+            outcome.triggered = False
+            outcome.prompt = ""
+            outcome.skip_reason = outcome.skip_reason or SKIP_DEPENDENCY_ERROR
+        finally:
+            outcome.duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
+            if outcome.dependency_failures and not outcome.triggered and not outcome.skip_reason:
+                outcome.skip_reason = SKIP_DEPENDENCY_ERROR
+        return outcome
+
+    # ---- internals -------------------------------------------------------
+
+    def _evaluate(self, *, scope: Any, message: str, sender_id: str, outcome: ReflectionOutcome) -> None:
+        if not isinstance(scope, RuntimeScope) or scope.visibility != "group" or scope.session is None:
+            outcome.skip_reason = SKIP_NOT_GROUP_SCOPE
+            return
+        text = str(message or "").strip()
+        if len(text) < _MIN_MESSAGE_CHARS:
+            outcome.skip_reason = SKIP_TOO_SHORT
+            return
+        if is_identity_contamination(text):
+            outcome.filtered_counts["message"] = 1
+            outcome.skip_reason = SKIP_POLLUTED
+            return
+
+        key = f"{scope.bot_id}:{scope.session.id}:{sender_id}:{text[:80].casefold()}"
+        now = time.time()
+        if now - self._last.get(key, 0.0) < self.cooldown_seconds:
+            outcome.skip_reason = SKIP_COOLDOWN
+            return
+
+        candidates = self._collect(scope, sender_id=sender_id, message=text, now=now, outcome=outcome)
+        if not candidates:
+            if outcome.dependency_failures and not outcome.candidate_counts:
+                outcome.skip_reason = SKIP_DEPENDENCY_ERROR
+            else:
+                outcome.skip_reason = SKIP_NO_CANDIDATES
+            return
+
+        header = (
+            "【现场认知反思候选】以下只是当前 Scope 的证据候选，不是事实或正式认知。"
+            "请结合本轮真实对话自行判断；各工具彼此独立，可调用零个或多个，不能凭空补全。"
+        )
+        footer = (
+            "可选动作：事实必须带 source_quote；信念必须绑定至少两条已批准事实；"
+            "黑话/风格/社交锚点/关切/群经历分别使用各自工具；episode 不等于 social anchor。"
+        )
+        lines = [header]
+        used = len(header)
+        emitted = 0
+        for source, item in candidates[: self.max_candidates]:
+            line = f"- {item}"
+            if used + len(line) + 1 > self.max_chars:
+                outcome.budget_truncated = True
+                break
+            lines.append(line)
+            used += len(line) + 1
+            emitted += 1
+        if emitted == 0:
+            outcome.budget_truncated = True
+            outcome.skip_reason = SKIP_BUDGET_EXHAUSTED
+            return
+        if used + len(footer) + 1 <= self.max_chars:
+            lines.append(footer)
+        else:
+            outcome.budget_truncated = True
+        self._last[key] = now
+        outcome.prompt = "\n".join(lines)
+        outcome.triggered = True
+
+    def _collect(
+        self,
+        scope: RuntimeScope,
+        *,
+        sender_id: str,
+        message: str,
+        now: float,
+        outcome: ReflectionOutcome,
+    ) -> list[tuple[str, str]]:
+        """返回 (source, candidate_text) 列表；单源失败只记录不抛出。"""
+        candidates: list[tuple[str, str]] = []
+        conn = getattr(self.db, "conn", None)
+        if conn is None:
+            outcome.record_failure("connection", "database connection unavailable")
+            return candidates
+        group_id = scope.session.conversation_id
+        knowledge = getattr(self.db, "scoped_knowledge", None)
+        soul = getattr(self.db, "soul_repository", None)
+        fewshot = getattr(self.db, "few_shot_repository", None) or getattr(self.db, "scoped_few_shot", None)
+
+        def accept(source: str, text: str) -> bool:
+            body = str(text or "").strip()
+            if not body:
+                return False
+            if is_identity_contamination(body):
+                outcome.filtered_counts[source] = outcome.filtered_counts.get(source, 0) + 1
+                return False
+            candidates.append((source, body))
+            outcome.candidate_counts[source] = outcome.candidate_counts.get(source, 0) + 1
+            return True
+
+        try:
+            rows = conn.execute(
+                "SELECT text FROM person_unsettled_state WHERE bot_id=? AND group_id=? AND user_id=?"
+                " ORDER BY updated_at DESC LIMIT 3",
+                (scope.bot_id, group_id, str(sender_id or "")),
+            ).fetchall()
+            texts = [str(row[0]).strip()[:80] for row in rows if row and row[0]]
+            if texts:
+                accept("unsettled", "未结算观感，可调用 social_impression：" + "；".join(texts))
+        except Exception as exc:
+            outcome.record_failure("unsettled", exc)
+
+        try:
+            if soul is not None:
+                items = (soul.get_state(scope, limit=_DEFAULT_CANDIDATE_LIMIT, offset=0).get("concerns") or {}).get("items") or []
+                for item in items:
+                    if str(item.get("status") or "active") not in {"active", "progressing", "dormant"}:
+                        continue
+                    topic = str(item.get("topic") or "").strip()
+                    if topic:
+                        accept("concern", f"关切 concern:{item.get('id')} [{item.get('status') or 'active'}]: {topic[:80]}")
+        except Exception as exc:
+            outcome.record_failure("concern", exc)
+
+        try:
+            episodes = fetch_recent_episodes(
+                conn,
+                bot_id=scope.bot_id,
+                group_id=group_id,
+                user_id=str(sender_id or "") or None,
+                limit=2,
+                since=now - 14 * 86400,
+            )
+            for item in episodes:
+                summary = "；".join(
+                    str(item.get(key) or "").strip()
+                    for key in ("trigger_text", "outcome")
+                    if str(item.get(key) or "").strip()
+                )
+                if summary:
+                    accept("episode", f"群经历 episode:{item.get('id')} [{item.get('episode_type')}]: {summary[:120]}")
+        except Exception as exc:
+            outcome.record_failure("episode", exc)
+
+        lowered = message.casefold()
+        tokens = [token for token in lowered.replace("？", " ").replace("?", " ").split() if len(token) >= 2]
+        if not tokens and len(lowered) >= 2:
+            tokens = [lowered]
+
+        if knowledge is None:
+            outcome.record_failure("knowledge", "scoped knowledge repository unavailable")
+        else:
+            try:
+                for fact in knowledge.list_scoped_facts(scope, limit=8):
+                    if fact.get("status") not in {"active", "approved", "pending"}:
+                        continue
+                    blob = f"{fact.get('subject')} {fact.get('predicate')} {fact.get('object')}"
+                    haystack = blob.casefold()
+                    matched = fact.get("status") == "pending" or any(token in haystack or token in lowered for token in tokens)
+                    if matched:
+                        accept("fact", f"事实 fact:{fact.get('id')} [{fact.get('status')}]: {blob[:100]}")
+            except Exception as exc:
+                outcome.record_failure("fact", exc)
+
+            try:
+                approved = [
+                    item
+                    for item in knowledge.list_scoped_beliefs(scope, status="active", limit=4)
+                    if not is_identity_contamination(item.get("content"))
+                ]
+                if len(approved) >= 2:
+                    ids = ",".join(str(item.get("id")) for item in approved[:3])
+                    accept("belief_base", f"已批准事实底座可用于信念提审 source_fact_ids=[{ids}]")
+            except Exception as exc:
+                outcome.record_failure("belief_base", exc)
+
+            try:
+                for belief in knowledge.list_scoped_beliefs(scope, status="pending", limit=2):
+                    content = str(belief.get("content") or "").strip()
+                    if content:
+                        accept("belief_pending", f"待审信念 belief:{belief.get('id')}: {content[:100]}")
+            except Exception as exc:
+                outcome.record_failure("belief_pending", exc)
+
+            try:
+                for jargon in knowledge.list_scoped_jargon(scope, status="pending", limit=2):
+                    word = str(jargon.get("word") or "").strip()
+                    if word and word in message:
+                        accept("jargon", f"待审黑话 jargon:{jargon.get('id')}「{word}」可调用 mark_cultural_moment")
+            except Exception as exc:
+                outcome.record_failure("jargon", exc)
+
+        try:
+            if fewshot is not None:
+                rows = fewshot.list_approved(scope=scope, limit=1)
+                if rows:
+                    accept(
+                        "fewshot",
+                        "已有风格样例；仅当本轮回复特别能代表风骨时才调用 mark_cultural_moment/exemplar_reply",
+                    )
+        except Exception as exc:
+            outcome.record_failure("fewshot", exc)
+
+        return candidates
+
+
+__all__ = [
+    "ReflectionOutcome",
+    "ReflectionTriggerService",
+    "SKIP_BUDGET_EXHAUSTED",
+    "SKIP_COOLDOWN",
+    "SKIP_DEPENDENCY_ERROR",
+    "SKIP_NO_CANDIDATES",
+    "SKIP_NOT_GROUP_SCOPE",
+    "SKIP_POLLUTED",
+    "SKIP_REASONS",
+    "SKIP_TOO_SHORT",
+    "STRATEGY_VERSION",
+]

@@ -56,6 +56,11 @@ class DomainWriteResult:
     entities: tuple[EntityChange, ...] = field(default_factory=tuple)
     effects: tuple[OutboxEventRef, ...] = field(default_factory=tuple)
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    details: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # 必须是普通 dict：WriteCoordinator 跨线程传结果时需要 pickle。
+        object.__setattr__(self, "details", dict(self.details or {}))
 
 
 class CommandRejectedError(RuntimeError):

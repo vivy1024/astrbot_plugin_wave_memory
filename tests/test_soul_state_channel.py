@@ -51,7 +51,7 @@ class SoulStateChannelTest(unittest.TestCase):
 
         self.assertEqual(result.status, "hit")
         self.assertIn("近期情绪", result.text)
-        self.assertIn("当前关切", result.text)
+        self.assertNotIn("当前关切", result.text)
         self.assertEqual(len(repo.calls), 1)
 
     def test_memory_only_disables_without_querying_repository(self):

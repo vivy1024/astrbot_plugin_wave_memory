@@ -14,12 +14,12 @@ from ..middleware.auth import require_auth
 try:
     from ...domain.scope import RuntimeScope, ScopeCodec, ScopeValidationError, SessionRef
     from ...engine.db.scoped_knowledge_repo import ScopedKnowledgeScopeError
-    from ...services.belief_confidence import is_activation_eligible
+    from ...services.belief_engine import is_fact_backed
     from ...services.belief_lifecycle import BeliefLifecycleService
 except ImportError:  # pragma: no cover - plugin root may be imported directly
     from domain.scope import RuntimeScope, ScopeCodec, ScopeValidationError, SessionRef
     from engine.db.scoped_knowledge_repo import ScopedKnowledgeScopeError
-    from services.belief_confidence import is_activation_eligible
+    from services.belief_engine import is_fact_backed
     from services.belief_lifecycle import BeliefLifecycleService
 
 beliefs_bp = Blueprint("beliefs", __name__, url_prefix="/api/beliefs")
@@ -453,10 +453,9 @@ def _formal_belief(
     item["evidence"] = evidence
     item["observation_count"] = len(observations or [])
     item["object_ref"] = _item_object_ref(item, scope)
-    can_activate = item.get("status") in {"pending", "quarantined"} and evidence_available and is_activation_eligible(provenance)
-    approve_reason = None if can_activate else (
-        "belief_anchor_unavailable" if not evidence_available else "belief_evidence_incomplete"
-    )
+    fact_backed = is_fact_backed(_scoped_repo(get_container()), scope, provenance)
+    can_activate = item.get("status") in {"pending", "quarantined"} and fact_backed
+    approve_reason = None if can_activate else "belief_facts_required"
     item["actions"] = {
         "approve": {"available": can_activate, "reason_code": approve_reason},
         "archive": {"available": item.get("status") != "archived", "reason_code": None if item.get("status") != "archived" else "invalid_belief_transition"},
@@ -881,8 +880,8 @@ async def batch_transition_scoped_beliefs():
             if action == "approve":
                 if current.get("status") not in {"pending", "quarantined"}:
                     raise ScopedKnowledgeScopeError("invalid_belief_transition")
-                if not _memory_evidence_available(container, scope, current.get("source_memory_id")):
-                    raise ScopedKnowledgeScopeError("belief_anchor_unavailable")
+                if not is_fact_backed(repo, scope, current.get("provenance")):
+                    raise ScopedKnowledgeScopeError("belief_facts_required")
             elif current.get("status") == "archived":
                 raise ScopedKnowledgeScopeError("invalid_belief_transition")
             validated.append(current)

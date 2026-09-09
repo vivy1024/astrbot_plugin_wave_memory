@@ -54,13 +54,14 @@ UNIQUE(user_id, group_id, bot_id)
 
 ### 定时服务
 
-所有有 .start() 的服务构造后必须调用：lifecycle/consolidation/dream/study/eviction
+有 `.start()` 的服务构造后必须调用：lifecycle/dream/study/eviction。
+`consolidation` 对象可保留，但 v5 默认不 `start()` 后台盲抽循环。
 
-### 好感度双系统
+### 好感度双系统（v5 收口）
 
-- AffinityEngine（30分钟flush）：行为统计 dimensions → 合成分
-- MetaThinking（@bot时）：LLM 给分 + 印象/标签
-- 写同表，flush 时取较高值，metadata 增量合并
+- AffinityEngine flush 只做触达 / 时间衰减，**不把关键词增量写入正式五维**
+- 正式好感由 `wave_memory_record_social_impression` 在系统算出的有限范围内自选
+- metadata 仍增量合并（印象时间线 / tags / ledger 不被 flush 覆盖）
 
 ---
 

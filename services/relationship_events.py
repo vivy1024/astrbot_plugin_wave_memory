@@ -16,6 +16,7 @@ try:  # 兼容插件包导入和仓库测试直接导入
         VALID_EVENT_TYPES,
         attitude_level,
         compute_affinity,
+        is_noisy_relationship_event,
     )
     from ..domain.scope import RuntimeScope, ScopeValidationError
 except ImportError:  # pragma: no cover - 由仓库测试直接导入 services 使用
@@ -27,6 +28,7 @@ except ImportError:  # pragma: no cover - 由仓库测试直接导入 services �
         VALID_EVENT_TYPES,
         attitude_level,
         compute_affinity,
+        is_noisy_relationship_event,
     )
     from domain.scope import RuntimeScope, ScopeValidationError
 
@@ -173,7 +175,7 @@ class RelationshipEventService:
             raise ValueError("bot_id, group_id and user_id are required")
         if dimension not in VALID_DIMENSIONS:
             raise ValueError(f"invalid relationship dimension: {dimension}")
-        if event_type not in VALID_EVENT_TYPES:
+        if event_type not in VALID_EVENT_TYPES or is_noisy_relationship_event(event_type, reason):
             raise ValueError(f"invalid relationship event_type: {event_type}")
         if not reason:
             raise ValueError("relationship event reason is required")

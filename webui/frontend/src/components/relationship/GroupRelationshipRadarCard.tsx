@@ -57,6 +57,15 @@ function displayName(item: RelationshipItem): string {
   return item.person.display_name || item.person.nickname || item.person.user_id
 }
 
+const NOISY_EVENT_TYPES = new Set(['message_seen'])
+const NOISY_EVENT_REASONS = new Set(['看见一条群友消息', '消息带来趣味感', '行为统计关系变化'])
+
+function isFormalHistoryItem(item: RelationshipHistoryItem): boolean {
+  const eventType = String(item.event_type || '').trim()
+  const reason = String(item.reason || '').trim()
+  return !NOISY_EVENT_TYPES.has(eventType) && !NOISY_EVENT_REASONS.has(reason)
+}
+
 function sourceText(item: RelationshipHistoryItem): string {
   if (item.source_memory_id !== null && item.source_memory_id !== undefined) return `memory:${item.source_memory_id}`
   if (item.source_episode_id !== null && item.source_episode_id !== undefined) return `episode:${item.source_episode_id}`
@@ -149,7 +158,7 @@ export function GroupRelationshipRadarCard({
   const activeValue = rawValueFor(activeItem, activeDimension)
   const activeHistory = useMemo(
     () => history
-      .filter((item) => item.dimension === activeDimension)
+      .filter((item) => item.dimension === activeDimension && isFormalHistoryItem(item))
       .sort((a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0))
       .slice(0, 3),
     [activeDimension, history],
@@ -217,7 +226,7 @@ export function GroupRelationshipRadarCard({
             <RadarIcon className="size-4 text-primary" />
             <span>本群关系分布（只读对照）</span>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">勾选群友可在雷达图上自由叠加对比；点击可查看对应维度的事件历史。未建立的维度不画成 0。</p>
+          <p className="mt-1 text-xs text-muted-foreground">轴按各维正式范围归一化到 0–100，小分不会撑满；全部叠加只是叠线。未建立的维度不画成 0。</p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-[11px]" onClick={selectOnlyCurrent}>只看当前</Button>
@@ -245,8 +254,8 @@ export function GroupRelationshipRadarCard({
             <ChartContainer config={chartConfig} className="mx-auto aspect-square max-h-[360px] w-full">
               <RadarChart data={chartData} cx="50%" cy="50%" outerRadius="68%">
                 <PolarGrid strokeDasharray="3 3" className="stroke-border/60" />
-                <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 11 }} className="fill-muted-foreground" />
-                <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
+                <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                <PolarRadiusAxis type="number" domain={[0, 100]} tick={false} axisLine={false} allowDataOverflow />
                 <ChartTooltip content={<ChartTooltipContent />} />
                 {visibleSeries.map((entry) => (
                     <Radar
@@ -255,7 +264,7 @@ export function GroupRelationshipRadarCard({
                       name={displayName(entry.item)}
                       stroke={entry.color}
                       fill={entry.color}
-                      fillOpacity={0.15}
+                      fillOpacity={Math.min(0.18, 0.35 / Math.max(visibleSeries.length, 1))}
                       strokeWidth={activeSubjectId === entry.item.subject_principal_id ? 2.5 : 1.5}
                       connectNulls={false}
                       isAnimationActive={false}

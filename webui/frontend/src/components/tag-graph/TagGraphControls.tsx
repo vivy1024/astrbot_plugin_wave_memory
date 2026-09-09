@@ -34,7 +34,7 @@ export function TagGraphControls({ botId, sessionId, layers, includePulse, loadi
     onLayersChange(layers.includes(layer) ? layers.filter((item) => item !== layer) : [...layers, layer])
   }
 
-  return <Card className="border-border/60"><CardContent className="flex flex-col gap-3 p-4">
+  return <Card className="border-sky-950/70 bg-sky-950/[.08] shadow-sm"><CardContent className="flex flex-col gap-3 p-4">
     <div className="flex flex-wrap items-end gap-3">
       <Badge variant="outline" className="mb-1">当前群</Badge>
       <ScopeSelect className="min-w-48 flex-1 xl:max-w-64" value={botId || undefined} loadOptions={loadBots} label="Bot" placeholder="选择 Bot" required onValueChange={(value) => onScopeChange({ botId: value, sessionId: '' })} />

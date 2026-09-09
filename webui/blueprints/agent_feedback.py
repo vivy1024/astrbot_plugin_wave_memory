@@ -58,16 +58,30 @@ def _stores(conn: Any) -> tuple[MemoryFeedbackStore, ConfigSuggestionStore, Revi
     return feedback_store, suggestion_store, candidate_store
 
 
-def build_agent_feedback_payload(conn: Any, *, limit: int = 100) -> dict[str, Any]:
-    """构造 Agent 反馈页面 payload。"""
+def build_agent_feedback_payload(conn: Any, *, limit: int = 100, bot_id: str = "") -> dict[str, Any]:
+    """构造 Agent 反馈页面 payload。
+
+    审核台是跨 Scope 的管理员视图，因此主列表保留全部候选（含无归属的历史
+    legacy 行），避免旧调用方提交的候选被隐藏而漏审；归属通过每条的
+    ``scope`` / ``legacy`` 字段显式暴露。``bot_id`` 非空时才收窄到该 Bot，
+    真正的 Scope 隔离由 store 层的带 scope 查询保证。
+    """
     feedback_store, suggestion_store, candidate_store = _stores(conn)
     feedback_records = feedback_store.list_recent(limit=limit)
     suggestions = suggestion_store.list_all(limit=limit)
-    candidates = candidate_store.list_all(limit=limit)
+    wanted_bot = str(bot_id or "").strip()
+    candidates = candidate_store.list_all(limit=limit, include_legacy=True)
+    if wanted_bot:
+        candidates = [
+            item for item in candidates if str(item.get("bot_id") or "") == wanted_bot
+        ]
     suggestion_history = [item for item in suggestions if item.get("review_status") != "pending"]
     candidate_history = [item for item in candidates if item.get("review_status") != "pending"]
     pending_suggestions = [item for item in suggestions if item.get("review_status") == "pending"]
     pending_candidates = [item for item in candidates if item.get("review_status") == "pending"]
+    legacy_pending = [
+        item for item in pending_candidates if item.get("legacy")
+    ]
     return {
         "feedback_records": feedback_records,
         "config_suggestions": pending_suggestions,
@@ -76,10 +90,12 @@ def build_agent_feedback_payload(conn: Any, *, limit: int = 100) -> dict[str, An
             "config_suggestions": suggestion_history,
             "review_candidates": candidate_history,
         },
+        "legacy_review_candidates": legacy_pending,
         "summary": {
             "feedback_records": len(feedback_records),
             "pending_suggestions": len(pending_suggestions),
             "pending_candidates": len(pending_candidates),
+            "legacy_pending_candidates": len(legacy_pending),
             "history_items": len(suggestion_history) + len(candidate_history),
         },
         "safety_note": "危险建议不会自动生效；批准只会记录人工状态，实际配置仍需在通道配置页面显式应用。",
@@ -97,11 +113,26 @@ def review_config_suggestion(store: ConfigSuggestionStore, suggestion_id: int, a
     return row
 
 
-def review_review_candidate(store: ReviewCandidateStore, candidate_id: int, action: str) -> dict[str, Any]:
+def review_review_candidate(
+    store: ReviewCandidateStore,
+    candidate_id: int,
+    action: str,
+    *,
+    bot_id: str = "",
+    reviewer: str = "",
+) -> dict[str, Any]:
+    """记录人工裁决。带 ``bot_id`` 时禁止跨该 Bot Scope 操作候选。"""
     status = _ACTION_TO_STATUS.get(str(action or "").strip().lower())
     if not status:
         raise ValueError(f"invalid action: {action}")
-    row = store.update_review_status(int(candidate_id), status, promoted=False)
+    current = store.get(int(candidate_id))
+    if current is None:
+        raise ValueError(f"review candidate not found: {candidate_id}")
+    wanted_bot = str(bot_id or "").strip()
+    owner_bot = str(current.get("bot_id") or "").strip()
+    if wanted_bot and owner_bot and owner_bot != wanted_bot:
+        raise ValueError("review candidate is outside the requested bot scope")
+    row = store.update_review_status(int(candidate_id), status, promoted=False, reviewer=reviewer)
     if not row:
         raise ValueError(f"review candidate not found: {candidate_id}")
     row["message"] = "审查候选已记录人工状态；不会自动写入高风险对象。"
@@ -127,7 +158,10 @@ async def get_agent_feedback():
     conn = _conn_from_container()
     if not conn:
         return jsonify({"error": "agent_feedback_store_unavailable", "feedback_records": [], "config_suggestions": [], "review_candidates": [], "history": {}, "summary": {}})
-    payload = build_agent_feedback_payload(conn)
+    wanted_bot = ""
+    if request is not None:
+        wanted_bot = str(request.args.get("bot_id") or "").strip()
+    payload = build_agent_feedback_payload(conn, bot_id=wanted_bot)
     return jsonify(payload)
 
 
@@ -207,7 +241,13 @@ async def update_review_candidate(candidate_id: int, action: str):
         return jsonify({"ok": False, "error": "agent_feedback_store_unavailable"}), 503
     try:
         _, _, candidate_store = _stores(conn)
-        row = review_review_candidate(candidate_store, candidate_id, action)
+        row = review_review_candidate(
+            candidate_store,
+            candidate_id,
+            action,
+            bot_id=bot_id,
+            reviewer=str(body.get("reviewer") or body.get("actor") or "webui-reviewer"),
+        )
         row["ok"] = True
         return jsonify(row)
     except Exception as exc:

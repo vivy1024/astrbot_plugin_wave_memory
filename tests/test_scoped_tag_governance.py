@@ -31,6 +31,7 @@ class Coordinator:
     def __init__(self, connection: sqlite3.Connection):
         self.connection = connection
         self._consumer_names = ("tag_index", "runtime_refresh")
+        self._results: dict[str, object] = {}
 
     async def transaction(self, callback, *, actor=None):
         self.connection.execute("BEGIN IMMEDIATE")
@@ -41,6 +42,57 @@ class Coordinator:
         except BaseException:
             self.connection.rollback()
             raise
+
+    async def submit(self, command):
+        from domain.commands import DomainWriteResult
+        from engine.db.outbox_repo import OutboxRepository
+
+        existing = self._results.get(command.idempotency_key)
+        if existing is not None:
+            return existing
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            import time
+            now = time.time()
+            sequence = OutboxRepository.next_write_sequence(self.connection)
+            self.connection.execute(
+                """INSERT INTO write_operations(
+                       operation_id, idempotency_key, request_hash, command_type, scope_json,
+                       status, write_sequence, created_at)
+                   VALUES (?, ?, ?, ?, '{}', 'pending', ?, ?)""",
+                (command.operation_id, command.idempotency_key, command.request_hash, command.command_type, sequence, now),
+            )
+            gateway = getattr(self, "gateway", None)
+            mutate = getattr(self, "mutate", None)
+            if gateway is None or mutate is None:
+                raise RuntimeError("test coordinator missing governance mutate")
+            outcome = gateway.apply_mutate(self.connection, command, now, mutate)
+            for index, draft in enumerate(outcome.events):
+                event_id = f"{command.operation_id}:{index}"
+                self.connection.execute(
+                    """INSERT INTO domain_outbox(
+                           event_id, operation_id, aggregate_kind, aggregate_id,
+                           aggregate_version, event_type, payload_version, payload_json, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, 1, '{}', ?)""",
+                    (event_id, command.operation_id, draft.aggregate_kind, draft.aggregate_id, draft.aggregate_version, draft.event_type, now),
+                )
+            result = DomainWriteResult(
+                operation_id=command.operation_id,
+                committed_at=now,
+                write_sequence=sequence,
+                entities=outcome.entities,
+                details=dict(outcome.details),
+            )
+            self.connection.execute(
+                "UPDATE write_operations SET status='committed', result_json='{}', committed_at=? WHERE operation_id=?",
+                (now, command.operation_id),
+            )
+            self.connection.commit()
+        except BaseException:
+            self.connection.rollback()
+            raise
+        self._results[command.idempotency_key] = result
+        return result
 
 
 def connection() -> sqlite3.Connection:

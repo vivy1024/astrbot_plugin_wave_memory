@@ -5,6 +5,8 @@ import json
 import sqlite3
 import types
 
+import pytest
+
 from domain.scope import RuntimeScope, SessionRef
 from engine.db.connection import ConnectionManager
 from engine.db.migrations.scoped_soul import ensure_scoped_soul_schema
@@ -140,6 +142,58 @@ def test_relationship_history_merges_real_layers_and_time_scope(tmp_path):
         manager.close()
 
 
+def test_relationship_history_and_writes_skip_passing_noise(tmp_path):
+    manager = ConnectionManager(str(tmp_path / "relationship-noise.db"))
+    try:
+        ensure_scoped_soul_schema(manager)
+        repo = ScopedSoulRepository(manager)
+        value_scope = scope()
+        repo.upsert_relationship(value_scope, subject_principal_id=value_scope.subject_principal_id, affinity=1, dimensions={"familiarity": 1})
+        with manager.write_transaction() as tx:
+            repo.record_relationship_event(
+                value_scope,
+                event_type="direct_reply",
+                dimension="trust",
+                delta=1.5,
+                reason="连续直接互动后更熟了",
+                source_memory_id=12,
+                created_at=100.0,
+                connection=tx,
+            )
+            tx.execute(
+                """INSERT INTO scoped_soul_relationship_events(
+                       bot_id, session_id, visibility, subject_principal_id, event_type,
+                       dimension, delta, reason, source_episode_id, source_memory_id,
+                       revision, created_at, operation_id, evidence, value_layer)
+                   VALUES (?, ?, ?, ?, 'message_seen', 'familiarity', 0.05, '看见一条群友消息',
+                           NULL, NULL, 9, 110.0, NULL, '[]', 'automatic')""",
+                (value_scope.bot_id, value_scope.session.id, value_scope.visibility, value_scope.subject_principal_id),
+            )
+            tx.execute(
+                """INSERT INTO scoped_soul_relationship_events(
+                       bot_id, session_id, visibility, subject_principal_id, event_type,
+                       dimension, delta, reason, source_episode_id, source_memory_id,
+                       revision, created_at, operation_id, evidence, value_layer)
+                   VALUES (?, ?, ?, ?, 'joke', 'fun', 1.0, '消息带来趣味感',
+                           NULL, NULL, 10, 120.0, NULL, '[]', 'automatic')""",
+                (value_scope.bot_id, value_scope.session.id, value_scope.visibility, value_scope.subject_principal_id),
+            )
+        with pytest.raises(ValueError, match="invalid_relationship_event_type"):
+            repo.record_relationship_event(
+                value_scope,
+                event_type="message_seen",
+                dimension="familiarity",
+                delta=0.05,
+                reason="看见一条群友消息",
+            )
+        history = repo.list_relationship_history(value_scope, subject_principal_id=value_scope.subject_principal_id)
+        assert history["total"] == 1
+        assert history["items"][0]["event_type"] == "direct_reply"
+        assert history["items"][0]["reason"] == "连续直接互动后更熟了"
+    finally:
+        manager.close()
+
+
 def test_unknown_relationship_does_not_create_zero_baseline(tmp_path):
     manager = ConnectionManager(str(tmp_path / "unknown.db"))
     try:
@@ -199,6 +253,56 @@ def test_calibration_gateway_writes_audit_timeline_operation_and_outbox(tmp_path
                 del actor
                 with manager.write_transaction() as tx:
                     return callback(tx)
+
+            async def submit(self, command):
+                from domain.commands import DomainWriteResult
+                from engine.db.outbox_repo import OutboxRepository
+                from services.relationship_calibration import apply_relationship_calibration
+
+                with manager.write_transaction() as tx:
+                    now = 100.0
+                    sequence = OutboxRepository.next_write_sequence(tx)
+                    tx.execute(
+                        """INSERT INTO write_operations(
+                               operation_id, idempotency_key, request_hash, command_type, scope_json,
+                               status, write_sequence, created_at)
+                           VALUES (?, ?, ?, ?, '{}', 'pending', ?, ?)""",
+                        (command.operation_id, command.idempotency_key, command.request_hash, command.command_type, sequence, now),
+                    )
+                    outcome = apply_relationship_calibration(
+                        tx,
+                        repository=command.payload["repository"],
+                        scope=command.scope,
+                        operation_id=command.operation_id,
+                        now=now,
+                        subject=command.payload["subject_principal_id"],
+                        expected_revision=command.payload["expected_revision"],
+                        action=command.payload["action"],
+                        dimension=command.payload["dimension"],
+                        delta=command.payload.get("delta"),
+                        value=command.payload.get("value"),
+                        reason=command.payload["reason"],
+                        evidence=command.payload.get("evidence") or (),
+                    )
+                    for index, draft in enumerate(outcome.events):
+                        tx.execute(
+                            """INSERT INTO domain_outbox(
+                                   event_id, operation_id, aggregate_kind, aggregate_id,
+                                   aggregate_version, event_type, payload_version, payload_json, created_at)
+                               VALUES (?, ?, ?, ?, ?, ?, 1, '{}', ?)""",
+                            (f"{command.operation_id}:{index}", command.operation_id, draft.aggregate_kind, draft.aggregate_id, draft.aggregate_version, draft.event_type, now),
+                        )
+                    tx.execute(
+                        "UPDATE write_operations SET status='committed', result_json='{}', committed_at=? WHERE operation_id=?",
+                        (now, command.operation_id),
+                    )
+                    return DomainWriteResult(
+                        operation_id=command.operation_id,
+                        committed_at=now,
+                        write_sequence=sequence,
+                        entities=outcome.entities,
+                        details=dict(outcome.details),
+                    )
 
         gateway = RelationshipCalibrationGateway(types.SimpleNamespace(coordinator=Coordinator(), _consumers={}), repo)
         result = asyncio.run(gateway.calibrate(

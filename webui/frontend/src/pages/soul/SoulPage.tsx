@@ -29,6 +29,19 @@ function formatTime(seconds: unknown): string {
   return Number.isFinite(value) && value > 0 ? new Date(value * 1000).toLocaleString('zh-CN') : '未记录'
 }
 
+const CONCERN_STATUS_LABELS: Record<string, string> = {
+  active: '激活',
+  dormant: '潜伏',
+  progressing: '推进中',
+  resolved: '已解决',
+  expired: '已过期',
+  archived: '已归档',
+}
+
+function concernStatusLabel(status: string | null | undefined): string {
+  return CONCERN_STATUS_LABELS[String(status || '')] ?? (status || '未标注')
+}
+
 function reasonText(reason: string | null | undefined): string {
   if (!reason) return '服务端未提供原因'
   const labels: Record<string, string> = {
@@ -431,7 +444,7 @@ export function SoulPage() {
                     <TargetIcon className="size-4 text-primary" />
                     <CardTitle className="text-sm">当前关切</CardTitle>
                   </div>
-                  <CardDescription>Bot 在本群正在记着的事</CardDescription>
+                  <CardDescription>未决挂念（L2 主观心智）：只读展示，可作为自然关心方向，不是强制回复指令</CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-3 pt-5">
                   {formalUnavailable || payload.concerns.page.total_status === 'unavailable' ? (
@@ -441,7 +454,11 @@ export function SoulPage() {
                       <div key={item.id} className="rounded-lg border bg-muted/10 p-3">
                         <div className="flex items-start justify-between gap-3">
                           <p className="text-sm font-semibold">{item.topic || item.summary || '未命名关切'}</p>
-                          <Badge variant="outline">版本 {item.revision ?? '—'}</Badge>
+                          <div className="flex flex-wrap justify-end gap-1">
+                            <Badge variant="secondary">{concernStatusLabel(item.status)}</Badge>
+                            {item.concern_type ? <Badge variant="outline">{item.concern_type}</Badge> : null}
+                            <Badge variant="outline">版本 {item.revision ?? '—'}</Badge>
+                          </div>
                         </div>
                         <p className="mt-1 text-[10px] text-muted-foreground">最近触发 {formatTime(item.last_triggered)}</p>
                         <div className="mt-3"><EvidenceList evidence={item.evidence} /></div>

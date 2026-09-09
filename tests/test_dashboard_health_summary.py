@@ -84,7 +84,7 @@ def test_core_off_or_runtime_error_makes_system_critical():
     services = [
         {"name": "Embedding", "status": "off", "reason": "embedding_provider_id 未配置"},
         {"name": "自主学习", "status": "off", "reason": "StudyService 未启用或 BookLore 不可用"},
-        {"name": "记忆整合", "status": "error", "reason": "LLM init failed"},
+        {"name": "Tag 提取", "status": "error", "reason": "LLM init failed"},
     ]
 
     annotated, summary = classify_services_health(services)
@@ -95,5 +95,5 @@ def test_core_off_or_runtime_error_makes_system_critical():
     assert summary["critical_count"] == 2
     assert summary["optional_off_count"] == 1
     assert severities["Embedding"] == "critical"
-    assert severities["记忆整合"] == "critical"
+    assert severities["Tag 提取"] == "critical"
     assert severities["自主学习"] == "disabled"

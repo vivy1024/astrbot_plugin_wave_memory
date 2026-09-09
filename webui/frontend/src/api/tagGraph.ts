@@ -132,3 +132,21 @@ export function findTagGraphPath(
     signal,
   })
 }
+
+export function updateTagCommand(
+  scope: TagGraphScope,
+  payload: {
+    object_ref: ObjectRefDescriptor
+    revision: number
+    patch: { name?: string; tag_type?: string; description?: string; aliases?: string[] }
+    idempotency_key?: string
+  },
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; revision: number; status: string; object_ref?: ObjectRefDescriptor }> {
+  const params = scopeQuery(scope)
+  return fetchJson(`/api/kg/commands/tags/update?${params.toString()}`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    signal,
+  })
+}
