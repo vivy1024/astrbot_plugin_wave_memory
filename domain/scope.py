@@ -431,6 +431,7 @@ COMMAND_SCOPE_MATRIX: Mapping[str, ScopeRequirement] = MappingProxyType({
     "fact_proposal.propose": ScopeRequirement(("runtime",), ("group",)),
     "belief_proposal.propose": ScopeRequirement(("runtime",), ("group",)),
     "episode.note": ScopeRequirement(("runtime",), ("group",)),
+    "diary.record": ScopeRequirement(("runtime",), ("group",)),
     "concern.note": ScopeRequirement(("runtime",), ("group",)),
     "relationship.record": ScopeRequirement(("runtime",), ("group",), subject_required=True),
     "self_reflect.candidate": ScopeRequirement(("runtime",), ("group",)),

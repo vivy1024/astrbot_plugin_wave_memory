@@ -67,12 +67,22 @@ export interface TagGraphEdge {
   read_only: true
 }
 
+export interface TagGraphLegend {
+  enabled: boolean
+  /** 服务端已过滤掉未知类型名；空数组表示「展示图中实际出现的全部类型」。 */
+  types: string[]
+  show_count: boolean
+  known_types: string[]
+}
+
 export interface TagGraphPayload {
   nodes: TagGraphNode[]
   edges: TagGraphEdge[]
   layers: TagGraphLayer[]
   available_layers: TagGraphLayer[]
   layer_counts: Partial<Record<TagGraphLayer, { nodes: number; edges: number }>>
+  tag_total?: number
+  legend?: TagGraphLegend
   scope: TagGraphScope
   read_only: true
   generated_at: number
@@ -105,7 +115,7 @@ function scopeQuery(scope: TagGraphScope): URLSearchParams {
 
 export function getTagGraph(scope: TagGraphScope, options: GetTagGraphOptions = {}): Promise<TagGraphPayload> {
   const params = scopeQuery(scope)
-  if (options.layers) params.set('layers', options.layers.join(','))
+  if (options.layers?.length) params.set('layers', options.layers.join(','))
   if (options.minConfidence !== undefined) params.set('min_confidence', String(options.minConfidence))
   if (options.maxNodes !== undefined) params.set('max_nodes', String(options.maxNodes))
   if (options.includePulse) params.set('include_pulse', '1')

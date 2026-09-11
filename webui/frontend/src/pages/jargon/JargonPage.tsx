@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { fetchJson } from '@/api/client'
+import { humanizeApiError, humanizeReason } from '@/lib/reason-label'
 import { archiveJargon, batchReviewJargons, checkHolymanUpdate, getCatalogAudit, getJargonEvidence, listJargonBlocklist, listJargons, previewHolymanSync, removeJargonBlocklistItem, reviewJargon, updateJargonMeaning, type CatalogAssetRecord, type CatalogAuditPayload, type HolymanSyncPreviewPayload, type HolymanUpdateCheckPayload, type JargonBlocklistItem, type JargonEvidencePayload, type JargonItem, type JargonResponse, type JargonScopeSelection } from '@/api/jargon'
 import { getScopeOptions, groupSessionOptions, scopeOptionsFor } from '@/api/options'
 import {
@@ -136,7 +137,7 @@ function JargonEvidenceDialog({ item, scope, onClose }: { item: JargonItem | nul
     } catch (reason) {
       if (request !== evidenceRequest.current) return
       setPayload(null)
-      setError(reason instanceof Error ? reason.message : '黑话证据加载失败')
+      setError(humanizeApiError(reason, '黑话证据加载失败'))
     } finally {
       if (request === evidenceRequest.current) setLoading(false)
     }
@@ -233,7 +234,7 @@ function CatalogBrowser({ catalog }: { catalog: CatalogAuditPayload | null }) {
       setUpdateCheck(result)
       toast.success(result.has_update ? '检测到内置资产远端更新' : '内置资产已是最新')
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : '内置资产更新检查失败')
+      toast.error(humanizeApiError(reason, '内置资产更新检查失败'))
     } finally {
       setUpdateChecking(false)
     }
@@ -246,7 +247,7 @@ function CatalogBrowser({ catalog }: { catalog: CatalogAuditPayload | null }) {
     try {
       setPreview(await previewHolymanSync(true))
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : '内置资产同步预览失败')
+      toast.error(humanizeApiError(reason, '内置资产同步预览失败'))
     } finally {
       setPreviewLoading(false)
     }
@@ -295,6 +296,7 @@ export function JargonPage() {
   const [deepLinkStatus, setDeepLinkStatus] = useState<'loading' | ObjectRefState | null>(null)
   const [catalog, setCatalog] = useState<CatalogAuditPayload | null>(null)
   const [catalogStatus, setCatalogStatus] = useState<'loading' | 'success' | 'error'>('loading')
+  const [catalogError, setCatalogError] = useState<unknown>(null)
   const [queryStatus, setQueryStatus] = useState<'loading' | 'success' | 'empty' | 'error'>('empty')
   const [error, setError] = useState<unknown>()
   const [mutating, setMutating] = useState<number | null>(null)
@@ -306,6 +308,7 @@ export function JargonPage() {
   const [archiveItem, setArchiveItem] = useState<JargonItem | null>(null)
   const [blocklist, setBlocklist] = useState<JargonBlocklistItem[]>([])
   const [blocklistStatus, setBlocklistStatus] = useState<'loading' | 'success' | 'error'>('loading')
+  const [blocklistError, setBlocklistError] = useState<unknown>(null)
   const [removingBlocklistId, setRemovingBlocklistId] = useState<number | null>(null)
   const [filterDraft, setFilterDraft] = useState({ search, status: statusFilter, source: sourceFilter, hasEvidence: evidenceFilter, minFrequency })
   const [activeTab, setActiveTab] = useState<'local' | 'catalog'>('local')
@@ -351,29 +354,32 @@ export function JargonPage() {
 
   const loadBlocklist = useCallback(async () => {
     const request = ++blocklistRequest.current
+    setBlocklistError(null)
     setBlocklistStatus('loading')
     try {
       const next = await listJargonBlocklist()
       if (request !== blocklistRequest.current) return
       setBlocklist(Array.isArray(next.items) ? next.items : [])
       setBlocklistStatus('success')
-    } catch {
+    } catch (reason) {
       if (request !== blocklistRequest.current) return
       setBlocklist([])
+      setBlocklistError(reason)
       setBlocklistStatus('error')
     }
   }, [])
 
   const loadCatalog = useCallback(async () => {
     const request = ++catalogRequest.current
+    setCatalogError(null)
     setCatalogStatus('loading')
     try {
       const next = await getCatalogAudit()
       if (request !== catalogRequest.current) return
       setCatalog(next); setCatalogStatus('success')
-    } catch {
+    } catch (reason) {
       if (request !== catalogRequest.current) return
-      setCatalog(null); setCatalogStatus('error')
+      setCatalog(null); setCatalogError(reason); setCatalogStatus('error')
     }
   }, [])
 
@@ -406,7 +412,7 @@ export function JargonPage() {
       if (!result.ok || result.operation.status !== 'succeeded') throw new Error('服务端未确认审核命令成功')
       toast.success(action === 'approve' ? '候选已通过证据审核' : '候选已拒绝并全局拉黑')
       await Promise.all([load(), loadBlocklist()])
-    } catch (reason) { toast.error(reason instanceof Error ? reason.message : '审核失败') }
+    } catch (reason) { toast.error(humanizeApiError(reason, '审核失败')) }
     finally { setMutating(null) }
   }
 
@@ -420,7 +426,7 @@ export function JargonPage() {
       toast.success(action === 'approve' ? '已批量通过选择的黑话' : '已批量拒绝并全局拉黑')
       await Promise.all([load(), loadBlocklist()])
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : '批量审核失败')
+      toast.error(humanizeApiError(reason, '批量审核失败'))
     } finally {
       setBatchMutating(false)
     }
@@ -434,7 +440,7 @@ export function JargonPage() {
       toast.success(`已解除“${item.word}”的手动全局拉黑`)
       await loadBlocklist()
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : '解除全局拉黑失败')
+      toast.error(humanizeApiError(reason, '解除全局拉黑失败'))
     } finally {
       setRemovingBlocklistId(null)
     }
@@ -453,7 +459,7 @@ export function JargonPage() {
       setSelectedIds([])
       await load()
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : '批量归档失败')
+      toast.error(humanizeApiError(reason, '批量归档失败'))
     } finally {
       setBatchMutating(false)
     }
@@ -469,7 +475,7 @@ export function JargonPage() {
       setEditItem(null)
       await load()
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : '释义更新失败')
+      toast.error(humanizeApiError(reason, '释义更新失败'))
     } finally {
       setMutating(null)
     }
@@ -485,7 +491,7 @@ export function JargonPage() {
       setArchiveItem(null)
       await load()
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : '归档失败')
+      toast.error(humanizeApiError(reason, '归档失败'))
     } finally {
       setMutating(null)
     }
@@ -640,21 +646,21 @@ export function JargonPage() {
 </Table>} cards={pageItems.map((item) => <article key={item.id} className={`flex flex-col gap-3 rounded-lg border bg-card p-4 ${selectedIds.includes(item.id) ? 'border-primary/50 bg-primary/5' : ''}`}><div className="flex items-start justify-between gap-2"><label className="flex min-w-0 items-start gap-2"><input aria-label={`选择黑话 ${item.word}`} type="checkbox" checked={selectedIds.includes(item.id)} onChange={(event) => toggleSelected(item.id, event.target.checked)} /><span><span className="block font-semibold">{item.word}</span><span className="mt-1 block whitespace-pre-wrap break-words text-sm text-muted-foreground">{item.meaning || '尚未形成可展示的释义'}</span></span></label><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></div><div className="flex flex-wrap gap-2 text-xs text-muted-foreground"><span>频次 {item.frequency}</span><span>来源 {item.source || 'wave_memory'}</span><span>证据 {item.anchors.length} 条</span></div><div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" size="sm" disabled={!item.object_ref} onClick={() => setEvidenceItem(item)}><MessageSquareQuoteIcon data-icon="inline-start" />证据</Button><Button type="button" variant="outline" size="sm" disabled={!editAvailable || !item.object_ref} onClick={() => openMeaningEditor(item)}><Edit2Icon data-icon="inline-start" />编辑</Button><ResponsiveDetail title={item.word} description="黑话释义、证据引用与审核操作" className="sm:max-w-4xl" trigger={<Button type="button" variant="outline" size="sm">详情</Button>}><JargonDetails item={item} reviewAvailable={reviewAvailable} busy={mutating === item.id} onReview={(action) => void review(item, action)} /></ResponsiveDetail></div></article>)} />
 </QueryState>{payload && !payload.capabilities.review?.available ? <Alert>
 <AlertTitle>审核能力当前不可用</AlertTitle>
-<AlertDescription>服务端拒绝原因：{payload.capabilities.review?.reason_code ?? '未提供'}</AlertDescription>
+<AlertDescription>服务端拒绝原因：{humanizeReason(payload.capabilities.review?.reason_code, '未提供')}</AlertDescription>
 </Alert> : null}{payload ? <PaginationControls page={payload.page} onOffsetChange={pagination.setOffset} onLimitChange={pagination.setLimit} /> : null}</CardContent>
 </Card>
 
         <Card>
           <CardHeader><CardTitle className="text-base">全局黑话拉黑列表</CardTitle><CardDescription>所有群共享，展示规范化词形、来源、原因与时间；只有用户审核产生的手动项可在此解除。</CardDescription></CardHeader>
           <CardContent>
-            <QueryState status={blocklistStatus} title="全局拉黑列表暂不可用" description="拉黑检查仍在服务端 fail-closed；此处仅为审计与解除入口。" onRetry={() => void loadBlocklist()}>
+            <QueryState status={blocklistStatus} title="全局拉黑列表暂不可用" error={blocklistError} description="拉黑检查仍在服务端 fail-closed；此处仅为审计与解除入口。" onRetry={() => void loadBlocklist()}>
               {blocklist.length ? <ResponsiveTable label="全局黑话拉黑列表" table={<Table><TableHeader><TableRow><TableHead>规范化词形</TableHead><TableHead>原因</TableHead><TableHead>来源</TableHead><TableHead>记录时间</TableHead><TableHead className="w-24 text-right">操作</TableHead></TableRow></TableHeader><TableBody>{blocklist.map((item) => <TableRow key={item.id}><TableCell className="font-semibold">{item.word}</TableCell><TableCell className="text-sm text-muted-foreground">{item.reason}</TableCell><TableCell><Badge variant="outline" className="font-mono text-[10px]">{item.source}</Badge></TableCell><TableCell className="text-sm text-muted-foreground">{item.created_at ? formatTime(item.created_at) : '未记录'}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" disabled={item.source !== 'user_global_reject' || removingBlocklistId === item.id} title={item.source === 'user_global_reject' ? '解除手动全局拉黑' : 'Holyman 同步项不可手动删除'} onClick={() => void removeFromGlobalBlocklist(item)}>{removingBlocklistId === item.id ? <Loader2Icon data-icon="inline-start" className="animate-spin" /> : <XIcon data-icon="inline-start" />}解除</Button></TableCell></TableRow>)}</TableBody></Table>} cards={blocklist.map((item) => <article key={item.id} className="flex flex-col gap-3 rounded-lg border bg-card p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{item.word}</p><p className="mt-1 text-sm text-muted-foreground">{item.reason}</p></div><Badge variant="outline" className="font-mono text-[10px]">{item.source}</Badge></div><div className="flex items-center justify-between gap-2 text-xs text-muted-foreground"><span>{item.created_at ? formatTime(item.created_at) : '未记录时间'}</span><Button type="button" size="sm" variant="outline" disabled={item.source !== 'user_global_reject' || removingBlocklistId === item.id} onClick={() => void removeFromGlobalBlocklist(item)}>解除全局拉黑</Button></div></article>)} /> : <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">当前没有全局拉黑词形。</div>}
             </QueryState>
           </CardContent>
         </Card>
       </TabsContent>
 
-      <TabsContent value="catalog"><Card><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle className="flex items-center gap-2 text-base"><DatabaseIcon className="size-4" />广域资产浏览</CardTitle><CardDescription className="mt-1">只读审计 Holyman 分层参考资产，不赋予本地审核语义，也不提供同步写入。</CardDescription></div><Badge variant={catalog?.asset_status === 'ready' ? 'secondary' : 'outline'}>{catalog?.asset_status === 'ready' ? '资产就绪' : '状态待核验'}</Badge></div></CardHeader><CardContent><QueryState status={catalogStatus} title="广域资产暂不可用" description="未使用演示数据或旧缓存替代。" onRetry={() => void loadCatalog()}>{catalog ? <CatalogBrowser catalog={catalog} /> : null}</QueryState></CardContent></Card></TabsContent>
+      <TabsContent value="catalog"><Card><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle className="flex items-center gap-2 text-base"><DatabaseIcon className="size-4" />广域资产浏览</CardTitle><CardDescription className="mt-1">只读审计 Holyman 分层参考资产，不赋予本地审核语义，也不提供同步写入。</CardDescription></div><Badge variant={catalog?.asset_status === 'ready' ? 'secondary' : 'outline'}>{catalog?.asset_status === 'ready' ? '资产就绪' : '状态待核验'}</Badge></div></CardHeader><CardContent><QueryState status={catalogStatus} title="广域资产暂不可用" error={catalogError} description="未使用演示数据或旧缓存替代。" onRetry={() => void loadCatalog()}>{catalog ? <CatalogBrowser catalog={catalog} /> : null}</QueryState></CardContent></Card></TabsContent>
     </Tabs>
 
     <Dialog open={Boolean(editItem)} onOpenChange={(open) => { if (!open && mutating === null) setEditItem(null) }}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>编辑黑话释义{editItem ? ` · ${editItem.word}` : ''}</DialogTitle><DialogDescription>保存会推进 revision，并把该黑话重新置为待审核；不会绕过现有证据门禁直接修改已确认语义。</DialogDescription></DialogHeader><Field><FieldLabel htmlFor="jargon-edit-meaning">黑话释义</FieldLabel><Textarea id="jargon-edit-meaning" className="min-h-28" value={editMeaning} onChange={(event) => setEditMeaning(event.target.value)} /></Field><DialogFooter><Button type="button" variant="outline" disabled={mutating !== null} onClick={() => setEditItem(null)}>取消</Button><Button type="button" disabled={mutating !== null || !editMeaning.trim()} onClick={() => void saveMeaning()}>{mutating !== null ? <Loader2Icon data-icon="inline-start" className="animate-spin" /> : <Edit2Icon data-icon="inline-start" />}保存并回到待审核</Button></DialogFooter></DialogContent></Dialog>

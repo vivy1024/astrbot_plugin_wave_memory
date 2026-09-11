@@ -158,8 +158,13 @@ describe('QueryState', () => {
     const { rerender } = render(<QueryState status="empty" />)
     expect(screen.getByText('当前真实为空')).toBeVisible()
 
+    // 空态不得复用错误风格标题；只传 error 标题时，empty 显示中性文案
+    rerender(<QueryState status="empty" title="事实读取失败" emptyTitle="当前群没有正式事实" />)
+    expect(screen.getByText('当前群没有正式事实')).toBeVisible()
+    expect(screen.queryByText('事实读取失败')).not.toBeInTheDocument()
+
     rerender(<QueryState status="error" error={new Error('API unavailable')} onRetry={() => undefined} />)
-    expect(screen.getByRole('alert')).toHaveTextContent('API unavailable')
+    expect(screen.getByRole('alert')).toHaveTextContent('接口暂时不可用')
     expect(screen.getByRole('button', { name: '重试' })).toBeVisible()
 
     rerender(<QueryState status="unknown" />)

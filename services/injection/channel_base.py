@@ -31,6 +31,8 @@ class InjectionResult:
     tokens: int = 0
     chars: int = 0
     score: float | None = None
+    # 仅用于正式 affinity 的全量印象摘要，不能被普通召回预算静默丢弃。
+    preserve_full_text: bool = False
 
     def __post_init__(self) -> None:
         if self.status not in VALID_INJECTION_STATUSES:
@@ -51,6 +53,7 @@ class InjectionResult:
         warnings: list[str] | None = None,
         score: float | None = None,
         latency_ms: float = 0.0,
+        preserve_full_text: bool = False,
     ) -> "InjectionResult":
         return cls(
             channel=channel,
@@ -61,6 +64,7 @@ class InjectionResult:
             warnings=warnings or [],
             score=score,
             latency_ms=latency_ms,
+            preserve_full_text=preserve_full_text,
         )
 
     @classmethod

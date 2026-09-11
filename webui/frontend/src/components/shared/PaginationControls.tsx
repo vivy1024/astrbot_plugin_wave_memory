@@ -6,6 +6,7 @@ import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
+import { humanizeReason } from '@/lib/reason-label'
 import { PAGE_SIZE_OPTIONS, type PageMetadata, type PageSize } from './types'
 
 type FocusTarget = 'first' | 'previous' | 'next' | 'last' | 'jump'
@@ -62,10 +63,11 @@ export function PaginationControls({
     requestOffset('jump', (bounded - 1) * page.limit)
   }
 
+  const unavailableReason = page.reason_code ? humanizeReason(page.reason_code) : ''
   const statusText =
     page.total_status === 'exact' && page.total !== null
       ? `第 ${page.page} 页${page.page_count === null ? '' : `，共 ${page.page_count} 页`}，共 ${page.total} 条`
-      : `第 ${page.page} 页，总数不可用${page.reason_code ? `：${page.reason_code}` : ''}`
+      : `第 ${page.page} 页，总数暂不可用${unavailableReason ? `：${unavailableReason}` : ''}`
 
   return (
     <nav data-slot="pagination-controls" aria-label={label} className={cn(        'flex flex-col gap-3 border-t border-border/70 pt-3 text-sm sm:flex-row sm:items-center sm:justify-between', className)}>

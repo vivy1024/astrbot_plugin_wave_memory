@@ -8,7 +8,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field, replace
 import hashlib
 import json
+import math
 from typing import Any, Mapping
+
+from ..impression_timeline import normalize_timeline_half_life
 
 try:
     from ...domain.scope import RuntimeScope
@@ -28,7 +31,6 @@ MAX_TIMEOUT_MS = 5000
 KNOWN_CHANNELS = (
     "safety",
     "memory",
-    "timeline",
     "facts",
     "persona",
     "belief",
@@ -39,9 +41,11 @@ KNOWN_CHANNELS = (
     "affinity",
     "soul_state",
 )
+# 已退役通道：旧 Channel_Settings 里可能仍保存其覆盖项；校验时静默忽略而不是拒绝。
+RETIRED_CHANNELS = frozenset({"timeline"})
 
 _ADVANCED_FULL_ONLY = {"persona", "belief", "jargon", "fewshot", "book_lore", "affinity", "soul_state"}
-_OPTIONAL_MEMORY_ONLY = {"timeline", "facts", "fts5"}
+_OPTIONAL_MEMORY_ONLY = {"facts", "fts5"}
 _QUERY_STAGE_NAMES = frozenset({"epa", "pyramid", "spike", "geodesic"})
 _QUERY_PARAM_LIMITS = {
     "pyramid_max_levels": (int, 1, 10),
@@ -50,7 +54,7 @@ _QUERY_PARAM_LIMITS = {
     "spike_firing_threshold": (float, 0.0, 1.0),
     "geodesic_alpha": (float, 0.0, 1.0),
 }
-_ROOT_OVERRIDE_FIELDS = frozenset({"channels", "recent_dedup_minutes", "timeline_days", "trace_enabled", "query_options", "memory_recall"})
+_ROOT_OVERRIDE_FIELDS = frozenset({"channels", "recent_dedup_minutes", "timeline_days", "timeline_decay_half_life_days", "trace_enabled", "query_options", "memory_recall"})
 _MEMORY_RECALL_FIELDS = frozenset({"enable_shotgun", "skip_recent_minutes", "source_filter", "exclude_sources"})
 _EFFECTIVE_FIELD_METADATA = {
     "*": {"apply_mode": "hot", "restart_required": False},
@@ -85,12 +89,14 @@ class ChannelConfigSet:
     query_stages: dict[str, bool] = field(default_factory=dict)
     query_params: dict[str, int | float] = field(default_factory=dict)
     memory_recall: dict[str, Any] = field(default_factory=dict)
+    timeline_decay_half_life_days: float = 21.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "mode": self.mode,
             "recent_dedup_minutes": self.recent_dedup_minutes,
             "timeline_days": self.timeline_days,
+            "timeline_decay_half_life_days": self.timeline_decay_half_life_days,
             "trace_enabled": self.trace_enabled,
             "query_options": {
                 "stages": dict(self.query_stages),
@@ -153,6 +159,18 @@ def _strict_number(value: Any, *, field_name: str, caster: type[int] | type[floa
     return converted
 
 
+def _strict_timeline_half_life(value: Any) -> float:
+    """热覆盖只接受正有限天数；旧 Inject_Settings 的回退不适用于这里。"""
+    field_name = "timeline_decay_half_life_days"
+    try:
+        converted = float(_strict_number(value, field_name=field_name, caster=float))
+    except (ValueError, OverflowError) as exc:
+        raise ValueError(f"{field_name} must be a positive finite number") from exc
+    if not math.isfinite(converted) or converted <= 0:
+        raise ValueError(f"{field_name} must be a positive finite number")
+    return normalize_timeline_half_life(converted)
+
+
 def _strict_string_list(value: Any, *, field_name: str) -> list[str]:
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise ValueError(f"{field_name} must be a string array")
@@ -176,8 +194,6 @@ def _enabled_for(name: str, mode: str, inject_cfg: Mapping[str, Any]) -> bool:
         return False
     if mode == "memory_only" and name in _ADVANCED_FULL_ONLY:
         return False
-    if name == "timeline":
-        return _bool(inject_cfg.get("enable_timeline"), True) and _int(inject_cfg.get("timeline_max"), 5) > 0
     if name == "facts":
         return _int(inject_cfg.get("facts_max"), 5) > 0
     return True
@@ -196,7 +212,6 @@ def build_default_channel_config(
     inject_top_k = _int(query_cfg.get("inject_top_k"), 5)
     min_similarity = _float(query_cfg.get("min_similarity"), 0.35)
     facts_max = _int(inject_cfg.get("facts_max"), 5)
-    timeline_max = _int(inject_cfg.get("timeline_max"), 5)
     timeline_days = _int(inject_cfg.get("timeline_days"), 0)
     recent_dedup = _int(inject_cfg.get("skip_recent_minutes"), 30)
 
@@ -205,7 +220,6 @@ def build_default_channel_config(
         # Online embedding providers routinely need >1s; keep memory channel
         # soft-timeout at 2s so remote vector recall is not cancelled early.
         "memory": ChannelConfig("memory", _enabled_for("memory", mode, inject_cfg), priority=100, top_k=inject_top_k, token_budget=600, timeout_ms=2000, min_score=min_similarity, modes=_modes_for("memory", mode)),
-        "timeline": ChannelConfig("timeline", _enabled_for("timeline", mode, inject_cfg), priority=80, max_items=timeline_max, token_budget=220, timeout_ms=400, modes=_modes_for("timeline", mode)),
         "facts": ChannelConfig("facts", _enabled_for("facts", mode, inject_cfg), priority=75, max_items=facts_max, token_budget=260, timeout_ms=120, modes=_modes_for("facts", mode)),
         # max_items=2 lets the scope-keyed speaker statistics block ride along with
         # the bot's own persona block; at 1 only self_persona could ever be injected.
@@ -215,7 +229,9 @@ def build_default_channel_config(
         "fewshot": ChannelConfig("fewshot", _enabled_for("fewshot", mode, inject_cfg), priority=50, max_items=3, token_budget=260, timeout_ms=300, modes=_modes_for("fewshot", mode)),
         "book_lore": ChannelConfig("book_lore", _enabled_for("book_lore", mode, inject_cfg), priority=45, max_items=1, token_budget=260, timeout_ms=800, min_score=0.35, modes=_modes_for("book_lore", mode)),
         "fts5": ChannelConfig("fts5", _enabled_for("fts5", mode, inject_cfg), priority=85, top_k=10, token_budget=350, timeout_ms=600, min_score=0.0, modes=_modes_for("fts5", mode)),
-        "affinity": ChannelConfig("affinity", _enabled_for("affinity", mode, inject_cfg), priority=68, max_items=3, token_budget=180, timeout_ms=120, modes=_modes_for("affinity", mode)),
+        # affinity 承载全量印象摘要、指数时间权重与关系分数；半衰期只影响权重。
+        # 全量保留由通道与编排器协议保证，不依赖下面的大固定预算，不按条数裁剪。
+        "affinity": ChannelConfig("affinity", _enabled_for("affinity", mode, inject_cfg), priority=68, max_items=3, token_budget=1600, timeout_ms=800, modes=_modes_for("affinity", mode)),
         "soul_state": ChannelConfig("soul_state", _enabled_for("soul_state", mode, inject_cfg), priority=67, max_items=1, token_budget=260, timeout_ms=180, modes=_modes_for("soul_state", mode)),
     }
     query_stages = {
@@ -237,6 +253,9 @@ def build_default_channel_config(
         query_stages=query_stages,
         query_params={},
         memory_recall=memory_recall,
+        timeline_decay_half_life_days=normalize_timeline_half_life(
+            inject_cfg.get("timeline_decay_half_life_days")
+        ),
     )
 
 
@@ -278,6 +297,9 @@ def apply_channel_overrides(base: ChannelConfigSet, overrides: Mapping[str, Any]
 
     updated = dict(base.channels)
     for name, patch in channels_override.items():
+        if name in RETIRED_CHANNELS:
+            # 已退役通道（如 timeline）的旧覆盖项：静默忽略，保持旧配置可读。
+            continue
         if name not in updated:
             raise ValueError(f"unknown channel: {name}")
         if patch is None:
@@ -320,6 +342,9 @@ def apply_channel_overrides(base: ChannelConfigSet, overrides: Mapping[str, Any]
         ))
         if timeline_days < 0:
             raise ValueError("timeline_days must be non-negative")
+    timeline_half_life = base.timeline_decay_half_life_days
+    if overrides.get("timeline_decay_half_life_days") is not None:
+        timeline_half_life = _strict_timeline_half_life(overrides["timeline_decay_half_life_days"])
     trace_enabled = base.trace_enabled
     if "trace_enabled" in overrides and overrides.get("trace_enabled") is not None:
         trace_enabled = _strict_bool(overrides.get("trace_enabled"), field_name="trace_enabled")
@@ -385,6 +410,7 @@ def apply_channel_overrides(base: ChannelConfigSet, overrides: Mapping[str, Any]
         query_stages=query_stages,
         query_params=query_params,
         memory_recall=memory_recall,
+        timeline_decay_half_life_days=timeline_half_life,
     )
     for name, cfg in candidate_set.channels.items():
         _validate_channel_config(name, cfg)
@@ -413,9 +439,11 @@ def _legacy_system_overrides(settings: Mapping[str, Any]) -> dict[str, Any]:
 def _config_set_from_payload(payload: Mapping[str, Any]) -> ChannelConfigSet:
     if not isinstance(payload, Mapping):
         raise ValueError("effective channel config must be an object")
-    channels_payload = payload.get("channels")
-    if not isinstance(channels_payload, Mapping) or set(channels_payload) != set(KNOWN_CHANNELS):
+    raw_channels_payload = payload.get("channels")
+    if not isinstance(raw_channels_payload, Mapping) or not set(KNOWN_CHANNELS).issubset(set(raw_channels_payload)):
         raise ValueError("effective channel config must contain every known channel")
+    # 只读取当前已知通道；历史有效层里可能还带着已退役通道（如 timeline）。
+    channels_payload = {name: raw_channels_payload[name] for name in KNOWN_CHANNELS}
     channels: dict[str, ChannelConfig] = {}
     for name in KNOWN_CHANNELS:
         raw = channels_payload[name]
@@ -450,6 +478,9 @@ def _config_set_from_payload(payload: Mapping[str, Any]) -> ChannelConfigSet:
         query_stages=dict(query_options.get("stages") or {}),
         query_params=dict(query_options.get("params") or {}),
         memory_recall=dict(memory_recall),
+        timeline_decay_half_life_days=_strict_timeline_half_life(
+            payload.get("timeline_decay_half_life_days", 21.0)
+        ),
     )
     # Reuse the strict validator for non-channel request-level options.
     validated = apply_channel_overrides(
@@ -459,6 +490,7 @@ def _config_set_from_payload(payload: Mapping[str, Any]) -> ChannelConfigSet:
             "memory_recall": candidate.memory_recall,
             "recent_dedup_minutes": candidate.recent_dedup_minutes,
             "timeline_days": candidate.timeline_days,
+            "timeline_decay_half_life_days": candidate.timeline_decay_half_life_days,
             "trace_enabled": candidate.trace_enabled,
         },
     )

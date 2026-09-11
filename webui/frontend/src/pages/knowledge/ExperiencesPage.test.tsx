@@ -37,7 +37,7 @@ describe('ExperiencesPage 证据链展示', () => {
     expect(api.listExperiences).not.toHaveBeenCalled()
   })
 
-  it('展示 episode 证据链定位，不把它当成事实或注入通道', async () => {
+  it('展示 episode 证据链定位，并说明日记进入经历时间线', async () => {
     api.listExperiences.mockResolvedValue({
       items: [{
         id: 42,
@@ -57,10 +57,14 @@ describe('ExperiencesPage 证据链展示', () => {
     render(<MemoryRouter initialEntries={['/knowledge/experiences?bot_id=bot-a&session_id=qq%3Agroup%3A1']}><ExperiencesPage /></MemoryRouter>)
 
     expect(await screen.findByText('共同经历')).toBeVisible()
-    expect(screen.getByText(/结构化群经历与反思证据/)).toBeVisible()
+    expect(screen.getByText(/结构化群经历与每日日记/)).toBeVisible()
     expect(screen.getByText('episode:42')).toBeVisible()
     expect(screen.getByText('来源 memory: 11, 12')).toBeVisible()
     expect(screen.getByText('反思候选')).toBeVisible()
-    expect(screen.getByText(/也不会作为独立通道注入/)).toBeVisible()
+    expect(screen.getByText(/日记会进入 Bot 经历时间线/)).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Bot 经历时间线' })).toHaveAttribute('href', expect.stringContaining('/soul'))
+    expect(screen.getByRole('link', { name: '群友印象时间线' })).toHaveAttribute('href', expect.stringContaining('/people'))
+    expect(screen.getByRole('link', { name: 'u1' })).toHaveAttribute('href', expect.stringContaining('/people'))
+    expect(screen.getByRole('link', { name: 'u1' })).toHaveAttribute('href', expect.stringContaining('search=u1'))
   })
 })

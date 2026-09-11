@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { ActivityIcon, AlertCircleIcon, Clock3Icon, CompassIcon, Globe2Icon, RefreshCwIcon, TargetIcon } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { ActivityIcon, AlertCircleIcon, Clock3Icon, CompassIcon, Globe2Icon, RefreshCwIcon, TargetIcon, UsersIcon } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 
 import { isRequestCancelled } from '@/api/client'
@@ -9,7 +9,6 @@ import { getRelationships, type RelationshipItem } from '@/api/people'
 import { getSoulState, refreshSoulState, type RelationshipHistoryItem, type SoulScopeSelection, type SoulStatePayload } from '@/api/soul'
 import { GroupRelationshipRadarCard } from '@/components/relationship/GroupRelationshipRadarCard'
 import { type RelationshipRadarDimension } from '@/components/relationship/RelationshipRadarCard'
-import { TimeAnchorsExplorer } from '@/components/soul/TimeAnchorsExplorer'
 import { EvidenceList, ObjectDeepLink, PaginationControls, QueryState, ScopeSelect } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -19,6 +18,8 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 import { Input } from '@/components/ui/input'
 import { useCanonicalScopeDefault, usePaginationSearchParams } from '@/hooks/use-pagination-search-params'
 import { formatDisplayNumber } from '@/lib/format-number'
+import { humanizeApiError, humanizeReason } from '@/lib/reason-label'
+import { scopedHref } from '@/lib/navigation-search'
 
 const componentChartConfig = {
   value: { label: '分量值', color: 'var(--chart-2)' },
@@ -42,17 +43,39 @@ function concernStatusLabel(status: string | null | undefined): string {
   return CONCERN_STATUS_LABELS[String(status || '')] ?? (status || '未标注')
 }
 
+const TIMELINE_TYPE_LABELS: Record<string, string> = {
+  episode: '经历',
+  daily_diary: '每日日记',
+  time_anchor: '时间锚点',
+  fact: '事实',
+  belief: '信念',
+  jargon: '黑话',
+  impression: '印象',
+  affinity: '好感',
+}
+
+function timelineTypeLabel(value: string | null | undefined): string {
+  const key = String(value || '').trim()
+  if (!key) return '未标注'
+  return TIMELINE_TYPE_LABELS[key] ?? humanizeReason(key, '事件')
+}
+
+const MOOD_COMPONENT_LABELS: Record<string, string> = {
+  valence: '愉悦度',
+  arousal: '激活度',
+  energy: '精力',
+  sleepiness: '困倦度',
+  mood: '心境',
+}
+
+function moodComponentLabel(key: string): string {
+  const trimmed = String(key || '').trim()
+  if (!trimmed) return '分量'
+  return MOOD_COMPONENT_LABELS[trimmed] ?? humanizeReason(trimmed, '心境分量')
+}
+
 function reasonText(reason: string | null | undefined): string {
-  if (!reason) return '服务端未提供原因'
-  const labels: Record<string, string> = {
-    soul_scoped_repository_unavailable: '心智数据还没准备好',
-    scoped_soul_mutation_unavailable: '还不能在这里改心智数据',
-    soul_runtime_refresh_unavailable: '还不能强制刷新心智',
-    formal_soul_context_unavailable: '还没有时区、精力或困倦记录',
-    alias_session_readonly: '这是同一群的旧平台残留，只能看不能改',
-    scope_required: '请先选择 Bot 和群',
-  }
-  return labels[reason] ?? reason
+  return humanizeReason(reason, '服务端未提供原因')
 }
 
 function parseTimestampParam(value: string | null): number | undefined {
@@ -104,9 +127,7 @@ function sortGroupRelationships(items: RelationshipItem[]): RelationshipItem[] {
 }
 
 function relationshipErrorText(reason: unknown): string {
-  if (reason instanceof Error && reason.message) return reason.message
-  if (typeof reason === 'string' && reason) return reason
-  return '本群关系对照暂时读取失败'
+  return humanizeApiError(reason, '本群关系对照暂时读取失败')
 }
 
 function SectionUnavailable({ reason }: { reason?: string | null }) {
@@ -323,7 +344,7 @@ export function SoulPage() {
     return () => formalRequestRef.current?.abort()
   }, [loadFormal])
 
-  const componentData = useMemo(() => Object.entries(payload?.mood.components ?? {}).map(([name, value]) => ({ name, value })), [payload?.mood.components])
+  const componentData = useMemo(() => Object.entries(payload?.mood.components ?? {}).map(([key, value]) => ({ name: moodComponentLabel(key), value })), [payload?.mood.components])
   const formalUnavailable = payload?.source.health === 'unavailable' || payload?.source.health === 'error'
 
   return (
@@ -331,9 +352,12 @@ export function SoulPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-bold tracking-tight">心智状态</h1>
-          <p className="text-sm text-muted-foreground">当前群心智状态：Bot 在本群的心境情绪、关注事项、作息精力与时间线。群友社交关系与好感请至「人物与关系」查看。</p>
+          <p className="text-sm text-muted-foreground">当前群心智状态：Bot 在本群的心境情绪、关注事项、作息精力与经历时间线。群友印象「我眼中的他」请到人物与关系页查看。</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button asChild size="sm" variant="outline">
+            <Link to={scopedHref('/people', searchParams.toString())}><UsersIcon data-icon="inline-start" aria-hidden="true" />人物与印象时间线</Link>
+          </Button>
           <Button size="sm" variant="outline" onClick={() => void loadFormal()} disabled={!scope || status === 'loading'}>
             <RefreshCwIcon data-icon="inline-start" aria-hidden="true" />
             刷新数据
@@ -400,7 +424,7 @@ export function SoulPage() {
                     <ActivityIcon className="size-4 text-primary" />
                     <CardTitle className="text-sm">当前心情</CardTitle>
                   </div>
-                  <CardDescription>Bot 自己现在的心境 · 版本 {payload.mood.revision ?? '未记录'}</CardDescription>
+                  <CardDescription title={`记录版本 ${payload.mood.revision ?? '未记录'}`}>Bot 自己现在的心境，随本群近期互动实时聚合</CardDescription>
                 </CardHeader>
                 <CardContent className="pt-5">
                   {formalUnavailable ? (
@@ -475,11 +499,10 @@ export function SoulPage() {
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <Clock3Icon className="size-4 text-primary" />
-                      <CardTitle className="text-sm">时间线</CardTitle>
+                      <CardTitle className="text-sm">我的经历时间线</CardTitle>
                     </div>
-                    <TimeAnchorsExplorer botId={botId} />
                   </div>
-                  <CardDescription>本群事件锚点，已按上面的时间范围过滤</CardDescription>
+                  <CardDescription>Bot 自己的经历主干：日记、共同事件与成长节点。群友印象请到「人物与关系」页查看。</CardDescription>
                 </CardHeader>
                 <CardContent className="pt-5">
                   {formalUnavailable || payload.timeline.page.total_status === 'unavailable' ? (
@@ -491,8 +514,12 @@ export function SoulPage() {
                           <span className="absolute -left-[27px] top-1 size-3 rounded-full border-2 border-background bg-primary" />
                           <div className="rounded-lg border bg-muted/10 p-3">
                             <p className="text-sm font-semibold">{item.event_summary || item.summary || '未命名事件'}</p>
-                            <p className="mt-1 text-[10px] text-muted-foreground">{item.event_type || 'unknown'} · {formatTime(item.timestamp)} · 版本 {item.revision ?? '未记录'}</p>
-                            <div className="mt-3"><EvidenceList evidence={item.evidence} /></div>
+                            <p className="mt-1 text-[10px] text-muted-foreground">{timelineTypeLabel(item.event_type)} · {formatTime(item.timestamp)} · 版本 {item.revision ?? '未记录'}</p>
+                            <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                              {item.origin_episode_id ? <Link className="text-primary hover:underline" to={scopedHref('/knowledge/experiences', searchParams.toString())}>经历片段</Link> : null}
+                              {item.origin_memory_id ? <Link className="text-primary hover:underline" to={scopedHref('/memories', searchParams.toString(), { object_id: item.origin_memory_id })}>来源记忆</Link> : null}
+                            </div>
+                            <div className="mt-3"><EvidenceList evidence={item.evidence} objectPath="/memories" /></div>
                           </div>
                         </div>
                       ))}

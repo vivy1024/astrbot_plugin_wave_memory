@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 import { isRequestCancelled } from '@/api/client'
-import { getTagQuality, getTags, type TagListPayload, type TagQualityPayload } from '@/api/tags'
+import { humanizeReason } from '@/lib/reason-label'
+import { getTagQuality, getTags, type ScopedGovernanceScope, type TagListPayload, type TagQualityPayload } from '@/api/tags'
 import { DeclarativeDataTable, InputWithIcon, PaginationControls, QueryState, type PageSize } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -30,18 +32,8 @@ function Metric({ label, value, detail }: { label: string; value: string | numbe
 
 const RAG_MODE_LABELS = { semantic: '语义 RAG', static: '静态词表', unavailable: '不可用' } as const
 const INDEX_HEALTH_LABELS = { ready: '代次已验证', invalid: '清单无效', unavailable: '索引不可用' } as const
-const REASON_LABELS: Record<string, string> = {
-  provider_not_configured: '标签提取模型未配置',
-  tag_extractor_unavailable: '标签提取器未启动',
-  embedding_unavailable: '向量服务不可用',
-  tag_index_unavailable: '标签向量索引不可用',
-  tag_index_empty: '标签向量索引为空',
-  manifest_invalid: '索引清单验证失败',
-  manifest_unavailable: '索引尚未生成版本清单',
-}
-
 function reasonLabel(value?: string | null): string {
-  return value ? REASON_LABELS[value] ?? value : '当前无降级原因'
+  return value ? humanizeReason(value, '当前无降级原因') : '当前无降级原因'
 }
 
 type TagRow = TagListPayload['items'][number]
@@ -72,8 +64,8 @@ const TAG_COLUMNS: import('@/components/shared').DataColumn<TagRow>[] = [
   },
   {
     key: 'capability',
-    header: '能力',
-    render: () => <Badge variant="secondary">只读</Badge>,
+    header: '本目录',
+    render: () => <Badge variant="secondary" title="合并/重分类/别名/停用请在上方「当前群标签治理」面板发起">此目录只读</Badge>,
   },
 ]
 
@@ -106,6 +98,12 @@ function TagsTable({ items, total, limit, offset, loading, onOffset, onLimit }: 
 }
 
 export function TagsPage() {
+  const [searchParams] = useSearchParams()
+  const governanceScope = useMemo<ScopedGovernanceScope | null>(() => {
+    const botId = searchParams.get('bot_id')
+    const sessionId = searchParams.get('session_id')
+    return botId && sessionId ? { bot_id: botId, session_id: sessionId, visibility: 'group' } : null
+  }, [searchParams])
   const [quality, setQuality] = useState<TagQualityPayload | null>(null)
   const [data, setData] = useState<TagListPayload | null>(null)
   const [error, setError] = useState<unknown>()
@@ -148,9 +146,9 @@ export function TagsPage() {
   const total = data?.total ?? 0
 
   return <div className="flex flex-col gap-5" data-page="tags">
-    <ScopedTagGovernancePanel />
+    <ScopedTagGovernancePanel initialScope={governanceScope} />
     <div className="flex flex-wrap items-start justify-between gap-4">
-      <header className="max-w-2xl"><div className="flex items-center gap-2"><TagsIcon className="size-5 text-primary" aria-hidden="true" /><h1 className="text-xl font-bold tracking-tight">标签总览</h1></div><p className="mt-1 text-xs text-muted-foreground">上方治理面板按当前群操作。下面的覆盖率与列表是全局诊断，不是当前群的可写目录。</p></header>
+      <header className="max-w-2xl"><div className="flex items-center gap-2"><TagsIcon className="size-5 text-primary" aria-hidden="true" /><h1 className="text-xl font-bold tracking-tight">标签总览</h1></div><p className="mt-1 text-xs text-muted-foreground">上方治理面板按当前群增删改（可继承页面 URL 的 Bot/群）。下方的覆盖率、索引与目录是跨群全局诊断，只读、不代表当前群的可写清单。</p></header>
       <Button type="button" size="sm" variant="outline" disabled={loading} onClick={() => setReload((value) => value + 1)}><RefreshCwIcon aria-hidden="true" />刷新</Button>
     </div>
 

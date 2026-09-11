@@ -27,6 +27,8 @@ export interface RegistryBotItem {
 }
 
 export interface SystemPayload {
+  /** 插件真实版本，来自 metadata.yaml；解析失败时为空串。 */
+  plugin_version?: string
   memories?: { total?: number; with_vector?: number; with_tags?: number }
   tags?: { total?: number; structured?: number; type_distribution?: Record<string, number> }
   coverage?: { vector_pct?: number; tag_pct?: number }

@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import Graph from 'graphology'
-import type Sigma from 'sigma'
 import { Maximize2Icon, Minimize2Icon, PlayIcon, PauseIcon, RotateCcwIcon, ZoomInIcon, ZoomOutIcon, SparklesIcon } from 'lucide-react'
 
-import type { TagGraphEdge, TagGraphNode } from '@/api/tagGraph'
+import type { TagGraphEdge, TagGraphNode, TagGraphPayload } from '@/api/tagGraph'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -21,7 +19,17 @@ function usePrefersReducedMotion(): boolean {
   return reduced
 }
 
-const TYPE_PALETTES: Record<string, { core: string; glow: string; text: string }> = {
+/**
+ * 图谱配色：深空观测台风格，按节点类型区分色相。
+ * 颜色集中在此处，避免散落在绘制逻辑里；future 可改为从配置读取。
+ */
+export interface NodePalette {
+  core: string
+  glow: string
+  text: string
+}
+
+export const TYPE_PALETTES: Record<string, NodePalette> = {
   keyword: { core: '#38bdf8', glow: 'rgba(56, 189, 248, 0.35)', text: '#bae6fd' },
   entity: { core: '#a78bfa', glow: 'rgba(167, 139, 250, 0.35)', text: '#ddd6fe' },
   topic: { core: '#34d399', glow: 'rgba(52, 211, 153, 0.35)', text: '#a7f3d0' },
@@ -31,9 +39,89 @@ const TYPE_PALETTES: Record<string, { core: string; glow: string; text: string }
   default: { core: '#94a3b8', glow: 'rgba(148, 163, 184, 0.30)', text: '#e2e8f0' },
 }
 
-function paletteFor(type: string) {
+export function paletteFor(type: string): NodePalette {
   return TYPE_PALETTES[type.toLowerCase()] ?? TYPE_PALETTES.default
 }
+
+/** 图例里用的中文类型名，与 TYPE_PALETTES 的键一一对应。 */
+export const TYPE_LABELS: Record<string, string> = {
+  keyword: '关键词',
+  entity: '实体',
+  topic: '话题',
+  emotion: '情绪',
+  fact: '事实',
+  jargon: '黑话',
+  default: '其他',
+}
+
+export function typeLabel(type: string): string {
+  return TYPE_LABELS[type.toLowerCase()] ?? type
+}
+
+export interface LegendItem {
+  type: string
+  label: string
+  count: number
+  color: string
+}
+
+/**
+ * 按配置整理图例项：顺序取自服务端配置，只保留图谱里实际出现的类型。
+ * 配置为空 => 按节点中出现顺序展示全部类型（旧行为兜底）。
+ */
+export function buildLegendItems(
+  nodes: Array<{ type?: string }>,
+  legend?: { types?: string[] } | null,
+): LegendItem[] {
+  const counts = new Map<string, number>()
+  for (const node of nodes) {
+    const key = (node.type || 'default').toLowerCase()
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  const configured = (legend?.types ?? []).map((item) => item.toLowerCase())
+  const order = configured.length ? configured : [...counts.keys()]
+  const seen = new Set<string>()
+  const items: LegendItem[] = []
+  for (const type of order) {
+    const count = counts.get(type)
+    // 配置里列了图里没有的类型就不展示，避免出现 0 个的图例项误导。
+    if (seen.has(type) || !count) continue
+    seen.add(type)
+    items.push({ type, label: typeLabel(type), count, color: paletteFor(type).core })
+  }
+  return items
+}
+
+/** 深空背景、网格与连线配色：固定观测台色板，不随外部主题变化。 */
+interface GraphPalette {
+  background: string
+  backgroundMid: string
+  backgroundOuter: string
+  grid: string
+  edgeCooccurrence: string
+  edgeRelations: string
+  pulse: string
+  ring: string
+}
+
+function readPalette(): GraphPalette {
+  return {
+    background: '#10233a',
+    backgroundMid: '#091421',
+    backgroundOuter: '#050a12',
+    grid: 'rgba(125, 211, 252, 0.035)',
+    edgeCooccurrence: '#67e8f9',
+    edgeRelations: '#c4b5fd',
+    pulse: '#ffffff',
+    ring: '#ffffff',
+  }
+}
+
+
+// 世界坐标尺寸：布局与视口复位共用同一常量，避免缩放漂移。
+const WORLD_WIDTH = 1200
+const WORLD_HEIGHT = 800
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
 
 interface SimNode {
   id: string
@@ -44,15 +132,6 @@ interface SimNode {
   vy: number
   radius: number
   degree: number
-}
-
-function stableHash(value: string): number {
-  let hash = 2166136261
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index)
-    hash = Math.imul(hash, 16777619)
-  }
-  return hash >>> 0
 }
 
 interface SimEdge {
@@ -69,6 +148,7 @@ export interface TagGraphCanvasProps {
   edges: TagGraphEdge[]
   selectedRef?: string | null
   pathEdgeIds?: Set<string>
+  legend?: TagGraphPayload['legend'] | null
   onSelect: (node: TagGraphNode) => void
 }
 
@@ -77,13 +157,13 @@ export function TagGraphCanvas({
   edges,
   selectedRef,
   pathEdgeIds = new Set(),
+  legend,
   onSelect,
 }: TagGraphCanvasProps) {
   const isMobile = useIsMobile()
   const reducedMotion = usePrefersReducedMotion()
+  const legendItems = useMemo(() => buildLegendItems(nodes, legend), [nodes, legend])
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const sigmaRef = useRef<HTMLDivElement>(null)
-  const sigmaInstanceRef = useRef<Sigma | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -100,8 +180,8 @@ export function TagGraphCanvas({
 
   // 构建力导向仿真数据模型
   const simData = useMemo(() => {
-    const width = 1200
-    const height = 800
+    const width = WORLD_WIDTH
+    const height = WORLD_HEIGHT
     const centerX = width / 2
     const centerY = height / 2
 
@@ -109,18 +189,18 @@ export function TagGraphCanvas({
     const sorted = [...nodes].sort(
       (a, b) => b.in_degree + b.out_degree - (a.in_degree + a.out_degree) || a.name.localeCompare(b.name)
     )
+    const total = Math.max(1, sorted.length)
+    // 覆盖可视范围的最大半径：按世界高度留边，横向用椭圆铺满更宽的画布。
+    const maxRadius = Math.min(width, height) * 0.46
 
     sorted.forEach((node, index) => {
       const degree = node.in_degree + node.out_degree
       const radius = Math.max(9, Math.min(24, 8 + Math.sqrt(degree + node.memory_count) * 2))
-      // 按类型分组的确定性同心轨道布局：刷新后位置稳定，不再随机跳动。
-      const typeIndex = Math.max(0, [...new Set(sorted.map((item) => item.type || 'default'))].indexOf(node.type || 'default'))
-      const typeCount = Math.max(1, new Set(sorted.map((item) => item.type || 'default')).size)
-      const ring = Math.floor(index / Math.max(1, Math.ceil(sorted.length / Math.min(typeCount, 5))))
-      const angle = (stableHash(node.ref || node.id) % 360) * Math.PI / 180 + (index % 12) * 0.18
-      const dist = Math.min(width, height) * (0.16 + Math.min(0.28, ring * 0.045)) + typeIndex * 18
-      const x = centerX + Math.cos(angle) * dist
-      const y = centerY + Math.sin(angle) * dist * 0.68
+      // 确定性中心螺旋（phyllotaxis）：度数越高越靠中心，节点均匀铺满画面，刷新后位置稳定不跳动。
+      const rr = maxRadius * Math.sqrt((index + 0.5) / total)
+      const theta = index * GOLDEN_ANGLE
+      const x = centerX + Math.cos(theta) * rr * (width / Math.min(width, height)) * 0.68
+      const y = centerY + Math.sin(theta) * rr
 
       nodeMap.set(node.id, {
         id: node.id,
@@ -153,42 +233,39 @@ export function TagGraphCanvas({
     return { nodes: Array.from(nodeMap.values()), edges: simEdges, nodeMap, width, height }
   }, [nodes, edges])
 
-  useEffect(() => {
-    if (!sigmaRef.current || isMobile) return
-    const graph = new Graph({ multi: true, type: 'directed' })
-    simData.nodes.forEach((node) => graph.addNode(node.id, { x: node.x, y: node.y, size: node.radius, label: node.raw.name, color: paletteFor(node.raw.type).core }))
-    simData.edges.forEach((edge) => {
-      if (graph.hasNode(edge.source.id) && graph.hasNode(edge.target.id)) graph.addEdgeWithKey(edge.id, edge.source.id, edge.target.id, { size: Math.max(0.5, edge.weight * 1.4), color: edge.layer === 'relations' ? '#c4b5fd66' : '#67e8f966' })
-    })
-    let renderer: Sigma | null = null
-    let disposed = false
-    if (typeof WebGL2RenderingContext === 'undefined') return () => { disposed = true }
-    void import('sigma').then(({ default: SigmaRenderer }) => {
-      if (disposed || !sigmaRef.current) return
-      renderer = new SigmaRenderer(graph, sigmaRef.current, { renderLabels: false, defaultNodeColor: '#67e8f9', defaultEdgeColor: '#67e8f955', labelDensity: 0 })
-      renderer.on('clickNode', ({ node }) => { const selected = simData.nodeMap.get(node)?.raw; if (selected) onSelect(selected) })
-      sigmaInstanceRef.current = renderer
-    }).catch(() => {
-      // jsdom/无 WebGL 环境保留可访问列表，不阻断页面和测试。
-    })
-    return () => { disposed = true; renderer?.kill(); sigmaInstanceRef.current = null }
-  }, [isMobile, onSelect, simData])
-
   // 视口复位居中
   const resetView = useCallback(() => {
-    if (!canvasRef.current) return
-    const rect = canvasRef.current.getBoundingClientRect()
-    const scale = Math.min(rect.width / simData.width, rect.height / simData.height) * 0.92
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    // 画布尚未布局（在隐藏 Tab 内 rect≈0）时跳过，交给 ResizeObserver 在真正可见后重算。
+    if (rect.width < 2 || rect.height < 2) return
+    const scale = Math.max(0.4, Math.min(1.8, Math.min(rect.width / WORLD_WIDTH, rect.height / WORLD_HEIGHT) * 0.92))
     transformRef.current = {
-      x: (rect.width - simData.width * scale) / 2,
-      y: (rect.height - simData.height * scale) / 2,
-      scale: Math.max(0.4, Math.min(1.8, scale)),
+      x: (rect.width - WORLD_WIDTH * scale) / 2,
+      y: (rect.height - WORLD_HEIGHT * scale) / 2,
+      scale,
     }
-  }, [simData.width, simData.height])
+  }, [])
 
   useEffect(() => {
+    if (isMobile) return
+    const canvas = canvasRef.current
     resetView()
-  }, [resetView])
+    if (!canvas || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => resetView())
+    observer.observe(canvas)
+    // 进入/退出全屏是 class 切换，canvas 的盒子尺寸变化不一定触发 observer，
+    // 这里补一次下一帧重算，确保全屏后节点按新视口铺开。
+    let frame = 0
+    if (typeof requestAnimationFrame === 'function') {
+      frame = requestAnimationFrame(() => resetView())
+    }
+    return () => {
+      if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame)
+      observer.disconnect()
+    }
+  }, [isMobile, isFullscreen, resetView, simData])
 
   // 物理步进计算 (Force-Directed Simulation Step)
   const stepPhysics = useCallback(() => {
@@ -266,6 +343,8 @@ export function TagGraphCanvas({
     if (!ctx) return
 
     let isRunning = true
+    // 主题 token 每次进入渲染循环时解析一次；样式表变更由 effect 依赖重建。
+    const palette = readPalette()
 
     const render = () => {
       if (!isRunning) return
@@ -294,12 +373,12 @@ export function TagGraphCanvas({
         rect.width * 0.48, rect.height * 0.42, 20,
         rect.width * 0.5, rect.height * 0.5, rect.width * 0.82
       )
-      bgGrad.addColorStop(0, '#10233a')
-      bgGrad.addColorStop(0.52, '#091421')
-      bgGrad.addColorStop(1, '#050a12')
+      bgGrad.addColorStop(0, palette.background)
+      bgGrad.addColorStop(0.52, palette.backgroundMid)
+      bgGrad.addColorStop(1, palette.backgroundOuter)
       ctx.fillStyle = bgGrad
       ctx.fillRect(0, 0, rect.width, rect.height)
-      ctx.strokeStyle = 'rgba(125, 211, 252, 0.035)'
+      ctx.strokeStyle = palette.grid
       ctx.lineWidth = 1
       for (let x = 0; x < rect.width; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, rect.height); ctx.stroke() }
       for (let y = 0; y < rect.height; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(rect.width, y); ctx.stroke() }
@@ -330,7 +409,7 @@ export function TagGraphCanvas({
           : false
         const isPathEdge = pathEdgeIds.has(edge.id)
 
-        let strokeColor = edge.layer === 'relations' ? '#c4b5fd' : '#67e8f9'
+        let strokeColor = edge.layer === 'relations' ? palette.edgeRelations : palette.edgeCooccurrence
         let lineWidth = isPathEdge ? 3.2 : Math.max(0.7, edge.weight * 1.8)
         let alpha = isPathEdge ? 0.95 : Math.max(0.08, Math.min(0.42, edge.weight * 0.52))
 
@@ -361,7 +440,7 @@ export function TagGraphCanvas({
           const py = edge.source.y + (edge.target.y - edge.source.y) * progress
 
           ctx.globalAlpha = Math.min(1.0, edge.pulseEnergy * 1.5)
-          ctx.fillStyle = '#ffffff'
+          ctx.fillStyle = palette.pulse
           ctx.beginPath()
           ctx.arc(px, py, 2.5 + Math.min(3.5, edge.pulseEnergy * 3), 0, Math.PI * 2)
           ctx.fill()
@@ -376,14 +455,13 @@ export function TagGraphCanvas({
         const isDimmed = selectedSimNode && !isNeighbor
 
         const p = paletteFor(node.raw.type)
-        let nodeAlpha = isDimmed ? 0.18 : 0.92
+        const nodeAlpha = isDimmed ? 0.18 : 0.92
 
         // 外圈光晕 (Radial Glow)
         const glowRadius = node.radius * (isSelected ? 2.4 : isHovered ? 2.0 : 1.5)
         const radGrad = ctx.createRadialGradient(node.x, node.y, node.radius * 0.3, node.x, node.y, glowRadius)
         radGrad.addColorStop(0, p.glow)
         radGrad.addColorStop(1, 'rgba(0,0,0,0)')
-
         ctx.globalAlpha = isDimmed ? 0.05 : isSelected ? 0.9 : 0.5
         ctx.fillStyle = radGrad
         ctx.beginPath()
@@ -399,7 +477,8 @@ export function TagGraphCanvas({
 
         // 选中高亮光环 (Selection Ring)
         if (isSelected || isHovered) {
-          ctx.strokeStyle = '#ffffff'
+          ctx.globalAlpha = 1
+          ctx.strokeStyle = palette.ring
           ctx.lineWidth = isSelected ? 2.5 : 1.5
           ctx.beginPath()
           ctx.arc(node.x, node.y, node.radius + 3.5, 0, Math.PI * 2)
@@ -573,15 +652,19 @@ export function TagGraphCanvas({
     <div
       ref={containerRef}
       className={cn(
-        'relative overflow-hidden rounded-2xl border border-sky-950/80 bg-[#07101b] shadow-[0_24px_80px_rgba(2,8,23,.36)] transition-all duration-300',
-        isFullscreen ? 'fixed inset-4 z-50 h-[calc(100vh-2rem)]' : 'h-[38rem] w-full'
+        // `relative` 与 `fixed` 不能同时写在 class 里：Tailwind 中 `.relative`
+        // 排在 `.fixed` 之后，会覆盖掉全屏定位。全屏时改用 fixed 分支。
+        'overflow-hidden rounded-2xl border border-sky-950/80 bg-[#07101b] shadow-[0_24px_80px_rgba(2,8,23,.36)] transition-all duration-300',
+        isFullscreen
+          ? 'fixed inset-4 z-50 h-[calc(100vh-2rem)] w-auto'
+          : 'relative h-[38rem] w-full'
       )}
       data-tag-graph-mode="neural-canvas svg"
     >
-      <div ref={sigmaRef} className="absolute inset-0 z-[1]" aria-label="Tag WebGL 关系图" />
       <canvas
         ref={canvasRef}
-        className="hidden h-full w-full cursor-grab active:cursor-grabbing"
+        className="block h-full w-full cursor-grab active:cursor-grabbing"
+        aria-label="Tag 关系图画布"
         onMouseMove={handleMouseMove}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
@@ -653,6 +736,19 @@ export function TagGraphCanvas({
         <span className="text-[11px] text-slate-400">滚轮缩放 / 拖拽平移 / 点击聚焦</span>
         {reducedMotion ? <span className="ml-2 text-amber-300">已遵循减少动态效果偏好</span> : null}
       </div>
+
+      {/* 类型图例：顺序与显隐由配置决定，只展示图中实际出现的类型 */}
+      {legend?.enabled !== false && legendItems.length > 0 ? (
+        <ul className="absolute bottom-4 right-4 flex max-w-[calc(100%-2rem)] flex-col gap-1 rounded-xl border border-sky-300/10 bg-slate-950/70 px-3 py-2 text-[11px] text-slate-300 shadow-lg backdrop-blur-xl" aria-label="节点类型图例">
+          {legendItems.map((item) => (
+            <li key={item.type} className="flex items-center gap-1.5">
+              <span className="size-2 rounded-full" style={{ backgroundColor: item.color }} aria-hidden="true" />
+              <span>{item.label}</span>
+              {legend?.show_count === false ? null : <span className="font-mono text-slate-500">{item.count}</span>}
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       {/* 供屏幕阅读器与测试环境的无障碍标签列表 */}
       <div className="sr-only" aria-label="可访问标签列表">

@@ -9,6 +9,7 @@ import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { formatDisplayNumber, formatSignedDisplayNumber } from '@/lib/format-number'
+import { humanizeApiError } from '@/lib/reason-label'
 
 const DIMENSIONS = [
   ['familiarity', '熟悉度'],
@@ -65,7 +66,7 @@ function calibrationFailureMessage(reason: unknown): string {
     relationship_evidence_invalid: '证据格式不符合服务端契约',
   }
   if (code) return `${labels[code] ?? '关系人工校准失败'}（${code}）`
-  return reason instanceof Error ? reason.message : '关系人工校准失败'
+  return humanizeApiError(reason, '关系人工校准失败')
 }
 
 export function RelationshipCalibrationPanel({ item, query, onChanged }: { item: RelationshipCalibrationTarget; query: PeopleQuery; onChanged?: () => void }) {
@@ -118,7 +119,7 @@ export function RelationshipCalibrationPanel({ item, query, onChanged }: { item:
       }
     } catch (reason: unknown) {
       if (requestId !== evidenceRequestRef.current) return
-      setEvidenceError(reason instanceof Error ? reason.message : '当前群友记忆读取失败')
+      setEvidenceError(humanizeApiError(reason, '当前群友记忆读取失败'))
       if (!append) setEvidenceMemories([])
     } finally {
       if (requestId === evidenceRequestRef.current) setEvidenceLoading(false)

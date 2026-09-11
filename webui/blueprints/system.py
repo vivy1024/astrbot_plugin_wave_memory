@@ -34,6 +34,35 @@ except Exception:  # pragma: no cover - 本地单测未安装 Quart 时直接放
 system_bp = Blueprint("system", __name__, url_prefix="/api")
 
 
+_PLUGIN_VERSION_CACHE: dict[str, str] = {}
+
+
+def _plugin_version() -> str:
+    """从 metadata.yaml 读取插件版本，供侧栏展示真实版本而不是硬编码常量。
+
+    只做一次轻量正则提取并缓存：版本号在进程生命周期内不变，
+    解析失败时返回空串，让前端回退到不显示版本，绝不编造一个版本号。
+    """
+    cached = _PLUGIN_VERSION_CACHE.get("value")
+    if cached is not None:
+        return cached
+
+    version = ""
+    try:
+        import re
+        from pathlib import Path
+
+        metadata = Path(__file__).resolve().parents[2] / "metadata.yaml"
+        match = re.search(r"^version:\s*[\"']?([^\"'\s]+)", metadata.read_text(encoding="utf-8"), re.MULTILINE)
+        if match:
+            version = match.group(1).strip()
+    except Exception:
+        version = ""
+
+    _PLUGIN_VERSION_CACHE["value"] = version
+    return version
+
+
 _CORE_SERVICE_NAMES = {
     "向量索引",
     "Tag 索引",
@@ -329,6 +358,7 @@ async def system_status():
     services_health, services_summary = classify_services_health(_get_services_health(c))
 
     return jsonify({
+        "plugin_version": _plugin_version(),
         "memories": {"total": total_mem, "with_vector": with_vec, "with_tags": tagged_memories},
         "tags": {"total": total_tags, "structured": structured_tags, "type_distribution": {r[0]: r[1] for r in type_dist}},
         "coverage": {

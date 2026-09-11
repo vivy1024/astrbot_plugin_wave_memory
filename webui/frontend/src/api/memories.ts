@@ -116,3 +116,72 @@ export async function runPostStream(path: string, subjects: number[] | MemoryRef
   if (buffer.trim()) consume(buffer)
   return last
 }
+
+// ---- 高级检索调试（只读）----
+
+export type QueryStageName = 'epa' | 'pyramid' | 'spike' | 'geodesic'
+
+export interface QueryDebugStageState {
+  enabled: boolean
+  available?: boolean
+  reason_code?: string
+  [key: string]: unknown
+}
+
+export interface QueryDebugPayload {
+  epa?: QueryDebugStageState
+  pyramid?: QueryDebugStageState
+  spike?: QueryDebugStageState
+  geodesic?: QueryDebugStageState
+  scoring?: Record<string, unknown>
+  vector_search?: Record<string, unknown>
+  highlights?: Record<string, unknown>
+  final?: { result_count?: number; ids?: unknown[]; reason_code?: string; cold?: unknown }
+  warnings?: Array<{ stage: string; reason_code: string; reason?: string }>
+  trace_meta?: { readonly?: boolean; touch?: boolean; truncated?: boolean }
+  [key: string]: unknown
+}
+
+export interface QueryDebugResultItem {
+  id?: number
+  content?: string
+  sender?: string
+  similarity?: number
+  source?: string
+  timestamp?: number
+  [key: string]: unknown
+}
+
+export interface QueryDebugResponse {
+  results: QueryDebugResultItem[]
+  timing: { embedding_ms?: number; total_ms?: number; [key: string]: unknown }
+  debug: QueryDebugPayload
+  readonly: true
+  touch: false
+}
+
+export type QueryDebugParams = Partial<Record<
+  'pyramid_max_levels' | 'pyramid_top_k' | 'spike_max_hops' | 'spike_firing_threshold' | 'geodesic_alpha',
+  number
+>>
+
+export interface QueryDebugRequest {
+  text: string
+  topK?: number
+  /** 作用域必须显式带上：服务端只从 query string / 请求头解析 Scope，不读 body。 */
+  scope: MemoryScope
+  /** 缺省表示沿用服务端配置；显式 false 才会关掉对应阶段。 */
+  stages?: Partial<Record<QueryStageName, boolean>>
+  /** 仅这 5 个键会被服务端接受，其余在 QueryOptions 白名单外会被丢弃。 */
+  params?: QueryDebugParams
+  signal?: AbortSignal
+}
+
+export function runQueryDebug(request: QueryDebugRequest): Promise<QueryDebugResponse> {
+  const { text, topK = 5, scope, stages, params, signal } = request
+  return fetchJson<QueryDebugResponse>(`/api/query?${query(scope)}`, {
+    method: 'POST',
+    body: JSON.stringify({ text, top_k: topK, stages, params, debug: true }),
+    signal,
+  })
+}

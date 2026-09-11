@@ -11,9 +11,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { humanizeApiError } from '@/lib/reason-label'
 
 function percent(value: number): string {
   return `${Math.round(Math.max(0, Math.min(1, value || 0)) * 100)}%`
+}
+
+function fixed2(value: unknown): string {
+  const num = Number(value)
+  return Number.isFinite(num) ? num.toFixed(2) : '—'
 }
 
 export interface TagGraphDetailProps {
@@ -68,7 +74,7 @@ export function TagGraphDetail({ scope, node, sourceRef, targetRef, path, pathLo
       setEditorOpen(false)
       onMutated?.()
     } catch (failure) {
-      toast.error(failure instanceof Error ? failure.message : '更新 Tag 失败')
+      toast.error(humanizeApiError(failure, '更新 Tag 失败'))
     } finally {
       setSaving(false)
     }
@@ -82,14 +88,14 @@ export function TagGraphDetail({ scope, node, sourceRef, targetRef, path, pathLo
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-lg font-semibold">{node.name}</h2>
             <Badge variant="outline">{node.type}</Badge>
-            <Button type="button" size="xs" variant="outline" className="ml-auto flex items-center gap-1" onClick={openEditor}><Edit3Icon className="size-3" />编辑</Button>
+            <Button type="button" size="xs" variant="outline" className="ml-auto flex items-center gap-1" disabled={!node.object_ref} title={node.object_ref ? '通过权威命令安全编辑当前 Tag 资料' : '缺少服务端签发的对象引用，不能编辑'} onClick={openEditor}><Edit3Icon className="size-3" />编辑</Button>
           </div>
           {node.description ? <p className="mt-2 text-sm text-muted-foreground">{node.description}</p> : null}
         </div>
-        <dl className="grid grid-cols-2 gap-2 text-sm"><div className="rounded-md border p-2"><dt className="text-xs text-muted-foreground">关联记忆</dt><dd className="mt-1 font-semibold tabular-nums">{node.memory_count}</dd></div><div className="rounded-md border p-2"><dt className="text-xs text-muted-foreground">置信度</dt><dd className="mt-1 font-semibold tabular-nums">{percent(node.confidence)}</dd></div><div className="rounded-md border p-2"><dt className="flex items-center gap-1 text-xs text-muted-foreground"><ArrowDownToLineIcon className="size-3" />入度</dt><dd className="mt-1 font-semibold tabular-nums">{node.in_degree} · {node.in_weight.toFixed(2)}</dd></div><div className="rounded-md border p-2"><dt className="flex items-center gap-1 text-xs text-muted-foreground"><ArrowUpFromLineIcon className="size-3" />出度</dt><dd className="mt-1 font-semibold tabular-nums">{node.out_degree} · {node.out_weight.toFixed(2)}</dd></div></dl>
+        <dl className="grid grid-cols-2 gap-2 text-sm"><div className="rounded-md border p-2"><dt className="text-xs text-muted-foreground">关联记忆</dt><dd className="mt-1 font-semibold tabular-nums">{node.memory_count}</dd></div><div className="rounded-md border p-2"><dt className="text-xs text-muted-foreground">置信度</dt><dd className="mt-1 font-semibold tabular-nums">{percent(node.confidence)}</dd></div><div className="rounded-md border p-2"><dt className="flex items-center gap-1 text-xs text-muted-foreground"><ArrowDownToLineIcon className="size-3" />入度</dt><dd className="mt-1 font-semibold tabular-nums">{node.in_degree} · {fixed2(node.in_weight)}</dd></div><div className="rounded-md border p-2"><dt className="flex items-center gap-1 text-xs text-muted-foreground"><ArrowUpFromLineIcon className="size-3" />出度</dt><dd className="mt-1 font-semibold tabular-nums">{node.out_degree} · {fixed2(node.out_weight)}</dd></div></dl>
         <div><p className="text-xs font-medium text-muted-foreground">来源</p><div className="mt-2 flex flex-wrap gap-2">{Object.entries(node.source_counts).map(([source, count]) => <Badge key={source} variant="outline">{source} · {count}</Badge>)}</div></div>
         <div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant={sourceRef === node.ref ? 'secondary' : 'outline'} onClick={() => onSetSource(node)}>设为起点</Button><Button type="button" size="sm" variant={targetRef === node.ref ? 'secondary' : 'outline'} onClick={() => onSetTarget(node)}>设为终点</Button></div>
-        <div><p className="flex items-center gap-1 text-xs font-medium text-muted-foreground"><DatabaseIcon className="size-3.5" />最近关联记忆</p><div className="mt-2 grid gap-2">{node.associated_memories.length ? node.associated_memories.map((memory) => <article key={memory.ref ?? memory.id} className="rounded-md border p-2"><p className="line-clamp-3 text-sm">{memory.content}</p><div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span>{memory.sender || '未知来源'} · {memory.tag_source} · 相关度 {memory.relevance.toFixed(2)}</span><ObjectDeepLink to="/memories" objectRef={memory.object_ref}>查看记忆</ObjectDeepLink></div></article>) : <p className="text-xs text-muted-foreground">当前群没有健康、已解析的关联记忆。</p>}</div></div>
+        <div><p className="flex items-center gap-1 text-xs font-medium text-muted-foreground"><DatabaseIcon className="size-3.5" />最近关联记忆</p><div className="mt-2 grid gap-2">{node.associated_memories.length ? node.associated_memories.map((memory) => <article key={memory.ref ?? memory.id} className="rounded-md border p-2"><p className="line-clamp-3 text-sm">{memory.content}</p><div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span>{memory.sender || '未知来源'} · {memory.tag_source} · 相关度 {fixed2(memory.relevance)}</span><ObjectDeepLink to="/memories" objectRef={memory.object_ref}>查看记忆</ObjectDeepLink></div></article>) : <p className="text-xs text-muted-foreground">当前群没有健康、已解析的关联记忆。</p>}</div></div>
       </>}
       <div className="border-t pt-4"><div className="flex flex-wrap items-center gap-2"><RouteIcon className="size-4 text-muted-foreground" /><span className="text-sm font-medium">标签路径</span><Button type="button" size="sm" disabled={!sourceRef || !targetRef || pathLoading} onClick={onRunPath}>查询当前可见图层</Button><Button type="button" size="sm" variant="ghost" disabled={!sourceRef && !targetRef && !path} onClick={onClearPath}>清除</Button></div><p className="mt-2 text-xs text-muted-foreground">隐藏图层不会被用来找路；路径只走有向边。</p>{pathLoading ? <p role="status" className="mt-3 text-sm">正在计算路径…</p> : path ? path.found ? <ol className="mt-3 flex flex-wrap items-center gap-2 text-sm">{path.nodes.map((item, index) => <li key={item.id} className="flex items-center gap-2"><Badge variant="secondary">{item.name}</Badge>{index < path.nodes.length - 1 ? <ArrowRightIcon className="size-3.5 text-muted-foreground" /> : null}</li>)}</ol> : <p className="mt-3 text-sm text-muted-foreground">当前可见图层内没有有向路径。</p> : null}</div>
     </CardContent>

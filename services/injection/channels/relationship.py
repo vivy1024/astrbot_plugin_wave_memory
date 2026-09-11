@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import time
 from collections.abc import Mapping
 from typing import Any
@@ -44,6 +46,64 @@ class RelationshipChannel:
         self.repository = repository
         self.db = db
 
+    async def _run_sync(self, func, *args, finish_on_cancel: bool = False, **kwargs):
+        """正式连接可跨线程；旧直连测试/外部调用保持线程绑定。"""
+        cm = getattr(self.repository, "cm", None) or getattr(self.db, "_cm", None)
+        if cm is None:
+            cm = getattr(self.db, "conn", None)
+        if not hasattr(cm, "write_transaction"):
+            return func(*args, **kwargs)
+        task = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
+        if not finish_on_cancel:
+            return await task
+        # 旧 metadata 迁移必须完整退出事务；取消请求后不留下后台写任务。
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            try:
+                await task
+            finally:
+                raise
+
+    @staticmethod
+    def _profile_metadata(db, conn, scope, sender_id, group_id) -> Mapping[str, Any]:
+        if conn is None or not sender_id or not group_id:
+            return {}
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='user_profiles'").fetchone():
+            return {}
+        params = (sender_id, group_id, scope.bot_id)
+        sql = "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?"
+        row = conn.execute(sql, params).fetchone()
+        metadata = json.loads(row[0]) if row and row[0] else {}
+        if not isinstance(metadata, Mapping):
+            raise ValueError("invalid_profile_metadata")
+        from ...impression_timeline import _TIMELINE_JSON_KEYS, migrate_and_strip_profile_metadata
+
+        if db is None or not any(key in metadata for key in _TIMELINE_JSON_KEYS):
+            return metadata
+        if getattr(db, "person_timeline", None) is None:
+            return metadata
+        transaction = getattr(conn, "write_transaction", None)
+        if not callable(transaction):
+            # 没有正式事务边界时只读 legacy 摘要，不执行半迁移。
+            return metadata
+        with transaction() as writer:
+            # 在写锁内重新取值，避免并发请求把同一 legacy 历史重复迁入。
+            row = writer.execute(sql, params).fetchone()
+            current = json.loads(row[0]) if row and row[0] else {}
+            if not isinstance(current, Mapping):
+                raise ValueError("invalid_profile_metadata")
+            cleaned = migrate_and_strip_profile_metadata(
+                db, bot_id=scope.bot_id, user_id=sender_id, group_id=group_id,
+                metadata=current, connection=writer,
+            )
+            if cleaned != current:
+                writer.execute(
+                    "UPDATE user_profiles SET metadata=? WHERE user_id=? AND group_id=? AND bot_id=?",
+                    (json.dumps(cleaned, ensure_ascii=False), *params),
+                )
+            return cleaned
+
     async def build(self, ctx: Any) -> InjectionResult:
         started = time.perf_counter()
         mode = str(getattr(ctx, "mode", "full") or "full")
@@ -58,17 +118,22 @@ class RelationshipChannel:
         if not scope.subject_principal_id or self.repository is None:
             return InjectionResult.empty(self.name, reason="relationship_subject_or_repository_unavailable")
         try:
-            state = self.repository.get_state(scope, subject_principal_id=scope.subject_principal_id, limit=25, offset=0)
+            state = await self._run_sync(
+                self.repository.get_state, scope,
+                subject_principal_id=scope.subject_principal_id, limit=25, offset=0,
+            )
             relationship = _mapping(_mapping(state).get("relationship"))
-            if relationship.get("affinity") is None:
-                return InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="relationship_unknown")
             dimensions = _mapping(relationship.get("dimensions"))
             values = _mapping(relationship.get("values"))
             history = list(_mapping(_mapping(state).get("relationship_history")).get("items") or [])
             impression_meta: Mapping[str, Any] = {}
             timeline_events: list[Any] = []
             sender_id = str(getattr(ctx, "sender_id", "") or "").strip()
-            group_id = str(getattr(ctx, "group_id", "") or getattr(scope.session, "conversation_id", "") or "").strip()
+            group_id = str(scope.session.conversation_id or "").strip()
+            if sender_id and scope.subject_principal_id != f"{scope.session.platform_id}:user:{sender_id}":
+                return InjectionResult.empty(self.name, reason="relationship_subject_mismatch")
+            if getattr(ctx, "group_id", None) and str(ctx.group_id) != group_id:
+                return InjectionResult.empty(self.name, reason="relationship_session_mismatch")
             db = self.db or getattr(self.repository, "db", None) or getattr(self.repository, "_db", None)
             timeline = getattr(db, "person_timeline", None) if db is not None else None
             if timeline is None:
@@ -84,26 +149,16 @@ class RelationshipChannel:
                     "person_timeline": timeline,
                     "conn": conn,
                 })()
-            try:
-                if sender_id and group_id and conn is not None and hasattr(conn, "execute"):
-                    import json as _json
-                    row = conn.execute(
-                        "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
-                        (sender_id, group_id, scope.bot_id),
-                    ).fetchone()
-                    if row and row[0]:
-                        loaded = _json.loads(row[0])
-                        if isinstance(loaded, Mapping):
-                            impression_meta = loaded
-            except Exception:
-                impression_meta = {}
+            impression_meta = await self._run_sync(
+                self._profile_metadata, db, conn, scope, sender_id, group_id,
+                finish_on_cancel=True,
+            )
             try:
                 from ...impression_timeline import (
                     affinity_shift_range,
                     injection_lines,
                     load_timeline_events,
                     load_unsettled_state,
-                    migrate_and_strip_profile_metadata,
                     should_trigger_affinity_transition,
                     unsettled_energy_line,
                 )
@@ -113,65 +168,49 @@ class RelationshipChannel:
                     injection_lines,
                     load_timeline_events,
                     load_unsettled_state,
-                    migrate_and_strip_profile_metadata,
                     should_trigger_affinity_transition,
                     unsettled_energy_line,
                 )
             if db is not None and sender_id and group_id:
-                try:
-                    cleaned = migrate_and_strip_profile_metadata(
-                        db,
-                        bot_id=scope.bot_id,
-                        user_id=sender_id,
-                        group_id=group_id,
-                        metadata=impression_meta,
-                        connection=conn,
-                    )
-                    if cleaned != impression_meta and conn is not None and hasattr(conn, "execute"):
-                        import json as _json
-                        conn.execute(
-                            "UPDATE user_profiles SET metadata=? WHERE user_id=? AND group_id=? AND bot_id=?",
-                            (_json.dumps(cleaned, ensure_ascii=False), sender_id, group_id, scope.bot_id),
-                        )
-                        commit = getattr(conn, "commit", None)
-                        if callable(commit):
-                            commit()
-                    impression_meta = cleaned
-                except Exception:
-                    pass
-                try:
-                    timeline_events = load_timeline_events(
-                        db,
-                        bot_id=scope.bot_id,
-                        user_id=sender_id,
-                        query=str(getattr(ctx, "message", "") or ""),
-                        limit=20,
-                        connection=conn,
-                    )
-                except Exception:
-                    timeline_events = []
+                timeline_events = await self._run_sync(
+                    load_timeline_events, db,
+                    bot_id=scope.bot_id,
+                    user_id=sender_id,
+                    query="",
+                    limit=None,
+                    connection=conn,
+                    strict=True,
+                )
             unsettled = {"energy": 0.0, "traces": []}
             if db is not None and sender_id and group_id:
-                try:
-                    unsettled = load_unsettled_state(
-                        db,
-                        bot_id=scope.bot_id,
-                        user_id=sender_id,
-                        group_id=group_id,
-                        connection=conn,
-                    )
-                except Exception:
-                    unsettled = {"energy": 0.0, "traces": []}
-            impression_block = [
-                line for line in injection_lines(
-                    impression_meta,
-                    history=history,
-                    now=float(getattr(ctx, "now", 0.0) or time.time()),
-                    query=str(getattr(ctx, "message", "") or ""),
-                    events=timeline_events,
+                unsettled = await self._run_sync(
+                    load_unsettled_state,
+                    db,
+                    bot_id=scope.bot_id,
+                    user_id=sender_id,
+                    group_id=group_id,
+                    connection=conn,
                 )
-                if line and not is_identity_contamination(line)
-            ]
+            context_config = _mapping(getattr(ctx, "config", {}))
+            half_life_days = context_config.get(
+                "timeline_decay_half_life_days",
+                _mapping(context_config.get("Inject_Settings")).get("timeline_decay_half_life_days"),
+            )
+            rendered_lines = await asyncio.to_thread(
+                injection_lines, impression_meta,
+                history=history,
+                now=float(getattr(ctx, "now", 0.0) or time.time()),
+                events=timeline_events,
+                half_life_days=half_life_days,
+            )
+            impression_block: list[str] = []
+            filtered_lines: list[str] = []
+            for line in rendered_lines:
+                if line:
+                    (filtered_lines if is_identity_contamination(line) else impression_block).append(line)
+            has_timeline = any(line.startswith("印象时间线") for line in impression_block)
+            if relationship.get("affinity") is None and not impression_block:
+                return InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="relationship_unknown")
             energy_line = unsettled_energy_line(
                 impression_meta,
                 energy=float(unsettled.get("energy") or 0.0),
@@ -192,7 +231,8 @@ class RelationshipChannel:
             )
             if labels:
                 status += "；" + "、".join(labels)
-            parts.append(status)
+            if relationship.get("affinity") is not None:
+                parts.append(status)
             if not any(line.startswith("最近关系线索：") or line.startswith("印象时间线") for line in impression_block):
                 try:
                     from ...impression_timeline import meaningful_event_anchor
@@ -241,25 +281,11 @@ class RelationshipChannel:
                     "日常观感继续写 <<impression:当下观感 | impact:1-5>>，不要覆盖这句结算。"
                 )
 
-            # 优先保证裁决节点指令完整注入，不被历史冗余背景截断
-            max_total = 900
-            reserved_len = len(transition_hint) + (1 if transition_hint else 0)
-            history_budget = max(200, max_total - reserved_len)
-            kept: list[str] = []
-            used = 0
-            for part in parts:
-                extra = len(part) + (1 if kept else 0)
-                if used + extra > history_budget:
-                    break
-                kept.append(part)
-                used += extra
+            # 印象时间线全量注入：不再按 900 字符预算截断历史背景；
+            # 结算提示固定追加在末尾，保证裁决节点指令完整。
             if transition_hint:
-                kept.append(transition_hint)
-            text = "\n".join(kept) if kept else ""
-            if is_identity_contamination(text):
-                result = InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="identity_contamination")
-                result.filtered = [{"filter_reason": "identity_contamination", "filter_channel": self.name}]
-                return result
+                parts.append(transition_hint)
+            text = "\n".join(parts) if parts else ""
             revision = relationship.get("revision") or _mapping(state).get("revision") or 0
             return InjectionResult.hit(
                 self.name,
@@ -273,6 +299,8 @@ class RelationshipChannel:
                     "dedupe_key": f"relationship:{scope.bot_id}:{scope.session.id}:{scope.subject_principal_id}:{revision}",
                 }],
                 latency_ms=self._latency_ms(started),
+                preserve_full_text=has_timeline,
+                filtered=[{"filter_reason": "identity_contamination", "filter_channel": self.name} for _ in filtered_lines],
             )
         except Exception as exc:
             result = InjectionResult.error_result(self.name, exc)

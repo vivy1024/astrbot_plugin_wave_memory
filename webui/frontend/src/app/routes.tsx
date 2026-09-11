@@ -6,6 +6,7 @@ import {
   BrainCircuitIcon,
   CompassIcon,
   DatabaseIcon,
+  FlaskConicalIcon,
   DownloadIcon,
   GaugeIcon,
   GitBranchIcon,
@@ -40,6 +41,7 @@ const PeoplePage = lazy(() => import('@/pages/people/PeoplePage').then((m) => ({
 const IndexesPage = lazy(() => import('@/pages/diagnostics/IndexesPage').then((m) => ({ default: m.IndexesPage })))
 const CompatibilityPage = lazy(() => import('@/pages/review/CompatibilityPage').then((m) => ({ default: m.CompatibilityPage })))
 const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })))
+const QueryLabPage = lazy(() => import('@/pages/lab/QueryLabPage').then((m) => ({ default: m.QueryLabPage })))
 
 export type RouteGroup = 'overview' | 'data' | 'runtime' | 'cognition' | 'knowledge' | 'system'
 export interface AppRoute {
@@ -56,6 +58,7 @@ export const appRoutes: AppRoute[] = [
   { path: '/explore', title: '神经云图', description: '3D 交互式高维记忆与关系星图', group: 'overview', icon: CompassIcon, element: ExplorePage },
   { path: '/memories', title: '记忆', description: '按 Bot 和群查看、编辑记忆', group: 'data', icon: DatabaseIcon, element: MemoriesPage },
   { path: '/tags', title: '标签', description: '覆盖率、频率、类型与置信度总览', group: 'data', icon: TagsIcon, element: TagsPage },
+  { path: '/lab', title: '算法实验室', description: '同一句查询跑两组检索算法并排对比', group: 'data', icon: FlaskConicalIcon, element: QueryLabPage },
   { path: '/tags/graph', title: '标签关系图', description: '标签共现、来源与关联路径', group: 'data', icon: BrainCircuitIcon, element: TagGraphPage },
   { path: '/import', title: '导入', description: '从来源预检并导入记忆', group: 'data', icon: DownloadIcon, element: ImportPage },
   { path: '/maintenance', title: '维护任务', description: '可恢复任务、进度、日志与取消', group: 'runtime', icon: SlidersIcon, element: MaintenancePage },

@@ -11,11 +11,11 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 
-INJECTION_SUMMARY_LIMIT = 12
 AFFINITY_STEP_CAP = 2.0
 AFFINITY_HOSTILITY_STEP_CAP = 3.0
 UNSETTLED_ENERGY_FULL = 10.0
 IMPACT_CAP = 5.0
+_REAL_UNIX_TS = 1_000_000_000.0
 ALLOWED_AFFINITY_DIMENSIONS = ("trust", "fun", "depth", "hostility", "familiarity")
 DIMENSION_KEYS = ("familiarity", "trust", "fun", "depth", "hostility")
 MEANINGFUL_EVENT_TYPES = frozenset({
@@ -53,11 +53,26 @@ def _as_mapping(value: Any) -> dict[str, Any]:
 def _finite(value: Any) -> float | None:
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if number != number or number in {float("inf"), float("-inf")}:
         return None
     return number
+
+
+def normalize_timeline_half_life(value: Any = None) -> float:
+    """旧配置缺失或非法时保留 21 天默认值；bool 不是天数。"""
+    number = None if isinstance(value, bool) else _finite(value)
+    return number if number is not None and number > 0 else 21.0
+
+
+def timeline_decay_weight(item: Mapping[str, Any], *, now: float, half_life_days: Any = None) -> float | None:
+    """只计算当前印象的时间权重，不裁掉记录、不修改关系分数。"""
+    timestamp = _item_timestamp(item)
+    if timestamp <= 0 or _finite(now) is None:
+        return None
+    age_days = max(0.0, (now - timestamp) / 86400.0)
+    return 2.0 ** (-age_days / normalize_timeline_half_life(half_life_days))
 
 
 def snapshot_from_relationship(relationship: Mapping[str, Any] | None) -> dict[str, float]:
@@ -200,21 +215,56 @@ def load_timeline_events(
     db: Any,
     *,
     bot_id: str,
-    user_id: str,
+    user_id: str | None = None,
     group_id: str | None = None,
     query: str = "",
-    limit: int = 50,
+    kind: str = "",
+    limit: int | None = 50,
+    offset: int = 0,
     connection=None,
+    strict: bool = False,
 ) -> list[dict[str, Any]]:
     repo = getattr(db, "person_timeline", None)
-    if repo is None:
+    if repo is None or not hasattr(repo, "list_events"):
+        if strict:
+            raise RuntimeError("person_timeline_repository_unavailable")
         return []
     return repo.list_events(
         bot_id=bot_id,
         user_id=user_id,
         group_id=group_id,
         query=query,
+        kind=kind,
         limit=limit,
+        offset=offset,
+        connection=connection,
+        **({"strict": True} if strict else {}),
+    )
+
+
+def page_timeline_events(
+    db: Any,
+    *,
+    bot_id: str,
+    user_id: str | None = None,
+    group_id: str | None = None,
+    query: str = "",
+    kind: str = "",
+    limit: int = 50,
+    offset: int = 0,
+    connection=None,
+) -> dict[str, Any]:
+    repo = getattr(db, "person_timeline", None)
+    if repo is None or not hasattr(repo, "page_events"):
+        return {"items": [], "total": 0}
+    return repo.page_events(
+        bot_id=bot_id,
+        user_id=user_id,
+        group_id=group_id,
+        query=query,
+        kind=kind,
+        limit=limit,
+        offset=offset,
         connection=connection,
     )
 
@@ -509,22 +559,8 @@ def event_type_for_shift(dimension: str, delta: float) -> str:
 
 
 def _item_summary(item: Mapping[str, Any], *, fallback_text: str = "") -> str:
-    summary = str(item.get("summary") or "").strip()
-    if summary:
-        return summary
-    event = item.get("event") if isinstance(item.get("event"), Mapping) else {}
-    before = _finite(event.get("before_affinity"))
-    after = _finite(event.get("after_affinity"))
-    text = str(item.get("text") or fallback_text or "").strip()
-    reason = str(event.get("reason") or "").strip().replace("\n", " ")
-    if before is not None and after is not None and before != after:
-        piece = f"好感 {before:g}→{after:g}"
-        if reason:
-            piece += f"（{reason[:60]}）"
-        if text and text not in piece:
-            piece += f"：{text[:80]}"
-        return piece
-    return text
+    # 只注入记录自己的 summary；没有独立摘要就不合成、不截取详情。
+    return str(item.get("summary") or "").strip()
 
 
 def _item_detail(item: Mapping[str, Any]) -> str:
@@ -535,36 +571,53 @@ def _item_detail(item: Mapping[str, Any]) -> str:
 
 
 def _item_timestamp(item: Mapping[str, Any]) -> float:
-    for key in ("at", "updated_at", "superseded_at", "cleared_at", "ts"):
-        value = _finite(item.get(key))
-        if value is not None:
-            return value
+    # 若记录显式给出事件时间但无效，不用创建时间冒充事件发生时间。
+    for key in ("occurred_at", "at", "updated_at", "superseded_at", "cleared_at", "created_at", "ts"):
+        raw = item.get(key)
+        if raw is None or raw == "":
+            continue
+        value = None if isinstance(raw, bool) else _finite(raw)
+        if value is None or value <= 0:
+            return 0.0
+        try:
+            time.localtime(value)
+        except (OverflowError, OSError, ValueError):
+            return 0.0
+        return value
     return 0.0
 
 
-def _decay_score(item: Mapping[str, Any], *, now: float) -> float:
-    age_days = max(0.0, (now - _item_timestamp(item)) / 86400.0)
-    recency = max(0.15, 1.0 - age_days * 0.02)
-    kind = str(item.get("kind") or "").strip()
-    if not kind:
-        event = item.get("event") if isinstance(item.get("event"), Mapping) else {}
-        if _finite(event.get("before_affinity")) is not None and _finite(event.get("after_affinity")) is not None:
-            kind = "affinity"
-        else:
-            kind = "impression"
-    weight = {"affinity": 1.2, "impression": 1.0, "person_fact": 0.9}.get(kind, 1.0)
-    return recency * weight
+def _when_label(item: Mapping[str, Any], *, now: float) -> str:
+    ts = _item_timestamp(item)
+    if ts <= 0:
+        return "时间未知"
+    age_days = max(0.0, (now - ts) / 86400.0)
+    if ts > now:
+        relative = "未来时间"
+    elif age_days < 1:
+        relative = "今天"
+    elif age_days < 2:
+        relative = "昨天"
+    elif age_days < 7:
+        relative = f"{int(age_days)}天前"
+    elif age_days < 45:
+        relative = f"{max(1, int(round(age_days / 7.0)))}周前"
+    else:
+        relative = f"{max(1, int(round(age_days / 30.0)))}个月前"
+    if ts >= _REAL_UNIX_TS:
+        return f"{time.strftime('%Y-%m-%d', time.localtime(ts))}（{relative}）"
+    return relative
 
 
 def impression_timeline_lines(
     metadata: Any,
     *,
-    limit: int = INJECTION_SUMMARY_LIMIT,
     now: float | None = None,
     query: str = "",
     events: Sequence[Any] | None = None,
+    half_life_days: Any = None,
 ) -> list[str]:
-    """衰减后的摘要时间线；关键词命中则把对应 detail 提前。"""
+    """印象时间线全量注入：每条一行摘要（早→近），近事权重高，旧事只作背景。"""
     payload = _as_mapping(metadata)
     items = [item for item in (events or ()) if isinstance(item, Mapping)]
     if not items:
@@ -575,7 +628,7 @@ def impression_timeline_lines(
         if current_event or current_text:
             current = {
                 "kind": "impression",
-                "summary": _item_summary({"event": current_event, "text": current_text}, fallback_text=current_text),
+                "summary": current_text,
                 "detail": current_text,
                 "text": current_text,
                 "event": current_event,
@@ -585,49 +638,72 @@ def impression_timeline_lines(
                 items.append(current)
     if not items:
         return []
-    stamp = float(now if now is not None else time.time())
-    ranked = sorted(items, key=lambda item: _decay_score(item, now=stamp), reverse=True)
-    cap = max(1, int(limit or INJECTION_SUMMARY_LIMIT))
-    selected = ranked[:cap]
-    query_tokens = [token.casefold() for token in str(query or "").split() if len(token) >= 2]
-    if query_tokens:
-        boosted: list[Mapping[str, Any]] = []
-        for item in items:
-            blob = f"{_item_summary(item)} {_item_detail(item)}".casefold()
-            if any(token in blob for token in query_tokens) and item not in selected:
-                boosted.append(item)
-        selected = list(boosted[:3]) + [item for item in selected if item not in boosted][:cap]
-    lines = ["印象时间线（摘要，早→近；完整记录可检索）："]
-    chronological = sorted(selected, key=_item_timestamp)
-    for item in chronological:
+    stamp = _finite(now) if now is not None else time.time()
+    if stamp is None:
+        stamp = time.time()
+    half_life = normalize_timeline_half_life(half_life_days)
+    lines = [
+        f"印象时间线（全量摘要，早→近；时间权重每 {half_life:g} 天减半）：",
+        "按时间权重理解当前印象；旧事仅作历史背景，不代表近期事实，不据此改写真实关系分数。",
+        "详情按需调用 wave_memory_person_search(query_type=timeline, person=当前人物, event_id=事件编号)；"
+        "非当前群记录须显式 scope=all_groups。",
+    ]
+    header_count = len(lines)
+    # query 仅为旧调用兼容保留；自动注入不筛选历史，也不拼接详情。
+    for item in sorted(items, key=lambda row: (_item_timestamp(row), str(row.get("id") or ""))):
         summary = _item_summary(item)
         if not summary:
             continue
-        detail = _item_detail(item)
-        if query_tokens and detail and detail != summary and any(token in detail.casefold() for token in query_tokens):
-            lines.append(f"- {summary}｜{detail[:160]}")
-        else:
-            lines.append(f"- {summary}")
-    return lines if len(lines) > 1 else []
+        weight = timeline_decay_weight(item, now=stamp, half_life_days=half_life)
+        weight_text = f"{weight:.6g}" if weight is not None else "未知"
+        if weight == 0.0:
+            age_days = max(0.0, (stamp - _item_timestamp(item)) / 86400.0)
+            weight_text = f"2^(-{age_days:.6g}/{half_life:.6g})"
+        when = _when_label(item, now=stamp) or "时间未知"
+        event_id = str(item.get("id") or "")
+        identity = f"事件#{event_id} " if event_id else ""
+        group_id = str(item.get("group_id") or "").strip()
+        if group_id:
+            identity += f"来源群={group_id} "
+        # 每条一行，不删除摘要中的文字；详情保留在正式仓库供按需读取。
+        summary = summary.replace("\r\n", " / ").replace("\n", " / ").replace("\r", " / ")
+        lines.append(f"- {identity}{when} [时间权重={weight_text}] {summary}")
+    return lines if len(lines) > header_count else []
 
 
 def injection_lines(
     metadata: Any,
     *,
-    trajectory_limit: int = INJECTION_SUMMARY_LIMIT,
     history: Sequence[Any] | None = None,
     now: float | None = None,
     query: str = "",
     events: Sequence[Any] | None = None,
+    half_life_days: Any = None,
 ) -> list[str]:
     payload = _as_mapping(metadata)
-    current = current_impression_text(events, payload)
     lines: list[str] = []
-    if current:
-        lines.append(f"你对这个人的印象：{current}")
-    timeline = impression_timeline_lines(payload, limit=trajectory_limit, now=now, query=query, events=events)
+    timeline = impression_timeline_lines(
+        payload,
+        now=now,
+        query=query,
+        events=events,
+        half_life_days=half_life_days,
+    )
     if timeline:
         lines.extend(timeline)
+    current_item = next((
+        item for item in sorted(
+            (item for item in (events or ()) if isinstance(item, Mapping)),
+            key=_item_timestamp, reverse=True,
+        ) if str(item.get("kind") or "") in {"impression", "affinity"}
+    ), {"summary": payload.get("impression"), "at": payload.get("impression_updated_at")})
+    current = _item_summary(current_item)
+    if current:
+        stamp = _finite(now) if now is not None else time.time()
+        stamp = stamp if stamp is not None else time.time()
+        weight = timeline_decay_weight(current_item, now=stamp, half_life_days=half_life_days)
+        weight_text = f"{weight:.6g}" if weight is not None else "未知"
+        lines.append(f"你对这个人的印象：{current}（最近存档，{_when_label(current_item, now=stamp)}；时间权重={weight_text}，非实时判断）")
     event = payload.get("impression_event") if isinstance(payload.get("impression_event"), Mapping) else meaningful_event_anchor(history)
     formatted = _format_event(event)
     if formatted and formatted != "互动" and not timeline:
@@ -908,6 +984,7 @@ def match_timeline_cue(
                 "score": score,
                 "kind": kind,
                 "event_id": raw.get("id") or raw.get("event_id"),
+                "occurred_at": _item_timestamp(raw),
             }
     if not best or not best["summary"]:
         return None
@@ -921,9 +998,11 @@ def timeline_cue_prompt(hit: Mapping[str, Any] | None) -> str:
     summary = str(hit.get("summary") or "").strip()
     if not summary:
         return ""
+    when = _when_label(hit, now=time.time())
+    prefix = f"{when}，" if when else "此前"
     return (
-        f"【印象线索】此前与他有过：{summary}。\n"
-        "本轮提到了相关内容。若自然相关可接话；不是必须回复的指令。"
+        f"【印象线索】{prefix}与他有过：{summary}。\n"
+        "本轮提到了相关内容。若自然相关可接话；不是必须回复的指令。旧事不要当成刚发生。"
     )
 
 

@@ -37,8 +37,7 @@ from .recall_policy import RecallPolicy
 
 
 _QUERY_STAGE_NAMES = ("epa", "pyramid", "spike", "geodesic")
-# Inject path budget is ~2s for the memory channel. Embedding must fail soft
-# before remote providers sit on multi-second HTTP retries (seen ~12s).
+# Inject path warns after 1.5s, but still waits for the embedding result.
 _INJECT_EMBEDDING_TIMEOUT_SEC = 1.5
 # Upper bound for source-filtered knn fan-out. Without it a large top_k turned the
 # hot search into the dominant cost of the bounded memory channel.
@@ -681,30 +680,18 @@ class QueryEngine:
 
         embed_start = time.perf_counter()
         try:
-            query_vec = await asyncio.wait_for(
-                self.embedding.get_embedding(text),
-                timeout=_INJECT_EMBEDDING_TIMEOUT_SEC,
-            )
-        except asyncio.TimeoutError:
-            embed_ms = (time.perf_counter() - embed_start) * 1000
-            self._trace_warning(
-                collector,
-                "embedding",
-                "embedding_timeout",
-                f"Embedding timed out after {_INJECT_EMBEDDING_TIMEOUT_SEC:.1f}s",
-            )
-            self._trace_record(
-                collector,
-                "embedding",
-                {
-                    "enabled": True,
-                    "available": False,
-                    "reason_code": "embedding_timeout",
-                    "latency_ms": round(embed_ms, 1),
-                    "timeout_sec": _INJECT_EMBEDDING_TIMEOUT_SEC,
-                },
-            )
-            return []
+            embedding_task = asyncio.create_task(self.embedding.get_embedding(text))
+            try:
+                query_vec = await asyncio.wait_for(
+                    asyncio.shield(embedding_task),
+                    timeout=_INJECT_EMBEDDING_TIMEOUT_SEC,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[WaveMemory] embedding exceeded %.1fs; waiting for result without cancelling",
+                    _INJECT_EMBEDDING_TIMEOUT_SEC,
+                )
+                query_vec = await embedding_task
         except Exception as exc:
             if collector is None:
                 raise

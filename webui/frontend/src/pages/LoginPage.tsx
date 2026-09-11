@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { humanizeApiError } from '@/lib/reason-label'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -20,7 +21,7 @@ export function LoginPage() {
     try {
       await login(password)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '登录失败')
+      setError(humanizeApiError(err, '登录失败'))
     } finally {
       setPending(false)
     }

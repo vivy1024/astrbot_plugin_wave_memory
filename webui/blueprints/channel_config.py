@@ -72,7 +72,6 @@ _EDITABLE_FIELDS = ["enabled", "priority", "top_k", "max_items", "token_budget",
 _CHANNEL_DESCRIPTORS = {
     "safety": ("身份污染、近期去重与安全边界", [], "critical", None),
     "memory": ("召回当前作用域的长期记忆", ["memory_index"], "high", "/memories"),
-    "timeline": ("读取当前 SoulScope 的时间线事件", ["soul_runtime"], "medium", "/soul"),
     "facts": ("注入同作用域且证据健康的事实", ["facts_repository"], "high", "/knowledge/facts"),
     "persona": ("读取当前 Bot/会话的人格投影", ["soul_runtime"], "high", "/soul"),
     "belief": ("注入 active 且证据健康的信念", ["belief_service", "evidence_resolver"], "high", "/beliefs"),
@@ -80,7 +79,7 @@ _CHANNEL_DESCRIPTORS = {
     "fewshot": ("提供已审核且健康的 Bot 风格样例", ["fewshot_service"], "high", "/knowledge/style-examples"),
     "book_lore": ("检索已审核的 BookLore projection", ["book_lore_adapter"], "medium", "/knowledge/book-lore"),
     "fts5": ("全文原词命中（FTS5），与向量记忆分开", ["fts_memories"], "medium", "/diagnostics/indexes"),
-    "affinity": ("读取当前关系投影；未知值保持为空", ["relationship_projection"], "medium", "/people"),
+    "affinity": ("印象摘要、印象时间线与关系分数一起注入", ["relationship_projection"], "medium", "/people"),
     "soul_state": ("注入当前 Scope 的 Mood、Concern、Timeline 与 Soul 状态", ["soul_repository"], "high", "/soul"),
 }
 

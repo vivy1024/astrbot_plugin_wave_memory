@@ -225,10 +225,10 @@ def test_main_production_wiring_passes_formal_repositories_writer_and_runtime_sc
     assert "from .webui.container import get_container" in injection_source
     assert "_parse_bool_config_value(cross_group_cfg.get('cross_group_enabled'), True)" in constructor_source
     assert constructor_source.count("'cross_group_enabled': self.cross_group_enabled") == 1
-    assert injection_source.count("cross_group_enabled=self.cross_group_enabled") == 2
+    assert injection_source.count("cross_group_enabled=self.cross_group_enabled") == 1
     assert injection_source.count(
         "shared_memory_grants_enabled=self.shared_memory_grants_enabled"
-    ) == 2
+    ) == 1
     assert "config['cross_group_enabled'] = self.cross_group_enabled" in context_config_source
     assert "config['shared_memory_grants_enabled'] = self.shared_memory_grants_enabled" in context_config_source
     # 后台盲抽已整体废除：on_message 不得自动创建关切或时间锚点，

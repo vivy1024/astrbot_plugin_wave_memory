@@ -13,7 +13,7 @@ import unicodedata
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable
 
-from .channel_base import InjectionChannel, InjectionResult
+from .channel_base import InjectionChannel, InjectionResult, estimate_injection_tokens
 from .context import InjectionContext
 from .trace_store import InjectionTraceStore, runtime_scope_metadata
 from ..config.channel_config import ChannelConfigSet, channel_config_revision
@@ -89,7 +89,7 @@ class InjectionOrchestrator:
                     "message": ctx.message,
                     "final_text": final_text,
                     "total_latency_ms": total_latency_ms,
-                    "total_tokens": sum(r.tokens for r in ordered if r.status == "hit"),
+                    "total_tokens": estimate_injection_tokens(final_text),
                     "total_chars": len(final_text),
                     "status": trace_status,
                     "error": trace_error,
@@ -132,28 +132,28 @@ class InjectionOrchestrator:
         if cfg is not None:
             channel_options[name] = cfg.to_dict()
         channel_ctx = replace(ctx, channel_options=channel_options)
-        # Task wrapper: on timeout wait_for cancels the channel; embedding now
-        # has its own hard timeout and HNSW/cold run in to_thread so cancel can
-        # land at await points instead of sitting on multi-second sync work.
+        # 超时只记警告，不取消、不丢结果。通道继续跑完再注入。
         task = asyncio.create_task(channel.build(channel_ctx))
+        timed_out = False
         try:
-            result = await asyncio.wait_for(task, timeout=max(timeout_ms / 1000.0, 0.001))
+            result = await asyncio.wait_for(asyncio.shield(task), timeout=max(timeout_ms / 1000.0, 0.001))
         except asyncio.TimeoutError:
-            if not task.done():
-                task.cancel()
-                try:
-                    await task
-                except (asyncio.CancelledError, Exception):
-                    pass
-            result = InjectionResult.timeout(name, timeout_ms=timeout_ms)
+            timed_out = True
+            logger.warning(
+                "[WaveMemory] %s exceeded %sms; waiting for result without cancelling",
+                name,
+                timeout_ms,
+            )
+            try:
+                result = await task
+            except Exception as exc:
+                result = InjectionResult.error_result(name, f"timed out after {timeout_ms}ms then failed: {exc}")
         except Exception as exc:
-            if not task.done():
-                task.cancel()
-                try:
-                    await task
-                except (asyncio.CancelledError, Exception):
-                    pass
             result = InjectionResult.error_result(name, exc)
+        if timed_out and result.status == "hit":
+            warning = f"channel exceeded {timeout_ms}ms"
+            if warning not in result.warnings:
+                result.warnings.append(warning)
         result.latency_ms = round((time.perf_counter() - started) * 1000, 2)
         return result
 
@@ -190,14 +190,31 @@ class InjectionOrchestrator:
         remaining_budget = sum(
             cfg.token_budget for cfg in self.config.channels.values() if cfg.enabled and cfg.name != "safety"
         )
+        preserved = {
+            id(result) for result in results
+            if result.channel == "affinity" and result.preserve_full_text
+            and result.status == "hit" and result.text
+        }
+        preserved_channels = {result.channel for result in results if id(result) in preserved}
+        # 必保留文本独立计量；它的超额不能吞掉其他通道预算，也不能转赠配额。
+        remaining_budget -= sum(
+            cfg.token_budget for name, cfg in self.config.channels.items()
+            if cfg.enabled and name in preserved_channels
+        )
         for result in results:
             if result.status != "hit" or not result.text:
                 continue
-            if remaining_budget <= 0:
-                break
+            must_preserve = id(result) in preserved
             result_tokens = max(result.tokens, 0)
-            if result_tokens > remaining_budget:
+            if not must_preserve and (remaining_budget <= 0 or result_tokens > remaining_budget):
+                result.status = "skipped"
+                result.warnings.append("injection_budget_exceeded")
                 continue
+            cfg = self.config.channels.get(result.channel)
+            if must_preserve and result_tokens > (cfg.token_budget if cfg else 0):
+                warning = "full_timeline_exceeds_injection_budget"
+                if warning not in result.warnings:
+                    result.warnings.append(warning)
             items = [item for item in (result.items or []) if isinstance(item, dict)]
             item_keys = {str(item.get("dedupe_key")) for item in items if item.get("dedupe_key")}
             if item_keys:
@@ -221,7 +238,8 @@ class InjectionOrchestrator:
                 seen_semantic_keys.add(normalized)
                 text = result.text
             parts.append(text)
-            remaining_budget -= max(1, result_tokens if text == result.text else len(text) // 4)
+            if not must_preserve:
+                remaining_budget -= max(1, result_tokens if text == result.text else len(text) // 4)
         return "\n\n".join(parts)
 
     @staticmethod

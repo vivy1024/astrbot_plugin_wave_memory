@@ -26,6 +26,8 @@ CREATE INDEX IF NOT EXISTS idx_person_timeline_person_time
     ON person_timeline_events (bot_id, user_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_person_timeline_kind
     ON person_timeline_events (bot_id, user_id, kind, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_person_timeline_group_time
+    ON person_timeline_events (bot_id, group_id, occurred_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_person_timeline_legacy_fact
     ON person_timeline_events (bot_id, user_id, legacy_fact_id)
     WHERE legacy_fact_id IS NOT NULL;

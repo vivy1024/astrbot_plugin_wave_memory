@@ -744,6 +744,7 @@ def build_tag_graph_projection(
             "nodes": [], "edges": [], "layers": list(requested),
             "available_layers": list(TAG_GRAPH_LAYERS),
             "layer_counts": {layer: {"nodes": 0, "edges": 0} for layer in requested},
+            "tag_total": 0,
             "scope": ScopeCodec.to_dict(scope), "read_only": True, "generated_at": generated_at,
             "warnings": [{"layer": "all", "reason": "database_unavailable"}],
             "pulse": {"enabled": bool(include_pulse), "half_life_hours": float(pulse_half_life_hours)},
@@ -949,7 +950,8 @@ def build_tag_graph_projection(
         warnings.append({"layer": "all", "reason": "scoped_tags_empty_or_unavailable"})
     return {
         "nodes": nodes, "edges": edges, "layers": list(requested), "available_layers": list(TAG_GRAPH_LAYERS),
-        "layer_counts": layer_counts, "scope": ScopeCodec.to_dict(scope), "read_only": True,
+        "layer_counts": layer_counts, "tag_total": len(tag_rows),
+        "scope": ScopeCodec.to_dict(scope), "read_only": True,
         "generated_at": generated_at, "warnings": warnings,
         "pulse": {"enabled": bool(include_pulse), "half_life_hours": float(pulse_half_life_hours)},
     }

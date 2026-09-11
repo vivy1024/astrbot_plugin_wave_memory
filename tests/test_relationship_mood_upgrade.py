@@ -40,6 +40,8 @@ def test_relationship_context_contains_recent_subject_history_but_not_other_user
             mode="full",
             config={"channels": {"affinity": {"enabled": True}}},
             scope=current,
+            sender_id="u1",
+            group_id="g1",
         )
 
         result = asyncio.run(RelationshipChannel(repository=repo).build(ctx))
@@ -48,6 +50,108 @@ def test_relationship_context_contains_recent_subject_history_but_not_other_user
         assert "一起聊到深夜" in result.text
         assert "一起完成了发布" in result.text
         assert "不应泄漏给 u1" not in result.text
+    finally:
+        manager.close()
+
+
+def test_relationship_full_history_reaches_provider_request(tmp_path):
+    from engine.db.migrations.person_timeline import ensure_person_timeline_schema
+    from engine.db.person_timeline_repo import PersonTimelineRepo
+    from services.config.channel_config import apply_channel_overrides, build_default_channel_config
+    from services.injection.channel_base import InjectionResult
+    from services.injection.context import InjectionContext
+    from services.injection.orchestrator import InjectionOrchestrator
+    from services.injection.channels.relationship import RelationshipChannel
+
+    manager = ConnectionManager(str(tmp_path / "full.db"))
+    try:
+        ensure_scoped_soul_schema(manager)
+        ensure_person_timeline_schema(manager)
+        soul = ScopedSoulRepository(manager)
+        timeline = PersonTimelineRepo(manager)
+        current = scope_for("u1")
+        soul.record_relationship_event(
+            current, event_type="deep_talk", dimension="depth", delta=3, reason="一起聊到深夜",
+        )
+        now = 1_780_000_000.0
+        events = []
+        for i in range(30):
+            events.append(timeline.add_event(
+                bot_id="bot-alpha",
+                user_id="u1",
+                group_id="g1",
+                kind="impression",
+                summary=f"完整摘要{i:02d}" + "X" * 250,
+                detail=f"完整详情{i:02d}" + "Y" * 400,
+                occurred_at=now - (29 - i) * 21 * 86400,
+            ))
+        db = SimpleNamespace(person_timeline=timeline, conn=manager, closed=False)
+        config = apply_channel_overrides(
+            build_default_channel_config(runtime_mode="full"),
+            {"channels": {"affinity": {"token_budget": 1, "priority": 1}, "memory": {"token_budget": 1, "priority": 100}}},
+        )
+
+        class FakeReq:
+            def __init__(self):
+                self.extra_user_content_parts = []
+
+        class FakeTextPart:
+            def __init__(self, text):
+                self.text = text
+
+        class MemoryChannel:
+            name = "memory"
+
+            async def build(self, ctx):
+                return InjectionResult.hit("memory", "记忆占满预算")
+
+        req = FakeReq()
+        ctx = InjectionContext(
+            event="event",
+            req=req,
+            message="午饭吃什么",
+            group_id="g1",
+            sender_id="u1",
+            sender_name="用户",
+            bot_id="bot-alpha",
+            bot_profile_id="yushu",
+            scope=current,
+            mode="full",
+            config=config.to_dict(),
+            now=now,
+        )
+        result = asyncio.run(InjectionOrchestrator(
+            channels=[
+                MemoryChannel(),
+                RelationshipChannel(repository=soul, db=db),
+            ],
+            config=config,
+            text_part_factory=FakeTextPart,
+        ).run(ctx))
+        text = req.extra_user_content_parts[0].text
+        assert result.injected
+        assert "记忆占满预算" in text
+        for i, event_id in enumerate(events):
+            assert f"完整摘要{i:02d}" in text
+            assert "X" * 250 in text
+            assert f"事件#{event_id}" in text
+            assert f"完整详情{i:02d}" not in text
+        timeline_start = text.index("印象时间线")
+        assert timeline_start < text.index("完整摘要00") < text.index("完整摘要29")
+        assert text.index("完整摘要29") < text.index("你对这个人的印象：完整摘要29")
+        assert "时间权重=1" in text
+        assert "时间权重=0.5" in text
+        assert "时间权重=0.25" in text
+        unknown = SimpleNamespace(
+            mode="full",
+            config={"channels": {"affinity": {"enabled": True}}},
+            scope=scope_for("nobody"),
+            sender_id="nobody",
+            group_id="g1",
+            now=now,
+        )
+        empty = asyncio.run(RelationshipChannel(repository=soul, db=db).build(unknown))
+        assert empty.status == "empty"
     finally:
         manager.close()
 

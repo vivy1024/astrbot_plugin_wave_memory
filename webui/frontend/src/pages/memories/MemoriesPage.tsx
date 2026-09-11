@@ -41,6 +41,7 @@ import { Separator } from '@/components/ui/separator'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import { useCanonicalScopeDefault, usePaginationSearchParams } from '@/hooks/use-pagination-search-params'
+import { humanizeApiError } from '@/lib/reason-label'
 
 const SOURCES = ['live', 'chat', 'noise', 'core', 'identity_quarantine', 'evolution', 'bzz_experience', 'experience', 'lore', 'book_lore', 'oni_lore', 'bot_reply', 'fewshot']
 
@@ -238,7 +239,7 @@ export function MemoriesPage() {
       })
     } catch (reason) {
       setDeepLinkStatus(deepLinkFailureState(reason))
-      toast.error(reason instanceof Error ? reason.message : '记忆详情加载失败')
+      toast.error(humanizeApiError(reason, '记忆详情加载失败'))
     }
   }
 
@@ -328,7 +329,7 @@ export function MemoriesPage() {
       toast.success('记忆已按当前群更新')
       await load()
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : '更新失败')
+      toast.error(humanizeApiError(reason, '更新失败'))
     } finally {
       setSaving(false)
     }
@@ -344,7 +345,7 @@ export function MemoriesPage() {
       closeDetail()
       await load()
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : '删除失败')
+      toast.error(humanizeApiError(reason, '删除失败'))
     } finally {
       setSaving(false)
     }
@@ -364,7 +365,7 @@ export function MemoriesPage() {
       toast.success('服务端已确认重新向量化完成')
       await load()
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : '重新向量化失败')
+      toast.error(humanizeApiError(reason, '重新向量化失败'))
     } finally {
       setSaving(false)
     }
@@ -391,7 +392,7 @@ export function MemoriesPage() {
       setTagReason('')
       toast.success(operation === 'add' ? `已人工纳入标签“${name}”` : `已人工排除标签“${name}”`)
     } catch (failure) {
-      toast.error(failure instanceof Error ? failure.message : '标签校准失败')
+      toast.error(humanizeApiError(failure, '标签校准失败'))
     } finally {
       setSaving(false)
     }
@@ -417,7 +418,7 @@ export function MemoriesPage() {
       setTagReason('')
       toast.success('已撤销当前人工标签校准')
     } catch (failure) {
-      toast.error(failure instanceof Error ? failure.message : '撤销标签校准失败')
+      toast.error(humanizeApiError(failure, '撤销标签校准失败'))
     } finally {
       setSaving(false)
     }
@@ -450,7 +451,7 @@ export function MemoriesPage() {
         void load()
       }
     }, action === 'extract-tags' ? { payload: { extract_tags: true, tag_batch_size: tagBatchSize, tag_write_policy: tagWritePolicy } } : undefined).catch((reason) => {
-      const message = reason instanceof Error ? reason.message : '批量任务失败'
+      const message = humanizeApiError(reason, '批量任务失败')
       setStreamLog((current) => [...current, `[ERROR] ${message}`])
       toast.error(message)
     }).finally(() => setStreamRunning(false))
@@ -463,7 +464,7 @@ export function MemoriesPage() {
       await confirmAction.run()
       setConfirmAction(null)
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : '操作失败')
+      toast.error(humanizeApiError(reason, '操作失败'))
     } finally {
       setConfirmRunning(false)
     }

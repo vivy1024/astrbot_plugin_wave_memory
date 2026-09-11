@@ -1,7 +1,12 @@
+import { MemoryRouter } from 'react-router-dom'
 import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { TagsPage } from './TagsPage'
+
+function renderTags() {
+  return render(<MemoryRouter><TagsPage /></MemoryRouter>)
+}
 
 const api = vi.hoisted(() => ({ getTags: vi.fn(), getTagQuality: vi.fn(), getScopeOptions: vi.fn() }))
 let isMobile = false
@@ -47,11 +52,11 @@ describe('TagsPage', () => {
   })
 
   it('展示真实质量指标与只读 Tag 目录，不暴露未开放写操作', async () => {
-    render(<TagsPage />)
+    renderTags()
 
     expect(await screen.findByText('共同记忆')).toBeVisible()
     expect(screen.getByText('80%')).toBeVisible()
-    expect(screen.getAllByText('只读').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('此目录只读').length).toBeGreaterThan(0)
     expect(screen.getByText('语义 RAG')).toBeVisible()
     expect(screen.getByText('42 个向量 · generation 7')).toBeVisible()
     expect(screen.getByRole('option', { name: 'person' })).toBeInTheDocument()
@@ -61,7 +66,7 @@ describe('TagsPage', () => {
 
   it('窄屏使用完整语义卡片而不是裁切桌面表格', async () => {
     isMobile = true
-    const { container } = render(<TagsPage />)
+    const { container } = renderTags()
 
     expect(await screen.findByText('共同记忆')).toBeVisible()
     expect(container.querySelector('[data-mode="cards"]')).toBeInTheDocument()

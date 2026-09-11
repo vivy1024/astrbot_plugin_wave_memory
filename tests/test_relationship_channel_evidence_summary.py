@@ -132,9 +132,11 @@ def test_channel_puts_impression_before_status_and_skips_message_seen_noise():
     )
     result = asyncio.run(ch.build(ctx))
     assert result.status == "hit"
-    assert result.text.startswith("你对这个人的印象：愿意核对事实")
+    assert result.text.startswith("印象时间线")
+    assert "你对这个人的印象：愿意核对事实" in result.text
     assert "印象时间线" in result.text
-    assert "好感 5→12" in result.text
+    assert "愿意核对事实" in result.text
+    assert "好感 5→12" not in result.text
     assert "看见一条群友消息" not in result.text
     assert result.text.index("你对这个人的印象") < result.text.index("综合值=12")
 

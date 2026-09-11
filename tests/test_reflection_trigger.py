@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from domain.scope import RuntimeScope, SessionRef
@@ -20,14 +21,27 @@ def group_scope() -> RuntimeScope:
 
 
 class _FakeConn:
-    def __init__(self, fail_person_unsettled: bool = False) -> None:
+    """模拟真实 person_unsettled_state：观感文本存在 traces JSON 数组里。
+
+    真实表结构没有 text 列（列为 bot_id/user_id/group_id/energy/
+    interaction_count/traces/updated_at）。这里按真实 schema 返回 traces，
+    以便 SQL 写错列名时测试能直接失败。
+    """
+
+    def __init__(self, fail_person_unsettled: bool = False, traces: str | None = None) -> None:
         self.fail_person_unsettled = fail_person_unsettled
+        self.traces = traces if traces is not None else json.dumps(
+            [{"text": "他看起来很累", "summary": "他看起来很累", "impact": 1.0, "ts": 1.0}]
+        )
 
     def execute(self, sql, params=()):
         if "person_unsettled_state" in sql:
             if self.fail_person_unsettled:
                 raise RuntimeError("db down")
-            return SimpleNamespace(fetchall=lambda: [("他看起来很累",)])
+            # 真实表没有 text 列：查它必须报错，否则说明代码写错了列名。
+            if "text" in sql and "traces" not in sql:
+                raise RuntimeError("no such column: text")
+            return SimpleNamespace(fetchall=lambda: [(self.traces,)])
         if "experience_episodes" in sql:
             return SimpleNamespace(fetchall=lambda: [])
         return SimpleNamespace(fetchall=lambda: [])
@@ -172,3 +186,67 @@ def test_outcome_log_fields_are_serialisable():
     outcome = service.collect(scope=group_scope(), message="小明还在考研吗", sender_id="u1")
     payload = json.dumps(outcome.to_log_fields(), ensure_ascii=False)
     assert STRATEGY_VERSION in payload
+
+# ---- 回归：person_unsettled_state 真实 schema 与工具名暴露 ----
+
+def test_unsettled_reads_traces_column_not_text():
+    """真实表没有 text 列；查错列名会让该源降级并拖垮整条反思链路。"""
+    service = ReflectionTriggerService(_db(), cooldown_seconds=0)
+    outcome = service.collect(scope=group_scope(), message="小明还在考研吗", sender_id="u1")
+    assert outcome.triggered is True, outcome.skip_reason
+    assert outcome.dependency_failures == []
+    assert outcome.candidate_counts.get("unsettled") == 1
+    assert "他看起来很累" in outcome.prompt
+
+
+def test_unsettled_parses_traces_json_array():
+    """traces 是 JSON 数组，要解析出里面的 text 字段。"""
+    traces = json.dumps([
+        {"text": "搬知乎暴论的诸葛匹夫", "summary": "x", "impact": 1.0, "ts": 1.0},
+        {"text": "被误会后急忙撇清的诸葛匹夫", "summary": "y", "impact": 1.0, "ts": 2.0},
+    ])
+    service = ReflectionTriggerService(_db(conn=_FakeConn(traces=traces)), cooldown_seconds=0)
+    outcome = service.collect(scope=group_scope(), message="诸葛匹夫又来了", sender_id="u1")
+    assert outcome.triggered is True
+    assert "搬知乎暴论的诸葛匹夫" in outcome.prompt
+    assert "被误会后急忙撇清的诸葛匹夫" in outcome.prompt
+
+
+def test_unsettled_bad_json_degrades_only_that_row():
+    """单行坏数据只跳过该行，不能把整个源判为失败。"""
+    service = ReflectionTriggerService(_db(conn=_FakeConn(traces="{not json")), cooldown_seconds=0)
+    outcome = service.collect(scope=group_scope(), message="小明还在考研吗", sender_id="u1")
+    # 该源没有候选，但也不应记为 dependency_failure
+    assert "unsettled" not in [item["source"] for item in outcome.dependency_failures]
+
+
+def test_prompt_exposes_exact_tool_names():
+    """提示必须写出确切工具名，模型才能在多个 wave_memory_* 工具中选对。"""
+    service = ReflectionTriggerService(_db(), cooldown_seconds=0)
+    prompt = service.build_prompt(scope=group_scope(), message="小明还在考研吗", sender_id="u1")
+    for tool in (
+        "wave_memory_propose_fact",
+        "wave_memory_propose_belief",
+        "wave_memory_mark_cultural_moment",
+        "wave_memory_note_social_anchor",
+    ):
+        assert tool in prompt, tool
+
+
+def test_exposed_tool_names_actually_exist():
+    """提示里写的工具名必须真实存在于 tools/，避免改名后提示漂移。"""
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parents[1]
+    declared = set()
+    for path in (root / "tools").glob("*.py"):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            marker = 'name: str = "wave_memory'
+            if marker in line:
+                declared.add(line.split('"')[1])
+    service = ReflectionTriggerService(_db(), cooldown_seconds=0)
+    prompt = service.build_prompt(scope=group_scope(), message="小明还在考研吗", sender_id="u1")
+    mentioned = {token for token in declared if token in prompt}
+    assert mentioned, "提示至少应写出一部分真实工具名"
+    for name in mentioned:
+        assert name in declared

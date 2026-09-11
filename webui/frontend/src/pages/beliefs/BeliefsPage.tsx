@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
+import { humanizeApiError, humanizeReason } from '@/lib/reason-label'
 
 import {
   approveBelief,
@@ -163,15 +164,17 @@ function BeliefDetails({ item, mutating, onTransition }: { item: BeliefItem; mut
   return <div className="flex flex-col gap-6">
     <section className="flex flex-col gap-2"><div className="flex flex-wrap gap-2"><Badge className={typeClass(item.type)}>{TYPE_LABELS[item.type]}</Badge><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge><Badge variant={item.gating?.decision === 'quarantine' ? 'destructive' : 'outline'}>{gatingLabel(item.gating?.decision)}</Badge></div><p className="text-base leading-7 text-foreground">{item.content}</p>{item.anchor_sentence ? <blockquote className="rounded-r-lg border-l-2 border-primary bg-primary/5 px-4 py-3 text-muted-foreground">“{item.anchor_sentence}”</blockquote> : null}</section>
     <section className="flex flex-col gap-3"><div className="flex items-center justify-between gap-3"><h3 className="font-medium">证据支持分量</h3><Badge variant="outline">综合 {confidenceText(item.confidence)}</Badge></div><ConfidenceComponents item={item} /><ConfidenceEvidenceSummary item={item} /></section>
-    <section className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-medium">关系门禁</h3><span className="text-xs text-muted-foreground">{item.gating?.policy_version ?? '未记录策略版本'}</span></div><div className="flex flex-wrap gap-2 text-xs"><Badge variant="outline">trust {item.gating?.trust == null ? '未知' : Math.round(item.gating.trust)}</Badge><Badge variant="outline">hostility {item.gating?.hostility == null ? '未知' : Math.round(item.gating.hostility)}</Badge><Badge variant="outline">参与者 {item.gating?.subjects?.length ?? 0}</Badge>{item.gating?.review_required ? <Badge variant="secondary">需要人工复核</Badge> : <Badge variant="secondary">跳过人工复核</Badge>}</div><p className="text-sm text-muted-foreground">高信任仅表示可以跳过人工复核；进入 active 仍必须满足 evidence-v1 的支持窗口、置信度、标签链和证据要求。{item.gating?.reason_code ? ` 当前原因：${item.gating.reason_code}` : ''}</p></section>
+    <section className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-medium">关系门禁</h3><span className="text-xs text-muted-foreground">策略版本 {item.gating?.policy_version ?? '未记录'}</span></div><div className="flex flex-wrap gap-2 text-xs"><Badge variant="outline">信任度 {item.gating?.trust == null ? '未知' : Math.round(item.gating.trust)}</Badge><Badge variant="outline">敌意 {item.gating?.hostility == null ? '未知' : Math.round(item.gating.hostility)}</Badge><Badge variant="outline">参与者 {item.gating?.subjects?.length ?? 0}</Badge>{item.gating?.review_required ? <Badge variant="secondary">需要人工复核</Badge> : <Badge variant="secondary">跳过人工复核</Badge>}</div><p className="text-sm text-muted-foreground">高信任仅表示可以跳过人工复核；进入激活状态仍必须满足证据支持窗口、置信度、标签链和证据要求。{item.gating?.reason_code ? ` 当前原因：${humanizeReason(item.gating.reason_code, '未提供原因')}` : ''}</p></section>
     <section className="flex flex-col gap-3"><div className="flex items-center justify-between gap-3"><h3 className="font-medium">证据卡</h3><span className="text-sm text-muted-foreground">{item.evidence.length} 条</span></div><EvidenceCards item={item} /></section>
     {item.quarantine_reason ? <Alert variant="destructive"><AlertTitle>当前处于隔离状态</AlertTitle><AlertDescription>{item.quarantine_reason}</AlertDescription></Alert> : null}
-    <div className="flex flex-wrap gap-2 border-t pt-4"><Button disabled={mutating || !item.actions.approve.available} onClick={() => onTransition('approve')}><CheckIcon data-icon="inline-start" />通过并激活</Button><Button variant="outline" disabled={mutating || !item.actions.archive.available} onClick={() => onTransition('archive')}><ArchiveIcon data-icon="inline-start" />归档</Button>{!item.actions.approve.available ? <span className="self-center text-sm text-muted-foreground">无法通过：{item.actions.approve.reason_code ?? '当前状态不允许'}</span> : null}</div>
+    <div className="flex flex-wrap gap-2 border-t pt-4"><Button disabled={mutating || !item.actions.approve.available} onClick={() => onTransition('approve')}><CheckIcon data-icon="inline-start" />通过并激活</Button><Button variant="outline" disabled={mutating || !item.actions.archive.available} onClick={() => onTransition('archive')}><ArchiveIcon data-icon="inline-start" />归档</Button>{!item.actions.approve.available ? <span className="self-center text-sm text-muted-foreground">无法通过：{humanizeReason(item.actions.approve.reason_code, '当前状态不允许')}</span> : null}</div>
     <details className="rounded-lg border bg-muted/20 p-3"><summary className="cursor-pointer font-medium">技术字段与完整证据引用</summary><div className="mt-4 flex flex-col gap-4"><dl className="grid gap-3 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">信念键</dt><dd className="break-all font-mono">{item.belief_key}</dd></div><div><dt className="text-muted-foreground">修订版本</dt><dd className="font-mono">{item.revision}</dd></div><div><dt className="text-muted-foreground">置信策略</dt><dd className="break-all font-mono">{item.confidence_policy_version ?? '未记录'}</dd></div><div><dt className="text-muted-foreground">当前群</dt><dd className="break-all font-mono">{item.bot_id} · {item.session_id}</dd></div></dl><EvidenceList evidence={item.evidence} />{item.object_ref ? <ObjectDeepLink to="/beliefs" objectRef={item.object_ref}>复制可复现跳转链接</ObjectDeepLink> : null}<details className="rounded-md border bg-background p-3"><summary className="cursor-pointer text-sm">查看置信分量 JSON</summary><pre className="mt-3 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(item.confidence_components ?? {}, null, 2)}</pre></details></div></details>
   </div>
 }
 
 function BeliefEvidenceDialog({ item, scope, onOpenChange }: { item: BeliefItem | null; scope: ScopedSelection | null; onOpenChange: (open: boolean) => void }) {
+  // 序号守卫：切换选中的信念时旧响应可能后到，避免详情串到另一条信念上。
+  const detailRequest = useRef(0)
   const [payload, setPayload] = useState<BeliefEvidencePayload | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -181,17 +184,21 @@ function BeliefEvidenceDialog({ item, scope, onOpenChange }: { item: BeliefItem 
 
   const load = useCallback(async () => {
     if (!item || !scope) return
+    // 切换选中的信念时旧响应可能后到，用序号丢弃，避免详情串到另一条信念上。
+    const request = ++detailRequest.current
     setLoading(true)
     setError('')
     try {
       const next = await getBeliefEvidence(item, scope, before, after)
+      if (request !== detailRequest.current) return
       setPayload(next)
       setTab(next.relationship_events.length ? 'relationship_event' : next.episodes.length ? 'episode' : 'memory')
     } catch (reason) {
+      if (request !== detailRequest.current) return
       setPayload(null)
-      setError(reason instanceof Error ? reason.message : '信念证据读取失败')
+      setError(humanizeApiError(reason, '信念证据读取失败'))
     } finally {
-      setLoading(false)
+      if (request === detailRequest.current) setLoading(false)
     }
   }, [after, before, item, scope])
 
@@ -317,7 +324,7 @@ export function BeliefsPage() {
       toast.success(action === 'approve' ? '信念已通过证据门并激活' : '信念已归档')
       await load()
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : '信念状态变更失败')
+      toast.error(humanizeApiError(reason, '信念状态变更失败'))
     } finally {
       setMutating(null)
     }
@@ -334,7 +341,7 @@ export function BeliefsPage() {
       toast.success(action === 'approve' ? `已批量激活 ${result.transitioned_count} 条信念` : `已批量归档 ${result.transitioned_count} 条信念`)
       await load()
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : '批量生命周期变更失败')
+      toast.error(humanizeApiError(reason, '批量生命周期变更失败'))
     } finally {
       setBatchMutating(false)
     }
@@ -384,7 +391,7 @@ export function BeliefsPage() {
           variant="outline"
           size="sm"
           disabled
-          title={payload?.capabilities.create?.reason_code ?? '带证据的新建命令尚未开放'}
+          title={humanizeReason(payload?.capabilities.create?.reason_code, '带证据的新建命令尚未开放')}
         >
           <PlusIcon data-icon="inline-start" />
           新增信念
@@ -462,7 +469,7 @@ export function BeliefsPage() {
           selectedCount={selectedItems.length}
           disabled={batchMutating || !batchAvailable}
           onClear={() => setSelectedIds([])}
-          extra={!payload?.capabilities.select_all_matching?.available ? `跨页全部匹配暂不可用：${payload?.capabilities.select_all_matching?.reason_code ?? '需要服务端重新签发整批引用'}` : undefined}
+          extra={!payload?.capabilities.select_all_matching?.available ? `跨页全部匹配暂不可用：${humanizeReason(payload?.capabilities.select_all_matching?.reason_code, '需要服务端重新签发整批引用')}` : undefined}
         >
           <Button
             type="button"
@@ -488,7 +495,7 @@ export function BeliefsPage() {
             size="sm"
             variant="destructive"
             disabled
-            title={payload?.capabilities.physical_delete?.reason_code ?? '物理删除禁用'}
+            title={humanizeReason(payload?.capabilities.physical_delete?.reason_code, '物理删除禁用')}
           >
             <Trash2Icon data-icon="inline-start" />
             批量物理删除
@@ -571,7 +578,7 @@ export function BeliefsPage() {
                               className="size-6"
                               aria-label={`通过信念 ${item.id}`}
                               disabled={mutating === item.id || !item.actions.approve.available}
-                              title={item.actions.approve.reason_code ?? '通过并激活'}
+                              title={humanizeReason(item.actions.approve.reason_code, '通过并激活')}
                               onClick={() => void transition(item, 'approve')}
                             >
                               <CheckIcon className="size-3" />
@@ -584,7 +591,7 @@ export function BeliefsPage() {
                             className="size-6"
                             aria-label={`归档信念 ${item.id}`}
                             disabled={mutating === item.id || !item.actions.archive.available}
-                            title={item.actions.archive.reason_code ?? '归档'}
+                            title={humanizeReason(item.actions.archive.reason_code, '归档')}
                             onClick={() => void transition(item, 'archive')}
                           >
                             <ArchiveIcon className="size-3" />

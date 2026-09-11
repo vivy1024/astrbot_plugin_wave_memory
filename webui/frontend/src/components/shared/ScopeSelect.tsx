@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrig
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import type { ScopeOption, ScopeOptionKind } from './types'
+import { humanizeApiError } from '@/lib/reason-label'
 
 const KIND_LABELS: Record<ScopeOptionKind, string> = {
   bot: 'Bot',
@@ -56,7 +57,7 @@ export function ScopeSelect({
       .catch((reason: unknown) => {
         if (controller.signal.aborted) return
         setOptions([])
-        setError(reason instanceof Error ? reason.message : '作用域选项加载失败')
+        setError(humanizeApiError(reason, '作用域选项加载失败'))
         setStatus('error')
       })
     return () => controller.abort()

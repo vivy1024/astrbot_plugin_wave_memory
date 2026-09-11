@@ -87,7 +87,7 @@ describe('TagGraphPage', () => {
     expect(await screen.findByLabelText('标签关系图移动端列表')).toBeVisible()
     expect(view.container.querySelector('[data-tag-graph-mode="list"]')).toBeInTheDocument()
     expect(view.container.querySelector('[data-tag-graph-mode="svg"]')).not.toBeInTheDocument()
-    expect(api.getTagGraph).toHaveBeenCalledWith(graph.scope, expect.objectContaining({ maxNodes: 120 }))
+    expect(api.getTagGraph).toHaveBeenCalledWith(graph.scope, expect.objectContaining({ maxNodes: 200 }))
   })
 
   it('prefers-reduced-motion 下不创建脉冲动画元素', async () => {

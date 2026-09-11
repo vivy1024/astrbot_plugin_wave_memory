@@ -5,6 +5,7 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/u
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
+import { humanizeApiError } from '@/lib/reason-label'
 
 export type QueryStatus = 'loading' | 'error' | 'empty' | 'unknown' | 'success'
 
@@ -13,6 +14,8 @@ export interface QueryStateProps {
   children?: ReactNode
   title?: string
   description?: string
+  emptyTitle?: string
+  emptyDescription?: string
   error?: unknown
   onRetry?: () => void
   loadingRows?: number
@@ -20,9 +23,7 @@ export interface QueryStateProps {
 }
 
 function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message
-  if (typeof error === 'string') return error
-  return '请求失败，服务端没有返回可读错误信息。'
+  return humanizeApiError(error, '请求失败，服务端没有返回可读错误信息。')
 }
 
 export function QueryState({
@@ -30,6 +31,8 @@ export function QueryState({
   children,
   title,
   description,
+  emptyTitle,
+  emptyDescription,
   error,
   onRetry,
   loadingRows = 3,
@@ -47,11 +50,23 @@ export function QueryState({
   }
 
   if (status === 'error') {
+    // error 与 description 同时存在时两者都要显示：description 是固定说明，
+    // 真实失败原因不能被它顶掉，否则用户永远看不到服务端返回了什么。
+    const hasError = error !== undefined && error !== null
+    const failure = hasError ? errorMessage(error) : ''
+    const note = description && description !== failure ? description : ''
+    const detail = failure || note ? [failure, note].filter(Boolean) : [errorMessage(error)]
     return (
       <Alert data-slot="query-state" variant="destructive" className={className}>
         <AlertCircleIcon />
         <AlertTitle>{title ?? '加载失败'}</AlertTitle>
-        <AlertDescription>{description ?? errorMessage(error)}</AlertDescription>
+        <AlertDescription>
+          {detail.map((line, index) => (
+            <span key={index} className={index > 0 ? 'text-muted-foreground' : undefined}>
+              {index > 0 ? ' ' : null}{line}
+            </span>
+          ))}
+        </AlertDescription>
         {onRetry ? (
           <AlertAction>
             <Button type="button" variant="outline" size="sm" onClick={onRetry}>
@@ -78,10 +93,10 @@ export function QueryState({
   }
 
   return (
-    <Alert className={className}>
+    <Alert data-slot="query-state" className={className}>
       <InboxIcon />
-      <AlertTitle>{title ?? '当前真实为空'}</AlertTitle>
-      <AlertDescription>{description ?? '当前筛选与授权作用域内没有记录，未使用演示数据填充。'}</AlertDescription>
+      <AlertTitle>{emptyTitle ?? '当前真实为空'}</AlertTitle>
+      <AlertDescription>{emptyDescription ?? description ?? '当前筛选与授权作用域内没有记录，未使用演示数据填充。'}</AlertDescription>
     </Alert>
   )
 }

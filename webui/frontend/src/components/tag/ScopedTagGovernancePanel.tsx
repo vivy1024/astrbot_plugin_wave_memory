@@ -24,12 +24,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { humanizeApiError } from '@/lib/reason-label'
 
 const actionLabels: Record<GovernanceAction, string> = { merge: '合并', retype: '重分类', alias: '增加别名', deactivate: '停用' }
 
-export function ScopedTagGovernancePanel() {
-  const [botId, setBotId] = useState('')
-  const [sessionId, setSessionId] = useState('')
+export function ScopedTagGovernancePanel({ initialScope }: { initialScope?: ScopedGovernanceScope | null } = {}) {
+  const [botId, setBotId] = useState(initialScope?.bot_id ?? '')
+  const [sessionId, setSessionId] = useState(initialScope?.session_id ?? '')
   const [options, setOptions] = useState<{ bot: Array<{ value: string; label: string }>; sessions: Array<{ value: string; label: string; description?: string; botId: string }> }>({ bot: [], sessions: [] })
   const scope = useMemo<ScopedGovernanceScope | null>(() => botId && sessionId ? { bot_id: botId, session_id: sessionId, visibility: 'group' } : null, [botId, sessionId])
   const [tags, setTags] = useState<ScopedTagItem[]>([])
@@ -45,15 +46,27 @@ export function ScopedTagGovernancePanel() {
   const [previews, setPreviews] = useState<Record<string, GovernancePreview>>({})
   const [busy, setBusy] = useState(false)
 
+  // 继承页面作用域：别处带 bot/session 跳进来时预填，用户仍可在此改选。
+  useEffect(() => {
+    if (initialScope?.bot_id) setBotId(initialScope.bot_id)
+    if (initialScope?.session_id) setSessionId(initialScope.session_id)
+  }, [initialScope?.bot_id, initialScope?.session_id])
+
   const loadOptions = useCallback(async () => {
     const payload = await getScopeOptions()
     const bots = scopeOptionsFor(payload, ['bot']).map((item) => ({ value: item.value, label: item.label }))
     const sessions = payload.sessions.map((item) => ({ value: item.id, label: item.label || item.conversation_id, description: `${item.bot_id} · ${item.kind}`, botId: item.bot_id }))
     setOptions({ bot: bots, sessions })
-    if (!botId && bots[0]) setBotId(bots[0].value)
-    const firstSession = sessions.find((item) => item.botId === (botId || bots[0]?.value))
-    if (!sessionId && firstSession) setSessionId(firstSession.value)
-  }, [botId, sessionId])
+    // 已有继承或已选作用域时不再自动挑第一个 Bot，避免覆盖用户/来路选择。
+    const hasScopedEntry = Boolean(initialScope?.bot_id)
+    setBotId((current) => current || (!hasScopedEntry && bots[0] ? bots[0].value : ''))
+    setSessionId((current) => {
+      if (current) return current
+      const ownerBot = hasScopedEntry ? initialScope?.bot_id : bots[0]?.value
+      const firstSession = sessions.find((item) => item.botId === ownerBot)
+      return !hasScopedEntry && firstSession ? firstSession.value : ''
+    })
+  }, [initialScope?.bot_id, initialScope?.session_id])
 
   const load = useCallback(async () => {
     if (!scope) return
@@ -69,7 +82,7 @@ export function ScopedTagGovernancePanel() {
       setApprovedSuggestions(approvedPayload.items)
       setPreviews({})
     } catch (failure) {
-      toast.error(failure instanceof Error ? failure.message : '当前群标签治理数据加载失败')
+      toast.error(humanizeApiError(failure, '当前群标签治理数据加载失败'))
     } finally {
       setLoading(false)
     }
@@ -97,7 +110,7 @@ export function ScopedTagGovernancePanel() {
       setTargetRef('')
       await load()
     } catch (failure) {
-      toast.error(failure instanceof Error ? failure.message : '治理建议创建失败')
+      toast.error(humanizeApiError(failure, '治理建议创建失败'))
     } finally {
       setBusy(false)
     }
@@ -109,21 +122,28 @@ export function ScopedTagGovernancePanel() {
       const next = await previewScopedTagSuggestion(scope, item.ref, item.revision)
       setPreviews((current) => ({ ...current, [item.ref]: next }))
     } catch (failure) {
-      toast.error(failure instanceof Error ? failure.message : '治理预检失败')
+      toast.error(humanizeApiError(failure, '治理预检失败'))
     }
+  }
+
+  function askReason(title: string, minLength: number): string | null {
+    const entered = window.prompt(title)?.trim() ?? ''
+    if (!entered) return null
+    if (entered.length < minLength) { toast.warning(`理由至少 ${minLength} 个字`); return null }
+    return entered
   }
 
   async function resolve(item: ScopedTagSuggestion, decision: 'approve' | 'reject') {
     if (!scope || !previews[item.ref]) { toast.warning('请先完成该建议的预检'); return }
-    if (!reason.trim()) { toast.warning('请填写审核理由'); return }
+    const approvalReason = askReason(decision === 'approve' ? '批准并应用该建议的理由（会写入审计）' : '拒绝该建议的理由（会写入审计）', 4)
+    if (approvalReason === null) return
     setBusy(true)
     try {
-      await resolveScopedTagSuggestion(scope, { suggestion_ref: item.ref, revision: item.revision, decision, preflight_token: previews[item.ref].preflight_token, reason: reason.trim() })
+      await resolveScopedTagSuggestion(scope, { suggestion_ref: item.ref, revision: item.revision, decision, preflight_token: previews[item.ref].preflight_token, reason: approvalReason })
       toast.success(decision === 'approve' ? '治理建议已批准并应用' : '治理建议已拒绝')
-      setReason('')
       await load()
     } catch (failure) {
-      toast.error(failure instanceof Error ? failure.message : '治理建议处理失败')
+      toast.error(humanizeApiError(failure, '治理建议处理失败'))
     } finally {
       setBusy(false)
     }
@@ -131,15 +151,15 @@ export function ScopedTagGovernancePanel() {
 
   async function compensate(item: ScopedTagSuggestion) {
     if (!scope) return
-    if (!reason.trim()) { toast.warning('请填写补偿理由'); return }
+    const compensateReason = askReason('申请补偿（撤销该已批准治理）的理由（会写入审计，不删除原记录）', 4)
+    if (compensateReason === null) return
     setBusy(true)
     try {
-      await compensateScopedTagSuggestion(scope, { suggestion_ref: item.ref, revision: item.revision, reason: reason.trim() })
+      await compensateScopedTagSuggestion(scope, { suggestion_ref: item.ref, revision: item.revision, reason: compensateReason })
       toast.success('治理补偿已提交并记录审计')
-      setReason('')
       await load()
     } catch (failure) {
-      toast.error(failure instanceof Error ? failure.message : '治理补偿失败')
+      toast.error(humanizeApiError(failure, '治理补偿失败'))
     } finally {
       setBusy(false)
     }
@@ -153,7 +173,7 @@ export function ScopedTagGovernancePanel() {
       setPreviews(Object.fromEntries(entries))
       toast.success(`已完成当前页 ${entries.length} 条建议的全量预检`)
     } catch (failure) {
-      toast.error(failure instanceof Error ? failure.message : '批量预检失败；没有提交任何审批')
+      toast.error(humanizeApiError(failure, '批量预检失败；没有提交任何审批'))
     } finally {
       setBusy(false)
     }
@@ -161,15 +181,15 @@ export function ScopedTagGovernancePanel() {
 
   async function resolveAll(decision: 'approve' | 'reject') {
     if (!scope || suggestions.some((item) => !previews[item.ref])) { toast.warning('请先完成当前页全部预检'); return }
-    if (!reason.trim()) { toast.warning('请填写批量审核理由'); return }
+    const batchReason = askReason(decision === 'approve' ? `批量批准 ${suggestions.length} 条建议的理由（会写入审计）` : `批量拒绝 ${suggestions.length} 条建议的理由（会写入审计）`, 4)
+    if (batchReason === null) return
     setBusy(true)
     try {
-      await resolveScopedTagSuggestionBatch(scope, suggestions.map((item) => ({ suggestion_ref: item.ref, revision: item.revision, preflight_token: previews[item.ref].preflight_token })), decision, reason.trim())
+      await resolveScopedTagSuggestionBatch(scope, suggestions.map((item) => ({ suggestion_ref: item.ref, revision: item.revision, preflight_token: previews[item.ref].preflight_token })), decision, batchReason)
       toast.success(decision === 'approve' ? '当前页建议已全量批准并应用' : '当前页建议已全量拒绝')
-      setReason('')
       await load()
     } catch (failure) {
-      toast.error(failure instanceof Error ? failure.message : '批量审批失败；服务端已保证全量校验')
+      toast.error(humanizeApiError(failure, '批量审批失败；服务端已保证全量校验'))
     } finally {
       setBusy(false)
     }

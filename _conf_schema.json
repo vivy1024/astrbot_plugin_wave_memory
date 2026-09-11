@@ -45,13 +45,13 @@
     "restart_required": true
   },
   "WebUI_Settings": {
-    "description": "WebUI 管理控制台配置",
-    "hint": "Wave Memory 现代可视管理台运行端口与密码",
+    "description": "管理控制台",
+    "hint": "本控制台自身的开关与端口",
     "type": "object",
     "items": {
       "webui_enabled": {
-        "description": "启用 WebUI 控制台",
-        "hint": "开启后将可以通过浏览器在 9876 端口访问极简 3D 神经控制台",
+        "description": "启用管理控制台",
+        "hint": "关闭后无法访问本控制台及其接口。",
         "type": "bool",
         "default": true,
         "restart_required": true
@@ -79,13 +79,13 @@
     }
   },
   "Runtime_Settings": {
-    "description": "整机运行能力边界",
-    "hint": "定义 WaveMemory 功能装载级别，防与其他自学习插件冲突",
+    "description": "整机运行能力",
+    "hint": "整机层面的能力边界",
     "type": "object",
     "items": {
       "runtime_mode": {
         "description": "系统运行级别",
-        "hint": "full: 激活完整 3D 知识图谱、信念和主动记忆注入能力；memory_only: 纯记忆数据库，不启用高级认知提炼；compat_only: 仅作为 LivingMemory 第三方兼容接口后端，不执行原生主动注入，避免和 SelfLearning / ChatPlus 等同类插件在同一轮聊天中产生重复注入的尴尬现象。",
+        "hint": "full: 激活完整知识图谱、信念与主动记忆注入能力；memory_only: 纯记忆数据库，不启用高级认知提炼；compat_only: 仅作为第三方兼容接口后端，不执行原生主动注入，避免和 SelfLearning / ChatPlus 等同类插件在同一轮聊天中重复注入。",
         "type": "string",
         "default": "full",
         "restart_required": true
@@ -93,8 +93,8 @@
     }
   },
   "Compatibility_Settings": {
-    "description": "第三方插件生态兼容模式",
-    "hint": "针对已有旧记忆风格生态的别名工具适配",
+    "description": "插件兼容模式",
+    "hint": "与其他记忆插件共存的方式",
     "type": "object",
     "items": {
       "livingmemory_alias_tools_enabled": {
@@ -114,8 +114,8 @@
     }
   },
   "Trace_Settings": {
-    "description": "注入观察台 Trace 存储上限",
-    "hint": "控制注入 Trace 的修剪天数与数据库体积",
+    "description": "观测数据留存",
+    "hint": "注入观测台保留多少条运行记录",
     "type": "object",
     "items": {
       "retention_days": {
@@ -142,8 +142,8 @@
     }
   },
   "Storage_Settings": {
-    "description": "数据库 canonical 存储容量（与热 HNSW 分离）",
-    "hint": "控制 SQLite 主库的软上限策略。达到上限后默认不删除历史，只对普通 chat 新写入做冷落库（不写向量）；core/知识类仍保留向量。热索引容量请改 Memory_Index_Settings.hot_max_vectors。",
+    "description": "记忆存储容量",
+    "hint": "数据库能保存多少记忆，以及是否给总量设软上限",
     "type": "object",
     "items": {
       "max_memories": {
@@ -154,8 +154,8 @@
         "restart_required": true
       },
       "canonical_capacity_enabled": {
-        "description": "启用 canonical 软上限",
-        "hint": "关闭后恢复旧行为：新写入始终尝试带向量落库（仅受热 HNSW 策略约束）。显式 false 不会被默认 true 覆盖。",
+        "description": "启用记忆总量软上限",
+        "hint": "关闭后新记忆会一直尝试带向量入库，只受热索引容量约束。显式关闭不会被默认值覆盖。",
         "type": "bool",
         "default": true,
         "restart_required": true
@@ -177,8 +177,8 @@
     }
   },
   "Memory_Budget_Settings": {
-    "description": "常驻内存预算（统一约束所有常驻向量索引）",
-    "hint": "hnswlib 按容量上限预分配常驻内存，因此仅降低重建频率无法限制稳态占用。选择预算档位后，热记忆、Tag Catalog 与 BookLore 三个索引的容量会被自动收敛到预算内；预算只会下调过大的显式配置，不会上调。预算针对进程常驻内存（RSS/anon），不包含可回收的文件缓存。",
+    "description": "内存占用预算",
+    "hint": "常驻内存的总上限，防止占满机器",
     "type": "object",
     "items": {
       "memory_profile": {
@@ -186,7 +186,11 @@
         "hint": "unbounded 保持历史显式容量不变；balanced_3g 面向容器常驻低于约 3GiB；strict_2g 面向低于约 2GiB，会显著降低 BookLore 常驻量并更多依赖冷召回。修改后需重启。",
         "type": "string",
         "default": "unbounded",
-        "options": ["unbounded", "balanced_3g", "strict_2g"],
+        "options": [
+          "unbounded",
+          "balanced_3g",
+          "strict_2g"
+        ],
         "restart_required": true
       },
       "memory_budget_mb": {
@@ -213,34 +217,34 @@
     }
   },
   "Memory_Index_Settings": {
-    "description": "Tag 驱动的热记忆索引与冷召回",
-    "hint": "HNSW 仅保留受限热记忆；未入热层的正式记忆仍可通过 Scope、Tag 和 FTS5 冷召回。修改容量后重启会排队重建索引。",
+    "description": "记忆检索索引",
+    "hint": "决定记忆能被搜到多快、多准，以及热冷如何分流",
     "type": "object",
     "items": {
       "hot_max_vectors": {
-        "description": "热记忆 HNSW 最大向量数",
-        "hint": "硬上限。hnswlib 按该上限预分配常驻内存，不是按实际条数，因此设得远高于真实热集会白占内存。达到上限时新候选保留在冷层并等待受控重建，绝不自动扩容。",
+        "description": "热记忆最大条数",
+        "hint": "常驻内存按这个上限预留，而不是按实际条数，因此设得过高会白白占用内存。达到上限后新记忆留在冷层等待重建，不会自动扩容。",
         "type": "int",
         "default": 40000,
         "restart_required": true
       },
       "enforce_scope_hot_quota": {
-        "description": "启用单个 Scope 热记忆配额",
-        "hint": "默认关闭：有效记忆会持续增量加入热 HNSW，直到全局硬上限。开启后才使用下方的单 Scope 上限，用于需要严格公平分配的场景。",
+        "description": "启用单个群的热记忆配额",
+        "hint": "默认关闭：记忆会持续进入热索引直到全局上限。开启后才使用下方的单群上限，适合需要严格平均分配的场景。",
         "type": "bool",
         "default": false,
         "restart_required": true
       },
       "per_scope_max_vectors": {
-        "description": "单个 Scope 的热记忆上限（可选）",
-        "hint": "仅在“启用单个 Scope 热记忆配额”打开时生效；关闭时 Scope 仍用于访问隔离和检索过滤，不限制热索引增量写入。",
+        "description": "单个群的热记忆上限",
+        "hint": "仅在上一项开启时生效。关闭时群仍用于访问隔离与检索过滤，但不限制热索引写入。",
         "type": "int",
         "default": 1000,
         "restart_required": true
       },
       "scoped_reserved_vectors": {
-        "description": "正式 Scope 热索引保留量",
-        "hint": "Tag 是语义层，Scope 是访问边界。保留给正式 Scope 的热向量数量，剩余容量由 legacy_group 与未入选正式记忆按全局排序竞争；可设为 0。",
+        "description": "为正式群保留的热记忆量",
+        "hint": "预留给正式群的热记忆条数，剩余容量由历史群与未入选记忆按优先级竞争，可设为 0。",
         "type": "int",
         "default": 10000,
         "restart_required": true
@@ -260,22 +264,22 @@
         "restart_required": true
       },
       "cold_recall_enabled": {
-        "description": "启用 Tag 驱动冷召回",
-        "hint": "关闭后仅使用热 HNSW；显式关闭会保留，不会被默认值覆盖。修改后重启生效。",
+        "description": "启用标签驱动的冷记忆召回",
+        "hint": "关闭后只搜索热记忆，冷层内容不会被召回。显式关闭会保留，不会被默认值覆盖。修改后需重启生效。",
         "type": "bool",
         "default": true,
         "restart_required": true
       },
       "tag_index_max_vectors": {
-        "description": "正式 Tag Catalog HNSW 硬上限",
-        "hint": "正式 Catalog 的独立硬上限，不等同于热记忆数量；超出容量的 Catalog 向量仍留在数据库，但不常驻 HNSW、也不会自动扩容。旧 tags 不使用此标签空间。",
+        "description": "标签索引最大条数",
+        "hint": "标签索引的独立上限，与热记忆条数是两回事。超出部分的标签仍保存在数据库中，但不参与快速检索，也不会自动扩容。",
         "type": "int",
         "default": 40000,
         "restart_required": true
       },
       "generation_retention": {
-        "description": "HNSW generation 保留数量",
-        "hint": "每次成功校验并发布 manifest 后保留的 generation 数量。默认 1 只保留当前已验证 generation，尽快回收旧文件并降低常驻/磁盘占用；设为 2 会额外保留一个可回滚 generation，但会多占约一份索引体积。最小值为 1。",
+        "description": "索引历史版本保留数量",
+        "hint": "每次校验通过后保留几个旧版本。默认 1 只留当前版本，最省内存和磁盘；设为 2 会多留一个可回滚版本，但多占约一份索引体积。最小为 1。",
         "type": "int",
         "default": 1,
         "restart_required": true
@@ -283,22 +287,36 @@
     }
   },
   "Inject_Settings": {
-    "description": "注入通道窗口控制",
-    "hint": "Timeline 保持 token 与条数预算；时间窗口仅决定是否截断历史。",
+    "description": "回复注入",
+    "hint": "注入内容的篇幅与时间窗口",
     "type": "object",
     "items": {
       "timeline_days": {
-        "description": "Timeline 历史窗口（天）",
-        "hint": "0 表示全历史；大于 0 时只读取最近 N 天。timeline_max 和 token 预算仍会限制实际注入量。",
+        "description": "历史时间窗（天，兼容保留）",
+        "hint": "独立群事件 timeline 通道已移除；本字段仅为旧配置兼容保留，当前无通道读取。0 表示全历史。",
         "type": "int",
         "default": 0,
+        "restart_required": false
+      },
+      "timeline_decay_half_life_days": {
+        "description": "印象时间线指数权重半衰期（天）",
+        "hint": "默认 21 天。权重按 2^(-经过天数/半衰期) 计算，只影响印象摘要的时间权重，不删除历史记录、不截断条数、不衰减关系分数。填写非正数或非法值时会回退到默认 21 天。",
+        "type": "float",
+        "default": 21,
+        "restart_required": false
+      },
+      "soul_timeline_max_items": {
+        "description": "Bot 经历日记时间线注入条数",
+        "hint": "在 Soul 状态通道中注入当前群经历日记与成长时间线的条数（默认 3 条）。",
+        "type": "int",
+        "default": 3,
         "restart_required": false
       }
     }
   },
   "Query_Settings": {
-    "description": "自适应记忆召回参数",
-    "hint": "调整大模型生成回复前，历史记忆在后台检索和整合的控制参数",
+    "description": "记忆召回",
+    "hint": "Bot 回复时自动带上哪些记忆、带多少条",
     "type": "object",
     "items": {
       "enable_auto_inject": {
@@ -309,8 +327,8 @@
         "obvious_hint": true
       },
       "inject_top_k": {
-        "description": "单次最大记忆注入条数",
-        "hint": "召回记忆片段数量上限（推荐 5 条，支持 1~20 条。过大可能撑爆大模型 token 视窗并引发幻觉）",
+        "description": "单次最多注入几条记忆",
+        "hint": "推荐 5 条，可填 1~20 条。设得过大可能撑满大模型的上下文长度并引发幻觉。",
         "type": "int",
         "default": 5
       },
@@ -359,8 +377,8 @@
     }
   },
   "Cross_Group_Settings": {
-    "description": "广域跨群记忆漫游",
-    "hint": "跨群好感度与记忆贯通规则",
+    "description": "跨群共享",
+    "hint": "记忆与画像是否跨群生效，以及授权范围",
     "type": "object",
     "items": {
       "cross_group_enabled": {
@@ -370,8 +388,8 @@
         "default": true
       },
       "shared_memory_grants_enabled": {
-        "description": "开启共享记忆只读授权（grant）扩展召回",
-        "hint": "默认关闭。开启后 QueryEngine 可按 shared_memory_grants 表中的 active 授权，窄扩展跨 Scope 只读候选；绝不 touch 外群、绝不物理 fanout 复制 memories。与 cross_group_enabled 全量跨群不同：grant 是精确授权列表。生产写入 grant 前请先跑 same-bot pilot。",
+        "description": "启用共享记忆只读授权",
+        "hint": "默认关闭。开启后可按指定授权列表额外召回少量其他群的记忆，只读、不会改动对方数据，也不会复制记忆。与「全量跨群共享」不同：这是精确到条目的授权，每次召回都留痕。",
         "type": "bool",
         "default": false
       },
@@ -384,8 +402,8 @@
     }
   },
   "Lifecycle_Settings": {
-    "description": "心智与心境灵魂系统",
-    "hint": "信念演进、情绪、生理生物钟心境和记忆自省整合参数",
+    "description": "心智与情绪",
+    "hint": "Bot 的心情、关切、作息等内在状态",
     "type": "object",
     "items": {
       "enable_persona_evolution": {
@@ -497,8 +515,8 @@
     }
   },
   "Message_Filter": {
-    "description": "无意义闲聊消息清洗过滤器",
-    "hint": "控制哪些群消息不被无意义地写入记忆库，保护特征空间不被污染",
+    "description": "闲聊过滤",
+    "hint": "先过滤掉无意义消息，避免污染记忆",
     "type": "object",
     "items": {
       "min_message_length": {
@@ -534,13 +552,13 @@
     }
   },
   "Tag_Settings": {
-    "description": "自省标签（Tag）提取参数",
-    "hint": "控制 AI 异步提取标签时的批量大小与屏蔽设置",
+    "description": "标签与分类",
+    "hint": "从聊天中自动提炼标签，以及标签图谱的图例展示",
     "type": "object",
     "items": {
       "tag_extraction_enabled": {
         "description": "启用标签特征分析",
-        "hint": "关闭后将不再对聊天提炼标签，无法使用 3D 神经云图、同好社区共现和 EPA 重排能力。推荐开启。",
+        "hint": "关闭后不再从聊天提炼标签，神经云图、同好社区共现与自省投影修正都会失效。推荐开启。",
         "type": "bool",
         "default": true
       },
@@ -573,12 +591,30 @@
         "hint": "逗号分隔。摘要话题回写到知识库时自动过滤包含这些无意义闲聊词汇的条目（默认已过滤：日常灌水、闲聊等）",
         "type": "string",
         "default": "日常闲聊,日常灌水,闲聊,灌水,群聊,聊天,日常"
+      },
+      "graph_legend_enabled": {
+        "description": "显示标签图谱图例",
+        "hint": "关闭后标签图谱左上角不再显示图例与节点计数。图谱本身不受影响。",
+        "type": "bool",
+        "default": true
+      },
+      "graph_legend_types": {
+        "description": "图例展示的标签类型与顺序",
+        "hint": "逗号分隔，按填写顺序展示。可选：keyword（关键词）、entity（实体）、topic（话题）、emotion（情绪）、fact（事实）、jargon（黑话）、default（其他）。留空表示展示图谱中实际出现的全部类型。",
+        "type": "string",
+        "default": "keyword,entity,topic,emotion,fact,jargon,default"
+      },
+      "graph_legend_show_count": {
+        "description": "图例显示节点数量",
+        "hint": "在图例中每个类型后显示该类型的节点个数。",
+        "type": "bool",
+        "default": true
       }
     }
   },
   "MetaThinking_Settings": {
-    "description": "对话规则过滤与防骚扰",
-    "hint": "MetaThinking 内心判断层：@bot/引用/连续对话允许回复，刷屏/极端攻击按规则拦截。",
+    "description": "对话规则",
+    "hint": "全局发言规则与防骚扰策略",
     "type": "object",
     "items": {
       "enabled": {
@@ -623,8 +659,8 @@
     }
   },
   "MetaThinking_Bot1": {
-    "description": "Bot 1 配置",
-    "hint": "羽书身份与行为配置。若已在 WebUI 配过，请以当前保存值为准；默认值仅用于新安装/缺键兜底。",
+    "description": "对话规则 · Bot 1",
+    "hint": "仅对 Bot 1 生效的覆盖配置",
     "type": "object",
     "items": {
       "qq_id": {
@@ -694,8 +730,8 @@
     }
   },
   "MetaThinking_Bot2": {
-    "description": "Bot 2 配置",
-    "hint": "白真真身份与行为配置。一个未排除 source 的 Bot 会作为经历/自省/信念等灵魂子系统所有者。",
+    "description": "对话规则 · Bot 2",
+    "hint": "仅对 Bot 2 生效的覆盖配置",
     "type": "object",
     "items": {
       "qq_id": {
@@ -764,8 +800,8 @@
     }
   },
   "Eviction_Settings": {
-    "description": "记忆淘汰与降级策略配置",
-    "hint": "控制噪声记忆 TTL 与冷热分层淘汰参数",
+    "description": "记忆淘汰",
+    "hint": "记忆过多时按什么规则降级或清理",
     "type": "object",
     "items": {
       "enabled": {
@@ -786,8 +822,8 @@
     }
   },
   "Jargon_Settings": {
-    "description": "黑话挖掘与自省系统配置",
-    "hint": "群黑话统计挖掘与阈值配置",
+    "description": "黑话与口癖",
+    "hint": "群内黑话的发现与使用",
     "type": "object",
     "items": {
       "enabled": {
@@ -818,8 +854,8 @@
     }
   },
   "FewShot_Settings": {
-    "description": "Few-Shot 风格学习配置",
-    "hint": "回复风格样例库注入配置",
+    "description": "风格示范",
+    "hint": "用已审核的回复范例影响说话风格",
     "type": "object",
     "items": {
       "enabled": {
@@ -835,8 +871,8 @@
     }
   },
   "Study_Settings": {
-    "description": "自省与自主学习配置",
-    "hint": "控制自省系统与学习源配置",
+    "description": "自主学习",
+    "hint": "沉淀对话经验的开关与频率",
     "type": "object",
     "items": {
       "self_reflect_enabled": {

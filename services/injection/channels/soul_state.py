@@ -30,6 +30,15 @@ def _as_bool(value: Any, default: bool = True) -> bool:
     return bool(value)
 
 
+def _as_int(value: Any, default: int) -> int:
+    try:
+        if value is None or value == "":
+            return default
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
 def _channel_cfg(ctx: Any) -> Mapping[str, Any]:
     config = _mapping(getattr(ctx, "config", {}))
     return _mapping(_mapping(config.get("channels", {})).get("soul_state", {}))
@@ -69,8 +78,10 @@ class SoulStateChannel:
                     + (f"（原因：{str(mood.get('cause'))[:80]}）" if mood.get("cause") else "")
                 )
             # 关切不再常驻注入：本轮是否惦记由 MetaThinking × 印象时间线线索决定。
+            inject_cfg = _mapping(getattr(ctx, "config", {})).get("Inject_Settings", {}) or {}
+            soul_timeline_max = _as_int(inject_cfg.get("soul_timeline_max_items"), 3)
             recent_timeline = []
-            for item in timeline[:2]:
+            for item in timeline[:max(1, soul_timeline_max)]:
                 if not isinstance(item, Mapping):
                     continue
                 summary = str(item.get("event_summary") or "").strip()[:100]

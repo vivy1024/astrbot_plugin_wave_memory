@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { EvidenceList } from '@/components/shared'
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import { formatDisplayNumber } from '@/lib/format-number'
+import { humanizeApiError } from '@/lib/reason-label'
 
 export const RELATIONSHIP_DIMENSIONS = [
   ['familiarity', '熟悉度'],
@@ -193,7 +194,7 @@ export function RelationshipTrajectoryCard({
       .catch((reason: unknown) => {
         if (!active) return
         setHistory([])
-        setError(reason instanceof Error ? reason.message : '关系历史读取失败')
+        setError(humanizeApiError(reason, '关系历史读取失败'))
       })
       .finally(() => {
         if (active) setLoading(false)

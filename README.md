@@ -68,7 +68,7 @@ v5 起，事实 / 黑话 / 信念 / 风格不再靠后台定时盲抽，而是�
 
 | 版本 | 日期 | 重点 |
 |------|------|------|
-| **v5.0.0** | 2026-09-06 | 现场提审取代后台盲抽：印象积攒→反思调工具；事实带原话；信念二审需 ≥2 条已审事实；关切不再截词 |
+| **v5.0.0** | 2026-09-09 | 现场提审取代后台盲抽 + Bot 亲笔日记；修复反思引导 SQL 列名 bug 导致的整条提审链路静默瘫痪（提示实际未送达），并在引导中写明确切工具名；WebUI 全量中文脱敏、配置页功能分组折叠、新增算法实验室对比页、标签图谱恢复深空彩色 |
 | **v4.7.2** | 2026-08-29 | 中文管理台与心智自省：人物历史关系审计、表格/筛选重构、去掉后端黑话 |
 | **v4.7.1** | 2026-08-06 | 稳定性修复与好感度平滑：发送前拦截清洗印象标记防泄露、WriteCoordinator死锁与共现循环防御、关系衰减优化、向量索引恢复 Inline Resize |
 | **v4.7.0** | 2026-07-26 | 瘦身重构 + 3D 增强：清理学习中心空壳(−11K行)、CDN 本地化、力导向聚类、节点降噪、经历/时间锚点/Outbox 新页面 |
@@ -262,10 +262,14 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 | 总览 | 健康状态、待办、近期异常 |
 | 神经云图 | 3D 记忆与关系图，先选 Bot 和群 |
 | 记忆 / 标签 / 导入 | 按群查看和编辑记忆、打标签、从来源预检导入 |
+| 标签关系图 | 标签共现与显式关系图谱；图例类型与顺序可在系统配置里调 |
+| 算法实验室 | 同一句查询跑两组检索算法配置，并排看命中差异与阶段降级 |
 | 维护任务 / 注入观测台 / 通道配置 | 后台任务、一次回复用了哪些通道、通道开关与预算 |
 | 信念 / 黑话与口癖 / 心智状态 | 审核信念和黑话，看心情、关切、时间线、好感 |
 | 书设定 / 经历 / 风格样例 / 事实 / 人物 | 只读或审核知识对象，人物页可筛好感和校准关系 |
 | 索引诊断 / 生态兼容 / 系统配置 | 检索索引健康、和其他记忆插件共存、默认值与生效值 |
+
+**系统配置页**按功能分组折叠（记忆召回 / 心智与情绪 / 标签与分类…），常用组默认展开，搜索时自动展开命中分组。每个字段标注真实生效方式：热生效 / 保存即生效 / 重启生效；侧栏显示从 `metadata.yaml` 读取的插件版本。
 
 开发命令：
 
@@ -299,6 +303,11 @@ cd webui/frontend && npm run build
 | wave_memory_record_social_impression | 记录主观印象并在动态范围内裁决好感 | full，群 Scope |
 | wave_memory_note_social_anchor | 人情借还 / 承诺 / 越界备忘，可挂未了往来 | full，群 Scope |
 | wave_memory_mark_cultural_moment | 提审本群黑话或高光回复（style 进审查队列） | full，群 Scope |
+| wave_memory_note_concern | 管理 Bot 内部关切状态 | full，群 Scope |
+| wave_memory_note_episode | 记录群经历片段 | full，群 Scope |
+| wave_memory_record_diary_episode | Bot 亲笔日记，钉入经历时间线 | full，群 Scope |
+| wave_memory_browse_recent_chat | 浏览群聊近期流水（配合 Cron 主动回顾） | full，群 Scope |
+| wave_memory_affinity_update | 按上限调整好感维度 | full，群 Scope |
 | wave_memory_propose_fact | 提审客观事实，必填原话 | full，群 Scope |
 | wave_memory_propose_belief | 提审稳定判断，须 ≥2 条已审事实 | full，群 Scope |
 | wave_memory_submit_review_candidate | 提交 memory/fact/belief/style/jargon 候选 | pending_review，不自动提升 |

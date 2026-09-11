@@ -29,6 +29,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { usePaginationSearchParams } from '@/hooks/use-pagination-search-params'
 import { MaintainPage } from '@/pages/maintain/MaintainPage'
 import { OutboxMonitorCard } from '@/components/maintenance/OutboxMonitorCard'
+import { humanizeApiError, humanizeReason } from '@/lib/reason-label'
 
 const activeStatuses = new Set(['pending', 'queued', 'running'])
 
@@ -279,7 +280,7 @@ export function MaintenancePage() {
       toast.info('取消请求已提交；请以任务最终状态为准。')
       void loadJobs()
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : '取消请求失败')
+      toast.error(humanizeApiError(reason, '取消请求失败'))
     }
   }
 
@@ -312,11 +313,11 @@ export function MaintenancePage() {
             <JobProgress job={detail} />
             <div className="grid gap-3 md:grid-cols-3">
               <div className="rounded-lg border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">当前阶段</p><p className="mt-1 font-medium">{checkpointError ? 'Checkpoint 不可用' : typeof checkpoint?.checkpoint?.phase === 'string' ? checkpoint.checkpoint.phase : activeStatuses.has(detail.status) ? '等待 checkpoint' : statusLabel(detail.status)}</p></div>
-              <div className="rounded-lg border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">错误状态</p><p className="mt-1 font-medium">{detail.error_code ?? '无错误'}</p></div>
+              <div className="rounded-lg border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">错误状态</p><p className="mt-1 font-medium">{detail.error_code ? humanizeReason(detail.error_code, '任务失败') : '无错误'}</p></div>
               <div className="rounded-lg border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">checkpoint 更新时间</p><p className="mt-1 font-medium">{checkpointError ? '不可用' : formatTime(checkpoint?.updated_at)}</p></div>
             </div>
-            {checkpointError ? <AlertBox message={`Checkpoint 读取失败：${checkpointError instanceof Error ? checkpointError.message : '未知错误'}。任务核心状态仍可查看。`} /> : null}
-            <div><h3 className="mb-2 text-sm font-semibold">任务日志</h3>{logsError ? <div className="mb-2"><AlertBox message={`任务日志读取失败：${logsError instanceof Error ? logsError.message : '未知错误'}。任务核心状态仍可查看。`} /></div> : null}<div className="max-h-64 overflow-auto rounded-lg border bg-muted/20 p-3 font-mono text-xs">{logsError ? <p className="text-muted-foreground">日志当前不可用。</p> : logs.length ? logs.map((log, index) => <div key={`${log.at}-${log.event}-${index}`} className={log.level === 'error' ? 'text-destructive' : 'text-muted-foreground'}>[{formatTime(log.at)}] {logLabel(log.event)}{dataSummary(log.data) ? ` · ${dataSummary(log.data)}` : ''}</div>) : <p className="text-muted-foreground">当前没有任务日志。</p>}</div></div>
+            {checkpointError ? <AlertBox message={`Checkpoint 读取失败：${humanizeApiError(checkpointError, '未知错误')}。任务核心状态仍可查看。`} /> : null}
+            <div><h3 className="mb-2 text-sm font-semibold">任务日志</h3>{logsError ? <div className="mb-2"><AlertBox message={`任务日志读取失败：${humanizeApiError(logsError, '未知错误')}。任务核心状态仍可查看。`} /></div> : null}<div className="max-h-64 overflow-auto rounded-lg border bg-muted/20 p-3 font-mono text-xs">{logsError ? <p className="text-muted-foreground">日志当前不可用。</p> : logs.length ? logs.map((log, index) => <div key={`${log.at}-${log.event}-${index}`} className={log.level === 'error' ? 'text-destructive' : 'text-muted-foreground'}>[{formatTime(log.at)}] {logLabel(log.event)}{dataSummary(log.data) ? ` · ${dataSummary(log.data)}` : ''}</div>) : <p className="text-muted-foreground">当前没有任务日志。</p>}</div></div>
             {detail.error_message ? <AlertBox message={detail.error_message} /> : null}
             <div className="flex flex-wrap items-center justify-between gap-3"><details className="rounded-md border p-3 text-xs text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">技术详情</summary><div className="mt-2 font-mono">job_id: {detail.run_id}<br />request_id: {detail.request_id}<br />checkpoint source: {checkpoint?.source ?? '未记录'}</div></details><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={detailLoading} onClick={() => setDetailVersion((value) => value + 1)}><RefreshCwIcon />刷新详情</Button><Button variant="destructive" disabled={!activeStatuses.has(detail.status)} onClick={() => void cancel()}><BanIcon />请求取消</Button></div></div>
           </CardContent>

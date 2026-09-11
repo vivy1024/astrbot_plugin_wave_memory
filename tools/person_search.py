@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import field
 from typing import Any
@@ -18,10 +19,12 @@ from astrbot.core.astr_agent_context import AstrAgentContext
 
 try:
     from ..domain.scope import RuntimeScope
+    from ..engine.db.connection import ConnectionManager
     from .person_identity import display_name_for_user, resolve_user_id
     from .scope_boundary import require_group_runtime_scope, scope_error_message
 except ImportError:  # pragma: no cover - direct tools imports in isolated tests
     from domain.scope import RuntimeScope
+    from engine.db.connection import ConnectionManager
     from tools.person_identity import display_name_for_user, resolve_user_id
     from tools.scope_boundary import require_group_runtime_scope, scope_error_message
 
@@ -59,7 +62,9 @@ class WaveMemoryPersonSearchTool(FunctionTool[AstrAgentContext]):
     description: str = (
         "按人物搜索记忆。支持 QQ 号或昵称；昵称会先解析为 QQ，再按 QQ 精确查询。"
         "默认只查当前群；需要看此人在其它群的发言时设 scope=all_groups。"
-        "query_type: recent=最近发言, about=被提及/关于此人, social=常互动对象, profile=人物画像。"
+        "query_type: recent=最近发言, about=被提及/关于此人, social=常互动对象, profile=人物画像, "
+        "timeline=人物时间线完整摘要与详情。timeline 可用 query 搜索关键词或旧事实编号，"
+        "event_id 精确查询时间线编号，offset 分页；所有查询仍受当前 Bot/人物/群范围限制。"
     )
     parameters: dict = field(default_factory=lambda: {
         "type": "object",
@@ -70,8 +75,8 @@ class WaveMemoryPersonSearchTool(FunctionTool[AstrAgentContext]):
             },
             "query_type": {
                 "type": "string",
-                "enum": ["recent", "about", "social", "profile"],
-                "description": "查询类型：recent/about/social/profile",
+                "enum": ["recent", "about", "social", "profile", "timeline"],
+                "description": "查询类型：recent/about/social/profile/timeline（完整人物时间线）",
                 "default": "recent",
             },
             "scope": {
@@ -92,6 +97,22 @@ class WaveMemoryPersonSearchTool(FunctionTool[AstrAgentContext]):
                 "type": "integer",
                 "description": "返回数量，默认 8",
                 "default": 8,
+            },
+            "query": {
+                "type": "string",
+                "description": "仅 timeline：搜索关键词或旧事实编号；空字符串查询全部",
+                "default": "",
+            },
+            "event_id": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "仅 timeline：精确时间线事件编号（不是旧事实编号），不绕过作用域限制",
+            },
+            "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "仅 timeline：分页起点，继续查询时使用返回的 next_offset",
+                "default": 0,
             },
         },
         "required": ["person"],
@@ -122,6 +143,26 @@ class WaveMemoryPersonSearchTool(FunctionTool[AstrAgentContext]):
 
         if not self.db:
             return "记忆数据库未初始化"
+        if query_type == "timeline":
+            # Do not reopen/bootstrap storage on this read-only path. Production
+            # connections support workers; legacy sqlite fixtures are thread-bound.
+            try:
+                connection = getattr(self.db, "conn", None)
+                manager = getattr(connection, "_mgr", connection)
+                arguments = {
+                    "cross_group": search_scope == "all_groups",
+                    "query": kwargs.get("query", ""),
+                    "event_id": kwargs.get("event_id"),
+                    "offset": kwargs.get("offset", 0),
+                }
+                if isinstance(manager, ConnectionManager):
+                    return await asyncio.to_thread(
+                        self._search_timeline, scope, person, limit, **arguments
+                    )
+                return self._search_timeline(scope, person, limit, **arguments)
+            except Exception as exc:
+                logger.warning(f"[WaveMemory] PersonSearch timeline failed: {exc}")
+                return f"查询出错：{exc}"
         if getattr(self.db, "closed", False):
             try:
                 self.db.reopen()
@@ -151,6 +192,73 @@ class WaveMemoryPersonSearchTool(FunctionTool[AstrAgentContext]):
         except Exception as exc:
             logger.warning(f"[WaveMemory] PersonSearch failed: {exc}")
             return f"查询出错：{exc}"
+
+    def _search_timeline(
+        self,
+        scope: RuntimeScope,
+        person: str,
+        limit: int,
+        *,
+        cross_group: bool,
+        query: Any,
+        event_id: Any,
+        offset: Any,
+    ) -> str:
+        """Read, resolve identity and format the whole page on the same thread."""
+        assert scope.session is not None
+        if event_id is not None:
+            if (
+                isinstance(event_id, bool)
+                or not str(event_id).strip().isdecimal()
+                or int(event_id) < 1
+            ):
+                return "event_id 必须是正整数时间线编号"
+            event_id = int(event_id)
+        try:
+            offset = max(0, int(offset or 0))
+        except (TypeError, ValueError):
+            return "offset 必须是非负整数"
+        query = str(query or "").strip()
+
+        repo = getattr(self.db, "person_timeline", None)
+        if repo is None:
+            return "人物时间线存储未初始化"
+        qq_id = resolve_user_id(self.db, person, scope)
+        if not qq_id:
+            return f"没有在当前 Bot/群作用域找到人物「{person}」"
+        display_name = display_name_for_user(self.db, qq_id, scope)
+        page = repo.page_events(
+            bot_id=scope.bot_id,
+            user_id=qq_id,
+            group_id=None if cross_group else scope.session.conversation_id,
+            query=query,
+            event_id=event_id,
+            limit=limit,
+            offset=offset,
+            strict=True,
+        )
+        items = page["items"]
+        total = page["total"]
+        next_offset = offset + len(items) if items and offset + len(items) < total else None
+        place = "跨群" if cross_group else "当前群"
+        parts = [
+            f"【{display_name}】{place}人物时间线",
+            f"QQ: {qq_id}",
+            f"total: {total}",
+            f"offset: {offset}",
+            f"next_offset: {next_offset if next_offset is not None else 'null'}",
+        ]
+        if not items:
+            parts.append("未找到符合条件的人物时间线事件")
+        for event in items:
+            stamp = event["occurred_at"]
+            formatted_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(stamp)))
+            parts.extend([
+                f"id: {event['id']} | 时间: {formatted_time} (occurred_at: {stamp}) | [群 {event['group_id']}]",
+                f"摘要: {event['summary']}",
+                f"详情: {event['detail']}",
+            ])
+        return "\n".join(parts)
 
     def _scope_memory_filter(
         self,

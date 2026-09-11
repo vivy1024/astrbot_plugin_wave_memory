@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
-import { BookOpenIcon, HeartIcon, MessageSquareIcon, RefreshCwIcon, SearchIcon, UserIcon } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { humanizeApiError } from '@/lib/reason-label'
+import { BookOpenIcon, HeartIcon, MessageSquareIcon, RefreshCwIcon, SearchIcon, SparklesIcon, UserIcon, UsersIcon } from 'lucide-react'
 
+import { isRequestCancelled } from '@/api/client'
 import { listExperiences, type ExperienceEpisode } from '@/api/experiences'
 import { getScopeOptions, groupSessionOptions, scopeOptionsFor } from '@/api/options'
 import { ScopeSelect } from '@/components/shared'
@@ -11,6 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { scopedHref } from '@/lib/navigation-search'
 
 const EPISODE_TYPE_LABELS: Record<string, string> = {
   user_message: '用户消息',
@@ -20,6 +24,7 @@ const EPISODE_TYPE_LABELS: Record<string, string> = {
   shared_event: '共同经历',
   shared_problem_solving: '共同解决问题',
   group_turning_point: '群事件转折',
+  daily_diary: '每日日记',
 }
 
 function sourceMemoryIds(value: ExperienceEpisode['source_memory_ids']): string[] {
@@ -53,7 +58,9 @@ export function ExperiencesPage() {
   const loadBots = useCallback(async () => scopeOptionsFor(await getScopeOptions(), ['bot']), [])
   const loadSessions = useCallback(async () => groupSessionOptions(scopeOptionsFor(await getScopeOptions(), ['session']), botId), [botId])
 
-  const loadData = useCallback(async () => {
+  const requestRef = useRef<AbortController | null>(null)
+
+  const loadData = useCallback(async (signal?: AbortSignal) => {
     if (!botId || !groupId) {
       setItems([])
       setTotal(0)
@@ -72,20 +79,28 @@ export function ExperiencesPage() {
         min_emotional_weight: weightVal,
         limit,
         offset: (page - 1) * limit,
+        signal,
       })
+      // 快速改搜索词或翻页时旧请求可能后到，用 signal 丢弃它，避免覆盖新结果。
+      if (signal?.aborted) return
       setItems(res.items ?? [])
       setTotal(res.page?.total ?? res.items?.length ?? 0)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载历史经历失败')
+      if (signal?.aborted || isRequestCancelled(err)) return
+      setError(humanizeApiError(err, '加载历史经历失败'))
       setItems([])
       setTotal(0)
     } finally {
-      setLoading(false)
+      if (!signal?.aborted) setLoading(false)
     }
   }, [botId, groupId, minWeight, page, search])
 
   useEffect(() => {
-    void loadData()
+    requestRef.current?.abort()
+    const controller = new AbortController()
+    requestRef.current = controller
+    void loadData(controller.signal)
+    return () => controller.abort()
   }, [loadData])
 
   const totalPages = Math.max(1, Math.ceil(total / limit))
@@ -96,13 +111,21 @@ export function ExperiencesPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">经历片段</h1>
           <p className="text-sm text-muted-foreground">
-            按当前 Bot 与群查看结构化群经历与反思证据（共 {total} 条）；经历不是事实、信念或社交锚点，也不会作为独立通道注入
+            按当前 Bot 与群查看结构化群经历与每日日记（共 {total} 条）。日记会进入 Bot 经历时间线；群友印象请到印象时间线查看。
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => void loadData()} disabled={loading}>
-          <RefreshCwIcon className={loading ? 'animate-spin' : undefined} data-icon="inline-start" aria-hidden="true" />
-          刷新
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link to={scopedHref('/soul', pagination.searchParams.toString())}><SparklesIcon data-icon="inline-start" aria-hidden="true" />Bot 经历时间线</Link>
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link to={scopedHref('/people', pagination.searchParams.toString())}><UsersIcon data-icon="inline-start" aria-hidden="true" />群友印象时间线</Link>
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => void loadData()} disabled={loading}>
+            <RefreshCwIcon className={loading ? 'animate-spin' : undefined} data-icon="inline-start" aria-hidden="true" />
+            刷新
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
@@ -225,9 +248,9 @@ export function ExperiencesPage() {
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
                   {item.user_id ? (
-                    <span className="flex items-center gap-1 truncate">
+                    <Link className="flex items-center gap-1 truncate text-primary hover:underline" to={scopedHref('/people', pagination.searchParams.toString(), { search: item.user_id })}>
                       <UserIcon className="size-3" aria-hidden="true" />{item.user_id}
-                    </span>
+                    </Link>
                   ) : <span>{item.group_id ?? '未记录会话'}</span>}
                   {item.created_at ? <span>{formatTime(item.created_at)}</span> : null}
                 </div>

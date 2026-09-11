@@ -1,29 +1,54 @@
 # Changelog
 
-## v5.0.0 (2026-09-06)
+## v5.0.0 (2026-09-09)
 
-认知来源从后台盲抽改为现场提审；关系与知识分层审核。这是不兼容的主版本跃迁：旧 pending 事实/信念/黑话/经历不再当作可用积攒，需按新契约重新沉淀。
+认知来源从后台盲抽改为现场提审与 Bot 亲笔日记；收敛双时间线体系，彻底清扫历史施工包袱与假资产；WebUI 全量中文脱敏与双时间线互链浏览。这是不兼容的主版本跃迁：旧 pending 事实/信念/黑话/经历碎屑不再当作可用积攒，按新契约重新沉淀。
 
-### 破坏性变更
+### 核心认知与双时间线架构
 
+- **双时间线彻底分工**：
+  - **群友印象时间线（`person_timeline_events`）**：记录「我眼中的他」——沉淀称呼、别名、交往里程碑与加减分账本，支持基于半衰期的指数衰减（默认 21 天，远期事实标明绝对日期），支持按当前群全量分页检索（`/api/people/timeline`）。
+  - **Bot 经历时间线（`scoped_soul_timeline`）**：记录「Bot 自己的经历主干」——以每日亲笔日记为骨干，记录成长转折与共同大事件；废弃机械聊天切片。
+- **Bot 亲笔日记工具（`wave_memory_record_diary_episode`）**：
+  - 极度瘦身与职责单一：仅记录标题、正文、经历摘要、情绪权重，存入 `experience_episodes` 并钉入 `scoped_soul_timeline`。
+  - 坚决不越俎代庖：事实、信念、黑话、群友好感与 FewShot 回归各自独立专门工具由 Bot 自主调用。
+  - 配合 AstrBot 原生 Cron 定时任务（天然携带真实群聊会话），提供群聊近期流水浏览工具 `wave_memory_browse_recent_chat`。
+- **配置参数化暴露（`_conf_schema.json`）**：
+  - 在 `Inject_Settings` 新增 `impression_timeline_max_items`（默认 12 条）、`timeline_decay_half_life_days`（默认 21.0 天）、`timeline_boost_old_items_count`（默认 3 条）、`soul_timeline_max_items`（默认 3 条）。
+  - 后端 `/api/config`（新旧端点兼容）与通道注入动态读取生效。
+
+### 破坏性变更与除垢
+
+- **生产库物理大除垢**：彻底清空 106.7 万行 7 月 Scope 迁移临时表（`scope_recovery_*` / `migration_*`），清空全部低质/假黑话（745+17）与机械切片（6000+条），库体积 VACUUM 释放约 23.5GB。
+- **提纯回注有效群友事实**：从 9月6日历史备份提纯 421 条有效群友别名/称呼/确认事实，去重补入 `person_timeline_events`（现共 6,897 条 / 611 人），生图垃圾与代骂全面丢弃。
 - **停掉自动抽取循环**：不再每 4 小时 consolidation 抽事实/信念，不再定时 belief emerge，不再按消息计数自动 jargon mine。服务对象可保留，默认不 `start()` 后台循环。
-- **关切不再截词**：入站不再因 `@` 或字数截前 60/80 字写关切或主观时间锚点。人味（问安、投喂、回礼）由注入看见人情账/事实/印象后临场发挥，不设关切专用工具。
+- **关切不再截词**：入站不再因 `@` 或字数截前 60/80 字写关切或主观时间锚点。人味（问安、投喂、回礼）由注入看见人情账/事实/印象后临场发挥。
 - **事实必须带原话**：`wave_memory_propose_fact` 必填 `source_quote`。黑话只用于理解原话；已有元数据明确反串/阴阳则拒绝升格为认真事实。
 - **信念是已审事实的二审**：提审与 WebUI 批准统一要求当前群 ≥2 条仍为已批准的 `source_fact_ids`。不是信仰，不是人生感悟。
 - **风格高光进正式审查队列**：`exemplar_reply` 写入 `review_candidates`（`style`），必须带当轮 message id；废弃旁路表 `exemplar_reply_candidates`。
 
-### 认知与社交
+### WebUI 重构与体验提升
 
-- 日常 `<<impression:...>>` 仍作一手感知流水；积攒够厚度后关系通道注入反思契机，引导调用现场工具。
-- 新增/收口现场工具：`record_social_impression`、`note_social_anchor`、`mark_cultural_moment`、`propose_fact`、`propose_belief`。
-- 好感由工具在系统算出的有限范围（默认约 ±2）内自选；真实变动或重要印象才钉时间线锚点。
-- 人情账工具可写备忘，**不作为注入规格**；关系通道注入当前分 + 印象时间线，不塞未了账单，不给 cautious/trusted 面具。
-- `AffinityEngine` 不再关键词加减正式五维；`classify_social_event` 与 `extract_from_summary` 已从正式路径删除。
-- 信念批准与提审同一道门：WebUI 通过必须仍挂 ≥2 条本群已批准事实；标签刷新只重算证据，不自动升格。
-- 关系通道优先保证反思指令预算；删除截词「前情关切」墙。
-- 正式注入现为 12 通道：在原有 11 条之外，`soul_state` 只读注入当前群 mood / concern / timeline。
-- `PersonaChannel` 不再读取 `PersonaEvolution` 全局对象画像；对象侧写改由关系通道的已审事实、印象和人情账承担。
-- `DesireEngine` 仍会初始化并出现在健康面板，但回复路径不调用 `trigger` / `resolve`，不能当成已上线的冲动博弈。
+- **全面技术文案脱敏**：建立中央原因码映射表（`reason-label.ts`），替换全站 48+ 处直显的 snake_case `reason_code` 与技术报错，未知 code 走严谨中文兜底。
+- **群友印象时间线独立页（`/knowledge/impressions`）**：全量分页浏览当前群全部印象事件（突破人物详情 40 条预览上限），支持群友 ID / 事实类型 / 关键词多维筛选。
+- **双时间线全站互链**：人物页 ↔ 心智页 ↔ 经历片段页 ↔ 印象时间线互相跳转；来源 memory / episode 支持深链定位。
+- **SoulPage 时间线收敛**：移除读空表 `time_anchors` 的残留组件，只保留经历时间线单主干，补全中文事件类型标签。
+- **ExperiencesPage 体验对齐**：补充 `daily_diary` 专属标签，更新经历体系文案。
+- **构建体积与现代化**：构建产物统一产出于 `webui/static/app`。
+- **系统配置页重新分组**：20 个后端 schema 章节收敛为 25 个功能分组（记忆召回 / 心智与情绪 / 标签与分类…），改为可折叠容器并记住展开状态，常用组默认展开、搜索时强制展开；隐藏 `_system_status` 这类纯说明项。
+- **配置页不再暴露后端字段**：移除逐字段渲染的 `键:`/`来源:`/`有效来源:`/`诊断:` 开发者信息；重写 33 处含 `HNSW`/`canonical`/`manifest`/`Scope`/`Catalog`/`3D` 等实现术语的名称与说明，保留技术准确性。
+- **生效方式文案纠偏**：`next_run` 原显示「下次生效」易被读成「要重启」，改为「保存即生效」；同时修掉旧实现拼出的「需要保存即生效」病句。侧栏版本徽章不再硬编码 `v1`，改为后端读取 `metadata.yaml` 的真实版本（解析失败则不显示，不编造）。
+- **新增「算法实验室」对比页（`/lab`）**：复用只读 `POST /api/query`，同一句查询跑两组 `stages`/`params` 配置并排对比命中差异、重合度与各阶段启用/降级状态；两组串行执行避免争抢热索引。
+- **标签图谱恢复深空配色 + 图例配置化**：按节点类型恢复彩色（keyword/entity/topic/emotion/fact/jargon）与深空渐变背景；图例类型名、顺序、显隐、是否显示计数改为 `Tag_Settings` 可配置，服务端过滤未知类型名。
+- **修复标签图谱全屏失效**：`relative` 与 `fixed` 同时写在 class 中，Tailwind 里 `.relative` 排在 `.fixed` 之后将其覆盖，导致「全屏探索」从未真正铺满；改为定位分支互斥，并在全屏切换后补一帧重算视口。同时删除工具栏重复渲染的缩小/复位/仿真按钮。
+- **修 `QueryState` 吞掉真实错误**：`description ?? errorMessage(error)` 使同时传入固定说明时真实失败原因永不显示（影响 Jargon 页两处）；现两者并显，错误优先。Jargon 页两处 `catch {` 同时改为保留错误对象。
+- **补齐请求竞态守卫**：经历片段页、系统配置页三条加载路径、信念详情弹窗原无竞态防护，快速切换筛选或重试时旧响应可能覆盖新数据；现统一用 `AbortController` 或请求序号丢弃过期响应。
+
+### 现场提审链路修复
+
+- **修复反思引导静默瘫痪（关键）**：`services/reflection_trigger.py` 从 `person_unsettled_state` 查 `text` 列，而该表真实结构只有 `traces`（JSON 数组）。每次触发反思都抛 `OperationalError: no such column: text`，且因「候选为空 + 存在依赖失败」被判定为 `dependency_error`，**整条反思提示被丢弃**（实测 `prompt_len=0`），大模型收不到任何提审引导。改为读 `traces` 并解析 JSON，坏行只跳过该行不拖垮整源。
+- **反思提示写明确切工具名**：原 footer 只有「分别使用各自工具」这类中文名词，模型面对 20+ 个 `wave_memory_*` 工具无法定位。现直接给出 `wave_memory_propose_fact` / `wave_memory_propose_belief` / `wave_memory_mark_cultural_moment` / `wave_memory_note_social_anchor` / `wave_memory_record_social_impression` / `wave_memory_affinity_update` / `wave_memory_note_concern` / `wave_memory_note_episode`。
+- **测试盲区修正**：原有 fake conn 返回裸字符串而非真实 JSON traces，导致错误列名永远测不出。fake 已改为真实 schema，并新增 5 条回归测试（查 `text` 必须报错、traces 解析、坏行降级、工具名存在、工具名与 `tools/` 声明一致）。
 
 ### 架构与运行时
 
@@ -31,18 +56,6 @@
 - 入站并发锁、命令前缀、抢词咽回收到 `InboundMessagePipeline`。
 - 群名预热收到 `PlatformContextManager`。
 - `on_message` 防抖后正确传递 `message_ts` / `sender_name`。
-
-### WebUI
-
-- Tag 图改 Sigma.js + Graphology + ForceAtlas2，默认全屏工作台。
-- 宽表改为卡片/抽屉；路由代码分割减轻首包。
-- 人物页：印象时间线、人情账、五维雷达与轨迹；信念/黑话审核契约对齐 scoped 表。
-
-### 数据与运维提示
-
-- 旧 `scoped_facts` / `scoped_beliefs` pending 海量候选与后台抽取产物应清空后按新工具重新积攒。核心 `memories` 与 `user_profiles` 不要删。
-- `enable_consolidation` 仍可实例化服务，但自动循环默认关闭。
-- 旧好感流水（`scoped_soul_relationships*`、`relationship_events`、画像 `affection` / `dimensions`）如需从零积攒，应单独清空关系表并重置画像分数；不要删 `memories`。
 
 ## v4.7.2 (2026-08-29)
 

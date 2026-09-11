@@ -18,13 +18,13 @@ test('记忆 Tag 校准 API 只使用 scoped correction 与 correction ObjectRef
 
 test('记忆详情区分 automatic effective manual 并强制填写理由', () => {
   assert.match(pageSource, /自动基线/)
-  assert.match(pageSource, /当前 effective/)
+  assert.match(pageSource, /当前生效/)
   assert.match(pageSource, /人工校准生效中/)
   assert.match(pageSource, /请先填写校准理由/)
   assert.match(pageSource, /请先填写撤销理由/)
   assert.match(pageSource, /tagState\.manual\.ref/)
   assert.match(pageSource, /name="memory-tag-reason"/)
-  assert.match(pageSource, /aria-label=\{`人工排除 Tag/)
+  assert.match(pageSource, /aria-label=\{`人工排除标签/)
 })
 
 test('Tag 治理工作台使用 scoped ObjectRef、preview token 和批量全量校验', () => {
@@ -34,9 +34,9 @@ test('Tag 治理工作台使用 scoped ObjectRef、preview token 和批量全量
   assert.match(governancePanelSource, /merge.*retype.*alias.*deactivate/s)
   assert.match(governancePanelSource, /预检当前页/)
   assert.match(governancePanelSource, /批量批准/)
-  assert.match(governancePanelSource, /当前 Scope 的 Tag/)
+  assert.match(governancePanelSource, /当前群的标签/)
   assert.doesNotMatch(maintainSource, /resolveAuditSuggestion|resolveAuditBatch/)
-  assert.match(maintainSource, /\/tags\?tab=governance/)
+  assert.match(maintainSource, /在标签工作台审核/)
 })
 
 test('Tag mutation 回读新 Memory ObjectRef 并更新 URL 深链', () => {

@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -153,9 +154,19 @@ class ReflectionTriggerService:
             "【现场认知反思候选】以下只是当前 Scope 的证据候选，不是事实或正式认知。"
             "请结合本轮真实对话自行判断；各工具彼此独立，可调用零个或多个，不能凭空补全。"
         )
+        # 提示里必须给出确切工具名：模型面对二十多个 wave_memory_* 工具时，
+        # 只写“各自工具”无法诱导它调用正确的那一个。
         footer = (
-            "可选动作：事实必须带 source_quote；信念必须绑定至少两条已批准事实；"
-            "黑话/风格/社交锚点/关切/群经历分别使用各自工具；episode 不等于 social anchor。"
+            "可选动作（按需调用，可零个或多个）："
+            "提审事实 wave_memory_propose_fact（必须带 source_quote）；"
+            "提审信念 wave_memory_propose_belief（需绑定至少两条已批准事实）；"
+            "群文化/梗 wave_memory_mark_cultural_moment；"
+            "社交锚点 wave_memory_note_social_anchor；"
+            "群友观感 wave_memory_record_social_impression；"
+            "好感 wave_memory_affinity_update；"
+            "关切 wave_memory_note_concern；"
+            "群经历 wave_memory_note_episode。"
+            "episode 不等于 social anchor。"
         )
         lines = [header]
         used = len(header)
@@ -212,12 +223,35 @@ class ReflectionTriggerService:
             return True
 
         try:
+            # person_unsettled_state 没有 text 列；观感文本存在 traces JSON 数组里。
+            # 这里必须读 traces 并解析，否则该源每次查询都抛 OperationalError，
+            # 而候选为空 + 依赖失败会让整条反思链路被判为 dependency_error 丢弃。
             rows = conn.execute(
-                "SELECT text FROM person_unsettled_state WHERE bot_id=? AND group_id=? AND user_id=?"
+                "SELECT traces FROM person_unsettled_state WHERE bot_id=? AND group_id=? AND user_id=?"
                 " ORDER BY updated_at DESC LIMIT 3",
                 (scope.bot_id, group_id, str(sender_id or "")),
             ).fetchall()
-            texts = [str(row[0]).strip()[:80] for row in rows if row and row[0]]
+            texts: list[str] = []
+            for row in rows:
+                if not row or not row[0]:
+                    continue
+                try:
+                    traces = json.loads(row[0])
+                except (TypeError, ValueError):
+                    # 单行坏数据只跳过该行，不能让整个源降级。
+                    continue
+                if not isinstance(traces, list):
+                    continue
+                for item in traces:
+                    if isinstance(item, dict):
+                        body = str(item.get("text") or item.get("summary") or "").strip()
+                    else:
+                        body = str(item or "").strip()
+                    if body:
+                        texts.append(body[:80])
+                if len(texts) >= 3:
+                    break
+            texts = texts[:3]
             if texts:
                 accept("unsettled", "未结算观感，可调用 social_impression：" + "；".join(texts))
         except Exception as exc:

@@ -160,7 +160,15 @@ export function FactsPage() {
         <Separator />
 
         <div className="flex flex-col gap-3 p-3">
-          <QueryState status={status} error={error} title="事实读取失败" description={!botId || !sessionId ? '请先选择 Bot 和群，不会跨 Bot 汇总。' : '当前群和筛选条件下没有正式事实。'} onRetry={() => setReload((value) => value + 1)}>
+          <QueryState
+            status={status}
+            error={error}
+            title="事实读取失败"
+            description={!botId || !sessionId ? '请先选择 Bot 和群，不会跨 Bot 汇总。' : undefined}
+            emptyTitle="当前群没有待审或已批准的正式事实"
+            emptyDescription="正式事实需要 Bot 现场提审、经你审核批准后才进入这里；人物相关的称呼、别名与事实已沉淀在「人物与关系」详情的印象时间线里，不在此页重复展示。"
+            onRetry={() => setReload((value) => value + 1)}
+          >
             <ResponsiveTable
               label="事实关系清单"
               table={<Table className="w-full table-fixed">

@@ -12,6 +12,7 @@ const api = vi.hoisted(() => ({
   getLegacyPeople: vi.fn(),
   getRelationships: vi.fn(),
   getRelationshipHistoricalAudit: vi.fn(),
+  getPersonTimeline: vi.fn(),
   clearImpression: vi.fn(),
 }))
 
@@ -21,13 +22,18 @@ vi.mock('@/api/options', () => ({
   groupSessionOptions: () => [],
 }))
 
-vi.mock('@/api/people', () => ({
-  getPeople: api.getPeople,
-  getLegacyPeople: api.getLegacyPeople,
-  getRelationships: api.getRelationships,
-  getRelationshipHistoricalAudit: api.getRelationshipHistoricalAudit,
-  clearImpression: api.clearImpression,
-}))
+vi.mock('@/api/people', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/people')>()
+  return {
+    ...actual,
+    getPeople: api.getPeople,
+    getLegacyPeople: api.getLegacyPeople,
+    getRelationships: api.getRelationships,
+    getRelationshipHistoricalAudit: api.getRelationshipHistoricalAudit,
+    getPersonTimeline: api.getPersonTimeline,
+    clearImpression: api.clearImpression,
+  }
+})
 
 vi.mock('@/components/relationship/RelationshipCalibrationPanel', () => ({ RelationshipCalibrationPanel: () => null }))
 vi.mock('@/components/relationship/RelationshipRadarCard', () => ({ RelationshipRadarCard: () => null }))
@@ -53,6 +59,34 @@ function page(items: unknown[], total = items.length) {
       page_count: 1,
       has_more: false,
     },
+  }
+}
+
+function timelinePage(items: unknown[], total = items.length) {
+  return { ...page(items, total), timeline: 'impression', readonly: true }
+}
+
+function timelineEvent(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 1,
+    user_id: 'u1',
+    group_id: 'g1',
+    bot_id: 'bot-a',
+    kind: 'impression',
+    summary: '愿意核对事实',
+    detail: '愿意核对事实',
+    subject: '',
+    predicate: '',
+    object: '',
+    confidence: null,
+    occurred_at: 1_700_000_000,
+    created_at: 1_700_000_000,
+    event_type: 'impression',
+    dimension: '',
+    delta: null,
+    readonly: true,
+    timeline: 'impression',
+    ...overrides,
   }
 }
 
@@ -89,15 +123,15 @@ describe('PeoplePage impression 可见化', () => {
     api.getScopeOptions.mockResolvedValue({ sessions: [] })
     api.getPeople.mockResolvedValue(page([person({ metadata: { impression: '说话谨慎但常帮着整理群聊记录的人。曾纠正过我两次事实错误。' } })]))
     api.getRelationships.mockResolvedValue(page([]))
-    api.getRelationshipHistoricalAudit.mockResolvedValue(
-      page([], 0),
-    )
+    api.getRelationshipHistoricalAudit.mockResolvedValue(page([], 0))
+    api.getPersonTimeline.mockResolvedValue(timelinePage([], 0))
   })
 
-  it('列表展示 impression 摘要列', async () => {
+  it('列表展示 impression 摘要列并互链 Bot 经历时间线', async () => {
     renderPage()
     expect(await screen.findByText('说话谨慎但常帮着整理群聊记录的人。曾纠正过我两次事实错误。')).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: 'Bot 印象' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Bot 经历时间线' })).toHaveAttribute('href', expect.stringContaining('/soul'))
     await waitFor(() => expect(api.getPeople).toHaveBeenCalledWith(expect.objectContaining({ bot_id: 'bot-a', session_id: 'qq:group:g1' })))
   })
 
@@ -120,47 +154,81 @@ describe('PeoplePage impression 可见化', () => {
     })))
   })
 
-  it('打开详情展示完整印象，没有印象时不渲染该区块', async () => {
+  it('按好感排序默认从高到低，未记录不会挤到第一页', async () => {
     const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => expect(api.getPeople).toHaveBeenCalled())
+    await user.click(screen.getByRole('button', { name: /高级筛选/ }))
+    await user.selectOptions(screen.getByLabelText('列表排序字段'), '好感')
+    await waitFor(() => expect(api.getPeople).toHaveBeenCalledWith(expect.objectContaining({
+      sort_by: 'affinity',
+      sort_order: 'desc',
+    })))
+    expect(screen.getByRole('button', { name: '当前从高到低，点击改为从低到高' })).toHaveTextContent('高→低')
+  })
+
+  it('好感从低到高会显式发给服务端', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => expect(api.getPeople).toHaveBeenCalled())
+    await user.click(screen.getByRole('button', { name: /高级筛选/ }))
+    await user.selectOptions(screen.getByLabelText('列表排序字段'), '好感')
+    await user.click(screen.getByRole('button', { name: '当前从高到低，点击改为从低到高' }))
+    await waitFor(() => expect(api.getPeople).toHaveBeenCalledWith(expect.objectContaining({
+      sort_by: 'affinity',
+      sort_order: 'asc',
+    })))
+  })
+
+  it('打开详情展示当前印象与内嵌印象时间线面板', async () => {
+    const user = userEvent.setup()
+    api.getPersonTimeline.mockResolvedValue(timelinePage([
+      timelineEvent({ id: 2, kind: 'person_fact', summary: '别名 时雨', event_type: 'person_fact' }),
+      timelineEvent({ id: 1, kind: 'affinity', summary: '好感从 0 升至 2', dimension: 'trust', delta: 2, event_type: 'deep_talk' }),
+    ], 2))
     renderPage()
     await waitFor(() => expect(api.getPeople).toHaveBeenCalled())
 
     await user.click(screen.getByRole('button', { name: '查看 甲 详情' }))
 
     await waitFor(() => expect(screen.getByText('Bot 当前印象')).toBeInTheDocument())
-    // 列表摘要列与详情卡片各自渲染一份印象内容
-    expect(screen.getAllByText('说话谨慎但常帮着整理群聊记录的人。曾纠正过我两次事实错误。')).toHaveLength(2)
-    expect(screen.getByText('由主对话自动生成、随互动更新；历史只读，不进入关系事件')).toBeInTheDocument()
+    // 列表摘要列与详情卡片各渲染一份当前印象
+    expect(screen.getAllByText('说话谨慎但常帮着整理群聊记录的人。曾纠正过我两次事实错误。').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText(/我眼中的他；下方可按类型与关键词浏览/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '清除当前印象' })).toBeInTheDocument()
+    // 内嵌实时面板按 user_id 拉全量并渲染
+    await waitFor(() => expect(api.getPersonTimeline).toHaveBeenCalledWith(
+      expect.objectContaining({ bot_id: 'bot-a', session_id: 'qq:group:g1', user_id: 'u1' }),
+      expect.anything(),
+    ))
+    expect(await screen.findByText('别名 时雨')).toBeInTheDocument()
+    expect(screen.getByText('好感从 0 升至 2')).toBeInTheDocument()
+    expect(screen.getAllByText('人物事实').length).toBeGreaterThan(0)
+    expect(screen.getByText(/trust\+2/)).toBeInTheDocument()
   })
 
-  it('详情展示只读印象时间线', async () => {
+  it('内嵌面板支持类型筛选并打到服务端', async () => {
     const user = userEvent.setup()
-    api.getPeople.mockResolvedValue(page([person({
-      metadata: {
-        impression: '愿意核对事实',
-        impression_history: [
-          { text: '说话谨慎', updated_at: 1_700_000_000 },
-          { text: '常纠正事实', cleared_at: 1_700_086_400, cleared_reason: '过期重看' },
-        ],
-      },
-    })]))
+    api.getPersonTimeline.mockResolvedValue(timelinePage([]))
     renderPage()
     await waitFor(() => expect(api.getPeople).toHaveBeenCalled())
     await user.click(screen.getByRole('button', { name: '查看 甲 详情' }))
-    expect(await screen.findByText('印象时间线（新在上，只读）')).toBeInTheDocument()
-    expect(screen.getByText('常纠正事实')).toBeInTheDocument()
-    expect(screen.getByText('说话谨慎')).toBeInTheDocument()
-    expect(screen.getByText(/清除原因：过期重看/)).toBeInTheDocument()
+    await waitFor(() => expect(api.getPersonTimeline).toHaveBeenCalled())
+    api.getPersonTimeline.mockClear()
+    await user.selectOptions(screen.getByLabelText('印象类型筛选'), 'person_fact')
+    await waitFor(() => expect(api.getPersonTimeline).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: 'u1', kind: 'person_fact' }),
+      expect.anything(),
+    ))
   })
 
-  it('只有当前印象没有历史时仍展示时间线空态', async () => {
+  it('内嵌面板无记录时展示中性空态', async () => {
     const user = userEvent.setup()
+    api.getPersonTimeline.mockResolvedValue(timelinePage([], 0))
     renderPage()
     await waitFor(() => expect(api.getPeople).toHaveBeenCalled())
     await user.click(screen.getByRole('button', { name: '查看 甲 详情' }))
-    expect(await screen.findByText('印象时间线（新在上，只读）')).toBeInTheDocument()
-    expect(screen.getByText(/尚无演变记录/)).toBeInTheDocument()
+    expect(await screen.findByText(/该筛选下暂无印象记录/)).toBeInTheDocument()
   })
 
   it('清除当前印象需要原因并调用审计接口', async () => {

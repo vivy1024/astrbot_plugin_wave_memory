@@ -58,8 +58,8 @@ class PersonTimelineRepo:
             str(user_id or ""),
             str(group_id or ""),
             str(kind or "impression"),
-            str(summary or "").strip()[:240],
-            str(detail or "").strip(),
+            str(summary or ""),
+            str(detail or ""),
             str(subject or ""),
             str(predicate or ""),
             str(object or ""),
@@ -86,68 +86,181 @@ class PersonTimelineRepo:
         self.cm.commit()
         return int(getattr(cur, "lastrowid", 0) or 0)
 
-    def list_events(
+    def _event_filters(
         self,
         *,
         bot_id: str,
-        user_id: str,
+        user_id: str | None = None,
         group_id: str | None = None,
+        event_id: int | None = None,
         query: str = "",
-        limit: int = 50,
-        connection=None,
-    ) -> list[dict[str, Any]]:
-        clauses = ["bot_id=?", "user_id=?"]
-        params: list[Any] = [str(bot_id or ""), str(user_id or "")]
-        if group_id:
+        kind: str = "",
+    ) -> tuple[list[str], list[Any]]:
+        clauses = ["bot_id=?"]
+        params: list[Any] = [str(bot_id or "")]
+        if event_id is not None:
+            clauses.append("id=?")
+            params.append(int(event_id))
+        user = str(user_id or "").strip()
+        if user:
+            clauses.append("user_id=?")
+            params.append(user)
+        group = str(group_id or "").strip() if group_id is not None else ""
+        if group:
             clauses.append("group_id=?")
-            params.append(group_id)
+            params.append(group)
+        kind_value = str(kind or "").strip()
+        if kind_value:
+            clauses.append("kind=?")
+            params.append(kind_value)
         token = str(query or "").strip()
         if token:
             like = f"%{token}%"
             clauses.append("(summary LIKE ? OR detail LIKE ? OR subject LIKE ? OR object LIKE ?)")
             params.extend((like, like, like, like))
-        params.append(max(1, int(limit or 50)))
+        return clauses, params
+
+    def _row_to_event(self, row: Any) -> dict[str, Any]:
+        provenance: dict[str, Any] = {}
+        raw = row[12]
+        if isinstance(raw, str) and raw.strip():
+            try:
+                loaded = json.loads(raw)
+                if isinstance(loaded, dict):
+                    provenance = loaded
+            except Exception:
+                provenance = {}
+        return {
+            "id": row[0],
+            "bot_id": row[1],
+            "user_id": row[2],
+            "group_id": row[3],
+            "kind": row[4],
+            "summary": row[5],
+            "detail": row[6],
+            "subject": row[7],
+            "predicate": row[8],
+            "object": row[9],
+            "confidence": row[10],
+            "occurred_at": row[11],
+            "provenance": provenance,
+            "created_at": row[13],
+            "text": row[5],
+            "at": row[11],
+        }
+
+    def list_events(
+        self,
+        *,
+        bot_id: str,
+        user_id: str | None = None,
+        group_id: str | None = None,
+        event_id: int | None = None,
+        query: str = "",
+        kind: str = "",
+        limit: int | None = 50,
+        offset: int = 0,
+        strict: bool = False,
+        connection=None,
+    ) -> list[dict[str, Any]]:
+        clauses, params = self._event_filters(
+            bot_id=bot_id,
+            user_id=user_id,
+            group_id=group_id,
+            event_id=event_id,
+            query=query,
+            kind=kind,
+        )
+        # limit=None 表示全量读取（印象时间线注入不做条数截断）。
+        tail = ""
+        if limit is not None:
+            params.append(max(1, int(limit or 50)))
+            params.append(max(0, int(offset or 0)))
+            tail = " LIMIT ? OFFSET ?"
+        elif offset:
+            params.append(max(0, int(offset or 0)))
+            tail = " LIMIT -1 OFFSET ?"
         sql = f"""SELECT id, bot_id, user_id, group_id, kind, summary, detail, subject, predicate, object,
                          confidence, occurred_at, provenance, created_at
                     FROM person_timeline_events
                    WHERE {' AND '.join(clauses)}
-                   ORDER BY occurred_at DESC, id DESC
-                   LIMIT ?"""
+                   ORDER BY occurred_at DESC, id DESC{tail}"""
         reader = connection.execute if connection is not None else self.cm.execute_read
         try:
             rows = reader(sql, tuple(params)).fetchall()
         except Exception:
+            if strict:
+                raise
             return []
-        items: list[dict[str, Any]] = []
-        for row in rows:
-            provenance: dict[str, Any] = {}
-            raw = row[12]
-            if isinstance(raw, str) and raw.strip():
-                try:
-                    loaded = json.loads(raw)
-                    if isinstance(loaded, dict):
-                        provenance = loaded
-                except Exception:
-                    provenance = {}
-            items.append({
-                "id": row[0],
-                "bot_id": row[1],
-                "user_id": row[2],
-                "group_id": row[3],
-                "kind": row[4],
-                "summary": row[5],
-                "detail": row[6],
-                "subject": row[7],
-                "predicate": row[8],
-                "object": row[9],
-                "confidence": row[10],
-                "occurred_at": row[11],
-                "provenance": provenance,
-                "created_at": row[13],
-                "text": row[5],
-                "at": row[11],
-            })
-        return items
+        return [self._row_to_event(row) for row in rows]
+
+    def count_events(
+        self,
+        *,
+        bot_id: str,
+        user_id: str | None = None,
+        group_id: str | None = None,
+        event_id: int | None = None,
+        query: str = "",
+        kind: str = "",
+        strict: bool = False,
+        connection=None,
+    ) -> int:
+        clauses, params = self._event_filters(
+            bot_id=bot_id,
+            user_id=user_id,
+            group_id=group_id,
+            event_id=event_id,
+            query=query,
+            kind=kind,
+        )
+        sql = f"SELECT COUNT(*) FROM person_timeline_events WHERE {' AND '.join(clauses)}"
+        reader = connection.execute if connection is not None else self.cm.execute_read
+        try:
+            row = reader(sql, tuple(params)).fetchone()
+        except Exception:
+            if strict:
+                raise
+            return 0
+        return int(row[0] or 0) if row else 0
+
+    def page_events(
+        self,
+        *,
+        bot_id: str,
+        user_id: str | None = None,
+        group_id: str | None = None,
+        event_id: int | None = None,
+        query: str = "",
+        kind: str = "",
+        limit: int = 50,
+        offset: int = 0,
+        strict: bool = False,
+        connection=None,
+    ) -> dict[str, Any]:
+        items = self.list_events(
+            bot_id=bot_id,
+            user_id=user_id,
+            group_id=group_id,
+            event_id=event_id,
+            query=query,
+            kind=kind,
+            limit=limit,
+            offset=offset,
+            strict=strict,
+            connection=connection,
+        )
+        total = self.count_events(
+            bot_id=bot_id,
+            user_id=user_id,
+            group_id=group_id,
+            event_id=event_id,
+            query=query,
+            kind=kind,
+            strict=strict,
+            connection=connection,
+        )
+        return {"items": items, "total": total}
 
     def latest_impression(self, *, bot_id: str, user_id: str, group_id: str | None = None, connection=None) -> str:
         clauses = ["bot_id=?", "user_id=?", "kind IN ('impression', 'affinity')"]
@@ -179,14 +292,15 @@ class PersonTimelineRepo:
         payload = dict(metadata) if isinstance(metadata, Mapping) else {}
         if not any(key in payload for key in _JSON_KEYS):
             return payload
-        current = str(payload.get("impression") or "").strip()
+        current = str(payload.get("impression") or "")
         history = payload.get("impression_history")
         if isinstance(history, list):
             for item in history:
                 if not isinstance(item, Mapping):
                     continue
-                text = str(item.get("text") or item.get("summary") or "").strip()
-                if not text:
+                summary = str(item.get("summary") or item.get("text") or item.get("detail") or "")
+                detail = str(item.get("detail") or item.get("text") or summary)
+                if not summary.strip() and not detail.strip():
                     continue
                 event = item.get("event") if isinstance(item.get("event"), Mapping) else {}
                 kind = "affinity" if event.get("before_affinity") not in {None, ""} else "impression"
@@ -195,19 +309,19 @@ class PersonTimelineRepo:
                     user_id=user_id,
                     group_id=group_id,
                     kind=kind,
-                    summary=str(item.get("summary") or text)[:240],
-                    detail=str(item.get("detail") or text),
+                    summary=summary,
+                    detail=detail,
                     occurred_at=item.get("updated_at") or item.get("superseded_at") or item.get("at") or item.get("cleared_at"),
                     provenance={"source": "metadata.impression_history", "event": dict(event), "actor": item.get("actor")},
                     connection=connection,
                 )
-        if current:
+        if current.strip():
             self.add_event(
                 bot_id=bot_id,
                 user_id=user_id,
                 group_id=group_id,
                 kind="impression",
-                summary=current[:240],
+                summary=current,
                 detail=current,
                 occurred_at=payload.get("impression_updated_at"),
                 provenance={"source": "metadata.impression", "event": payload.get("impression_event")},
@@ -233,12 +347,12 @@ class PersonTimelineRepo:
                 event_type = str(item.get("event_type") or "").strip()
                 if event_type in {"", "message_seen"}:
                     continue
-                reason = str(item.get("reason") or "").strip()
+                reason = str(item.get("reason") or "")
                 dimension = str(item.get("dimension") or "").strip()
                 delta = item.get("delta")
                 summary = f"{event_type} {dimension}{delta:+g}" if isinstance(delta, (int, float)) else event_type
-                if reason:
-                    summary = f"{summary}：{reason}"[:240]
+                if reason.strip():
+                    summary = f"{summary}：{reason}"
                 self.add_event(
                     bot_id=bot_id,
                     user_id=user_id,

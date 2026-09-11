@@ -48,7 +48,6 @@ def test_injection_shadow_channels_import_under_plugin_package_name():
     modules = [
         "astrbot_plugin_wave_memory.services.injection.channels.safety",
         "astrbot_plugin_wave_memory.services.injection.channels.memory_recall",
-        "astrbot_plugin_wave_memory.services.injection.channels.timeline",
         "astrbot_plugin_wave_memory.services.injection.channels.facts",
         "astrbot_plugin_wave_memory.services.injection.channels.persona",
         "astrbot_plugin_wave_memory.services.injection.channels.belief",

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { humanizeApiError } from '@/lib/reason-label'
 import { AlertCircleIcon, Loader2Icon, SaveIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -87,7 +88,7 @@ export function TagExtractionConfigPanel({
       })
       .catch((err) => {
         if (!alive) return
-        toast.error(err instanceof Error ? err.message : '标签配置加载失败')
+        toast.error(humanizeApiError(err, '标签配置加载失败'))
       })
       .finally(() => {
         if (alive) setLoading(false)
@@ -139,7 +140,7 @@ export function TagExtractionConfigPanel({
       })
       toast.success('标签提取配置保存成功；模型与向量维度需要重启后生效')
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '标签提取配置保存失败')
+      toast.error(humanizeApiError(err, '标签提取配置保存失败'))
     } finally {
       setSaving(false)
     }

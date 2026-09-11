@@ -80,6 +80,8 @@ from .tools.cultural_moment import WaveMemoryMarkCulturalMomentTool
 from .tools.fact_proposal import WaveMemoryProposeFactTool
 from .tools.belief_proposal import WaveMemoryProposeBeliefTool
 from .tools.episode import WaveMemoryNoteEpisodeTool
+from .tools.diary_episode import WaveMemoryRecordDiaryEpisodeTool
+from .tools.browse_chat import WaveMemoryBrowseRecentChatTool
 from .tools.concern import WaveMemoryNoteConcernTool
 from .tools.livingmemory_compat_tools import build_livingmemory_compat_tools
 from .engine.book_lore_index import BookLoreIndex
@@ -278,9 +280,7 @@ class WaveMemoryPlugin(Star):
         self.injection_format = query_cfg.get("injection_format", "[记忆] {sender}({time}): {content}")
         # v2.0: inject 控制参数
         self.skip_recent_minutes = int(inject_cfg.get("skip_recent_minutes", 30))
-        self.timeline_max = int(inject_cfg.get("timeline_max", 5))
         self.facts_max = int(inject_cfg.get("facts_max", 5))
-        self.enable_timeline = inject_cfg.get("enable_timeline", True)
         self.enable_spike = effective_query_feature(query_cfg, "enable_spike_routing", self.runtime_mode)
         self.enable_pyramid = effective_query_feature(query_cfg, "enable_residual_pyramid", self.runtime_mode)
         self.enable_epa = effective_query_feature(query_cfg, "enable_epa", self.runtime_mode)
@@ -948,7 +948,6 @@ class WaveMemoryPlugin(Star):
             from .services.injection.trace_store import InjectionTraceStore
             from .services.injection.channels.safety import SafetyChannel
             from .services.injection.channels.memory_recall import MemoryRecallChannel
-            from .services.injection.channels.timeline import TimelineChannel
             from .services.injection.channels.facts import FactsChannel
             from .services.injection.channels.persona import PersonaChannel
             from .services.injection.channels.belief import BeliefChannel
@@ -979,12 +978,6 @@ class WaveMemoryPlugin(Star):
                 MemoryRecallChannel(query_engine=self.query_engine, safety_channel=safety),
                 FTS5Channel(
                     db=self.db,
-                    cross_group_enabled=self.cross_group_enabled,
-                    shared_memory_grants_enabled=self.shared_memory_grants_enabled,
-                ),
-                TimelineChannel(
-                    db=self.db,
-                    safety_channel=safety,
                     cross_group_enabled=self.cross_group_enabled,
                     shared_memory_grants_enabled=self.shared_memory_grants_enabled,
                 ),
@@ -1060,18 +1053,21 @@ class WaveMemoryPlugin(Star):
         return build_channel_config_from_plugin_config(self.config, scope=scope)
 
     def _build_shadow_context_config(self, *, channel_config, exclude_sources, recent_context: list[str], realtime_ctx: dict) -> dict:
+        from .services.impression_timeline import normalize_timeline_half_life
+
         config = channel_config.to_dict() if channel_config is not None else {}
+        # Read the resolved value, not raw Inject_Settings that would bypass overrides.
+        config["timeline_decay_half_life_days"] = normalize_timeline_half_life(
+            config.get("timeline_decay_half_life_days")
+        )
         recall = dict(config.get("memory_recall") or {})
         recall.update({
             "context_messages": recent_context,
             "exclude_sources": exclude_sources,
         })
         config["memory_recall"] = recall
-        # ``timeline_days=0`` is deliberate: retain full legacy-compatible
-        # history while the Timeline channel itself enforces item/token budgets.
-        config["timeline"] = {"days": int(config.get("timeline_days", 0) or 0)}
         # Active/shadow contexts expose the same normalized setting used by
-        # QueryEngine and the FTS5/Timeline channel instances.
+        # QueryEngine and the FTS5 channel instance.
         config["cross_group_enabled"] = self.cross_group_enabled
         config["shared_memory_grants_enabled"] = self.shared_memory_grants_enabled
         config["persona"] = {"realtime_ctx": realtime_ctx}
@@ -1435,6 +1431,7 @@ class WaveMemoryPlugin(Star):
                 ),
                 WaveMemoryProposeBeliefTool(db=self.db),
                 WaveMemoryNoteEpisodeTool(db=self.db, writer=self.writer, write_gateway=self.write_gateway),
+                WaveMemoryRecordDiaryEpisodeTool(db=self.db, write_gateway=self.write_gateway),
                 WaveMemoryNoteConcernTool(
                     db=self.db,
                     concern_tracker=getattr(self, "concern_tracker", None),

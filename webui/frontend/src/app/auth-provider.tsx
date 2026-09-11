@@ -4,6 +4,7 @@ import { checkAuth, login as loginRequest } from '@/api/auth'
 import { clearStoredToken, getStoredToken, setAuthFailureHandler, setStoredToken } from '@/api/client'
 import { getSystemStatus } from '@/api/system'
 import { AuthContext, type AuthContextValue, type AuthState } from '@/app/auth-context'
+import { humanizeApiError } from '@/lib/reason-label'
 
 function initialAuthState(): AuthState {
   // 乐观假定：本地已存 Token 时前置设为 ready，防止初始化阶段瞬间闪烁 LoginPage 影响美观
@@ -17,9 +18,7 @@ function initialAuthState(): AuthState {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error && error.message.trim()
-    ? error.message
-    : '认证状态检查失败，请检查网络或服务端后重试。'
+  return humanizeApiError(error, '认证状态检查失败，请检查网络或服务端后重试。')
 }
 
 function isUnauthorized(error: unknown): boolean {

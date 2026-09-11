@@ -185,6 +185,51 @@ export function getPeople(query: PeopleQuery): Promise<PageResponse<PersonItem>>
   return fetchJson<PageResponse<PersonItem>>(`/api/people${queryString(query)}`)
 }
 
+export interface PersonTimelineQuery {
+  bot_id: string
+  session_id: string
+  visibility: 'group'
+  user_id?: string
+  kind?: 'impression' | 'affinity' | 'person_fact' | ''
+  search?: string
+  limit?: PageSize
+  offset?: number
+}
+
+export interface PersonTimelineEventItem {
+  id: number
+  user_id: string
+  group_id: string
+  bot_id: string
+  kind: 'impression' | 'affinity' | 'person_fact' | string
+  summary: string
+  detail: string
+  subject: string
+  predicate: string
+  object: string
+  confidence: number | null
+  occurred_at: number | null
+  created_at: number | null
+  event_type: string
+  dimension: string
+  delta: number | string | null
+  readonly: true
+  timeline: 'impression'
+}
+
+export interface PersonTimelinePage extends PageResponse<PersonTimelineEventItem> {
+  scope?: Record<string, unknown>
+  timeline: 'impression'
+  readonly: true
+  user_id?: string | null
+  kind?: string | null
+  search?: string | null
+}
+
+export function getPersonTimeline(query: PersonTimelineQuery, signal?: AbortSignal): Promise<PersonTimelinePage> {
+  return fetchJson<PersonTimelinePage>(`/api/people/timeline${queryString(query)}`, { signal })
+}
+
 export interface LegacyPeopleQuery {
   bot_id: string
   group_id: string

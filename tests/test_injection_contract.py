@@ -49,7 +49,7 @@ class InjectionContractTest(unittest.TestCase):
         hit = InjectionResult.hit("memory", "一段记忆", items=[{"id": 1}], score=0.9, latency_ms=12.5)
         empty = InjectionResult.empty("facts", latency_ms=1.0)
         disabled = InjectionResult.disabled("belief", reason="mode memory_only")
-        skipped = InjectionResult.skipped("timeline", reason="no sender")
+        skipped = InjectionResult.skipped("affinity", reason="no sender")
         timeout = InjectionResult.timeout("jargon", timeout_ms=300)
         error = InjectionResult.error_result("fewshot", ValueError("bad sample"))
 

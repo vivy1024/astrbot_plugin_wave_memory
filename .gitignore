@@ -22,3 +22,9 @@ webui/frontend/dist/
 *.egg-info/
 .venv/
 venv/
+/node_modules/
+served_index.js
+.narrafork/
+.sync_runtime_*.tar
+*.tar
+*.tar.gz

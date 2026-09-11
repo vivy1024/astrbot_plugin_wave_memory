@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { humanizeApiError } from '@/lib/reason-label'
 import { Link } from 'react-router-dom'
 import { ArrowRightIcon, Loader2Icon, RotateCcwIcon, SaveIcon, ShieldCheckIcon, WandSparklesIcon } from 'lucide-react'
 import { toast } from 'sonner'
@@ -158,7 +159,7 @@ export function ChannelConfigPage() {
       setVerificationUrl(payload.verification_url ?? '/observatory')
       invalidateValidation()
     } catch (err) {
-      setError(err instanceof Error ? err.message : '通道配置加载失败')
+      setError(humanizeApiError(err, '通道配置加载失败'))
     } finally {
       setLoading(false)
     }
@@ -179,7 +180,7 @@ export function ChannelConfigPage() {
       if (result.ok) toast.success('通道配置校验通过')
       else toast.error(result.errors.join('；') || '通道配置校验失败')
     } catch (err) {
-      const result = safeValidation({ ok: false, errors: [err instanceof Error ? err.message : '通道配置校验失败'], diff: [] })
+      const result = safeValidation({ ok: false, errors: [humanizeApiError(err, '通道配置校验失败')], diff: [] })
       setValidation(result)
       setValidatedFingerprint(null)
       toast.error(result.errors[0])
@@ -210,7 +211,7 @@ export function ChannelConfigPage() {
         toast.error(result.errors.join('；') || '通道配置应用失败')
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : '通道配置应用失败'
+      const message = humanizeApiError(err, '通道配置应用失败')
       setValidation(safeValidation({ ok: false, errors: [message], diff: [] }))
       setValidatedFingerprint(null)
       toast.error(message)
@@ -236,7 +237,7 @@ export function ChannelConfigPage() {
         toast.error(result.errors.join('；') || '恢复默认失败')
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : '恢复默认失败'
+      const message = humanizeApiError(err, '恢复默认失败')
       setValidation(safeValidation({ ok: false, errors: [message], diff: [] }))
       setValidatedFingerprint(null)
       toast.error(message)

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { humanizeApiError } from '@/lib/reason-label'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowLeftIcon, BrainCircuitIcon, RefreshCwIcon, ShieldCheckIcon } from 'lucide-react'
 
@@ -16,6 +17,11 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { useCanonicalScopeDefault } from '@/hooks/use-pagination-search-params'
 
 const DEFAULT_LAYERS: TagGraphLayer[] = ['cooccurrence', 'relations']
+
+const LAYER_LABELS_ZH: Record<TagGraphLayer, string> = {
+  cooccurrence: '有向共现',
+  relations: '显式关系',
+}
 
 function parseLayers(value: string | null): TagGraphLayer[] {
   if (value === null) return DEFAULT_LAYERS
@@ -63,6 +69,7 @@ export function TagGraphPage() {
   useEffect(() => {
     graphRequest.current?.abort()
     if (!scope) { setGraph(null); setError(undefined); setLoading(false); return }
+    if (!layers.length) { setGraph(null); setError(undefined); setLoading(false); return }
     const controller = new AbortController()
     graphRequest.current = controller
     setLoading(true)
@@ -71,7 +78,7 @@ export function TagGraphPage() {
       controller.abort(new Error('API 请求超时（30 秒上限），请检查网络或刷新重试'))
     }, 30_000)
 
-    getTagGraph(scope, { layers, includePulse, maxNodes: isMobile ? 120 : 400, signal: controller.signal })
+    getTagGraph(scope, { layers, includePulse, maxNodes: isMobile ? 200 : 1000, signal: controller.signal })
       .then((payload) => { if (!controller.signal.aborted && graphRequest.current === controller) setGraph(payload) })
       .catch((reason: unknown) => { if (!controller.signal.aborted && graphRequest.current === controller && !isRequestCancelled(reason)) { setGraph(null); setError(reason) } })
       .finally(() => {
@@ -124,11 +131,16 @@ export function TagGraphPage() {
 
     {!scope ? (
       <Card><CardContent className="p-6 text-sm text-muted-foreground">请先选择 Bot 和群。没选完整之前不会去猜标签图。</CardContent></Card>
+    ) : !layers.length ? (
+      <Card><CardContent className="flex flex-col gap-2 p-6 text-sm text-muted-foreground">
+        <span className="font-medium text-foreground">未开启任何图层</span>
+        <span>标签图不会用无连接的孤立点冒充关系。请在上方开启「有向共现」或「显式关系」至少一个图层再看图。</span>
+      </CardContent></Card>
     ) : error && !graph ? (
       <Alert variant="destructive">
         <AlertTitle>标签关系图读取失败</AlertTitle>
         <AlertDescription>
-          {error instanceof Error ? error.message : '请检查当前群是否可用。'}
+          {humanizeApiError(error, '请检查当前群是否可用。')}
           <Button type="button" size="sm" variant="outline" className="ml-2" onClick={() => setReload((value) => value + 1)}>重试</Button>
         </AlertDescription>
       </Alert>
@@ -140,18 +152,18 @@ export function TagGraphPage() {
     ) : graph ? (
       <>
         <div className="flex flex-wrap gap-2 text-xs">
-          <Badge variant="secondary">节点 {graph.nodes.length}</Badge>
+          <Badge variant="secondary">节点 {graph.nodes.length}{graph.tag_total && graph.tag_total > graph.nodes.length ? ` / 本群共 ${graph.tag_total}` : ''}</Badge>
           <Badge variant="secondary">边 {graph.edges.length}</Badge>
-          {graph.layers.map((layer) => <Badge key={layer} variant="outline">{layer} · {graph.layer_counts[layer]?.edges ?? 0}</Badge>)}
-          {graph.pulse.enabled ? <Badge variant="outline">pulse · {graph.pulse.half_life_hours}h</Badge> : null}
+          {graph.layers.map((layer) => <Badge key={layer} variant="outline">{LAYER_LABELS_ZH[layer] ?? layer} · {graph.layer_counts[layer]?.edges ?? 0}</Badge>)}
+          {graph.pulse.enabled ? <Badge variant="outline">脉冲 · {graph.pulse.half_life_hours}h</Badge> : null}
         </div>
         {graph.nodes.length ? (
           <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_23rem]">
-            <TagGraphCanvas nodes={graph.nodes} edges={graph.edges} selectedRef={selectedRef} pathEdgeIds={pathEdgeIds} onSelect={selectNode} />
+            <TagGraphCanvas nodes={graph.nodes} edges={graph.edges} selectedRef={selectedRef} pathEdgeIds={pathEdgeIds} legend={graph.legend} onSelect={selectNode} />
             <TagGraphDetail scope={scope} node={selectedNode} sourceRef={sourceRef} targetRef={targetRef} path={path} pathLoading={pathLoading} onSetSource={(node) => setQuery({ source_ref: node.ref })} onSetTarget={(node) => setQuery({ target_ref: node.ref })} onRunPath={runPath} onClearPath={clearPath} onMutated={() => setReload((value) => value + 1)} />
           </div>
         ) : (
-          <Card><CardContent className="p-6 text-sm text-muted-foreground">当前 Scope 与可见图层下没有正式 Tag 节点；未使用演示数据填充。</CardContent></Card>
+          <Card><CardContent className="p-6 text-sm text-muted-foreground">当前群还没有正式的 Tag 关系节点（共 {graph.tag_total ?? 0} 个标签，开启的图层里没有可连的边）；未使用演示数据填充。</CardContent></Card>
         )}
       </>
     ) : null}

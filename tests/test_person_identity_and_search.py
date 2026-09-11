@@ -3,8 +3,11 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import sys
+import threading
 import types
 from types import SimpleNamespace
+
+import pytest
 
 
 def _install_astrbot_tool_stub() -> None:
@@ -230,3 +233,73 @@ def test_person_search_accepts_display_platform_session_ids():
     result = asyncio.run(tool.call(_ctx(scope), person="诸葛匹夫", query_type="recent", limit=3))
     assert "本群发言A" in result
     assert resolve_user_id(db, "诸葛匹夫", scope) == "2696534623"
+
+
+def test_person_search_timeline_reads_full_detail_and_pages(tmp_path):
+    from engine.db.connection import ConnectionManager
+    from engine.db.person_timeline_repo import PersonTimelineRepo
+
+    cm = ConnectionManager(str(tmp_path / "people.sqlite3"))
+    try:
+        repo = PersonTimelineRepo(cm)
+        cm.executescript(
+            """
+            CREATE TABLE user_profiles(user_id TEXT, group_id TEXT, bot_id TEXT, nickname TEXT, interaction_count INTEGER, last_seen REAL);
+            CREATE TABLE person_registry(qq_id TEXT, display_name TEXT, aliases TEXT, message_count INTEGER);
+            INSERT INTO user_profiles VALUES ('2696534623', '398291136', 'yushu', '诸葛匹夫', 10, 1);
+            INSERT INTO person_registry VALUES ('2696534623', '诸葛匹夫', '[]', 10);
+            """
+        )
+        summary = "完整摘要；" * 20
+        detail = "完整详情第一段。" * 40
+        event_id = repo.add_event(
+            bot_id="yushu", user_id="2696534623", group_id="398291136",
+            kind="impression", summary=summary, detail=detail, occurred_at=100.0,
+        )
+        other_id = repo.add_event(
+            bot_id="yushu", user_id="2696534623", group_id="398291136",
+            kind="person_fact", summary="第二页旧事", detail="第二页详情", occurred_at=50.0,
+        )
+        repo.add_event(
+            bot_id="yushu", user_id="2696534623", group_id="150727649",
+            kind="impression", summary="别群印象", detail="别群详情", occurred_at=80.0,
+        )
+        repo.add_event(
+            bot_id="other-bot", user_id="2696534623", group_id="398291136",
+            kind="impression", summary="别的Bot", detail="别的详情", occurred_at=90.0,
+        )
+        db = SimpleNamespace(conn=cm, person_timeline=repo, closed=False)
+        tool = WaveMemoryPersonSearchTool(db=db)
+        before = repo.count_events(bot_id="yushu", user_id="2696534623", group_id="398291136")
+        page = asyncio.run(tool.call(
+            _ctx(_scope()), person="诸葛匹夫", query_type="timeline", limit=1,
+        ))
+        assert summary in page
+        assert detail in page
+        assert f"id: {event_id}" in page
+        assert "别群印象" not in page
+        assert "别的Bot" not in page
+        assert "next_offset: 1" in page
+        next_page = asyncio.run(tool.call(
+            _ctx(_scope()), person="诸葛匹夫", query_type="timeline", limit=1, offset=1,
+        ))
+        assert "第二页旧事" in next_page
+        by_id = asyncio.run(tool.call(
+            _ctx(_scope()), person="诸葛匹夫", query_type="timeline", event_id=other_id,
+        ))
+        assert "第二页详情" in by_id
+        leaked = asyncio.run(tool.call(
+            _ctx(_scope()), person="诸葛匹夫", query_type="timeline", query="别的Bot",
+        ))
+        assert "未找到符合条件的人物时间线事件" in leaked
+        other_group = asyncio.run(tool.call(
+            _ctx(_scope()), person="诸葛匹夫", query_type="timeline", query="别群",
+        ))
+        assert "未找到符合条件的人物时间线事件" in other_group
+        cross = asyncio.run(tool.call(
+            _ctx(_scope()), person="诸葛匹夫", query_type="timeline", query="别群", scope="all_groups",
+        ))
+        assert "别群详情" in cross
+        assert repo.count_events(bot_id="yushu", user_id="2696534623", group_id="398291136") == before
+    finally:
+        cm.close()

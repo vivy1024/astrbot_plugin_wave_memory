@@ -70,7 +70,14 @@ def _timeline_metadata_projection(metadata: Any, *, bot_id: str, user_id: str, g
         payload = cleaned
     except Exception:
         pass
-    events = load_timeline_events(db, bot_id=bot_id, user_id=user_id, limit=40, connection=conn)
+    events = load_timeline_events(
+        db,
+        bot_id=bot_id,
+        user_id=user_id,
+        group_id=group_id,
+        limit=40,
+        connection=conn,
+    )
     if events:
         payload["impression"] = current_impression_text(events, payload)
         payload["impression_history"] = [
@@ -286,6 +293,13 @@ def _optional_int(raw: Any, name: str) -> int | None:
     return int(text)
 
 
+def _normalized_sort_order(raw: Any, *, sort_by: str) -> str:
+    text = str(raw or "").strip().lower()
+    if text in {"asc", "desc"}:
+        return text
+    return "desc" if sort_by in {"affinity", "interactions"} else "asc"
+
+
 def _people_query_from_request() -> dict[str, Any]:
     return {
         "search": str(request.args.get("search") or "").strip().casefold(),
@@ -293,7 +307,10 @@ def _people_query_from_request() -> dict[str, Any]:
         "relationship_state": str(request.args.get("relationship_state") or "all").strip().lower() or "all",
         "alias_filter": str(request.args.get("alias_filter") or "all").strip().lower() or "all",
         "sort_by": str(request.args.get("sort_by") or "name").strip().lower() or "name",
-        "sort_order": str(request.args.get("sort_order") or "asc").strip().lower() or "asc",
+        "sort_order": _normalized_sort_order(
+            request.args.get("sort_order"),
+            sort_by=str(request.args.get("sort_by") or "name").strip().lower() or "name",
+        ),
         "min_affinity": _optional_float(request.args.get("min_affinity"), "min_affinity"),
         "max_affinity": _optional_float(request.args.get("max_affinity"), "max_affinity"),
         "min_interactions": _optional_int(request.args.get("min_interactions"), "min_interactions"),
@@ -339,7 +356,7 @@ def _filter_people_rows(
     relationship_state = str(filters.get("relationship_state") or "all").strip().lower() or "all"
     alias_filter = str(filters.get("alias_filter") or "all").strip().lower() or "all"
     sort_by = str(filters.get("sort_by") or "name").strip().lower() or "name"
-    sort_order = str(filters.get("sort_order") or "asc").strip().lower() or "asc"
+    sort_order = _normalized_sort_order(filters.get("sort_order"), sort_by=sort_by)
     min_affinity = filters.get("min_affinity")
     max_affinity = filters.get("max_affinity")
     min_interactions = filters.get("min_interactions")
@@ -403,13 +420,20 @@ def _filter_people_rows(
         name = str(person.get("display_name") or "").casefold()
         if sort_by == "interactions":
             count = _interaction_count(person)
-            return ((count is None, count if count is not None else 0), name)
+            missing = count is None
+            value = count if count is not None else 0
+            return (missing, -value if reverse else value, name)
         if sort_by == "affinity":
             affinity = _relationship_affinity(item if nested_person is not None else ((relationship_lookup or {}).get(str(person.get("user_id") or "")) or item))
-            return ((affinity is None, affinity if affinity is not None else 0.0), name)
+            missing = affinity is None
+            value = affinity if affinity is not None else 0.0
+            return (missing, -value if reverse else value, name)
         return (name, str(person.get("user_id") or ""))
 
-    filtered.sort(key=sort_key, reverse=reverse)
+    if sort_by in {"affinity", "interactions"}:
+        filtered.sort(key=sort_key)
+    else:
+        filtered.sort(key=sort_key, reverse=reverse)
     return filtered
 
 
@@ -974,6 +998,86 @@ async def clear_impression():
         return jsonify(error_payload(code, str(exc))), status
     except ValueError as exc:
         return jsonify(error_payload(str(exc), str(exc))), 422
+
+
+_TIMELINE_KINDS = frozenset({"impression", "affinity", "person_fact"})
+
+
+def _serialize_timeline_event(item: Mapping[str, Any]) -> dict[str, Any]:
+    provenance = item.get("provenance") if isinstance(item.get("provenance"), Mapping) else {}
+    event = provenance.get("event") if isinstance(provenance.get("event"), Mapping) else {}
+    ledger = provenance.get("ledger") if isinstance(provenance.get("ledger"), Mapping) else {}
+    kind = str(item.get("kind") or "").strip()
+    return {
+        "id": item.get("id"),
+        "user_id": str(item.get("user_id") or ""),
+        "group_id": str(item.get("group_id") or ""),
+        "bot_id": str(item.get("bot_id") or ""),
+        "kind": kind,
+        "summary": str(item.get("summary") or "").strip(),
+        "detail": str(item.get("detail") or "").strip(),
+        "subject": str(item.get("subject") or "").strip(),
+        "predicate": str(item.get("predicate") or "").strip(),
+        "object": str(item.get("object") or "").strip(),
+        "confidence": item.get("confidence"),
+        "occurred_at": item.get("occurred_at"),
+        "created_at": item.get("created_at"),
+        "event_type": str(event.get("event_type") or ledger.get("event_type") or kind),
+        "dimension": str(event.get("dimension") or ledger.get("dimension") or ""),
+        "delta": event.get("delta") if event.get("delta") is not None else ledger.get("delta"),
+        "readonly": True,
+        "timeline": "impression",
+    }
+
+
+@people_bp.route("/people/timeline", methods=["GET"])
+@require_auth
+async def list_person_timeline():
+    """分页浏览当前群的群友印象时间线（我眼中的他），与 Bot 经历时间线分工。"""
+    try:
+        scope = _request_scope()
+        if scope is None or scope.session is None or scope.visibility != "group":
+            return jsonify(error_payload("scope_required", "A complete group RuntimeScope is required")), 400
+        db = getattr(get_container(), "db", None)
+        if db is None or getattr(db, "person_timeline", None) is None:
+            return jsonify(error_payload("person_timeline_unavailable", "Person timeline is unavailable", retryable=True)), 503
+        try:
+            from ...services.impression_timeline import page_timeline_events
+        except ImportError:  # pragma: no cover
+            from services.impression_timeline import page_timeline_events
+        limit, offset = _page_args()
+        user_id = str(request.args.get("user_id") or "").strip()
+        kind = str(request.args.get("kind") or "").strip()
+        search = str(request.args.get("search") or "").strip()
+        if kind and kind not in _TIMELINE_KINDS:
+            return jsonify(error_payload("invalid_timeline_kind", "kind must be impression, affinity or person_fact")), 400
+        conn = _connection()
+        page = page_timeline_events(
+            db,
+            bot_id=scope.bot_id,
+            user_id=user_id or None,
+            group_id=scope.session.conversation_id,
+            query=search,
+            kind=kind,
+            limit=limit,
+            offset=offset,
+            connection=conn,
+        )
+        items = [_serialize_timeline_event(item) for item in page.get("items") or []]
+        payload = page_response(items, total=int(page.get("total") or 0), limit=limit, offset=offset)
+        payload.update({
+            "scope": scope.to_dict(),
+            "timeline": "impression",
+            "readonly": True,
+            "user_id": user_id or None,
+            "kind": kind or None,
+            "search": search or None,
+        })
+        return jsonify(payload)
+    except (TypeError, ValueError):
+        return jsonify(error_payload("invalid_pagination", "Invalid pagination parameters")), 400
+    except Exception:
+        return jsonify(error_payload("person_timeline_unavailable", "Person timeline is unavailable", retryable=True)), 503
 
 
 @people_bp.route("/people", methods=["GET"])

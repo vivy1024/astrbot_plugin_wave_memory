@@ -86,6 +86,27 @@ def _descriptor(refs, *, kind: str, locator: int | str, scope: RuntimeScope, rev
     }
 
 
+_LEGEND_KNOWN_TYPES = ("keyword", "entity", "topic", "emotion", "fact", "jargon", "default")
+
+
+def _legend_settings() -> dict[str, Any]:
+    """图例展示配置：类型顺序、显隐、是否计数。仅影响展示，不影响图谱数据。"""
+    container = get_container()
+    tag_cfg = (getattr(container, "plugin_config", None) or {}).get("Tag_Settings", {}) or {}
+    raw = str(tag_cfg.get("graph_legend_types", "") or "").strip()
+    # 未配置或留空 => 展示图谱中实际出现的全部类型（按出现顺序，前端兜底）。
+    types = [item.strip() for item in raw.split(",") if item.strip()] if raw else []
+    enabled = bool(tag_cfg.get("graph_legend_enabled", True))
+    show_count = bool(tag_cfg.get("graph_legend_show_count", True))
+    # 未知类型名直接丢弃，避免把拼写错误当成一个空图例项渲染出来。
+    return {
+        "enabled": enabled,
+        "types": [t for t in types if t in _LEGEND_KNOWN_TYPES],
+        "show_count": show_count,
+        "known_types": list(_LEGEND_KNOWN_TYPES),
+    }
+
+
 def _decorate_graph(payload: dict[str, Any], *, scope: RuntimeScope) -> dict[str, Any]:
     refs = _object_refs()
     for node in payload.get("nodes", ()):
@@ -102,6 +123,7 @@ def _decorate_graph(payload: dict[str, Any], *, scope: RuntimeScope) -> dict[str
             if memory_descriptor is not None:
                 memory["ref"] = memory_descriptor["ref"]
                 memory["object_ref"] = memory_descriptor
+    payload["legend"] = _legend_settings()
     return payload
 
 

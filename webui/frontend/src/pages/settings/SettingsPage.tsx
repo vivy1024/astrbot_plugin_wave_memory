@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { humanizeApiError } from '@/lib/reason-label'
 import { AlertCircleIcon, Loader2Icon, RefreshCwIcon, SaveIcon, Undo2Icon } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -24,10 +25,12 @@ import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { SettingsSection } from '@/components/ui/collapsible'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { validateNumericDraft } from '@/lib/numeric-draft'
 import { changedPayload } from '@/pages/settings/settings-state'
+import { groupMeta, isHiddenSection, matchesSearch } from '@/pages/settings/settings-groups'
 
 function cloneGroups(groups: ConfigGroup[]): ConfigGroup[] {
   return typeof structuredClone === 'function'
@@ -77,7 +80,7 @@ function hotNumericDrafts(params: HotParam[]): Record<string, string> {
 }
 
 function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback
+  return humanizeApiError(error, fallback)
 }
 
 export function SettingsPage() {
@@ -100,12 +103,18 @@ export function SettingsPage() {
   const [hotError, setHotError] = useState<unknown>(null)
   const [providersError, setProvidersError] = useState<unknown>(null)
   const [saving, setSaving] = useState(false)
+  // 请求序号：重试加载与保存后回读可能交错，只接受最后一次发出的响应。
+  const schemaRequestRef = useRef(0)
+  const hotRequestRef = useRef(0)
+  const providersRequestRef = useRef(0)
 
   const loadSchema = useCallback(async () => {
+    const requestId = ++schemaRequestRef.current
     setSchemaLoading(true)
     setSchemaError(null)
     try {
       const schema = await getConfigSchema()
+      if (requestId !== schemaRequestRef.current) return
       const groups = cloneGroups(schema.groups ?? [])
       setSchemaGroups(groups)
       setOriginalGroups(cloneGroups(groups))
@@ -113,40 +122,47 @@ export function SettingsPage() {
       setSchemaErrors({})
       setWarnings(schema.warnings ?? [])
     } catch (error) {
+      if (requestId !== schemaRequestRef.current) return
       setSchemaError(error)
     } finally {
-      setSchemaLoading(false)
+      if (requestId === schemaRequestRef.current) setSchemaLoading(false)
     }
   }, [])
 
   const loadHot = useCallback(async () => {
+    const requestId = ++hotRequestRef.current
     setHotLoading(true)
     setHotError(null)
     try {
       const hot = await getHotConfig()
+      if (requestId !== hotRequestRef.current) return
       const params = cloneHotParams(hot.params ?? [])
       setHotParams(params)
       setOriginalHotParams(cloneHotParams(params))
       setHotDrafts(hotNumericDrafts(params))
       setHotErrors({})
     } catch (error) {
+      if (requestId !== hotRequestRef.current) return
       setHotError(error)
     } finally {
-      setHotLoading(false)
+      if (requestId === hotRequestRef.current) setHotLoading(false)
     }
   }, [])
 
   const loadProviders = useCallback(async () => {
+    const requestId = ++providersRequestRef.current
     setProvidersLoading(true)
     setProvidersError(null)
     try {
       const providerData = await listProviders()
+      if (requestId !== providersRequestRef.current) return
       setProviders(providerData.providers ?? [])
     } catch (error) {
+      if (requestId !== providersRequestRef.current) return
       setProviders([])
       setProvidersError(error)
     } finally {
-      setProvidersLoading(false)
+      if (requestId === providersRequestRef.current) setProvidersLoading(false)
     }
   }, [])
 
@@ -335,20 +351,32 @@ export function SettingsPage() {
     return <Input type="text" value={value == null ? '' : String(value)} onChange={(event) => setValue(event.target.value)} />
   }
 
+  // 分组展开状态：默认按「常用组」展开，用户的手动开合覆盖默认值。
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({})
+  const toggleSection = useCallback((key: string, next: boolean) => {
+    setOpenSections((current) => ({ ...current, [key]: next }))
+  }, [])
+
   const visibleGroups = useMemo(() => {
     const term = search.trim().toLowerCase()
-    return schemaGroups.map((group) => {
-      const groupMatches = !term || `${group.key} ${group.description} ${group.hint}`.toLowerCase().includes(term)
+    // 搜索时忽略 tab 与折叠过滤：用户已经明确表达了要找什么。
+    const searching = term.length > 0
+    return schemaGroups.filter((group) => !isHiddenSection(group.key)).map((group) => {
+      const meta = groupMeta(group.key)
+      const allItems = group.kind === 'object' ? (group.items ?? []) : []
+      if (!matchesSearch(meta, group.key, group, allItems, term)) return null
+      if (searching) return group
       const mode = activeTab === 'restart' ? 'restart' : activeTab === 'static' ? 'next_run' : null
       if (group.kind === 'object') {
-        const items = (group.items ?? []).filter((item) => {
-          const textMatches = groupMatches || `${item.key} ${item.description} ${item.hint}`.toLowerCase().includes(term)
-          return textMatches && (!mode || item.apply_mode === mode)
-        })
+        const items = allItems.filter((item) => !mode || item.apply_mode === mode)
         return items.length ? { ...group, items } : null
       }
-      return groupMatches && (!mode || group.apply_mode === mode) ? group : null
-    }).filter((group): group is ConfigGroup => group !== null)
+      return !mode || group.apply_mode === mode ? group : null
+    }).filter((group): group is ConfigGroup => group !== null).map((group) => {
+      const meta = groupMeta(group.key)
+      const itemCount = group.kind === 'object' ? (group.items?.length ?? 0) : 1
+      return { group, meta, itemCount }
+    })
   }, [activeTab, schemaGroups, search])
 
   const schemaRegion = schemaLoading ? <Skeleton className="h-72 w-full" /> : schemaError ? (
@@ -361,24 +389,63 @@ export function SettingsPage() {
           <div className="flex gap-2"><Button variant="outline" onClick={discardSchema} disabled={saving}><Undo2Icon />放弃修改</Button><Button onClick={() => void saveSchema()} disabled={saving || !Object.keys(fullPayload).length || hasSchemaErrors}>{saving ? <Loader2Icon className="animate-spin" /> : <SaveIcon />}保存配置</Button></div>
         </CardContent>
       </Card>
-      {!visibleGroups.length ? <QueryState status="empty" title="没有匹配的配置项" description="请调整搜索词或切换配置分类。" /> : visibleGroups.map((group) => (
-        <Card key={group.key}>
-          <CardHeader><CardTitle>{group.description}</CardTitle><CardDescription>{group.hint || group.key}</CardDescription></CardHeader>
-          <CardContent className="space-y-5">
-            {group.kind === 'object' ? (group.items ?? []).map((item) => (
-              <div key={item.key} className="grid gap-4 rounded-lg border p-4 xl:grid-cols-[minmax(16rem,0.8fr)_minmax(0,1.2fr)]">
-                <Field><div className="flex items-center justify-between gap-3"><FieldLabel>{item.description}</FieldLabel><div className="flex gap-1.5">{item.restart_required ? <Badge variant="secondary">需要重启</Badge> : null}{item.apply_mode === 'hot' ? <button type="button" onClick={() => setActiveTab('hot')} className="inline-flex items-center rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 transition-colors hover:bg-emerald-500/20">⚡ 可实时热应用</button> : null}</div></div>{editor(group, item)}<FieldDescription>{item.hint}<br />键：<span className="font-mono">{group.key}.{item.key}</span>；来源：{item.source}；有效来源：{item.effective_source}。{item.error ? ` 诊断：${item.error}` : ''}</FieldDescription></Field>
-                <FieldValueState label={item.description} {...pathState(item)} />
-              </div>
-            )) : (
-              <div className="grid gap-4 xl:grid-cols-[minmax(16rem,0.8fr)_minmax(0,1.2fr)]">
-                <Field><div className="flex items-center justify-between gap-3"><FieldLabel>{group.description}</FieldLabel><div className="flex gap-1.5">{group.restart_required ? <Badge variant="secondary">需要重启</Badge> : null}{group.apply_mode === 'hot' ? <button type="button" onClick={() => setActiveTab('hot')} className="inline-flex items-center rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 transition-colors hover:bg-emerald-500/20">⚡ 可实时热应用</button> : null}</div></div>{editor(group)}<FieldDescription>键：<span className="font-mono">{group.key}</span>；来源：{group.source}；有效来源：{group.effective_source}。{group.error ? ` 诊断：${group.error}` : ''}</FieldDescription></Field>
-                <FieldValueState label={group.description} {...pathState(group)} />
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ))}
+      {!visibleGroups.length ? <QueryState status="empty" title="没有匹配的配置项" description="请调整搜索词或切换配置分类。" /> : visibleGroups.map(({ group, meta, itemCount }) => {
+        // 搜索时强制展开，否则用户会以为没有命中；其余情况用用户的开合状态覆盖默认值。
+        const searching = search.trim().length > 0
+        const open = searching || (openSections[group.key] ?? meta.defaultOpen)
+        return (
+          <SettingsSection
+            key={group.key}
+            title={meta.title}
+            count={itemCount}
+            open={open}
+            onOpenChange={(next) => toggleSection(group.key, next)}
+          >
+            <p className="mb-3 text-xs text-muted-foreground">{meta.description}</p>
+            <div className="space-y-3">
+              {group.kind === 'object' ? (group.items ?? []).map((item) => (
+                <div key={item.key} className="grid gap-3 rounded-lg border p-3 xl:grid-cols-[minmax(16rem,0.8fr)_minmax(0,1.2fr)]">
+                  <Field>
+                    <div className="flex items-center justify-between gap-3">
+                      <FieldLabel>{item.description}</FieldLabel>
+                      <div className="flex gap-1.5">
+                        {item.apply_mode === 'hot' ? null : item.restart_required
+                          ? <Badge variant="secondary">需重启</Badge>
+                          : <Badge variant="outline">保存即生效</Badge>}
+                      </div>
+                    </div>
+                    {editor(group, item)}
+                    <FieldDescription>
+                      {item.hint}
+                      {item.error ? <span className="text-destructive"> {item.error}</span> : null}
+                    </FieldDescription>
+                  </Field>
+                  <FieldValueState label={item.description} {...pathState(item)} />
+                </div>
+              )) : (
+                <div className="grid gap-3 xl:grid-cols-[minmax(16rem,0.8fr)_minmax(0,1.2fr)]">
+                  <Field>
+                    <div className="flex items-center justify-between gap-3">
+                      <FieldLabel>{group.description}</FieldLabel>
+                      <div className="flex gap-1.5">
+                        {group.apply_mode === 'hot' ? null : group.restart_required
+                          ? <Badge variant="secondary">需重启</Badge>
+                          : <Badge variant="outline">保存即生效</Badge>}
+                      </div>
+                    </div>
+                    {editor(group)}
+                    <FieldDescription>
+                      {group.hint}
+                      {group.error ? <span className="text-destructive"> {group.error}</span> : null}
+                    </FieldDescription>
+                  </Field>
+                  <FieldValueState label={group.description} {...pathState(group)} />
+                </div>
+              )}
+            </div>
+          </SettingsSection>
+        )
+      })}
     </>
   )
 
@@ -392,7 +459,7 @@ export function SettingsPage() {
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
-          <TabsTrigger value="static">静态/下次运行</TabsTrigger><TabsTrigger value="hot">实时热参数</TabsTrigger><TabsTrigger value="restart">需重启参数</TabsTrigger><TabsTrigger value="advanced">全部高级设置</TabsTrigger>
+          <TabsTrigger value="static">保存即生效</TabsTrigger><TabsTrigger value="hot">实时热参数</TabsTrigger><TabsTrigger value="restart">需重启参数</TabsTrigger><TabsTrigger value="advanced">全部高级设置</TabsTrigger>
         </TabsList>
 
         <TabsContent value="hot" className="mt-4">

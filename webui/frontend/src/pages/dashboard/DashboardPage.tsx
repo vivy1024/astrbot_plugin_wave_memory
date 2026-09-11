@@ -12,6 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Skeleton } from '@/components/ui/skeleton'
 import { InjectionTrendCard } from '@/pages/dashboard/InjectionTrendCard'
 import { SystemHealthCard } from '@/pages/dashboard/SystemHealthCard'
+import { humanizeApiError } from '@/lib/reason-label'
 
 interface SectionState<T> {
   data?: T
@@ -99,9 +100,8 @@ function moduleLabel(key: unknown): string {
     concern_tokens: '关切',
     mood_tokens: '情绪',
     lore_tokens: '世界知识',
-    exp_memories_tokens: '时间线/经历',
+    exp_memories_tokens: '时间线（历史）',
     book_lore_tokens: '书设知识',
-    timeline_tokens: '时间线',
     fts5_tokens: '全文原词命中',
     fewshot_tokens: '风格范例',
   }
@@ -115,7 +115,6 @@ function moduleRoute(key: unknown): string | undefined {
     lore_tokens: '/knowledge/book-lore',
     book_lore_tokens: '/knowledge/book-lore',
     exp_memories_tokens: '/channels',
-    timeline_tokens: '/channels',
     relation_memories_tokens: '/people',
     fewshot_tokens: '/knowledge/style-examples',
     jargon_tokens: '/jargon',
@@ -240,9 +239,9 @@ interface InjectionBreakdownCardProps {
 function InjectionBreakdownCard({ metrics, channels, channelsUnavailable = false, metricsUnavailable = false }: InjectionBreakdownCardProps) {
   const ranking = (metrics?.ranking ?? []).slice(0, 5)
   const max = Math.max(...ranking.map((item) => Number(item.sum ?? item.total_tokens ?? 0)), 1)
-  const experienceTokens = Number((metrics?.ranking ?? []).find((item) => item.key === 'exp_memories_tokens')?.sum ?? 0)
-  const timelineConfig = channels?.current?.channels?.timeline
-  const enabled = timelineConfig?.enabled
+  const relationTokens = Number((metrics?.ranking ?? []).find((item) => item.key === 'relation_memories_tokens')?.sum ?? 0)
+  const affinityConfig = channels?.current?.channels?.affinity
+  const enabled = affinityConfig?.enabled
   const channelValue = (value: unknown, suffix = '') => channelsUnavailable || value === undefined || value === null ? '不可用 / 未返回' : `${formatNumber(value)}${suffix}`
 
   return (
@@ -296,14 +295,14 @@ function InjectionBreakdownCard({ metrics, channels, channelsUnavailable = false
         <div className="flex-1 min-w-0">
           <CardTitle className="tracking-tight text-sm font-semibold flex items-center gap-1.5">
             <BookOpenIcon className="size-4 text-primary" />
-            <span>经历注入通道</span>
+            <span>关系注入通道</span>
           </CardTitle>
           <CardDescription className="text-[10.5px] mt-0.5 leading-relaxed text-muted-foreground/80">
-            配置经历通道的单次注入上限与 Token 预算；不代表 facts 表总量。
+            印象摘要、印象时间线与好感分数经 affinity 通道一起注入；Token 为该通道单次预算。
           </CardDescription>
         </div>
         <Badge variant="outline" className="px-2 py-0.5 text-[9px] font-mono shrink-0">
-          {metricsUnavailable ? '指标不可用 / 未返回' : `${metrics?.range ?? '当前窗口'} 消耗 ${formatNumber(experienceTokens)} token`}
+          {metricsUnavailable ? '指标不可用 / 未返回' : `${metrics?.range ?? '当前窗口'} 消耗 ${formatNumber(relationTokens)} token`}
         </Badge>
       </CardHeader>
 
@@ -318,15 +317,15 @@ function InjectionBreakdownCard({ metrics, channels, channelsUnavailable = false
           </div>
           <div className="rounded-lg border bg-muted/5 p-2 flex flex-col justify-between">
             <span className="text-[9.5px] text-muted-foreground/80 font-medium">配置状态</span>
-            <span className="mt-0.5 font-mono text-[11px] text-foreground/80">{channelsUnavailable ? '不可用' : timelineConfig?.status ? String(timelineConfig.status) : '未返回'}</span>
+            <span className="mt-0.5 font-mono text-[11px] text-foreground/80">{channelsUnavailable ? '不可用' : affinityConfig?.status ? String(affinityConfig.status) : '未返回'}</span>
           </div>
           <div className="rounded-lg border bg-muted/5 p-2 flex flex-col justify-between">
             <span className="text-[9.5px] text-muted-foreground/80 font-medium">注入上限</span>
-            <span className="mt-0.5 font-mono text-[11px] font-semibold">{channelValue(timelineConfig?.max_items, ' 条')}</span>
+            <span className="mt-0.5 font-mono text-[11px] font-semibold">{channelValue(affinityConfig?.max_items, ' 条')}</span>
           </div>
           <div className="rounded-lg border bg-muted/5 p-2 flex flex-col justify-between">
             <span className="text-[9.5px] text-muted-foreground/80 font-medium">Token 预算</span>
-            <span className="mt-0.5 font-mono text-[11px] font-semibold">{channelValue(timelineConfig?.token_budget)}</span>
+            <span className="mt-0.5 font-mono text-[11px] font-semibold">{channelValue(affinityConfig?.token_budget)}</span>
           </div>
         </div>
 
@@ -440,7 +439,7 @@ export function DashboardPage() {
     setSystem({ loading: true })
     getSystemStatus(controller.signal)
       .then((data) => { if (!controller.signal.aborted) setSystem({ loading: false, data }) })
-      .catch((reason: unknown) => { if (!controller.signal.aborted && !isRequestCancelled(reason)) setSystem({ loading: false, error: reason instanceof Error ? reason.message : '系统状态读取失败' }) })
+      .catch((reason: unknown) => { if (!controller.signal.aborted && !isRequestCancelled(reason)) setSystem({ loading: false, error: humanizeApiError(reason, '系统状态读取失败') }) })
     return () => controller.abort()
   }, [systemVersion])
 
@@ -449,7 +448,7 @@ export function DashboardPage() {
     setErrors({ loading: true })
     getRecentErrors(controller.signal)
       .then((data) => { if (!controller.signal.aborted) setErrors({ loading: false, data }) })
-      .catch((reason: unknown) => { if (!controller.signal.aborted && !isRequestCancelled(reason)) setErrors({ loading: false, error: reason instanceof Error ? reason.message : '最近错误读取失败' }) })
+      .catch((reason: unknown) => { if (!controller.signal.aborted && !isRequestCancelled(reason)) setErrors({ loading: false, error: humanizeApiError(reason, '最近错误读取失败') }) })
     return () => controller.abort()
   }, [errorsVersion])
 
@@ -458,7 +457,7 @@ export function DashboardPage() {
     setChannels({ loading: true })
     getChannelConfig(controller.signal)
       .then((data) => { if (!controller.signal.aborted) setChannels({ loading: false, data }) })
-      .catch((reason: unknown) => { if (!controller.signal.aborted && !isRequestCancelled(reason)) setChannels({ loading: false, error: reason instanceof Error ? reason.message : '通道配置读取失败' }) })
+      .catch((reason: unknown) => { if (!controller.signal.aborted && !isRequestCancelled(reason)) setChannels({ loading: false, error: humanizeApiError(reason, '通道配置读取失败') }) })
     return () => controller.abort()
   }, [channelsVersion])
 
@@ -467,7 +466,7 @@ export function DashboardPage() {
     setMetrics({ loading: true })
     getInjectionMetrics(metricsRange, controller.signal)
       .then((data) => { if (!controller.signal.aborted) setMetrics({ loading: false, data }) })
-      .catch((reason: unknown) => { if (!controller.signal.aborted && !isRequestCancelled(reason)) setMetrics({ loading: false, error: reason instanceof Error ? reason.message : '注入指标读取失败' }) })
+      .catch((reason: unknown) => { if (!controller.signal.aborted && !isRequestCancelled(reason)) setMetrics({ loading: false, error: humanizeApiError(reason, '注入指标读取失败') }) })
     return () => controller.abort()
   }, [metricsRange, metricsVersion])
 

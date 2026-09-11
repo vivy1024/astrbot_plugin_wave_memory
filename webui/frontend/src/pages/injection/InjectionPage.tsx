@@ -3,6 +3,7 @@ import { RefreshCwIcon, SearchIcon } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 
 import { isRequestCancelled } from '@/api/client'
+import { humanizeApiError, humanizeReason } from '@/lib/reason-label'
 import { getInjectionTrace, listInjectionTraces, type InjectionTraceSummary, type TraceDetailPayload, type TraceFilters } from '@/api/injection'
 import { getScopeOptions, scopeOptionsFor } from '@/api/options'
 import { PaginationControls, QueryState, ScopeSelect, DeclarativeDataTable } from '@/components/shared'
@@ -225,7 +226,7 @@ export function InjectionPage() {
     setDetailError('')
     getInjectionTrace(selectedTraceId, controller.signal)
       .then((value) => { if (active) setDetail(value) })
-      .catch((reason: unknown) => { if (active && !isRequestCancelled(reason)) setDetailError(reason instanceof Error ? reason.message : '注入详情加载失败') })
+      .catch((reason: unknown) => { if (active && !isRequestCancelled(reason)) setDetailError(humanizeApiError(reason, '注入详情加载失败')) })
       .finally(() => { if (active) setDetailLoading(false) })
     return () => { active = false; controller.abort() }
   }, [selectedTraceId])
@@ -312,7 +313,7 @@ export function InjectionPage() {
       <Card>
         <CardHeader>
           <CardTitle>注入摘要</CardTitle>
-          <CardDescription>{payload?.page.total_status === 'exact' ? `当前筛选共 ${payload.page.total ?? 0} 条` : `总数不可用：${payload?.page.reason_code ?? '等待查询'}`}</CardDescription>
+          <CardDescription>{payload?.page.total_status === 'exact' ? `当前筛选共 ${payload.page.total ?? 0} 条` : `总数暂不可用：${humanizeReason(payload?.page.reason_code, '等待查询')}`}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <QueryState status={status} error={error} onRetry={() => void load()}>

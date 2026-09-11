@@ -123,7 +123,7 @@ class InjectionOrchestratorTest(unittest.TestCase):
         orchestrator = InjectionOrchestrator(
             channels=[
                 DummyChannel("facts", InjectionResult.hit("facts", "不该注入")),
-                DummyChannel("timeline", InjectionResult.empty("timeline")),
+                DummyChannel("fts5", InjectionResult.empty("fts5")),
                 SlowChannel(),
             ],
             config=config,
@@ -146,12 +146,14 @@ class InjectionOrchestratorTest(unittest.TestCase):
         result = asyncio.run(orchestrator.run(ctx))
         detail = trace_store.get("trace-orch-2")
 
-        self.assertFalse(result.injected)
-        self.assertEqual(req.extra_user_content_parts, [])
+        self.assertTrue(result.injected)
+        self.assertEqual(req.extra_user_content_parts[0].text, "too late")
         statuses = {c["channel"]: c["status"] for c in detail["channels"]}
         self.assertNotIn("facts", statuses)
-        self.assertEqual(statuses["timeline"], "empty")
-        self.assertEqual(statuses["memory"], "timeout")
+        self.assertEqual(statuses["fts5"], "empty")
+        self.assertEqual(statuses["slow"], "hit")
+        timed = next(item for item in result.channel_results if item.channel == "slow")
+        self.assertIn("channel exceeded 10ms", timed.warnings)
 
     def test_memory_only_trace_omits_disabled_advanced_channels(self):
         from services.config.channel_config import build_default_channel_config
@@ -204,14 +206,14 @@ class InjectionOrchestratorTest(unittest.TestCase):
 
         req = FakeReq()
         trace_store = self._trace_store()
-        disabled = {name: {"enabled": False} for name in KNOWN_CHANNELS if name not in {"safety", "memory", "timeline", "facts"}}
+        disabled = {name: {"enabled": False} for name in KNOWN_CHANNELS if name not in {"safety", "memory", "fts5", "facts"}}
         config = apply_channel_overrides(
             build_default_channel_config(runtime_mode="full"),
             {
                 "channels": {
                     **disabled,
                     "facts": {"priority": 300, "token_budget": 0},
-                    "timeline": {"priority": 200, "token_budget": 1},
+                    "fts5": {"priority": 200, "token_budget": 1},
                     "memory": {"priority": 100, "token_budget": 1},
                 }
             },
@@ -219,7 +221,7 @@ class InjectionOrchestratorTest(unittest.TestCase):
         orchestrator = InjectionOrchestrator(
             channels=[
                 DummyChannel("memory", InjectionResult.hit("memory", "这是一段会超过全局剩余预算的长记忆文本")),
-                DummyChannel("timeline", InjectionResult.hit("timeline", "短")),
+                DummyChannel("fts5", InjectionResult.hit("fts5", "短")),
                 ErroringChannel(),
             ],
             config=config,
@@ -249,8 +251,8 @@ class InjectionOrchestratorTest(unittest.TestCase):
         self.assertEqual(detail["status"], "degraded")
         self.assertIn("facts", detail["error"])
         self.assertEqual(statuses["facts"], "error")
-        self.assertEqual(statuses["timeline"], "hit")
-        self.assertEqual(statuses["memory"], "hit")
+        self.assertEqual(statuses["fts5"], "hit")
+        self.assertEqual(statuses["memory"], "skipped")
 
     def test_channel_timeout_keeps_other_channels_and_records_channel_latency(self):
         from services.config.channel_config import apply_channel_overrides, build_default_channel_config
@@ -291,9 +293,12 @@ class InjectionOrchestratorTest(unittest.TestCase):
         latency_by_channel = {row["channel"]: row["latency_ms"] for row in detail["channels"]}
 
         self.assertTrue(result.injected)
-        self.assertEqual(req.extra_user_content_parts[0].text, "可用事实")
-        self.assertEqual(statuses["memory"], "timeout")
+        self.assertIn("超时记忆", result.final_text)
+        self.assertIn("可用事实", result.final_text)
+        self.assertEqual(statuses["memory"], "hit")
         self.assertEqual(statuses["facts"], "hit")
+        timed = next(item for item in result.channel_results if item.channel == "memory")
+        self.assertIn("channel exceeded 10ms", timed.warnings)
         self.assertGreaterEqual(latency_by_channel["memory"], 1)
         self.assertGreaterEqual(latency_by_channel["facts"], 1)
 
@@ -339,6 +344,48 @@ class InjectionOrchestratorTest(unittest.TestCase):
         self.assertIn("memory", message)
         self.assertIn("hit", message)
         self.assertIn("ms", message)
+
+    def test_preserved_affinity_timeline_survives_exhausted_budget(self):
+        from services.config.channel_config import apply_channel_overrides, build_default_channel_config
+        from services.injection.channel_base import InjectionResult
+        from services.injection.context import InjectionContext
+        from services.injection.orchestrator import InjectionOrchestrator
+
+        req = FakeReq()
+        config = apply_channel_overrides(
+            build_default_channel_config(runtime_mode="full"),
+            {
+                "channels": {
+                    "affinity": {"token_budget": 1, "priority": 1},
+                    "memory": {"token_budget": 1, "priority": 100},
+                    "facts": {"token_budget": 1, "priority": 50},
+                }
+            },
+        )
+        long_timeline = "印象时间线\n" + "\n".join(f"- 事件#{i:02d} 旧摘要{i:02d}" for i in range(40))
+        orchestrator = InjectionOrchestrator(
+            channels=[
+                DummyChannel("memory", InjectionResult.hit("memory", "记忆占满预算")),
+                DummyChannel(
+                    "affinity",
+                    InjectionResult.hit("affinity", long_timeline, preserve_full_text=True),
+                ),
+                DummyChannel("facts", InjectionResult.hit("facts", "事实也应保留")),
+            ],
+            config=config,
+            text_part_factory=FakeTextPart,
+        )
+        result = asyncio.run(orchestrator.run(InjectionContext(
+            event="event", req=req, message="hello", group_id="g1", sender_id="u1",
+            sender_name="用户", bot_id="bot", bot_profile_id="yushu", mode="full",
+        )))
+        self.assertTrue(result.injected)
+        self.assertIn("事件#00 旧摘要00", result.final_text)
+        self.assertIn("事件#39 旧摘要39", result.final_text)
+        self.assertIn("记忆占满预算", result.final_text)
+        self.assertIn("事实也应保留", result.final_text)
+        self.assertIn("full_timeline_exceeds_injection_budget", result.channel_results[2].warnings)
+        self.assertEqual(req.extra_user_content_parts[0].text, result.final_text)
 
 
 if __name__ == "__main__":

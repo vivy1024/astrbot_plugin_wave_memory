@@ -19,9 +19,21 @@ class ChannelConfigTest(unittest.TestCase):
         self.assertEqual(config.channels["memory"].top_k, 7)
         self.assertAlmostEqual(config.channels["memory"].min_score, 0.42)
         self.assertEqual(config.channels["facts"].max_items, 4)
-        self.assertEqual(config.channels["timeline"].max_items, 3)
-        self.assertTrue(config.channels["timeline"].enabled)
+        # 独立 timeline 通道已退役：旧 inject 开关被接受但不生成通道。
+        self.assertNotIn("timeline", config.channels)
         self.assertTrue(config.channels["safety"].enabled)
+
+    def test_retired_timeline_override_is_ignored_for_legacy_configs(self):
+        from services.config.channel_config import apply_channel_overrides, build_default_channel_config
+
+        base = build_default_channel_config(runtime_mode="full")
+        updated = apply_channel_overrides(
+            base,
+            {"channels": {"timeline": {"enabled": False, "priority": 1}}},
+        )
+
+        self.assertNotIn("timeline", updated.channels)
+        self.assertTrue(updated.channels["memory"].enabled)
 
     def test_timeline_days_defaults_to_zero_and_preserves_explicit_zero(self):
         from services.config.channel_config import build_default_channel_config
@@ -36,6 +48,7 @@ class ChannelConfigTest(unittest.TestCase):
         self.assertEqual(explicit_zero.timeline_days, 0)
         self.assertEqual(default_config.to_dict()["timeline_days"], 0)
         self.assertEqual(explicit_zero.to_dict()["timeline_days"], 0)
+        self.assertEqual(default_config.timeline_decay_half_life_days, 21.0)
 
     def test_memory_only_disables_advanced_channels_by_default(self):
         from services.config.channel_config import build_default_channel_config
@@ -76,16 +89,16 @@ class ChannelConfigTest(unittest.TestCase):
                             },
                         }],
                     },
-                },
-            },
+                },            },
             scope=scope,
         )
 
         self.assertTrue(config.channels["safety"].enabled)
         self.assertTrue(config.channels["memory"].enabled)
         self.assertTrue(config.channels["fts5"].enabled)
-        for name in ("timeline", "facts", "persona", "belief", "jargon", "fewshot", "book_lore", "affinity", "soul_state"):
+        for name in ("facts", "persona", "belief", "jargon", "fewshot", "book_lore", "affinity", "soul_state"):
             self.assertFalse(config.channels[name].enabled, name)
+        self.assertNotIn("timeline", config.channels)
         self.assertFalse(config.trace_enabled)
         self.assertEqual(config.query_stages, {"epa": False, "pyramid": False, "spike": False, "geodesic": False})
         self.assertFalse(config.memory_recall["enable_shotgun"])
@@ -109,7 +122,7 @@ class ChannelConfigTest(unittest.TestCase):
         self.assertEqual(updated.channels["memory"].timeout_ms, 250)
         self.assertAlmostEqual(updated.channels["memory"].min_score, 0.55)
         self.assertFalse(updated.channels["facts"].enabled)
-        self.assertEqual(updated.channels["timeline"].max_items, base.channels["timeline"].max_items)
+        self.assertEqual(updated.channels["fts5"].max_items, base.channels["fts5"].max_items)
 
     def test_invalid_hot_config_is_rejected(self):
         from services.config.channel_config import apply_channel_overrides, build_default_channel_config
@@ -137,6 +150,7 @@ class ChannelConfigTest(unittest.TestCase):
         self.assertIn("channels", payload)
         self.assertFalse(payload["channels"]["memory"]["enabled"])
         self.assertTrue(payload["channels"]["safety"]["enabled"])
+        self.assertEqual(payload["timeline_decay_half_life_days"], 21.0)
 
     def test_build_channel_config_from_plugin_config_applies_stored_overrides(self):
         from services.config.channel_config import build_channel_config_from_plugin_config
@@ -249,6 +263,41 @@ class ChannelConfigTest(unittest.TestCase):
         self.assertEqual(applied["operation"]["status"], "succeeded")
         self.assertEqual(applied["revision"], preview["preflight_token"])
         self.assertIn("config_revision=", applied["verification_url"])
+
+    def test_timeline_half_life_falls_back_and_strict_overrides_round_trip(self):
+        from services.config.channel_config import (
+            apply_channel_overrides,
+            build_channel_config_from_plugin_config,
+            build_default_channel_config,
+            _config_set_from_payload,
+        )
+
+        for invalid in (None, "", 0, -1, True, False, "abc", float("nan"), float("inf")):
+            config = build_default_channel_config(
+                runtime_mode="full",
+                inject_cfg={"timeline_decay_half_life_days": invalid},
+            )
+            self.assertEqual(config.timeline_decay_half_life_days, 21.0, invalid)
+
+        valid = apply_channel_overrides(
+            build_default_channel_config(runtime_mode="full"),
+            {"timeline_decay_half_life_days": "14"},
+        )
+        self.assertEqual(valid.timeline_decay_half_life_days, 14.0)
+        restored = _config_set_from_payload(valid.to_dict())
+        self.assertEqual(restored.timeline_decay_half_life_days, 14.0)
+        for invalid in (0, -3, True, "nope", float("nan")):
+            with self.assertRaises(ValueError):
+                apply_channel_overrides(
+                    valid,
+                    {"timeline_decay_half_life_days": invalid},
+                )
+        plugin = build_channel_config_from_plugin_config({
+            "Runtime_Settings": {"runtime_mode": "full"},
+            "Inject_Settings": {"timeline_decay_half_life_days": "not-a-number"},
+            "Channel_Settings": {"timeline_decay_half_life_days": 7},
+        })
+        self.assertEqual(plugin.timeline_decay_half_life_days, 7.0)
 
     def test_layer_patch_is_fully_validated_and_explicit_false_zero_are_preserved(self):
         from services.config.channel_config import apply_channel_overrides, build_default_channel_config

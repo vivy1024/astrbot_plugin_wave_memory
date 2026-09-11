@@ -37,7 +37,16 @@ vi.mock('@/api/knowledge', () => ({
   getApprovedFewShot: mocks.getApprovedFewShot,
   getScopedFacts: mocks.getScopedFacts,
 }))
-vi.mock('@/api/people', () => ({ getPeople: mocks.getPeople, getRelationships: mocks.getRelationships, getLegacyPeople: vi.fn() }))
+vi.mock('@/api/people', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/people')>()
+  return {
+    ...actual,
+    getPeople: mocks.getPeople,
+    getRelationships: mocks.getRelationships,
+    getLegacyPeople: vi.fn(),
+    getPersonTimeline: vi.fn(),
+  }
+})
 vi.mock('@/api/jargon', () => ({ listJargons: mocks.listJargons, getCatalogAudit: mocks.getCatalogAudit, getJargonEvidence: mocks.getJargonEvidence, batchReviewJargons: mocks.batchReviewJargons, updateJargonMeaning: mocks.updateJargonMeaning, archiveJargon: mocks.archiveJargon, checkHolymanUpdate: mocks.checkHolymanUpdate, previewHolymanSync: mocks.previewHolymanSync, reviewJargon: vi.fn() }))
 vi.mock('@/api/diagnostics', () => ({ getIndexDiagnostics: mocks.getIndexDiagnostics }))
 vi.mock('@/api/options', () => ({

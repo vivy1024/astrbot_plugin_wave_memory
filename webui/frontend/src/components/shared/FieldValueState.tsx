@@ -31,8 +31,18 @@ function displayValue(value: unknown): string {
 const APPLY_LABELS: Record<ApplyMode, string> = {
   hot: '热生效',
   restart: '重启生效',
-  'next-run': '下次生效',
+  // next_run 表示「不需要重启，保存后由运行时下次读取路径生效」。
+  // 原文案“下次生效”容易被读成“下次重启才生效”，与事实不符。
+  'next-run': '保存即生效',
   unknown: '未知生效',
+}
+
+/** 保存值与生效值不一致时，说明各自需要什么动作，避免拼出“需要保存即生效”这类病句。 */
+const APPLY_PENDING_HINTS: Record<ApplyMode, string> = {
+  hot: '需要应用热参数',
+  restart: '需要重启 AstrBot',
+  'next-run': '会在运行时下次读取配置时生效',
+  unknown: '需要确认生效方式',
 }
 
 export function FieldValueState({
@@ -83,7 +93,7 @@ export function FieldValueState({
         {differs ? (
           <>
             <AlertTriangleIcon className="size-3 text-amber-500 shrink-0" />
-            <span className="text-amber-600">已保存值与当前生效值不同；修改尚未在当前进程生效（需要{APPLY_LABELS[mode]}）。</span>
+            <span className="text-amber-600">已保存值与当前生效值不同；{APPLY_PENDING_HINTS[mode]}。</span>
           </>
         ) : (
           <>

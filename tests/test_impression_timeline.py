@@ -7,9 +7,11 @@ from services.impression_timeline import (
     injection_lines,
     ledger_entries,
     meaningful_event_anchor,
+    normalize_timeline_half_life,
     propose_affinity_shift,
     relationship_context,
     snapshot_from_relationship,
+    timeline_decay_weight,
 )
 
 
@@ -47,9 +49,10 @@ def test_injection_lines_include_decayed_trajectory_summaries():
     )
     lines = injection_lines(metadata, now=3.0)
 
-    assert lines[0] == "你对这个人的印象：聊了考研其实挺有想法"
+    assert any(line.startswith("你对这个人的印象：聊了考研其实挺有想法") for line in lines)
     assert any(line.startswith("印象时间线") for line in lines)
-    assert any("好感 5→12" in line for line in lines)
+    assert all("好感 5→12" not in line for line in lines)
+    assert injection_lines({}, events=[{"kind": "impression", "detail": "只有详情没有摘要", "occurred_at": 1.0}]) == []
 
 
 def test_append_impression_stores_snapshot_and_event_on_archive():
@@ -90,7 +93,7 @@ def test_injection_lines_prefer_stored_event_then_history_anchor():
         event={"event_type": "bot_praised", "reason": "被感谢"},
     )
     lines = injection_lines(metadata, history=[{"event_type": "joke", "reason": "接梗"}])
-    assert lines[0] == "你对这个人的印象：愿意核对事实"
+    assert any(line.startswith("你对这个人的印象：愿意核对事实") for line in lines)
     assert any(line.startswith("印象时间线") for line in lines)
     assert any("愿意核对事实" in line for line in lines[1:])
 
@@ -172,7 +175,9 @@ def test_unsettled_energy_and_threshold_transition():
 def test_history_is_not_truncated_at_twenty():
     events = [{"kind": "impression", "summary": f"印象节点{i:02d}足够长", "detail": f"印象节点{i:02d}足够长", "occurred_at": float(i + 1)} for i in range(25)]
     lines = injection_lines({}, events=events, now=30.0)
-    assert any("印象节点00足够长" in line or "印象节点24足够长" in line for line in lines)
+    body = "\n".join(lines)
+    for i in range(25):
+        assert f"印象节点{i:02d}足够长" in body
     assert current_impression_text(list(reversed(events))) == "印象节点24足够长"
 
 
@@ -206,4 +211,54 @@ def test_match_timeline_cue_requires_overlap_and_stays_read_only():
     assert match_timeline_cue(events, "午饭吃什么") is None
     assert match_timeline_cue(events, "短") is None
     assert match_timeline_cue(events, "今天天气不错啊") is None
+
+
+def test_timeline_injection_is_full_and_labels_age():
+    from services.impression_timeline import impression_timeline_lines
+
+    now = 1_780_000_000.0  # 2026-06-02-ish unix
+    may_ts = now - 90 * 86400
+    july_ts = now - 3 * 86400
+    events = [
+        {"id": 11, "kind": "person_fact", "summary": "介绍 健身软件开发", "detail": "完整软件开发详情", "occurred_at": may_ts, "group_id": "g1"},
+        {"id": 12, "kind": "person_fact", "summary": "计划切换使用 城3.1", "detail": "计划切换使用 城3.1", "occurred_at": july_ts, "group_id": "g1"},
+        {"id": 13, "kind": "person_fact", "summary": "说了 喜欢伊芙", "detail": "说了 喜欢伊芙", "occurred_at": now - 86400, "group_id": "g1"},
+        {"id": 14, "kind": "person_fact", "summary": "时间缺失的旧记录", "detail": "不该被当成今天", "occurred_at": "invalid"},
+    ]
+    lines = impression_timeline_lines({}, events=events, now=now, half_life_days=21)
+    body = "\n".join(lines)
+    assert "介绍 健身软件开发" in body
+    assert "计划切换使用 城3.1" in body
+    assert "说了 喜欢伊芙" in body
+    assert "完整软件开发详情" not in body
+    assert body.index("介绍 健身软件开发") < body.index("计划切换使用 城3.1") < body.index("说了 喜欢伊芙")
+    assert "事件#11" in body
+    assert "来源群=g1" in body
+    assert "时间权重=0.5" in "\n".join(impression_timeline_lines({}, events=[{"id": 1, "summary": "半衰期", "occurred_at": now - 21 * 86400}], now=now))
+    may_weight = timeline_decay_weight(events[0], now=now, half_life_days=21)
+    july_weight = timeline_decay_weight(events[1], now=now, half_life_days=21)
+    assert may_weight is not None and july_weight is not None
+    assert may_weight < july_weight
+    assert f"时间权重={may_weight:.6g}" in body
+    assert "时间未知" in body
+    assert "昨天" in body
+    assert "3天前" in body
+    assert normalize_timeline_half_life(None) == 21.0
+    assert normalize_timeline_half_life(True) == 21.0
+    assert normalize_timeline_half_life(-3) == 21.0
+
+
+def test_timeline_injection_keeps_old_fact_with_date_when_query_matches():
+    from services.impression_timeline import impression_timeline_lines
+
+    now = 1_780_000_000.0
+    events = [
+        {"kind": "person_fact", "summary": "介绍 健身软件开发", "detail": "介绍 健身软件开发", "occurred_at": now - 90 * 86400},
+        {"kind": "person_fact", "summary": "计划切换使用 城3.1", "detail": "计划切换使用 城3.1", "occurred_at": now - 3 * 86400},
+    ]
+    lines = impression_timeline_lines({}, events=events, now=now, query="软件开发")
+    body = "\n".join(lines)
+    assert "介绍 健身软件开发" in body
+    assert "计划切换使用 城3.1" in body
+    assert "2025-" in body or "2026-" in body
 
