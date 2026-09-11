@@ -369,26 +369,26 @@
         "default": "<memory from='{sender}' time='{time}'>{content}</memory>"
       },
       "enable_spike_routing": {
-        "description": "启用图谱共现脉冲传播 (Spike Routing)",
-        "hint": "当标签覆盖率>20%且图谱构建完成后起效。开启后支持跨实体进行多跳语义联想，机器人思路更加开阔活跃。",
+        "description": "启用神经星云脉冲传播 (Spike Routing)",
+        "hint": "标签神经星云高级拓扑检索能力。当标签覆盖率>20%且图谱构建完成后起效，支持跨实体多跳语义联想；可在「算法实验室」中可视化对比效果。",
         "type": "bool",
         "default": true
       },
       "enable_residual_pyramid": {
         "description": "启用残差多阶金字塔召回 (Residual Pyramid)",
-        "hint": "对复杂长问题在特征空间进行多阶语义残差差分检索，大幅提升多重主语、指代模糊场景下的召回精准度。",
+        "hint": "标签神经星云多阶语义残差差分检索能力，提升多重主语、指代模糊场景下的召回精准度；可在「算法实验室」中可视化对比效果。",
         "type": "bool",
         "default": true
       },
       "enable_epa": {
         "description": "启用自省投影距离修正 (EPA)",
-        "hint": "开启后，系统根据用户输入的问题倾向度，动态对记忆向量的绝对欧氏几何距离进行投影自省缩放。推荐开启。",
+        "hint": "根据问题倾向度动态对记忆向量欧氏几何距离进行投影自省缩放；可在「算法实验室」中可视化对比效果。推荐开启。",
         "type": "bool",
         "default": true
       },
       "enable_geodesic_rerank": {
         "description": "启用非欧流形测地线重排 (Geodesic)",
-        "hint": "利用知识图谱的局部拓扑关联结构对向量空间偏离距离进行拉回校正，极大地抑制大模型向量相似度产生的幻觉关联。",
+        "hint": "利用标签神经星云的局部拓扑关联结构对向量空间偏离距离进行拉回校正，抑制向量幻觉关联；可在「算法实验室」中可视化对比效果。",
         "type": "bool",
         "default": true
       },
@@ -576,13 +576,13 @@
     }
   },
   "Tag_Settings": {
-    "description": "标签与分类",
-    "hint": "从聊天中自动提炼标签，以及标签图谱的图例展示",
+    "description": "标签与神经星云 (Tag Graph)",
+    "hint": "从聊天中自动提炼标签，以及标签神经星云的图例、类型与展示配置",
     "type": "object",
     "items": {
       "tag_extraction_enabled": {
         "description": "启用标签特征分析",
-        "hint": "关闭后不再从聊天提炼标签，神经云图、同好社区共现与自省投影修正都会失效。推荐开启。",
+        "hint": "关闭后不再从聊天提炼标签，标签神经星云、同好社区共现与自省投影修正都会失效。推荐开启。",
         "type": "bool",
         "default": true
       },
@@ -617,19 +617,19 @@
         "default": "日常闲聊,日常灌水,闲聊,灌水,群聊,聊天,日常"
       },
       "graph_legend_enabled": {
-        "description": "显示标签图谱图例",
-        "hint": "关闭后标签图谱左上角不再显示图例与节点计数。图谱本身不受影响。",
+        "description": "显示神经星云图例",
+        "hint": "关闭后标签神经星云左上角不再显示图例与节点计数。星云图谱本身不受影响。",
         "type": "bool",
         "default": true
       },
       "graph_legend_types": {
-        "description": "图例展示的标签类型与顺序",
-        "hint": "逗号分隔，按填写顺序展示。可选：keyword（关键词）、entity（实体）、topic（话题）、emotion（情绪）、fact（事实）、jargon（黑话）、default（其他）。留空表示展示图谱中实际出现的全部类型。",
+        "description": "神经星云图例展示类型与顺序",
+        "hint": "逗号分隔，按填写顺序展示。可选真实类型：topic（话题）、event（事件）、keyword（关键词）、entity（实体）、fact（事实）、person（人物）、emotion（情绪）、location（地点）、time（时间）、jargon（黑话）、default（其他）。留空表示展示星云中实际出现的全部类型。",
         "type": "string",
-        "default": "keyword,entity,topic,emotion,fact,jargon,default"
+        "default": "topic,event,keyword,entity,fact,person,emotion,location,time,jargon,default"
       },
       "graph_legend_show_count": {
-        "description": "图例显示节点数量",
+        "description": "神经星云图例显示节点数量",
         "hint": "在图例中每个类型后显示该类型的节点个数。",
         "type": "bool",
         "default": true

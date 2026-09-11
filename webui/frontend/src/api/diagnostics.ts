@@ -23,5 +23,5 @@ export interface IndexDiagnostics {
 }
 
 export function getIndexDiagnostics(signal?: AbortSignal): Promise<IndexDiagnostics> {
-  return fetchJson<IndexDiagnostics>('/api/diagnostics/indexes', { signal })
+  return fetchJson<IndexDiagnostics>('/api/diagnostics/indexes', { signal, timeoutMs: 30000 })
 }

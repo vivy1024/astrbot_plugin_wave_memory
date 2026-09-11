@@ -6,6 +6,7 @@ export interface ApiError extends Error {
 
 export interface ApiRequestInit extends RequestInit {
   noAuth?: boolean
+  timeoutMs?: number
 }
 
 export class ApiRequestCancelledError extends Error {
@@ -99,7 +100,7 @@ function createApiError(response: Response, payload: unknown): ApiError {
 }
 
 export async function fetchJson<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
-  const { noAuth, headers, body, signal, ...fetchInit } = init
+  const { noAuth, headers, body, signal, timeoutMs = 15000, ...fetchInit } = init
   if (signal?.aborted) throw new ApiRequestCancelledError()
   const requestHeaders = new Headers(headers)
   const token = getStoredToken()
@@ -121,7 +122,7 @@ export async function fetchJson<T>(path: string, init: ApiRequestInit = {}): Pro
   const timeoutId = setTimeout(() => {
     timedOut = true
     controller.abort()
-  }, 15000)
+  }, timeoutMs)
 
   try {
     const response = await fetch(toApiPath(path), {
@@ -144,8 +145,11 @@ export async function fetchJson<T>(path: string, init: ApiRequestInit = {}): Pro
 
     return payload as T
   } catch (error) {
-    if (timedOut) throw new ApiRequestTimeoutError()
-    if (signal?.aborted || controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
+    if (timedOut) {
+      const seconds = Math.round(timeoutMs / 1000)
+      throw new ApiRequestTimeoutError(`API 请求超时（${seconds} 秒上限），请检查网络或服务端响应健康。`)
+    }
+    if (isRequestCancelled(error)) {
       throw new ApiRequestCancelledError()
     }
     throw error

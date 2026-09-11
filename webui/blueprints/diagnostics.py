@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -140,7 +141,8 @@ async def get_index_diagnostics():
     """Return diagnostics only; this endpoint exposes no repair mutation."""
     container = get_container()
     service = build_diagnostics_service(container)
-    return jsonify(service.collect())
+    payload = await asyncio.to_thread(service.collect)
+    return jsonify(payload)
 
 
 __all__ = ["build_diagnostics_service", "diagnostics_bp", "get_index_diagnostics"]

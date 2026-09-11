@@ -1,9 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Maximize2Icon, Minimize2Icon, PlayIcon, PauseIcon, RotateCcwIcon, ZoomInIcon, ZoomOutIcon, SparklesIcon } from 'lucide-react'
+import {
+  FlaskConicalIcon,
+  Loader2Icon,
+  Maximize2Icon,
+  Minimize2Icon,
+  PauseIcon,
+  PlayIcon,
+  RotateCcwIcon,
+  SearchIcon,
+  SlidersHorizontalIcon,
+  SparklesIcon,
+  XIcon,
+  ZoomInIcon,
+  ZoomOutIcon,
+} from 'lucide-react'
 
-import type { TagGraphEdge, TagGraphNode, TagGraphPayload } from '@/api/tagGraph'
+import type { TagGraphEdge, TagGraphNode, TagGraphPayload, TagGraphScope } from '@/api/tagGraph'
+import { runQueryDebug, type QueryDebugResponse, type QueryStageName } from '@/api/memories'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/utils'
 
@@ -19,10 +36,6 @@ function usePrefersReducedMotion(): boolean {
   return reduced
 }
 
-/**
- * 图谱配色：深空观测台风格，按节点类型区分色相。
- * 颜色集中在此处，避免散落在绘制逻辑里；future 可改为从配置读取。
- */
 export interface NodePalette {
   core: string
   glow: string
@@ -30,11 +43,15 @@ export interface NodePalette {
 }
 
 export const TYPE_PALETTES: Record<string, NodePalette> = {
+  topic: { core: '#34d399', glow: 'rgba(52, 211, 153, 0.35)', text: '#a7f3d0' },
+  event: { core: '#f97316', glow: 'rgba(249, 115, 22, 0.35)', text: '#fed7aa' },
   keyword: { core: '#38bdf8', glow: 'rgba(56, 189, 248, 0.35)', text: '#bae6fd' },
   entity: { core: '#a78bfa', glow: 'rgba(167, 139, 250, 0.35)', text: '#ddd6fe' },
-  topic: { core: '#34d399', glow: 'rgba(52, 211, 153, 0.35)', text: '#a7f3d0' },
-  emotion: { core: '#fbbf24', glow: 'rgba(251, 191, 36, 0.35)', text: '#fde68a' },
   fact: { core: '#f472b6', glow: 'rgba(244, 114, 182, 0.35)', text: '#fbcfe8' },
+  person: { core: '#818cf8', glow: 'rgba(129, 140, 248, 0.35)', text: '#c7d2fe' },
+  emotion: { core: '#fbbf24', glow: 'rgba(251, 191, 36, 0.35)', text: '#fde68a' },
+  location: { core: '#2dd4bf', glow: 'rgba(45, 212, 191, 0.35)', text: '#99f6e4' },
+  time: { core: '#22d3ee', glow: 'rgba(34, 211, 238, 0.35)', text: '#a5f3fc' },
   jargon: { core: '#fb7185', glow: 'rgba(251, 113, 133, 0.35)', text: '#fecdd3' },
   default: { core: '#94a3b8', glow: 'rgba(148, 163, 184, 0.30)', text: '#e2e8f0' },
 }
@@ -43,13 +60,16 @@ export function paletteFor(type: string): NodePalette {
   return TYPE_PALETTES[type.toLowerCase()] ?? TYPE_PALETTES.default
 }
 
-/** 图例里用的中文类型名，与 TYPE_PALETTES 的键一一对应。 */
 export const TYPE_LABELS: Record<string, string> = {
+  topic: '话题',
+  event: '事件',
   keyword: '关键词',
   entity: '实体',
-  topic: '话题',
-  emotion: '情绪',
   fact: '事实',
+  person: '人物',
+  emotion: '情绪',
+  location: '地点',
+  time: '时间',
   jargon: '黑话',
   default: '其他',
 }
@@ -65,63 +85,38 @@ export interface LegendItem {
   color: string
 }
 
-/**
- * 按配置整理图例项：顺序取自服务端配置，只保留图谱里实际出现的类型。
- * 配置为空 => 按节点中出现顺序展示全部类型（旧行为兜底）。
- */
 export function buildLegendItems(
   nodes: Array<{ type?: string }>,
-  legend?: { types?: string[] } | null,
+  legend?: TagGraphPayload['legend'] | null
 ): LegendItem[] {
-  const counts = new Map<string, number>()
-  for (const node of nodes) {
-    const key = (node.type || 'default').toLowerCase()
-    counts.set(key, (counts.get(key) ?? 0) + 1)
+  const counts: Record<string, number> = {}
+  for (const n of nodes) {
+    const t = (n.type || 'default').toLowerCase()
+    counts[t] = (counts[t] || 0) + 1
   }
-  const configured = (legend?.types ?? []).map((item) => item.toLowerCase())
-  const order = configured.length ? configured : [...counts.keys()]
-  const seen = new Set<string>()
-  const items: LegendItem[] = []
-  for (const type of order) {
-    const count = counts.get(type)
-    // 配置里列了图里没有的类型就不展示，避免出现 0 个的图例项误导。
-    if (seen.has(type) || !count) continue
-    seen.add(type)
-    items.push({ type, label: typeLabel(type), count, color: paletteFor(type).core })
+
+  const presentTypes = Object.keys(counts)
+  let orderedTypes: string[]
+  if (legend?.types && legend.types.length > 0) {
+    const configuredLower = legend.types.map((t) => t.toLowerCase())
+    orderedTypes = configuredLower.filter((t) => presentTypes.includes(t))
+    for (const t of presentTypes) {
+      if (!orderedTypes.includes(t)) orderedTypes.push(t)
+    }
+  } else {
+    orderedTypes = presentTypes
   }
-  return items
+
+  return orderedTypes.map((t) => ({
+    type: t,
+    label: typeLabel(t),
+    count: counts[t] || 0,
+    color: paletteFor(t).core,
+  }))
 }
 
-/** 深空背景、网格与连线配色：固定观测台色板，不随外部主题变化。 */
-interface GraphPalette {
-  background: string
-  backgroundMid: string
-  backgroundOuter: string
-  grid: string
-  edgeCooccurrence: string
-  edgeRelations: string
-  pulse: string
-  ring: string
-}
-
-function readPalette(): GraphPalette {
-  return {
-    background: '#10233a',
-    backgroundMid: '#091421',
-    backgroundOuter: '#050a12',
-    grid: 'rgba(125, 211, 252, 0.035)',
-    edgeCooccurrence: '#67e8f9',
-    edgeRelations: '#c4b5fd',
-    pulse: '#ffffff',
-    ring: '#ffffff',
-  }
-}
-
-
-// 世界坐标尺寸：布局与视口复位共用同一常量，避免缩放漂移。
-const WORLD_WIDTH = 1200
-const WORLD_HEIGHT = 800
-const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
+const WORLD_WIDTH = 2600
+const WORLD_HEIGHT = 1800
 
 interface SimNode {
   id: string
@@ -149,7 +144,12 @@ export interface TagGraphCanvasProps {
   selectedRef?: string | null
   pathEdgeIds?: Set<string>
   legend?: TagGraphPayload['legend'] | null
+  scope?: TagGraphScope | null
+  maxNodes: number
+  minConfidence: number
+  pulseHalfLifeHours: number
   onSelect: (node: TagGraphNode) => void
+  onParamsChange: (params: { maxNodes?: number; minConfidence?: number; pulseHalfLifeHours?: number }) => void
 }
 
 export function TagGraphCanvas({
@@ -158,7 +158,12 @@ export function TagGraphCanvas({
   selectedRef,
   pathEdgeIds = new Set(),
   legend,
+  scope,
+  maxNodes,
+  minConfidence,
+  pulseHalfLifeHours,
   onSelect,
+  onParamsChange,
 }: TagGraphCanvasProps) {
   const isMobile = useIsMobile()
   const reducedMotion = usePrefersReducedMotion()
@@ -168,14 +173,34 @@ export function TagGraphCanvas({
 
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [isSimulating, setIsSimulating] = useState(false)
+  const [activeFilterType, setActiveFilterType] = useState<string | null>(null)
   const [hoveredNode, setHoveredNode] = useState<TagGraphNode | null>(null)
-  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
 
-  // 视角变换矩阵状态
+  // 悬浮配置面板与实验室抽屉开关 (内嵌在 Canvas 内部，全屏也完全可用)
+  const [showConfig, setShowConfig] = useState(false)
+  const [activeTab, setActiveTab] = useState<'view' | 'lab'>('view')
+
+  // 本地调节草稿参数
+  const [draftNodes, setDraftNodes] = useState(maxNodes)
+  const [draftConfidence, setDraftConfidence] = useState(minConfidence)
+  const [draftHalfLife, setDraftHalfLife] = useState(pulseHalfLifeHours)
+
+  // 算法实验室状态
+  const [labText, setLabText] = useState('')
+  const [labLoading, setLabLoading] = useState(false)
+  const [labStages, setLabStages] = useState<Record<QueryStageName, boolean>>({
+    spike: true,
+    geodesic: true,
+    epa: true,
+    pyramid: true,
+  })
+  const [labResult, setLabResult] = useState<QueryDebugResponse | null>(null)
+  const [highlightTags, setHighlightTags] = useState<Set<string>>(new Set())
+
+  // 视角变换矩阵
   const transformRef = useRef({ x: 0, y: 0, scale: 1.0 })
   const isDraggingRef = useRef(false)
   const dragStartRef = useRef({ x: 0, y: 0 })
-  const animFrameRef = useRef<number | null>(null)
   const pulsePhaseRef = useRef(0)
 
   // 构建力导向仿真数据模型
@@ -189,19 +214,14 @@ export function TagGraphCanvas({
     const sorted = [...nodes].sort(
       (a, b) => b.in_degree + b.out_degree - (a.in_degree + a.out_degree) || a.name.localeCompare(b.name)
     )
-    const total = Math.max(1, sorted.length)
-    // 覆盖可视范围的最大半径：按世界高度留边，横向用椭圆铺满更宽的画布。
-    const maxRadius = Math.min(width, height) * 0.46
 
-    sorted.forEach((node, index) => {
-      const degree = node.in_degree + node.out_degree
-      const radius = Math.max(9, Math.min(24, 8 + Math.sqrt(degree + node.memory_count) * 2))
-      // 确定性中心螺旋（phyllotaxis）：度数越高越靠中心，节点均匀铺满画面，刷新后位置稳定不跳动。
-      const rr = maxRadius * Math.sqrt((index + 0.5) / total)
-      const theta = index * GOLDEN_ANGLE
-      const x = centerX + Math.cos(theta) * rr * (width / Math.min(width, height)) * 0.68
-      const y = centerY + Math.sin(theta) * rr
-
+    sorted.forEach((node, idx) => {
+      const degree = (node.in_degree || 0) + (node.out_degree || 0)
+      const radius = Math.max(5, Math.min(18, 5 + Math.sqrt(degree) * 2.2))
+      const phi = (idx / Math.max(1, sorted.length)) * Math.PI * 2 * 3.5
+      const rad = 60 + Math.sqrt(idx) * 36
+      const x = centerX + Math.cos(phi) * rad + (Math.random() - 0.5) * 20
+      const y = centerY + Math.sin(phi) * rad + (Math.random() - 0.5) * 20
       nodeMap.set(node.id, {
         id: node.id,
         raw: node,
@@ -218,14 +238,14 @@ export function TagGraphCanvas({
     edges.forEach((edge) => {
       const source = nodeMap.get(edge.source)
       const target = nodeMap.get(edge.target)
-      if (source && target && source !== target) {
+      if (source && target) {
         simEdges.push({
           id: edge.id,
           source,
           target,
-          weight: Math.max(0.1, Math.min(1.0, edge.confidence || edge.weight || 0.5)),
+          weight: Math.max(0.1, Math.min(1.0, edge.weight || 0.5)),
           layer: edge.layer,
-          pulseEnergy: edge.pulse_energy ?? 0,
+          pulseEnergy: (edge as any).pulse_energy || (edge.weight ? edge.weight * 0.8 : 0),
         })
       }
     })
@@ -233,55 +253,69 @@ export function TagGraphCanvas({
     return { nodes: Array.from(nodeMap.values()), edges: simEdges, nodeMap, width, height }
   }, [nodes, edges])
 
-  // 视口复位居中
+  // 居中自适应视图
   const resetView = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
-    // 画布尚未布局（在隐藏 Tab 内 rect≈0）时跳过，交给 ResizeObserver 在真正可见后重算。
-    if (rect.width < 2 || rect.height < 2) return
-    const scale = Math.max(0.4, Math.min(1.8, Math.min(rect.width / WORLD_WIDTH, rect.height / WORLD_HEIGHT) * 0.92))
+    if (!simData.nodes.length) {
+      transformRef.current = { x: rect.width / 2, y: rect.height / 2, scale: 1.0 }
+      return
+    }
+
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    simData.nodes.forEach((n) => {
+      minX = Math.min(minX, n.x)
+      maxX = Math.max(maxX, n.x)
+      minY = Math.min(minY, n.y)
+      maxY = Math.max(maxY, n.y)
+    })
+
+    const spanX = Math.max(120, maxX - minX)
+    const spanY = Math.max(120, maxY - minY)
+    const padding = 60
+    const scaleX = (rect.width - padding * 2) / spanX
+    const scaleY = (rect.height - padding * 2) / spanY
+    const scale = Math.max(0.28, Math.min(1.8, Math.min(scaleX, scaleY)))
+
+    const graphCenterX = (minX + maxX) / 2
+    const graphCenterY = (minY + maxY) / 2
     transformRef.current = {
-      x: (rect.width - WORLD_WIDTH * scale) / 2,
-      y: (rect.height - WORLD_HEIGHT * scale) / 2,
       scale,
+      x: rect.width / 2 - graphCenterX * scale,
+      y: rect.height / 2 - graphCenterY * scale,
     }
-  }, [])
+  }, [simData.nodes])
 
   useEffect(() => {
-    if (isMobile) return
-    const canvas = canvasRef.current
     resetView()
-    if (!canvas || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(() => resetView())
-    observer.observe(canvas)
-    // 监听窗口尺寸变化与全屏动画过渡完成（350ms后），确保全屏与退出演示完全对齐视口
-    const t1 = setTimeout(() => resetView(), 100)
-    const t2 = setTimeout(() => resetView(), 350)
-    return () => {
-      clearTimeout(t1)
-      clearTimeout(t2)
-      observer.disconnect()
-    }
-  }, [isMobile, isFullscreen, resetView, simData])
+  }, [resetView])
 
-  // 支持 Escape 键一键退出全屏
   useEffect(() => {
-    if (!isFullscreen) return
+    const timer = setTimeout(() => resetView(), 120)
+    return () => clearTimeout(timer)
+  }, [isFullscreen, resetView])
+
+  useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsFullscreen(false)
+      if (e.key === 'Escape') {
+        setIsFullscreen(false)
+        setShowConfig(false)
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isFullscreen])
+  }, [])
 
-  // 物理步进计算 (Force-Directed Simulation Step)
+  // 物理步进计算
   const stepPhysics = useCallback(() => {
     const { nodes: simNodes, edges: simEdges, width, height } = simData
     const centerX = width / 2
     const centerY = height / 2
 
-    // 1. 节点排斥力 (N^2 节点距离斥力)
     for (let i = 0; i < simNodes.length; i++) {
       const na = simNodes[i]
       for (let j = i + 1; j < simNodes.length; j++) {
@@ -302,14 +336,12 @@ export function TagGraphCanvas({
         }
       }
 
-      // 2. 居中引力 (Centering gravity)
       const cdx = centerX - na.x
       const cdy = centerY - na.y
       na.vx += cdx * 0.003
       na.vy += cdy * 0.003
     }
 
-    // 3. 弹簧连线引力 (Spring attraction)
     for (let e = 0; e < simEdges.length; e++) {
       const edge = simEdges[e]
       const dx = edge.target.x - edge.source.x
@@ -319,31 +351,61 @@ export function TagGraphCanvas({
       const force = (dist - targetDist) * 0.02 * edge.weight
       const fx = (dx / dist) * force
       const fy = (dy / dist) * force
-
       edge.source.vx += fx
       edge.source.vy += fy
       edge.target.vx -= fx
       edge.target.vy -= fy
     }
 
-    // 4. 更新位置与阻尼阻力 (Damping)
     let totalKinetic = 0
     for (let i = 0; i < simNodes.length; i++) {
-      const node = simNodes[i]
-      node.vx *= 0.86
-      node.vy *= 0.86
-      node.x += Math.max(-12, Math.min(12, node.vx))
-      node.y += Math.max(-12, Math.min(12, node.vy))
-      totalKinetic += Math.abs(node.vx) + Math.abs(node.vy)
+      const n = simNodes[i]
+      n.vx *= 0.86
+      n.vy *= 0.86
+      n.x += n.vx
+      n.y += n.vy
+      totalKinetic += n.vx * n.vx + n.vy * n.vy
     }
 
-    // 动能衰减至阈值时自动休眠
     if (totalKinetic < 0.25 && simNodes.length > 5) {
       setIsSimulating(false)
     }
   }, [simData])
 
-  // 主画布渲染循环 (60 FPS Render Loop)
+  // 执行算法实验室查询联动
+  const handleRunLabQuery = async () => {
+    if (!scope || !labText.trim() || labLoading) return
+    setLabLoading(true)
+    try {
+      const res = await runQueryDebug({
+        text: labText.trim(),
+        topK: 5,
+        scope,
+        stages: labStages,
+        params: {},
+      })
+      setLabResult(res)
+
+      // 提取命中的标签并在图谱上高亮
+      const hits = new Set<string>()
+      const debugHighlights = (res.debug as any)?.highlights || {}
+      ;(debugHighlights.seed_tags || []).forEach((t: any) => {
+        const id = typeof t === 'object' ? t.tag_id : t
+        if (id) hits.add(String(id))
+      })
+      ;(debugHighlights.pyramid_tags || []).forEach((t: any) => {
+        const id = typeof t === 'object' ? t.tag_id : t
+        if (id) hits.add(String(id))
+      })
+      setHighlightTags(hits)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLabLoading(false)
+    }
+  }
+
+  // 主画布渲染循环
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -351,20 +413,22 @@ export function TagGraphCanvas({
     if (!ctx) return
 
     let isRunning = true
-    // 主题 token 每次进入渲染循环时解析一次；样式表变更由 effect 依赖重建。
-    const palette = readPalette()
+    const palette = {
+      background: '#07101b',
+      backgroundMid: '#060d17',
+      backgroundOuter: '#03070d',
+      grid: 'rgba(56, 189, 248, 0.04)',
+      edgeBase: 'rgba(125, 211, 252, 0.18)',
+      edgePath: '#f43f5e',
+      ring: '#38bdf8',
+      pulse: '#38bdf8',
+    }
 
     const render = () => {
       if (!isRunning) return
+      if (isSimulating && !reducedMotion) stepPhysics()
 
-      // 物理布局仅在用户显式点击播放时运行；默认保持静止便于阅读。
-      if (isSimulating && !reducedMotion) {
-        stepPhysics()
-      }
-
-      // 脉冲波相位推进
       pulsePhaseRef.current = (pulsePhaseRef.current + 0.016) % 1.0
-
       const dpr = window.devicePixelRatio || 1
       const rect = canvas.getBoundingClientRect()
       if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
@@ -376,7 +440,6 @@ export function TagGraphCanvas({
       ctx.scale(dpr, dpr)
       ctx.clearRect(0, 0, rect.width, rect.height)
 
-      // 深空观测台背景：低对比度星尘与细网格只提供空间感，不抢数据层注意力。
       const bgGrad = ctx.createRadialGradient(
         rect.width * 0.48, rect.height * 0.42, 20,
         rect.width * 0.5, rect.height * 0.5, rect.width * 0.82
@@ -387,66 +450,41 @@ export function TagGraphCanvas({
       ctx.fillStyle = bgGrad
       ctx.fillRect(0, 0, rect.width, rect.height)
       ctx.strokeStyle = palette.grid
-      ctx.lineWidth = 1
-      for (let x = 0; x < rect.width; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, rect.height); ctx.stroke() }
-      for (let y = 0; y < rect.height; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(rect.width, y); ctx.stroke() }
 
-      // 应用视口矩阵 (Pan & Zoom)
       const { x: panX, y: panY, scale } = transformRef.current
       ctx.save()
       ctx.translate(panX, panY)
       ctx.scale(scale, scale)
 
-      const activeRef = selectedRef ?? hoveredNode?.ref ?? null
-      const selectedSimNode = activeRef ? simData.nodes.find((n) => n.raw.ref === activeRef) : null
-
-      // 计算当前活跃节点的一跳邻居集合 (Neighbor Highlighting)
+      const selectedSimNode = simData.nodes.find((n) => n.raw.ref === selectedRef)
       const neighborIds = new Set<string>()
       if (selectedSimNode) {
         neighborIds.add(selectedSimNode.id)
-        simData.edges.forEach((edge) => {
-          if (edge.source.id === selectedSimNode.id) neighborIds.add(edge.target.id)
-          if (edge.target.id === selectedSimNode.id) neighborIds.add(edge.source.id)
+        simData.edges.forEach((e) => {
+          if (e.source.id === selectedSimNode.id) neighborIds.add(e.target.id)
+          if (e.target.id === selectedSimNode.id) neighborIds.add(e.source.id)
         })
       }
 
-      // 1. 绘制连线光纤 (Edges)
+      // 1. 绘制突触连线
       simData.edges.forEach((edge) => {
-        const isConnectedToActive = selectedSimNode
-          ? edge.source.id === selectedSimNode.id || edge.target.id === selectedSimNode.id
-          : false
-        const isPathEdge = pathEdgeIds.has(edge.id)
+        const isPath = pathEdgeIds.has(edge.id)
+        const isConnectedToSelected = selectedSimNode && (edge.source.id === selectedSimNode.id || edge.target.id === selectedSimNode.id)
+        const isDimmed = selectedSimNode && !isConnectedToSelected && !isPath
 
-        let strokeColor = edge.layer === 'relations' ? palette.edgeRelations : palette.edgeCooccurrence
-        let lineWidth = isPathEdge ? 3.2 : Math.max(0.7, edge.weight * 1.8)
-        let alpha = isPathEdge ? 0.95 : Math.max(0.08, Math.min(0.42, edge.weight * 0.52))
-
-        if (selectedSimNode) {
-          if (!isConnectedToActive && !isPathEdge) {
-            alpha = 0.04 // 无关连线极暗化
-          } else {
-            alpha = Math.max(alpha, 0.85)
-            lineWidth = Math.max(lineWidth, 2.2)
-          }
-        }
-
-        ctx.strokeStyle = strokeColor
-        ctx.globalAlpha = alpha
-        ctx.lineWidth = lineWidth
-        ctx.setLineDash(edge.layer === 'relations' ? [6, 4] : [])
+        ctx.lineWidth = isPath ? 3.0 : isConnectedToSelected ? 2.0 : Math.max(0.6, edge.weight * 2.2)
+        ctx.strokeStyle = isPath ? palette.edgePath : isConnectedToSelected ? '#38bdf8' : palette.edgeBase
+        ctx.globalAlpha = isDimmed ? 0.05 : isPath ? 1.0 : isConnectedToSelected ? 0.85 : Math.max(0.12, edge.weight * 0.6)
 
         ctx.beginPath()
         ctx.moveTo(edge.source.x, edge.source.y)
         ctx.lineTo(edge.target.x, edge.target.y)
         ctx.stroke()
-        ctx.setLineDash([])
 
-        // 绘制脉冲光球动画 (Spike Energy Motion)
         if (!reducedMotion && edge.pulseEnergy > 0) {
           const progress = (pulsePhaseRef.current + (edge.source.x % 100) * 0.01) % 1.0
           const px = edge.source.x + (edge.target.x - edge.source.x) * progress
           const py = edge.source.y + (edge.target.y - edge.source.y) * progress
-
           ctx.globalAlpha = Math.min(1.0, edge.pulseEnergy * 1.5)
           ctx.fillStyle = palette.pulse
           ctx.beginPath()
@@ -455,50 +493,48 @@ export function TagGraphCanvas({
         }
       })
 
-      // 2. 绘制发光节点星体 (Nodes)
+      // 2. 绘制发光节点星体
       simData.nodes.forEach((node) => {
         const isSelected = node.raw.ref === selectedRef
         const isHovered = node.raw.ref === hoveredNode?.ref
         const isNeighbor = neighborIds.has(node.id)
-        const isDimmed = selectedSimNode && !isNeighbor
+        const isTypeDimmed = activeFilterType !== null && node.raw.type.toLowerCase() !== activeFilterType
+        const isLabHit = highlightTags.has(String(node.raw.id)) || highlightTags.has(node.raw.name)
+        const isDimmed = (selectedSimNode && !isNeighbor) || isTypeDimmed
 
         const p = paletteFor(node.raw.type)
         const nodeAlpha = isDimmed ? 0.18 : 0.92
 
-        // 外圈光晕 (Radial Glow)
-        const glowRadius = node.radius * (isSelected ? 2.4 : isHovered ? 2.0 : 1.5)
+        const glowRadius = node.radius * (isSelected || isLabHit ? 2.6 : isHovered ? 2.0 : 1.5)
         const radGrad = ctx.createRadialGradient(node.x, node.y, node.radius * 0.3, node.x, node.y, glowRadius)
-        radGrad.addColorStop(0, p.glow)
+        radGrad.addColorStop(0, isLabHit ? 'rgba(56, 189, 248, 0.6)' : p.glow)
         radGrad.addColorStop(1, 'rgba(0,0,0,0)')
-        ctx.globalAlpha = isDimmed ? 0.05 : isSelected ? 0.9 : 0.5
+        ctx.globalAlpha = isDimmed ? 0.05 : isSelected || isLabHit ? 0.95 : 0.5
         ctx.fillStyle = radGrad
         ctx.beginPath()
         ctx.arc(node.x, node.y, glowRadius, 0, Math.PI * 2)
         ctx.fill()
 
-        // 实体核心 (Star Core)
         ctx.globalAlpha = nodeAlpha
-        ctx.fillStyle = p.core
+        ctx.fillStyle = isLabHit ? '#38bdf8' : p.core
         ctx.beginPath()
         ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2)
         ctx.fill()
 
-        // 选中高亮光环 (Selection Ring)
-        if (isSelected || isHovered) {
+        if (isSelected || isHovered || isLabHit) {
           ctx.globalAlpha = 1
-          ctx.strokeStyle = palette.ring
-          ctx.lineWidth = isSelected ? 2.5 : 1.5
+          ctx.strokeStyle = isLabHit ? '#38bdf8' : palette.ring
+          ctx.lineWidth = isSelected || isLabHit ? 2.5 : 1.5
           ctx.beginPath()
           ctx.arc(node.x, node.y, node.radius + 3.5, 0, Math.PI * 2)
           ctx.stroke()
         }
 
-        // 标签文字 (Star Name Text)
-        const showText = isSelected || isHovered || isNeighbor || (!selectedSimNode && (node.degree >= 3 || scale > 1.45))
+        const showText = isSelected || isHovered || isNeighbor || isLabHit || (!selectedSimNode && (node.degree >= 3 || scale > 1.45))
         if (showText) {
           ctx.globalAlpha = isDimmed ? 0.3 : 0.95
-          ctx.fillStyle = isSelected ? '#ffffff' : p.text
-          ctx.font = `${isSelected ? 'bold ' : ''}${Math.max(10, Math.min(14, 11 / Math.sqrt(scale)))}px sans-serif`
+          ctx.fillStyle = isSelected || isLabHit ? '#ffffff' : p.text
+          ctx.font = `${isSelected || isLabHit ? 'bold ' : ''}${Math.max(10, Math.min(14, 11 / Math.sqrt(scale)))}px sans-serif`
           ctx.textAlign = 'center'
           ctx.textBaseline = 'top'
           const label = node.raw.name.length > 14 ? `${node.raw.name.slice(0, 13)}…` : node.raw.name
@@ -508,92 +544,81 @@ export function TagGraphCanvas({
 
       ctx.restore()
       ctx.restore()
-
-      animFrameRef.current = requestAnimationFrame(render)
+      requestAnimationFrame(render)
     }
 
-    animFrameRef.current = requestAnimationFrame(render)
-
+    const animId = requestAnimationFrame(render)
     return () => {
       isRunning = false
-      if (animFrameRef.current !== null) {
-        cancelAnimationFrame(animFrameRef.current)
-      }
+      cancelAnimationFrame(animId)
     }
-  }, [isSimulating, reducedMotion, stepPhysics, simData, selectedRef, hoveredNode, pathEdgeIds])
+  }, [activeFilterType, hoveredNode, isSimulating, nodes, pathEdgeIds, reducedMotion, selectedRef, simData, stepPhysics, highlightTags])
 
-  // 坐标反投影：从屏幕坐标转换到模拟器世界坐标
-  const screenToWorld = useCallback((screenX: number, screenY: number) => {
-    const canvas = canvasRef.current
-    if (!canvas) return { x: 0, y: 0 }
-    const rect = canvas.getBoundingClientRect()
-    const localX = screenX - rect.left
-    const localY = screenY - rect.top
-    const { x: panX, y: panY, scale } = transformRef.current
-    return {
-      x: (localX - panX) / scale,
-      y: (localY - panY) / scale,
-    }
-  }, [])
-
-  // 鼠标悬停拾取检测 (Hit Testing)
+  // 鼠标交互
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const mouseX = e.clientX - rect.left
+    const mouseY = e.clientY - rect.top
+
     if (isDraggingRef.current) {
-      const dx = e.clientX - dragStartRef.current.x
-      const dy = e.clientY - dragStartRef.current.y
+      const dx = mouseX - dragStartRef.current.x
+      const dy = mouseY - dragStartRef.current.y
+      dragStartRef.current = { x: mouseX, y: mouseY }
       transformRef.current.x += dx
       transformRef.current.y += dy
-      dragStartRef.current = { x: e.clientX, y: e.clientY }
       return
     }
 
-    const world = screenToWorld(e.clientX, e.clientY)
-    const { scale } = transformRef.current
-    // 带有容差的最近节点拾取
-    let bestNode: TagGraphNode | null = null
-    let minDist = 24 / scale
+    const { x: panX, y: panY, scale } = transformRef.current
+    const worldX = (mouseX - panX) / scale
+    const worldY = (mouseY - panY) / scale
 
+    let bestNode: TagGraphNode | null = null
+    let bestDist = 20 / scale
     for (const node of simData.nodes) {
-      const dx = node.x - world.x
-      const dy = node.y - world.y
+      const dx = node.x - worldX
+      const dy = node.y - worldY
       const dist = Math.sqrt(dx * dx + dy * dy)
-      if (dist < node.radius + minDist) {
+      if (dist < node.radius + 8 / scale && dist < bestDist) {
+        bestDist = dist
         bestNode = node.raw
-        minDist = dist
       }
     }
-
     setHoveredNode(bestNode)
-    setMousePos(bestNode ? { x: e.clientX, y: e.clientY } : null)
   }
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (e.button === 0 || e.button === 1) {
-      isDraggingRef.current = true
-      dragStartRef.current = { x: e.clientX, y: e.clientY }
-    }
+    if (e.button !== 0) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    isDraggingRef.current = true
+    dragStartRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top }
   }
 
   const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const wasDragging = isDraggingRef.current
     isDraggingRef.current = false
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const mouseX = e.clientX - rect.left
+    const mouseY = e.clientY - rect.top
+    const { x: panX, y: panY, scale } = transformRef.current
+    const worldX = (mouseX - panX) / scale
+    const worldY = (mouseY - panY) / scale
 
-    // 如果只是点击（非长距离拖拽），触发节点选中
-    const distMoved = Math.hypot(e.clientX - dragStartRef.current.x, e.clientY - dragStartRef.current.y)
-    if (wasDragging && distMoved < 6) {
-      const world = screenToWorld(e.clientX, e.clientY)
-      for (const node of simData.nodes) {
-        const dx = node.x - world.x
-        const dy = node.y - world.y
-        if (Math.hypot(dx, dy) <= node.radius + 12) {
-          onSelect(node.raw)
-          return
-        }
+    for (const node of simData.nodes) {
+      const dx = node.x - worldX
+      const dy = node.y - worldY
+      if (Math.sqrt(dx * dx + dy * dy) < node.radius + 8 / scale) {
+        onSelect(node.raw)
+        return
       }
     }
   }
 
-  // 鼠标滚轮缩放 (Zoom In/Out)
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault()
     const canvas = canvasRef.current
@@ -601,12 +626,10 @@ export function TagGraphCanvas({
     const rect = canvas.getBoundingClientRect()
     const mouseX = e.clientX - rect.left
     const mouseY = e.clientY - rect.top
-
     const zoomFactor = e.deltaY < 0 ? 1.14 : 0.88
     const current = transformRef.current
     const newScale = Math.max(0.25, Math.min(4.5, current.scale * zoomFactor))
 
-    // 以当前鼠标焦点为中心平滑缩放
     current.x = mouseX - (mouseX - current.x) * (newScale / current.scale)
     current.y = mouseY - (mouseY - current.y) * (newScale / current.scale)
     current.scale = newScale
@@ -651,7 +674,7 @@ export function TagGraphCanvas({
               </span>
             </button>
           ))}
-        <p className="text-xs text-muted-foreground">移动端已降级为响应式卡片列表；所有筛选与详情依然生效。</p>
+        <p className="text-xs text-muted-foreground">移动端已降级为列表视图。</p>
       </div>
     )
   }
@@ -660,8 +683,6 @@ export function TagGraphCanvas({
     <div
       ref={containerRef}
       className={cn(
-        // `relative` 与 `fixed` 不能同时写在 class 里：Tailwind 中 `.relative`
-        // 排在 `.fixed` 之后，会覆盖掉全屏定位。全屏时改用 fixed 分支。
         'overflow-hidden border border-sky-950/80 bg-[#07101b] shadow-[0_24px_80px_rgba(2,8,23,.36)] transition-all duration-300',
         isFullscreen
           ? 'fixed inset-0 z-50 h-[100vh] w-[100vw] rounded-none'
@@ -679,8 +700,334 @@ export function TagGraphCanvas({
         onWheel={handleWheel}
       />
 
-      {/* 悬浮控制工具栏 */}
-      <div className="absolute bottom-4 left-4 flex items-center gap-1 rounded-xl border border-sky-300/10 bg-slate-950/70 p-1.5 shadow-lg backdrop-blur-xl">
+      {/* 画布左上角常驻：HUD 操作栏 (全屏时仍然完全可见！) */}
+      <div className="absolute left-4 top-4 z-20 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setShowConfig(!showConfig)}
+          className={cn(
+            'flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium shadow-lg backdrop-blur-xl transition-all',
+            showConfig
+              ? 'border-sky-400 bg-sky-950/90 text-white ring-1 ring-sky-400/30'
+              : 'border-sky-300/20 bg-slate-950/80 text-slate-200 hover:border-sky-400/50 hover:bg-slate-900 hover:text-white'
+          )}
+        >
+          <SlidersHorizontalIcon className="size-3.5 text-sky-400" />
+          <span>图谱与算法配置</span>
+        </button>
+
+        <div className="flex items-center gap-2 rounded-xl border border-sky-300/10 bg-slate-950/70 px-3 py-2 text-xs text-slate-300 shadow-lg backdrop-blur-xl">
+          <SparklesIcon className="size-3.5 text-sky-400" />
+          <span className="font-mono text-sky-300">{nodes.length} 节点</span>
+          <span className="font-mono text-slate-400">{edges.length} 突触</span>
+        </div>
+      </div>
+
+      {/* 画布内嵌悬浮配置面板 (参考神经云图 #kg-config，全屏模式下依然触手可及！) */}
+      {showConfig ? (
+        <div
+          className="absolute left-4 top-16 z-30 w-84 max-h-[calc(100%-5rem)] overflow-y-auto rounded-2xl border border-sky-500/25 bg-slate-950/90 p-4 text-xs shadow-2xl backdrop-blur-2xl animate-in fade-in slide-in-from-top-2 duration-150 text-slate-200"
+          style={{ width: '22rem' }}
+        >
+          <div className="flex items-center justify-between border-b border-white/10 pb-2.5 mb-3">
+            <div className="flex items-center gap-1.5">
+              <span className="font-semibold text-sm text-foreground">图谱与算法控制台</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowConfig(false)}
+              className="text-slate-400 hover:text-white p-1 rounded-md transition"
+              title="关闭面板"
+            >
+              <XIcon className="size-4" />
+            </button>
+          </div>
+
+          {/* 选项卡切换：视图参数 vs 算法实验室 */}
+          <div className="grid grid-cols-2 gap-1 rounded-lg border border-white/10 bg-slate-900/60 p-1 mb-3">
+            <button
+              type="button"
+              onClick={() => setActiveTab('view')}
+              className={cn(
+                'py-1.5 text-center text-xs font-medium rounded-md transition',
+                activeTab === 'view' ? 'bg-sky-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+              )}
+            >
+              🌌 视图与突触
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('lab')}
+              className={cn(
+                'py-1.5 text-center text-xs font-medium rounded-md transition',
+                activeTab === 'lab' ? 'bg-sky-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+              )}
+            >
+              🧪 算法实验室
+            </button>
+          </div>
+
+          {activeTab === 'view' ? (
+            <div className="space-y-4">
+              {/* 1. 节点数量 */}
+              <div className="space-y-1">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="font-medium text-slate-200">展示节点数量 (Max Nodes)</span>
+                  <span className="font-mono text-sky-400 font-bold">{draftNodes}</span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  显示当前群内活跃度最高的多少个标签。调大展现完整星云，调小聚焦核心骨干。
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="range"
+                    min="10"
+                    max="2000"
+                    step="10"
+                    value={draftNodes}
+                    onChange={(e) => setDraftNodes(Number(e.target.value))}
+                    className="h-1.5 flex-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-400"
+                  />
+                  <Input
+                    type="number"
+                    min="1"
+                    className="h-7 w-20 px-1.5 text-right font-mono text-xs bg-slate-900 border-white/10"
+                    value={draftNodes}
+                    onChange={(e) => setDraftNodes(Number(e.target.value))}
+                  />
+                </div>
+              </div>
+
+              {/* 2. 置信度门限 */}
+              <div className="space-y-1">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="font-medium text-slate-200">置信度门限 (Min Confidence)</span>
+                  <span className="font-mono text-purple-400 font-bold">{draftConfidence.toFixed(2)}</span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  过滤大模型提取时不够确信的低质量杂词，只保留高可信度核心关联。
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={draftConfidence}
+                    onChange={(e) => setDraftConfidence(Number(e.target.value))}
+                    className="h-1.5 flex-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-400"
+                  />
+                  <Input
+                    type="number"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    className="h-7 w-20 px-1.5 text-right font-mono text-xs bg-slate-900 border-white/10"
+                    value={draftConfidence}
+                    onChange={(e) => setDraftConfidence(Number(e.target.value))}
+                  />
+                </div>
+              </div>
+
+              {/* 3. 脉冲流动与半衰期 */}
+              <div className="space-y-1">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="font-medium text-slate-200">脉冲半衰期 (Pulse Hours)</span>
+                  <span className="font-mono text-amber-400 font-bold">{draftHalfLife}h</span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  让近期刚刚讨论过的活跃话题在突触连线上流动发光。半衰期越短，脉冲衰退越快。
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="range"
+                    min="12"
+                    max="360"
+                    step="12"
+                    value={draftHalfLife}
+                    onChange={(e) => setDraftHalfLife(Number(e.target.value))}
+                    className="h-1.5 flex-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                  />
+                  <Input
+                    type="number"
+                    min="1"
+                    className="h-7 w-20 px-1.5 text-right font-mono text-xs bg-slate-900 border-white/10"
+                    value={draftHalfLife}
+                    onChange={(e) => setDraftHalfLife(Number(e.target.value))}
+                  />
+                </div>
+              </div>
+
+              {/* 快捷预设 */}
+              <div className="pt-1">
+                <span className="text-[11px] text-slate-400 block mb-1.5">快速预设</span>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button
+                    type="button"
+                    className="p-1 text-[10px] rounded border border-white/10 bg-slate-900/60 hover:bg-slate-800 text-center"
+                    onClick={() => { setDraftNodes(100); setDraftConfidence(0.4); }}
+                  >
+                    ⚡ 核心紧凑
+                  </button>
+                  <button
+                    type="button"
+                    className="p-1 text-[10px] rounded border border-white/10 bg-slate-900/60 hover:bg-slate-800 text-center"
+                    onClick={() => { setDraftNodes(300); setDraftConfidence(0.0); }}
+                  >
+                    🌌 标准平衡
+                  </button>
+                  <button
+                    type="button"
+                    className="p-1 text-[10px] rounded border border-white/10 bg-slate-900/60 hover:bg-slate-800 text-center"
+                    onClick={() => { setDraftNodes(1000); setDraftConfidence(0.0); }}
+                  >
+                    🪐 全景深空
+                  </button>
+                </div>
+              </div>
+
+              <Button
+                type="button"
+                className="w-full bg-sky-600 hover:bg-sky-500 text-white font-medium text-xs mt-2"
+                onClick={() => {
+                  onParamsChange({
+                    maxNodes: Math.max(10, draftNodes),
+                    minConfidence: Math.max(0, Math.min(1, draftConfidence)),
+                    pulseHalfLifeHours: Math.max(1, draftHalfLife),
+                  })
+                  setShowConfig(false)
+                }}
+              >
+                应用视图配置
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="rounded-lg bg-sky-950/40 border border-sky-500/20 p-2.5">
+                <div className="flex items-center gap-1.5 text-sky-300 font-semibold mb-1">
+                  <FlaskConicalIcon className="size-3.5" />
+                  <span>基于本图的拓扑联想检索</span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  机器人每次回复时，就是沿着当前星云的突触进行拓扑联想的。输入一句话，图谱上的命中节点将实时发光！
+                </p>
+              </div>
+
+              {/* 查询输入 */}
+              <div className="space-y-1">
+                <span className="text-[11px] text-slate-300 font-medium">测试查询语句</span>
+                <div className="flex gap-1.5">
+                  <Input
+                    placeholder="输入问题或话题..."
+                    value={labText}
+                    onChange={(e) => setLabText(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleRunLabQuery() }}
+                    className="h-8 text-xs bg-slate-900 border-white/10"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={labLoading || !labText.trim()}
+                    onClick={handleRunLabQuery}
+                    className="h-8 px-2.5 bg-sky-600 hover:bg-sky-500 text-white shrink-0 text-xs"
+                  >
+                    {labLoading ? <Loader2Icon className="size-3.5 animate-spin" /> : <SearchIcon className="size-3.5" />}
+                    <span>联想</span>
+                  </Button>
+                </div>
+              </div>
+
+              {/* 算法阶段开关 */}
+              <div className="space-y-1 pt-1">
+                <span className="text-[11px] text-slate-300 font-medium block">高阶算法阶段 (自由开关)</span>
+                <div className="space-y-1.5 rounded-lg border border-white/5 bg-slate-900/40 p-2 text-[11px]">
+                  <label className="flex items-center justify-between cursor-pointer">
+                    <span className="text-slate-300">⚡ 脉冲共现扩散 (Spike)</span>
+                    <Switch
+                      checked={labStages.spike}
+                      onCheckedChange={(checked) => setLabStages((prev) => ({ ...prev, spike: checked }))}
+                    />
+                  </label>
+                  <p className="text-[10px] text-slate-500">顺着当前星云突触多跳联想，思路更活跃</p>
+
+                  <label className="flex items-center justify-between cursor-pointer pt-1 border-t border-white/5">
+                    <span className="text-slate-300">🌐 测地线重排 (Geodesic)</span>
+                    <Switch
+                      checked={labStages.geodesic}
+                      onCheckedChange={(checked) => setLabStages((prev) => ({ ...prev, geodesic: checked }))}
+                    />
+                  </label>
+                  <p className="text-[10px] text-slate-500">利用局部拓扑拉回向量偏差，抑制幻觉</p>
+
+                  <label className="flex items-center justify-between cursor-pointer pt-1 border-t border-white/5">
+                    <span className="text-slate-300">📐 自省投影修正 (EPA)</span>
+                    <Switch
+                      checked={labStages.epa}
+                      onCheckedChange={(checked) => setLabStages((prev) => ({ ...prev, epa: checked }))}
+                    />
+                  </label>
+                  <p className="text-[10px] text-slate-500">根据问话倾向动态调整几何匹配距离</p>
+
+                  <label className="flex items-center justify-between cursor-pointer pt-1 border-t border-white/5">
+                    <span className="text-slate-300">🔺 残差多阶金字塔 (Pyramid)</span>
+                    <Switch
+                      checked={labStages.pyramid}
+                      onCheckedChange={(checked) => setLabStages((prev) => ({ ...prev, pyramid: checked }))}
+                    />
+                  </label>
+                  <p className="text-[10px] text-slate-500">多层差分检索，化解复杂多主语问题</p>
+                </div>
+              </div>
+
+              {/* 检索命中结果展示 */}
+              {labResult?.results?.length ? (
+                <div className="space-y-1.5 pt-2 border-t border-white/10">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-semibold text-emerald-400">✨ 命中关联记忆 ({labResult.results.length})</span>
+                    {highlightTags.size > 0 ? (
+                      <button
+                        type="button"
+                        className="text-[10px] text-sky-400 hover:underline"
+                        onClick={() => setHighlightTags(new Set())}
+                      >
+                        清除高亮
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                    {labResult.results.map((m, idx) => (
+                      <div key={idx} className="p-2 rounded bg-slate-900/80 border border-white/5 text-[11px]">
+                        <div className="flex justify-between text-slate-400 text-[10px] mb-0.5">
+                          <span>{String(m.sender_name || '记忆')}</span>
+                          <span className="font-mono text-sky-400">
+                            {typeof m.score === 'number' ? `${(m.score * 100).toFixed(0)}% 契合` : '已召回'}
+                          </span>
+                        </div>
+                        <p className="line-clamp-2 text-slate-200">{String(m.content || '')}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {/* 右上角醒目的全屏探索 / 退出全屏切换按钮 */}
+      <button
+        type="button"
+        onClick={() => setIsFullscreen(!isFullscreen)}
+        className="absolute right-4 top-4 z-10 flex items-center gap-1.5 rounded-xl border border-sky-300/20 bg-slate-950/80 px-3 py-2 text-xs font-medium text-slate-200 shadow-lg backdrop-blur-xl transition-all hover:border-sky-400/50 hover:bg-slate-900 hover:text-white active:scale-95"
+        aria-label={isFullscreen ? '退出全屏' : '全屏探索'}
+        title={isFullscreen ? '退出全屏 (Esc)' : '全屏沉浸探索'}
+      >
+        {isFullscreen ? <Minimize2Icon className="size-3.5 text-sky-400" /> : <Maximize2Icon className="size-3.5 text-sky-400" />}
+        <span>{isFullscreen ? '退出全屏 (Esc)' : '全屏探索'}</span>
+      </button>
+
+      {/* 悬浮控制工具栏 (左下角) */}
+      <div className="absolute bottom-4 left-4 flex items-center gap-1 rounded-xl border border-sky-300/10 bg-slate-950/70 p-1.5 shadow-lg backdrop-blur-xl z-10">
         <Button
           type="button"
           size="icon-xs"
@@ -721,56 +1068,56 @@ export function TagGraphCanvas({
         >
           {isSimulating ? <PauseIcon className="size-3.5" /> : <PlayIcon className="size-3.5" />}
         </Button>
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          className="text-slate-300 hover:text-white"
-          title={isFullscreen ? '退出全屏' : '全屏探索'}
-          onClick={() => setIsFullscreen(!isFullscreen)}
-        >
-          {isFullscreen ? <Minimize2Icon className="size-3.5" /> : <Maximize2Icon className="size-3.5" />}
-        </Button>
       </div>
 
-      {/* 状态徽章与图例 */}
-      <div className="absolute left-4 top-4 flex max-w-[calc(100%-10rem)] flex-wrap items-center gap-2 rounded-xl border border-sky-300/10 bg-slate-950/70 px-3 py-2 text-xs text-slate-300 shadow-lg backdrop-blur-xl">
-        <SparklesIcon className="size-3.5 text-sky-400" />
-        <span>Tag 神经星云</span>
-        <span className="text-slate-500">·</span>
-        <span className="font-mono text-sky-300">{nodes.length} 节点</span>
-        <span className="font-mono text-slate-400">{edges.length} 突触</span>
-        <span className="text-slate-500">·</span>
-        <span className="text-[11px] text-slate-400">滚轮缩放 / 拖拽平移 / 点击聚焦</span>
-        {reducedMotion ? <span className="ml-2 text-amber-300">已遵循减少动态效果偏好</span> : null}
-      </div>
-
-      {/* 右上角醒目的全屏探索 / 退出全屏切换按钮 */}
-      <button
-        type="button"
-        onClick={() => setIsFullscreen(!isFullscreen)}
-        className="absolute right-4 top-4 z-10 flex items-center gap-1.5 rounded-xl border border-sky-300/20 bg-slate-950/80 px-3 py-2 text-xs font-medium text-slate-200 shadow-lg backdrop-blur-xl transition-all hover:border-sky-400/50 hover:bg-slate-900 hover:text-white active:scale-95"
-        aria-label={isFullscreen ? '退出全屏' : '全屏探索'}
-        title={isFullscreen ? '退出全屏 (Esc)' : '全屏沉浸探索'}
-      >
-        {isFullscreen ? <Minimize2Icon className="size-3.5 text-sky-400" /> : <Maximize2Icon className="size-3.5 text-sky-400" />}
-        <span>{isFullscreen ? '退出全屏 (Esc)' : '全屏探索'}</span>
-      </button>
-
-      {/* 类型图例：顺序与显隐由配置决定，只展示图中实际出现的类型 */}
+      {/* 类型图例：点击类型可自由高亮/筛选该类别 */}
       {legend?.enabled !== false && legendItems.length > 0 ? (
-        <ul className="absolute bottom-4 right-4 flex max-w-[calc(100%-2rem)] flex-col gap-1 rounded-xl border border-sky-300/10 bg-slate-950/70 px-3 py-2 text-[11px] text-slate-300 shadow-lg backdrop-blur-xl" aria-label="节点类型图例">
-          {legendItems.map((item) => (
-            <li key={item.type} className="flex items-center gap-1.5">
-              <span className="size-2 rounded-full" style={{ backgroundColor: item.color }} aria-hidden="true" />
-              <span>{item.label}</span>
-              {legend?.show_count === false ? null : <span className="font-mono text-slate-500">{item.count}</span>}
-            </li>
-          ))}
+        <ul className="absolute bottom-4 right-4 flex max-w-[calc(100%-2rem)] flex-col gap-1 rounded-xl border border-sky-300/10 bg-slate-950/80 px-3 py-2 text-[11px] text-slate-300 shadow-lg backdrop-blur-xl z-10" aria-label="节点类型图例">
+          <div className="flex items-center justify-between text-[10px] text-slate-400 mb-0.5 border-b border-white/5 pb-1">
+            <span>类型透镜</span>
+            {activeFilterType ? (
+              <button
+                type="button"
+                className="text-sky-400 hover:text-white transition-colors"
+                onClick={() => setActiveFilterType(null)}
+              >
+                重置全显
+              </button>
+            ) : (
+              <span className="text-slate-500">点击过滤</span>
+            )}
+          </div>
+          {legendItems.map((item) => {
+            const isFilterActive = activeFilterType === item.type.toLowerCase()
+            return (
+              <li key={item.type}>
+                <button
+                  type="button"
+                  className={cn(
+                    'flex items-center gap-1.5 w-full text-left rounded px-1 py-0.5 transition-all',
+                    isFilterActive
+                      ? 'bg-white/10 text-white font-medium ring-1 ring-white/20'
+                      : 'hover:bg-white/5 text-slate-300'
+                  )}
+                  onClick={() => setActiveFilterType(isFilterActive ? null : item.type.toLowerCase())}
+                  title={`点击只看 ${item.label} 类型标签`}
+                >
+                  <span
+                    className={cn('size-2 rounded-full transition-transform', isFilterActive && 'scale-125')}
+                    style={{ backgroundColor: item.color }}
+                    aria-hidden="true"
+                  />
+                  <span>{item.label}</span>
+                  {legend?.show_count === false ? null : (
+                    <span className="ml-auto font-mono text-[10px] text-slate-500">{item.count}</span>
+                  )}
+                </button>
+              </li>
+            )
+          })}
         </ul>
       ) : null}
 
-      {/* 供屏幕阅读器与测试环境的无障碍标签列表 */}
       <div className="sr-only" aria-label="可访问标签列表">
         {nodes.map((n) => (
           <button key={n.id} type="button" aria-label={`选择标签 ${n.name}`} onClick={() => onSelect(n)}>
@@ -778,28 +1125,6 @@ export function TagGraphCanvas({
           </button>
         ))}
       </div>
-
-      {/* 鼠标悬停标签 Tooltip */}
-      {hoveredNode && mousePos && containerRef.current && (
-        <div
-          className="pointer-events-none fixed z-50 flex flex-col gap-1 rounded-md border border-sky-500/30 bg-slate-950/90 px-2.5 py-1.5 text-xs text-white shadow-xl backdrop-blur-md"
-          style={{
-            left: mousePos.x + 14,
-            top: mousePos.y - 12,
-          }}
-        >
-          <div className="flex items-center gap-1.5 font-medium">
-            <span className="size-2 rounded-full" style={{ backgroundColor: paletteFor(hoveredNode.type).core }} />
-            <span>{hoveredNode.name}</span>
-            <Badge variant="outline" className="text-[9px] px-1 py-0">{hoveredNode.type}</Badge>
-          </div>
-          <div className="grid grid-cols-3 gap-2 font-mono text-[10px] text-slate-400">
-            <span>记忆 {hoveredNode.memory_count}</span>
-            <span>入度 {hoveredNode.in_degree}</span>
-            <span>出度 {hoveredNode.out_degree}</span>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

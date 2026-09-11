@@ -254,13 +254,18 @@ class DiagnosticsService:
             connection,
             "SELECT COUNT(*) FROM memories WHERE vector IS NOT NULL",
         )
+        size_query = (
+            """SELECT length(vector), COUNT(*) FROM memories
+                 WHERE vector IS NOT NULL
+                 GROUP BY length(vector) ORDER BY COUNT(*) DESC LIMIT 5"""
+            if canonical_vector_count <= 1000
+            else """SELECT length(vector), COUNT(*) FROM (
+                     SELECT vector FROM memories WHERE vector IS NOT NULL LIMIT 1000
+                 ) GROUP BY length(vector) ORDER BY COUNT(*) DESC LIMIT 5"""
+        )
         canonical_blob_sizes = [
             {"bytes": int(row[0] or 0), "count": int(row[1] or 0)}
-            for row in connection.execute(
-                """SELECT length(vector), COUNT(*) FROM memories
-                     WHERE vector IS NOT NULL
-                     GROUP BY length(vector) ORDER BY COUNT(*) DESC LIMIT 5"""
-            ).fetchall()
+            for row in connection.execute(size_query).fetchall()
         ]
         if "memory_vectors" not in existing:
             evidence = {
@@ -433,37 +438,79 @@ class DiagnosticsService:
                 "missing_tables": missing_tables,
             }
 
-        rows = connection.execute(
+        consumer_rows = connection.execute(
+            "SELECT consumer_name, COUNT(*) FROM outbox_deliveries GROUP BY consumer_name ORDER BY consumer_name"
+        ).fetchall()
+        if not consumer_rows:
+            return "empty", {
+                "scope": "per_event_per_consumer",
+                "consumer_count": 0,
+                "total_lag": 0,
+                "processing_count": 0,
+                "retry_count": 0,
+                "pending_count": 0,
+                "consumers": [],
+            }
+
+        latest_write_sequence = _scalar(
+            connection,
+            "SELECT MAX(write_sequence) FROM write_operations WHERE status='committed'",
+        ) or 0
+
+        # Only join related tables for pending/unprocessed deliveries to avoid full-table joins on millions of rows
+        lag_rows = connection.execute(
             """SELECT d.consumer_name,
-                      COUNT(*) AS delivery_count,
-                      SUM(CASE WHEN d.processed_at IS NULL THEN 1 ELSE 0 END) AS lag_count,
-                      SUM(CASE WHEN d.processed_at IS NULL AND d.state='processing' THEN 1 ELSE 0 END) AS processing_count,
-                      SUM(CASE WHEN d.processed_at IS NULL AND d.state='retry' THEN 1 ELSE 0 END) AS retry_count,
-                      SUM(CASE WHEN d.processed_at IS NULL AND d.state='pending' THEN 1 ELSE 0 END) AS pending_count,
-                      MIN(CASE WHEN d.processed_at IS NULL THEN o.created_at END) AS oldest_pending_at,
-                      MAX(w.write_sequence) AS latest_write_sequence,
-                      MAX(CASE WHEN d.processed_at IS NOT NULL THEN w.write_sequence ELSE 0 END) AS applied_write_sequence
+                      d.state,
+                      o.created_at,
+                      w.write_sequence
                  FROM outbox_deliveries d
                  JOIN domain_outbox o ON o.event_id=d.event_id
                  JOIN write_operations w ON w.operation_id=o.operation_id
-                WHERE w.status='committed'
-                GROUP BY d.consumer_name
-                ORDER BY d.consumer_name"""
+                WHERE d.processed_at IS NULL
+                  AND w.status='committed'
+                ORDER BY w.write_sequence ASC"""
         ).fetchall()
-        consumers = [
-            {
-                "consumer": str(row[0]),
-                "delivery_count": int(row[1] or 0),
-                "lag_count": int(row[2] or 0),
-                "processing_count": int(row[3] or 0),
-                "retry_count": int(row[4] or 0),
-                "pending_count": int(row[5] or 0),
-                "oldest_pending_at": row[6],
-                "latest_write_sequence": int(row[7] or 0),
-                "applied_write_sequence": int(row[8] or 0),
-            }
-            for row in rows
-        ]
+
+        lag_map: dict[str, list[tuple[str, Any, int]]] = {}
+        for cname, state, created_at, write_seq in lag_rows:
+            lag_map.setdefault(str(cname), []).append((str(state), created_at, int(write_seq or 0)))
+
+        applied_map: dict[str, int] = {}
+        if lag_rows:
+            applied_rows = connection.execute(
+                """SELECT d.consumer_name,
+                          MAX(w.write_sequence)
+                     FROM outbox_deliveries d
+                     JOIN domain_outbox o ON o.event_id=d.event_id
+                     JOIN write_operations w ON w.operation_id=o.operation_id
+                    WHERE d.processed_at IS NOT NULL
+                      AND w.status='committed'
+                    GROUP BY d.consumer_name"""
+            ).fetchall()
+            applied_map = {str(r[0]): int(r[1] or 0) for r in applied_rows}
+
+        consumers = []
+        for cname_raw, delivery_count in consumer_rows:
+            cname = str(cname_raw)
+            c_lags = lag_map.get(cname, [])
+            lag_count = len(c_lags)
+            processing_count = sum(1 for s, _, _ in c_lags if s == "processing")
+            retry_count = sum(1 for s, _, _ in c_lags if s == "retry")
+            pending_count = sum(1 for s, _, _ in c_lags if s == "pending")
+            oldest_pending_at = min((ca for _, ca, _ in c_lags if ca is not None), default=None)
+            applied_seq = applied_map.get(cname, latest_write_sequence) if lag_count > 0 else latest_write_sequence
+
+            consumers.append({
+                "consumer": cname,
+                "delivery_count": int(delivery_count or 0),
+                "lag_count": lag_count,
+                "processing_count": processing_count,
+                "retry_count": retry_count,
+                "pending_count": pending_count,
+                "oldest_pending_at": oldest_pending_at,
+                "latest_write_sequence": latest_write_sequence,
+                "applied_write_sequence": applied_seq,
+            })
         total_lag = sum(item["lag_count"] for item in consumers)
         processing = sum(item["processing_count"] for item in consumers)
         retrying = sum(item["retry_count"] for item in consumers)
@@ -546,31 +593,45 @@ class DiagnosticsService:
             }
 
         projection_count = _scalar(connection, "SELECT COUNT(*) FROM derived_projection_state")
-        row = connection.execute(
-            """SELECT COUNT(*) AS delivery_count,
-                      SUM(CASE WHEN p.applied_version IS NULL OR p.applied_version < o.aggregate_version THEN 1 ELSE 0 END) AS lagged_count,
-                      SUM(CASE WHEN (p.applied_version IS NULL OR p.applied_version < o.aggregate_version)
-                                    AND d.processed_at IS NULL AND d.state='processing' THEN 1 ELSE 0 END) AS repairing_count,
-                      MAX(COALESCE(p.generation, 0)) AS max_generation,
-                      MAX(COALESCE(p.updated_at, 0)) AS latest_projection_at
-                 FROM outbox_deliveries d
-                 JOIN domain_outbox o ON o.event_id=d.event_id
-                 LEFT JOIN derived_projection_state p
-                   ON p.consumer_name=d.consumer_name
-                  AND p.aggregate_kind=o.aggregate_kind
-                  AND p.aggregate_id=o.aggregate_id"""
-        ).fetchone()
-        delivery_count = int(row[0] or 0)
-        lagged_count = int(row[1] or 0)
-        repairing_count = int(row[2] or 0)
+        delivery_count = _scalar(connection, "SELECT COUNT(*) FROM outbox_deliveries")
+        meta_row = connection.execute(
+            "SELECT MAX(COALESCE(generation, 0)), MAX(COALESCE(updated_at, 0)) FROM derived_projection_state"
+        ).fetchone() or (0, None)
+        max_generation = int(meta_row[0] or 0)
+        latest_projection_at = meta_row[1] or None
+
+        # Check for lagged projections only when there are unprocessed deliveries, avoiding massive full joins
+        unprocessed_count = _scalar(
+            connection,
+            "SELECT COUNT(*) FROM outbox_deliveries WHERE processed_at IS NULL",
+        )
+        if unprocessed_count == 0:
+            lagged_count = 0
+            repairing_count = 0
+        else:
+            row = connection.execute(
+                """SELECT SUM(CASE WHEN p.applied_version IS NULL OR p.applied_version < o.aggregate_version THEN 1 ELSE 0 END) AS lagged_count,
+                          SUM(CASE WHEN (p.applied_version IS NULL OR p.applied_version < o.aggregate_version)
+                                        AND d.processed_at IS NULL AND d.state='processing' THEN 1 ELSE 0 END) AS repairing_count
+                     FROM outbox_deliveries d
+                     JOIN domain_outbox o ON o.event_id=d.event_id
+                     LEFT JOIN derived_projection_state p
+                       ON p.consumer_name=d.consumer_name
+                      AND p.aggregate_kind=o.aggregate_kind
+                      AND p.aggregate_id=o.aggregate_id
+                    WHERE d.processed_at IS NULL"""
+            ).fetchone() or (0, 0)
+            lagged_count = int(row[0] or 0)
+            repairing_count = int(row[1] or 0)
+
         evidence = {
             "scope": "consumer_aggregate_version",
             "projection_count": projection_count,
             "delivery_count": delivery_count,
             "lagged_count": lagged_count,
             "repairing_count": repairing_count,
-            "max_generation": int(row[3] or 0),
-            "latest_projection_at": row[4] or None,
+            "max_generation": max_generation,
+            "latest_projection_at": latest_projection_at,
         }
         if projection_count == 0 and delivery_count == 0:
             return "empty", evidence
@@ -1018,6 +1079,10 @@ def _error_evidence(exc: BaseException) -> dict[str, str]:
 
 def _overall_health(checks: Sequence[Mapping[str, Any]]) -> str:
     if not checks:
+        return "not_configured"
+    # process_memory is an auxiliary runtime probe and should not mask unconfigured persistent storage
+    functional_checks = [c for c in checks if c.get("name") != "process_memory"]
+    if functional_checks and all(c.get("health") == "not_configured" for c in functional_checks):
         return "not_configured"
     healths = [str(item.get("health") or "probe_error") for item in checks]
     for value in ("probe_error", "drift", "repairing"):

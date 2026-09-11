@@ -752,8 +752,8 @@ def build_tag_graph_projection(
 
     tag_rows = _active_tag_rows(conn, scope)
     tags = {int(row["id"]): row for row in tag_rows}
-    # 1. 节点前置收敛：避免对几千个全量标签做全矩阵扫描
-    candidate_cap = max(80, min(len(tag_rows), int(max_nodes * 1.5)))
+    # 1. 节点前置收敛：按用户设定的 max_nodes 动态放开，支持大容量星云自由展示
+    candidate_cap = max(100, min(len(tag_rows), int(max_nodes * 2.5)))
     candidate_tags = sorted(tag_rows, key=lambda r: float(r.get("confidence") or 0.0), reverse=True)[:candidate_cap]
     candidate_ids = [int(r["id"]) for r in candidate_tags]
 
@@ -762,7 +762,7 @@ def build_tag_graph_projection(
     links = [row for row in links if int(row["tag_id"]) in tags]
 
     # 3. 记忆查询前置收敛为最新活跃记忆，避免数万参数 SQL 溢出
-    active_mids = sorted({int(row["memory_id"]) for row in links}, reverse=True)[:1500]
+    active_mids = sorted({int(row["memory_id"]) for row in links}, reverse=True)[:5000]
     memories = _live_memory_rows(conn, scope, active_mids)
     links = [row for row in links if int(row["memory_id"]) in memories]
 
@@ -811,8 +811,9 @@ def build_tag_graph_projection(
                     source_kind = "manual" if "manual" in {str(source_link.get("source")), str(target_link.get("source"))} else "automatic"
                     item["source_counts"][source_kind] += 1
         max_raw = max((float(item["raw_weight"]) for item in aggregates.values()), default=0.0)
-        max_edges_limit = min(600, int(max_nodes * 2.5))
-        # 按共现权重排序，只保留前 max_edges_limit 条强关联骨干突触
+        # 根据用户指定的 max_nodes 动态扩展最大突触数，不搞写死的 600 条硬限制
+        max_edges_limit = max(1000, min(10000, int(max_nodes * 4.0)))
+        # 按共现权重排序，保留前 max_edges_limit 条强关联骨干突触
         sorted_aggregates = sorted(
             aggregates.items(),
             key=lambda pair: float(pair[1]["raw_weight"]),

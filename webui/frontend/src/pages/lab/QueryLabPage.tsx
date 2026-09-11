@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { FlaskConicalIcon, Loader2Icon, PlayIcon, RotateCcwIcon, ShieldCheckIcon } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { BrainCircuitIcon, FlaskConicalIcon, Loader2Icon, PlayIcon, RotateCcwIcon, ShieldCheckIcon } from 'lucide-react'
 
 import { isRequestCancelled } from '@/api/client'
 import { runQueryDebug, type QueryDebugResponse, type QueryStageName } from '@/api/memories'
@@ -127,10 +127,27 @@ export function QueryLabPage() {
 
   return (
     <div className="flex flex-col gap-3" data-page="query-lab">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <header>
+          <h1 className="text-xl font-bold tracking-tight flex items-center gap-2">
+            <FlaskConicalIcon className="size-5 text-primary" aria-hidden="true" />
+            算法实验室 · 神经星云拓扑检索
+          </h1>
+          <p className="mt-1 text-xs text-muted-foreground">
+            评测与验证标签神经星云向 QueryEngine 赋能的高级拓扑检索能力。
+          </p>
+        </header>
+        <Button asChild size="sm" variant="outline">
+          <Link to={`/tags/graph${scope ? `?bot_id=${encodeURIComponent(botId)}&session_id=${encodeURIComponent(sessionId)}` : ''}`}>
+            <BrainCircuitIcon aria-hidden="true" />返回标签神经星云
+          </Link>
+        </Button>
+      </div>
+
       <Alert>
         <ShieldCheckIcon aria-hidden="true" />
         <AlertTitle>只读检索实验台</AlertTitle>
-        <AlertDescription>用正式 QueryEngine 跑真实检索，不写入、不累加访问计数、不改任何记忆。同一句查询跑两组算法配置，并排看差异。</AlertDescription>
+        <AlertDescription>基于标签神经星云的拓扑与共现网络，用正式 QueryEngine 跑真实检索，不写入、不累加访问计数、不改任何记忆。同一句查询跑两组算法配置，并排看差异。</AlertDescription>
       </Alert>
 
       <Card>

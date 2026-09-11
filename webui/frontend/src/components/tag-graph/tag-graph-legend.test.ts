@@ -45,8 +45,8 @@ describe('标签图谱图例配置化', () => {
     expect(items.graph_legend_enabled.type).toBe('bool')
     expect(items.graph_legend_types.type).toBe('string')
     expect(items.graph_legend_show_count.type).toBe('bool')
-    // 顺序配置的默认值必须覆盖全部已知类型
-    const known = ['keyword', 'entity', 'topic', 'emotion', 'fact', 'jargon', 'default']
+    // 顺序配置的默认值必须覆盖全部已知类型（包含真实数据库中的 event/person/location/time）
+    const known = ['keyword', 'entity', 'topic', 'emotion', 'fact', 'person', 'event', 'location', 'time', 'jargon', 'default']
     for (const type of known) expect(items.graph_legend_types.default).toContain(type)
   })
 

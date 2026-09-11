@@ -501,3 +501,75 @@ def test_blueprint_container_resolution_uses_only_live_paths(tmp_path):
     assert service.tag_index.kind == "tag"
     assert service.tag_index.runtime_count == 3
     assert service.book_lore_path is None
+
+
+def test_diagnostics_optimizations_handle_large_dataset_simulation(tmp_path):
+    import sqlite3
+    from services.diagnostics import DiagnosticsService
+
+    db_file = tmp_path / "test_opt.db"
+    conn = sqlite3.connect(str(db_file))
+    conn.executescript("""
+        CREATE TABLE memories (
+            id INTEGER PRIMARY KEY,
+            content TEXT,
+            vector BLOB
+        );
+        CREATE TABLE write_operations (
+            operation_id TEXT PRIMARY KEY,
+            write_sequence INTEGER UNIQUE,
+            status TEXT NOT NULL
+        );
+        CREATE TABLE domain_outbox (
+            event_id TEXT PRIMARY KEY,
+            operation_id TEXT REFERENCES write_operations(operation_id),
+            aggregate_kind TEXT,
+            aggregate_id TEXT,
+            aggregate_version INTEGER,
+            created_at REAL
+        );
+        CREATE TABLE outbox_deliveries (
+            event_id TEXT REFERENCES domain_outbox(event_id),
+            consumer_name TEXT NOT NULL,
+            state TEXT NOT NULL,
+            processed_at REAL,
+            PRIMARY KEY(event_id, consumer_name)
+        );
+        CREATE TABLE derived_projection_state (
+            consumer_name TEXT NOT NULL,
+            aggregate_kind TEXT NOT NULL,
+            aggregate_id TEXT NOT NULL,
+            applied_version INTEGER NOT NULL,
+            generation INTEGER NOT NULL DEFAULT 0,
+            updated_at REAL NOT NULL,
+            PRIMARY KEY(consumer_name, aggregate_kind, aggregate_id)
+        );
+    """)
+
+    # 模拟数据
+    conn.execute("INSERT INTO write_operations VALUES ('op1', 1, 'committed')")
+    conn.execute("INSERT INTO domain_outbox VALUES ('ev1', 'op1', 'memory', '1', 1, 100.0)")
+    conn.execute("INSERT INTO outbox_deliveries VALUES ('ev1', 'consumer_a', 'completed', 101.0)")
+    conn.execute("INSERT INTO derived_projection_state VALUES ('consumer_a', 'memory', '1', 1, 1, 101.0)")
+
+    # 插入 10 条向量数据
+    for i in range(10):
+        conn.execute("INSERT INTO memories VALUES (?, 'test', ?)", (i + 1, b"x" * 128))
+    conn.commit()
+
+    # 运行三项被优化的探针
+    status, evidence = DiagnosticsService._probe_outbox_consumer_lag(conn)
+    assert status == "healthy"
+    assert evidence["total_lag"] == 0
+    assert len(evidence["consumers"]) == 1
+    assert evidence["consumers"][0]["applied_write_sequence"] == 1
+
+    status, evidence = DiagnosticsService._probe_derived_projection(conn)
+    assert status == "healthy"
+    assert evidence["lagged_count"] == 0
+
+    status, evidence = DiagnosticsService._probe_memory_vectors(conn)
+    assert status == "healthy"
+    assert evidence["canonical_vector_count"] == 10
+    assert evidence["blob_sizes"][0]["bytes"] == 128
+    conn.close()

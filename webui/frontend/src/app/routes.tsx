@@ -51,6 +51,7 @@ export interface AppRoute {
   group: RouteGroup
   icon: ComponentType<{ className?: string }>
   element: ComponentType
+  hidden?: boolean
 }
 
 export const appRoutes: AppRoute[] = [
@@ -58,8 +59,8 @@ export const appRoutes: AppRoute[] = [
   { path: '/explore', title: '神经云图', description: '3D 交互式高维记忆与关系星图', group: 'overview', icon: CompassIcon, element: ExplorePage },
   { path: '/memories', title: '记忆', description: '按 Bot 和群查看、编辑记忆', group: 'data', icon: DatabaseIcon, element: MemoriesPage },
   { path: '/tags', title: '标签', description: '覆盖率、频率、类型与置信度总览', group: 'data', icon: TagsIcon, element: TagsPage },
-  { path: '/lab', title: '算法实验室', description: '同一句查询跑两组检索算法并排对比', group: 'data', icon: FlaskConicalIcon, element: QueryLabPage },
-  { path: '/tags/graph', title: '标签关系图', description: '标签共现、来源与关联路径', group: 'data', icon: BrainCircuitIcon, element: TagGraphPage },
+  { path: '/tags/graph', title: '标签神经星云', description: '标签共现网络、突触脉冲与高维拓扑星云', group: 'data', icon: BrainCircuitIcon, element: TagGraphPage },
+  { path: '/lab', title: '算法实验室', description: '同一句查询对比标签神经星云的高级拓扑检索算法', group: 'data', icon: FlaskConicalIcon, element: QueryLabPage, hidden: true },
   { path: '/import', title: '导入', description: '从来源预检并导入记忆', group: 'data', icon: DownloadIcon, element: ImportPage },
   { path: '/maintenance', title: '维护任务', description: '可恢复任务、进度、日志与取消', group: 'runtime', icon: SlidersIcon, element: MaintenancePage },
   { path: '/observatory', title: '注入观测台', description: '查看一次回复用了哪些记忆通道', group: 'runtime', icon: ActivityIcon, element: InjectionPage },

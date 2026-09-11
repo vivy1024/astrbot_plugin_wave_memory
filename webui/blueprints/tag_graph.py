@@ -86,7 +86,10 @@ def _descriptor(refs, *, kind: str, locator: int | str, scope: RuntimeScope, rev
     }
 
 
-_LEGEND_KNOWN_TYPES = ("keyword", "entity", "topic", "emotion", "fact", "jargon", "default")
+_LEGEND_KNOWN_TYPES = (
+    "topic", "event", "keyword", "entity", "fact",
+    "person", "emotion", "location", "time", "jargon", "default",
+)
 
 
 def _legend_settings() -> dict[str, Any]:
@@ -143,7 +146,7 @@ def _graph_from_request(scope: RuntimeScope, *, layers: tuple[str, ...] | None =
         scope=scope,
         layers=selected_layers,
         min_confidence=_bounded_float(request.args.get("min_confidence"), 0.0, 0.0, 1.0),
-        max_nodes=max_nodes or _bounded_int(request.args.get("max_nodes"), 300, 1, 1000),
+        max_nodes=max_nodes or _bounded_int(request.args.get("max_nodes"), 300, 10, 5000),
         include_pulse=_as_bool(request.args.get("include_pulse")),
         pulse_half_life_hours=_bounded_float(request.args.get("pulse_half_life_hours"), 72.0, 1.0, 24.0 * 365.0),
     )

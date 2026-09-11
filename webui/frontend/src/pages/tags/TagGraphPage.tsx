@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { humanizeApiError } from '@/lib/reason-label'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowLeftIcon, BrainCircuitIcon, RefreshCwIcon, ShieldCheckIcon } from 'lucide-react'
+import { ArrowLeftIcon, BrainCircuitIcon, RefreshCwIcon } from 'lucide-react'
 
 import { isRequestCancelled } from '@/api/client'
 import { findTagGraphPath, getTagGraph, getTagGraphDetail, type TagGraphLayer, type TagGraphNode, type TagGraphPathPayload, type TagGraphPayload, type TagGraphScope } from '@/api/tagGraph'
@@ -37,6 +37,9 @@ export function TagGraphPage() {
   const layerQuery = searchParams.get('layers')
   const layers = useMemo(() => parseLayers(layerQuery), [layerQuery])
   const includePulse = searchParams.get('pulse') === '1'
+  const maxNodes = Number(searchParams.get('max_nodes')) || (isMobile ? 150 : 300)
+  const minConfidence = searchParams.has('min_confidence') ? Number(searchParams.get('min_confidence')) : 0.0
+  const pulseHalfLifeHours = Number(searchParams.get('pulse_half_life')) || 72
   const selectedRef = searchParams.get('ref')
   const sourceRef = searchParams.get('source_ref')
   const targetRef = searchParams.get('target_ref')
@@ -78,7 +81,14 @@ export function TagGraphPage() {
       controller.abort(new Error('API 请求超时（30 秒上限），请检查网络或刷新重试'))
     }, 30_000)
 
-    getTagGraph(scope, { layers, includePulse, maxNodes: isMobile ? 200 : 1000, signal: controller.signal })
+    getTagGraph(scope, {
+      layers,
+      includePulse,
+      maxNodes,
+      minConfidence,
+      pulseHalfLifeHours,
+      signal: controller.signal,
+    })
       .then((payload) => { if (!controller.signal.aborted && graphRequest.current === controller) setGraph(payload) })
       .catch((reason: unknown) => { if (!controller.signal.aborted && graphRequest.current === controller && !isRequestCancelled(reason)) { setGraph(null); setError(reason) } })
       .finally(() => {
@@ -89,7 +99,7 @@ export function TagGraphPage() {
       clearTimeout(timeoutId)
       controller.abort()
     }
-  }, [includePulse, isMobile, layers, reload, scope])
+  }, [includePulse, isMobile, layers, maxNodes, minConfidence, pulseHalfLifeHours, reload, scope])
 
   const graphNode = graph?.nodes.find((node) => node.ref === selectedRef) ?? null
   const selectedNode = graphNode ?? detailNode
@@ -129,11 +139,11 @@ export function TagGraphPage() {
       <header className="max-w-3xl">
         <div className="flex items-center gap-2">
           <BrainCircuitIcon className="size-5 text-primary" aria-hidden="true" />
-          <h1 className="text-xl font-bold tracking-tight">标签关系图</h1>
+          <h1 className="text-xl font-bold tracking-tight">标签神经星云</h1>
         </div>
-        <p className="mt-1 text-xs text-muted-foreground">直观展示当前群的标签共现网络与关联路径。</p>
+        <p className="mt-1 text-xs text-muted-foreground">当前群的标签共现突触、拓扑流形与关联路径星云。</p>
       </header>
-      <div className="flex gap-2">
+      <div className="flex items-center gap-2">
         <Button asChild size="sm" variant="outline">
           <Link to="/tags"><ArrowLeftIcon aria-hidden="true" />返回标签总览</Link>
         </Button>
@@ -142,12 +152,27 @@ export function TagGraphPage() {
         </Button>
       </div>
     </div>
-    <Alert>
-      <ShieldCheckIcon aria-hidden="true" />
-      <AlertTitle>当前群 · 关系探索</AlertTitle>
-      <AlertDescription>点击节点可高亮一跳邻居并查看关联记忆；路径查询只使用已选图层。</AlertDescription>
-    </Alert>
-    <div className="shrink-0"><TagGraphControls botId={botId} sessionId={sessionId} layers={layers} includePulse={includePulse} loading={loading} onScopeChange={({ botId: nextBot, sessionId: nextSession }) => setQuery({ bot_id: nextBot ?? botId, session_id: nextSession ?? sessionId, visibility: 'group', ref: null, source_ref: null, target_ref: null })} onLayersChange={changeLayers} onPulseChange={(enabled) => setQuery({ pulse: enabled ? '1' : null })} /></div>
+    <div className="shrink-0">
+      <TagGraphControls
+        botId={botId}
+        sessionId={sessionId}
+        layers={layers}
+        includePulse={includePulse}
+        loading={loading}
+        onScopeChange={({ botId: nextBot, sessionId: nextSession }) =>
+          setQuery({
+            bot_id: nextBot ?? botId,
+            session_id: nextSession ?? sessionId,
+            visibility: 'group',
+            ref: null,
+            source_ref: null,
+            target_ref: null,
+          })
+        }
+        onLayersChange={changeLayers}
+        onPulseChange={(enabled) => setQuery({ pulse: enabled ? '1' : null })}
+      />
+    </div>
 
     {!scope ? (
       <Card><CardContent className="p-6 text-sm text-muted-foreground">请先选择 Bot 和群聊。</CardContent></Card>
@@ -179,8 +204,38 @@ export function TagGraphPage() {
         </div>
         {graph.nodes.length ? (
           <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_23rem]">
-            <TagGraphCanvas nodes={graph.nodes} edges={graph.edges} selectedRef={selectedRef} pathEdgeIds={pathEdgeIds} legend={graph.legend} onSelect={selectNode} />
-            <TagGraphDetail scope={scope} node={selectedNode} sourceRef={sourceRef} targetRef={targetRef} path={path} pathLoading={pathLoading} onSetSource={(node) => setQuery({ source_ref: node.ref })} onSetTarget={(node) => setQuery({ target_ref: node.ref })} onRunPath={runPath} onClearPath={clearPath} onMutated={() => setReload((value) => value + 1)} />
+            <TagGraphCanvas
+              nodes={graph.nodes}
+              edges={graph.edges}
+              selectedRef={selectedRef}
+              pathEdgeIds={pathEdgeIds}
+              legend={graph.legend}
+              scope={scope}
+              maxNodes={maxNodes}
+              minConfidence={minConfidence}
+              pulseHalfLifeHours={pulseHalfLifeHours}
+              onSelect={selectNode}
+              onParamsChange={(params) =>
+                setQuery({
+                  max_nodes: params.maxNodes !== undefined ? String(params.maxNodes) : null,
+                  min_confidence: params.minConfidence !== undefined ? String(params.minConfidence) : null,
+                  pulse_half_life: params.pulseHalfLifeHours !== undefined ? String(params.pulseHalfLifeHours) : null,
+                })
+              }
+            />
+            <TagGraphDetail
+              scope={scope}
+              node={selectedNode}
+              sourceRef={sourceRef}
+              targetRef={targetRef}
+              path={path}
+              pathLoading={pathLoading}
+              onSetSource={(node) => setQuery({ source_ref: node.ref })}
+              onSetTarget={(node) => setQuery({ target_ref: node.ref })}
+              onRunPath={runPath}
+              onClearPath={clearPath}
+              onMutated={() => setReload((value) => value + 1)}
+            />
           </div>
         ) : (
           <Card><CardContent className="p-6 text-sm text-muted-foreground">当前群暂无标签连线关系（共 {graph.tag_total ?? 0} 个独立标签）。</CardContent></Card>
