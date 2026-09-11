@@ -250,3 +250,28 @@ def test_exposed_tool_names_actually_exist():
     assert mentioned, "提示至少应写出一部分真实工具名"
     for name in mentioned:
         assert name in declared
+
+def test_persona_prompt_only_references_real_tools():
+    """人格提示词里引用的 wave_memory_* / book_lore_* 必须真实存在。
+
+    历史上提示词写过 wave_memory_record_social_anchor、wave_memory_manage_concern、
+    affinity_update 等不存在的名字，导致提审静默失败。这里锁住一致性。
+    """
+    import re
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parents[1]
+    declared = set()
+    for path in (root / "tools").glob("*.py"):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            m = re.search(r'name: str = "([a-z_]+)"', line)
+            if m:
+                declared.add(m.group(1))
+
+    prompt_path = root / "docs" / "persona-prompt-optimized.md"
+    assert prompt_path.exists(), "人格提示词优化版缺失"
+    prompt = prompt_path.read_text(encoding="utf-8")
+    referenced = set(re.findall(r"(?:wave_memory_[a-z_]+|book_lore_[a-z_]+)", prompt))
+    assert referenced, "提示词应引用工具名"
+    missing = sorted(name for name in referenced if name not in declared)
+    assert missing == [], f"提示词引用了不存在的工具: {missing}"
