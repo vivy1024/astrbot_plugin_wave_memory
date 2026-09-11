@@ -255,17 +255,25 @@ export function TagGraphCanvas({
     if (!canvas || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(() => resetView())
     observer.observe(canvas)
-    // 进入/退出全屏是 class 切换，canvas 的盒子尺寸变化不一定触发 observer，
-    // 这里补一次下一帧重算，确保全屏后节点按新视口铺开。
-    let frame = 0
-    if (typeof requestAnimationFrame === 'function') {
-      frame = requestAnimationFrame(() => resetView())
-    }
+    // 监听窗口尺寸变化与全屏动画过渡完成（350ms后），确保全屏与退出演示完全对齐视口
+    const t1 = setTimeout(() => resetView(), 100)
+    const t2 = setTimeout(() => resetView(), 350)
     return () => {
-      if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame)
+      clearTimeout(t1)
+      clearTimeout(t2)
       observer.disconnect()
     }
   }, [isMobile, isFullscreen, resetView, simData])
+
+  // 支持 Escape 键一键退出全屏
+  useEffect(() => {
+    if (!isFullscreen) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsFullscreen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isFullscreen])
 
   // 物理步进计算 (Force-Directed Simulation Step)
   const stepPhysics = useCallback(() => {
@@ -654,10 +662,10 @@ export function TagGraphCanvas({
       className={cn(
         // `relative` 与 `fixed` 不能同时写在 class 里：Tailwind 中 `.relative`
         // 排在 `.fixed` 之后，会覆盖掉全屏定位。全屏时改用 fixed 分支。
-        'overflow-hidden rounded-2xl border border-sky-950/80 bg-[#07101b] shadow-[0_24px_80px_rgba(2,8,23,.36)] transition-all duration-300',
+        'overflow-hidden border border-sky-950/80 bg-[#07101b] shadow-[0_24px_80px_rgba(2,8,23,.36)] transition-all duration-300',
         isFullscreen
-          ? 'fixed inset-4 z-50 h-[calc(100vh-2rem)] w-auto'
-          : 'relative h-[38rem] w-full'
+          ? 'fixed inset-0 z-50 h-[100vh] w-[100vw] rounded-none'
+          : 'relative h-[38rem] w-full rounded-2xl'
       )}
       data-tag-graph-mode="neural-canvas svg"
     >
@@ -726,7 +734,7 @@ export function TagGraphCanvas({
       </div>
 
       {/* 状态徽章与图例 */}
-      <div className="absolute left-4 top-4 flex max-w-[calc(100%-2rem)] flex-wrap items-center gap-2 rounded-xl border border-sky-300/10 bg-slate-950/70 px-3 py-2 text-xs text-slate-300 shadow-lg backdrop-blur-xl">
+      <div className="absolute left-4 top-4 flex max-w-[calc(100%-10rem)] flex-wrap items-center gap-2 rounded-xl border border-sky-300/10 bg-slate-950/70 px-3 py-2 text-xs text-slate-300 shadow-lg backdrop-blur-xl">
         <SparklesIcon className="size-3.5 text-sky-400" />
         <span>Tag 神经星云</span>
         <span className="text-slate-500">·</span>
@@ -736,6 +744,18 @@ export function TagGraphCanvas({
         <span className="text-[11px] text-slate-400">滚轮缩放 / 拖拽平移 / 点击聚焦</span>
         {reducedMotion ? <span className="ml-2 text-amber-300">已遵循减少动态效果偏好</span> : null}
       </div>
+
+      {/* 右上角醒目的全屏探索 / 退出全屏切换按钮 */}
+      <button
+        type="button"
+        onClick={() => setIsFullscreen(!isFullscreen)}
+        className="absolute right-4 top-4 z-10 flex items-center gap-1.5 rounded-xl border border-sky-300/20 bg-slate-950/80 px-3 py-2 text-xs font-medium text-slate-200 shadow-lg backdrop-blur-xl transition-all hover:border-sky-400/50 hover:bg-slate-900 hover:text-white active:scale-95"
+        aria-label={isFullscreen ? '退出全屏' : '全屏探索'}
+        title={isFullscreen ? '退出全屏 (Esc)' : '全屏沉浸探索'}
+      >
+        {isFullscreen ? <Minimize2Icon className="size-3.5 text-sky-400" /> : <Maximize2Icon className="size-3.5 text-sky-400" />}
+        <span>{isFullscreen ? '退出全屏 (Esc)' : '全屏探索'}</span>
+      </button>
 
       {/* 类型图例：顺序与显隐由配置决定，只展示图中实际出现的类型 */}
       {legend?.enabled !== false && legendItems.length > 0 ? (

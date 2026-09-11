@@ -59,12 +59,12 @@ describe('标签图谱观测台配色', () => {
     const canvas = read(CANVAS)
     // 桌面分支：从容器 ref 到 canvas 元素之间就是 className 的 cn(...) 块
     const block = canvas.slice(canvas.indexOf('ref={containerRef}'), canvas.indexOf('<canvas'))
-    // 全屏分支必须带 fixed 定位
-    expect(block).toContain('fixed inset-4 z-50')
+    // 全屏分支必须带 fixed 定位并填满视口
+    expect(block).toContain('fixed inset-0 z-50')
     // 常态分支才带 relative
-    expect(block).toContain("'relative h-[38rem] w-full'")
+    expect(block).toContain("'relative h-[38rem] w-full")
     // 基础样式行不得内联 relative，否则 Tailwind 里 .relative 会覆盖 .fixed
-    const baseLine = block.split('\n').find((line) => line.includes('overflow-hidden rounded-2xl'))
+    const baseLine = block.split('\n').find((line) => line.includes('border-sky-950/80'))
     expect(baseLine).toBeDefined()
     expect(baseLine).not.toContain('relative')
     // relative 只能出现在常态分支那一行
