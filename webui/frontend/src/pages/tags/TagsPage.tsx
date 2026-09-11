@@ -164,7 +164,7 @@ export function TagsPage() {
     <Card className="border-border/60">
       <CardHeader className="border-b pb-3">
         <CardTitle className="text-sm">标签提取与索引状态</CardTitle>
-        <CardDescription>展示当前提取能力、索引代次和检索降级路径，不暴露模型编号或物理路径。</CardDescription>
+        <CardDescription>展示当前标签提取能力、索引状态与健康指标。</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3 p-4 sm:grid-cols-3">
         <div className="flex min-w-0 flex-col gap-2 rounded-lg border p-3">
@@ -194,7 +194,7 @@ export function TagsPage() {
         </form>
       </CardHeader>
       <CardContent className="p-4">
-        <QueryState status={status} error={error} title="标签数据读取失败" onRetry={() => setReload((value) => value + 1)} description={status === 'empty' ? '当前筛选条件下没有标签；未使用演示数据填充。' : undefined}>
+        <QueryState status={status} error={error} title="标签数据读取失败" onRetry={() => setReload((value) => value + 1)} description={status === 'empty' ? '当前筛选条件下没有标签。' : undefined}>
           {data?.items.length ? <TagsTable items={data.items} total={total} limit={limit} offset={offset} loading={loading} onOffset={setOffset} onLimit={(v) => { setOffset(0); setLimit(v) }} /> : null}
         </QueryState>
       </CardContent>

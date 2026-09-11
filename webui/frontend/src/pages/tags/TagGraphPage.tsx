@@ -124,17 +124,37 @@ export function TagGraphPage() {
   const clearPath = () => { pathRequest.current?.abort(); setPath(null); setQuery({ source_ref: null, target_ref: null }) }
   const pathEdgeIds = useMemo(() => new Set(path?.edges.map((edge) => edge.id) ?? []), [path])
 
-  return <div className="fixed inset-0 z-40 flex h-[100svh] w-[100vw] flex-col gap-3 overflow-hidden bg-[#050914] p-3 md:p-4" data-page="tag-graph">
-    <div className="flex flex-wrap items-start justify-between gap-3"><header className="max-w-3xl"><div className="flex items-center gap-2"><BrainCircuitIcon className="size-5 text-primary" aria-hidden="true" /><h1 className="text-xl font-bold tracking-tight">标签关系图</h1></div><p className="mt-1 text-xs text-muted-foreground">用当前群里的标签、记忆和关系画只读图，不能在这里改或删标签。</p></header><div className="flex gap-2"><Button asChild size="sm" variant="outline"><Link to="/tags"><ArrowLeftIcon aria-hidden="true" />返回标签总览</Link></Button><Button type="button" size="sm" variant="outline" disabled={!scope || loading} onClick={() => setReload((value) => value + 1)}><RefreshCwIcon aria-hidden="true" />刷新</Button></div></div>
-    <Alert className="border-sky-400/15 bg-sky-400/[.035]"><ShieldCheckIcon aria-hidden="true" /><AlertTitle>当前群 · 只读观测</AlertTitle><AlertDescription>图谱只展示当前群的真实标签关系。选中节点后会突出一跳邻域；路径查询只使用已开启的图层。</AlertDescription></Alert>
+  return <div className="flex flex-col gap-6" data-page="tag-graph">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <header className="max-w-3xl">
+        <div className="flex items-center gap-2">
+          <BrainCircuitIcon className="size-5 text-primary" aria-hidden="true" />
+          <h1 className="text-xl font-bold tracking-tight">标签关系图</h1>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">直观展示当前群的标签共现网络与关联路径。</p>
+      </header>
+      <div className="flex gap-2">
+        <Button asChild size="sm" variant="outline">
+          <Link to="/tags"><ArrowLeftIcon aria-hidden="true" />返回标签总览</Link>
+        </Button>
+        <Button type="button" size="sm" variant="outline" disabled={!scope || loading} onClick={() => setReload((value) => value + 1)}>
+          <RefreshCwIcon aria-hidden="true" />刷新
+        </Button>
+      </div>
+    </div>
+    <Alert>
+      <ShieldCheckIcon aria-hidden="true" />
+      <AlertTitle>当前群 · 关系探索</AlertTitle>
+      <AlertDescription>点击节点可高亮一跳邻居并查看关联记忆；路径查询只使用已选图层。</AlertDescription>
+    </Alert>
     <div className="shrink-0"><TagGraphControls botId={botId} sessionId={sessionId} layers={layers} includePulse={includePulse} loading={loading} onScopeChange={({ botId: nextBot, sessionId: nextSession }) => setQuery({ bot_id: nextBot ?? botId, session_id: nextSession ?? sessionId, visibility: 'group', ref: null, source_ref: null, target_ref: null })} onLayersChange={changeLayers} onPulseChange={(enabled) => setQuery({ pulse: enabled ? '1' : null })} /></div>
 
     {!scope ? (
-      <Card><CardContent className="p-6 text-sm text-muted-foreground">请先选择 Bot 和群。没选完整之前不会去猜标签图。</CardContent></Card>
+      <Card><CardContent className="p-6 text-sm text-muted-foreground">请先选择 Bot 和群聊。</CardContent></Card>
     ) : !layers.length ? (
       <Card><CardContent className="flex flex-col gap-2 p-6 text-sm text-muted-foreground">
         <span className="font-medium text-foreground">未开启任何图层</span>
-        <span>标签图不会用无连接的孤立点冒充关系。请在上方开启「有向共现」或「显式关系」至少一个图层再看图。</span>
+        <span>请在上方开启「有向共现」或「显式关系」以查看图谱节点。</span>
       </CardContent></Card>
     ) : error && !graph ? (
       <Alert variant="destructive">
@@ -163,7 +183,7 @@ export function TagGraphPage() {
             <TagGraphDetail scope={scope} node={selectedNode} sourceRef={sourceRef} targetRef={targetRef} path={path} pathLoading={pathLoading} onSetSource={(node) => setQuery({ source_ref: node.ref })} onSetTarget={(node) => setQuery({ target_ref: node.ref })} onRunPath={runPath} onClearPath={clearPath} onMutated={() => setReload((value) => value + 1)} />
           </div>
         ) : (
-          <Card><CardContent className="p-6 text-sm text-muted-foreground">当前群还没有正式的 Tag 关系节点（共 {graph.tag_total ?? 0} 个标签，开启的图层里没有可连的边）；未使用演示数据填充。</CardContent></Card>
+          <Card><CardContent className="p-6 text-sm text-muted-foreground">当前群暂无标签连线关系（共 {graph.tag_total ?? 0} 个独立标签）。</CardContent></Card>
         )}
       </>
     ) : null}

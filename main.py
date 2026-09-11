@@ -62,7 +62,7 @@ from .services.inbound_message_handler import InboundMessagePipeline
 from .services.backup_lifecycle import DatabaseBackupManager
 from .services.runtime_mode import effective_native_injection_enabled, effective_query_feature, resolve_runtime_mode, runtime_capability_enabled, should_self_heal_advanced_query
 from .services.compat import build_duplicate_memory_warnings, build_livingmemory_compat_surface, detect_memory_plugins
-from .services.impression_timeline import parse_impression_mark, persist_unsettled_trace
+from .services.impression_timeline import configure_social_limits, parse_impression_mark, persist_unsettled_trace
 from .services.lifecycle import LifecycleService
 from .services.persona_evolution import PersonaEvolution
 from .tools.memory_search import WaveMemorySearchTool, WaveMemoryRememberTool
@@ -175,6 +175,23 @@ def _parse_int_config_value(value, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _positive_float(value, default: float) -> float:
+    """解析正浮点配置；非法、非正或缺失一律回退默认。
+
+    关系变化上限用于防止一次互动把好感拉满或清零，因此绝不能接受
+    0、负数或 NaN —— 那会让上限保护失效。
+    """
+    try:
+        if value is None or value == "":
+            return default
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(parsed) or parsed <= 0:
+        return default
+    return parsed
 
 
 def _parse_bot_config(cfg: dict) -> BotProfile:
@@ -501,6 +518,10 @@ class WaveMemoryPlugin(Star):
         tag_catalog_index_path = os.path.join(self.data_dir, "tag_catalog.hnsw")
 
         self.db = WaveMemoryDB(db_path, dimension=self.dimension)
+        if getattr(self.db, "soul_repository", None):
+            self.db.soul_repository.manual_adjustment_delta_cap = _positive_float(
+                affinity_cfg.get("manual_adjustment_delta_cap"), 20.0
+            )
         self.data_governance_jobs = DataGovernancePreviewJobs(
             source_db_path=self.db.db_path,
             snapshot_dir=os.path.join(self.data_dir, "data_governance_snapshots"),
@@ -645,6 +666,11 @@ class WaveMemoryPlugin(Star):
                 "aba_window_seconds": int(social_cfg.get("aba_window_seconds", 30)),
             },
         })
+        configure_social_limits(
+            step_cap=_positive_float(social_cfg.get("affinity_step_cap"), 2.0),
+            hostility_step_cap=_positive_float(social_cfg.get("affinity_hostility_step_cap"), 3.0),
+            impact_cap=_positive_float(social_cfg.get("impact_cap"), 5.0),
+        )
         if self.spike_router:
             self.hot_config.on_change(self.spike_router.on_config_change)
 
@@ -674,8 +700,13 @@ class WaveMemoryPlugin(Star):
                 self.runtime_refresh_projection.consumer_name: self.runtime_refresh_projection,
             },
         )
+        # 三个关系变化上限从配置读取：schema 里一直有这三个键，
+        # 但此前构造时没传，导致界面可调却永远走默认值 5/15/8。
         self.relationship_service = RelationshipEventService(
             self.db.conn,
+            single_delta_cap=_positive_float(lifecycle_cfg.get("relationship_single_delta_cap"), 5.0),
+            daily_delta_cap=_positive_float(lifecycle_cfg.get("relationship_daily_delta_cap"), 15.0),
+            hostility_delta_cap=_positive_float(lifecycle_cfg.get("relationship_hostility_delta_cap"), 8.0),
             repository=self.db.soul_repository,
             coordinator=self.write_gateway.coordinator,
         )
@@ -753,8 +784,9 @@ class WaveMemoryPlugin(Star):
 
         # TagWorker（匀速后台标签提取）
         self.tag_worker = None
-        if self.tag_extractor:
-            tag_worker_cfg = self.config.get("TagWorker_Settings", {})
+        tag_worker_cfg = self.config.get("TagWorker_Settings", {})
+        worker_enabled = _parse_bool_config_value(tag_worker_cfg.get("worker_enabled"), True)
+        if self.tag_extractor and worker_enabled:
             self.tag_worker = TagWorker(
                 db=self.db,
                 tag_extractor=self.tag_extractor,

@@ -94,7 +94,7 @@ export function FewShotPage() {
         </form>
       </div>
 
-        <QueryState status={status} error={error} title="风格样例读取失败" description={!botId || !sessionId ? '请先选择 Bot 和群，不会跨群汇总。' : '正式风格样例表当前是空的，不是查询失败。本页不会用候选或演示数据填满。'} onRetry={() => setReload((value) => value + 1)}>
+        <QueryState status={status} error={error} title="风格样例读取失败" description={!botId || !sessionId ? '请先选择 Bot 和群聊。' : '当前群暂无已通过审核的风格样例。'} onRetry={() => setReload((value) => value + 1)}>
           <DeclarativeDataTable
             label="风格样例清单"
             items={pageItems}

@@ -105,7 +105,7 @@ describe('知识、人物与诊断页面关键约束', () => {
   it('FewShot 未选择真实 Bot 时不请求跨 Bot 列表', async () => {
     render(<MemoryRouter><FewShotPage /></MemoryRouter>)
 
-    expect(await screen.findByText(/不会跨群汇总/)).toBeVisible()
+    expect(await screen.findByText(/请先选择 Bot 和群聊/)).toBeVisible()
     expect(mocks.getApprovedFewShot).not.toHaveBeenCalled()
   })
 

@@ -95,8 +95,8 @@ export function QueryState({
   return (
     <Alert data-slot="query-state" className={className}>
       <InboxIcon />
-      <AlertTitle>{emptyTitle ?? '当前真实为空'}</AlertTitle>
-      <AlertDescription>{emptyDescription ?? description ?? '当前筛选与授权作用域内没有记录，未使用演示数据填充。'}</AlertDescription>
+      <AlertTitle>{emptyTitle ?? '暂无记录'}</AlertTitle>
+      <AlertDescription>{emptyDescription ?? description ?? '当前筛选条件下没有匹配的数据。'}</AlertDescription>
     </Alert>
   )
 }

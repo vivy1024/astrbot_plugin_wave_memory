@@ -17,6 +17,7 @@ try:
         attitude_level,
         cap_automatic_delta,
         cap_manual_adjustment_delta,
+        MANUAL_ADJUSTMENT_DELTA_CAP,
         clamp_dimension,
         compute_affinity,
         is_noisy_relationship_event,
@@ -32,6 +33,7 @@ except ImportError:  # pragma: no cover
         attitude_level,
         cap_automatic_delta,
         cap_manual_adjustment_delta,
+        MANUAL_ADJUSTMENT_DELTA_CAP,
         clamp_dimension,
         compute_affinity,
         is_noisy_relationship_event,
@@ -191,11 +193,17 @@ def _compute_affinity(dimensions: Mapping[str, float]) -> int:
 class ScopedSoulRepository:
     """以 bot_id + session_id + visibility（关系再加 subject）隔离 Soul。"""
 
-    def __init__(self, cm: ConnectionManager, soul_context_provider: Any | None = None):
+    def __init__(
+        self,
+        cm: ConnectionManager,
+        soul_context_provider: Any | None = None,
+        manual_adjustment_delta_cap: float = MANUAL_ADJUSTMENT_DELTA_CAP,
+    ):
         if not isinstance(cm, ConnectionManager):
             raise TypeError("cm must be a ConnectionManager")
         self.cm = cm
         self.soul_context_provider = soul_context_provider
+        self.manual_adjustment_delta_cap = max(1.0, float(manual_adjustment_delta_cap))
         # Direct repository users (including focused tests) receive the same idempotent
         # additive schema as the production DB facade.
         try:
@@ -696,7 +704,7 @@ class ScopedSoulRepository:
             if normalized_action == "adjust":
                 if delta is None or isinstance(delta, bool):
                     raise ValueError("relationship_delta_invalid")
-                applied_delta = cap_manual_adjustment_delta(delta)
+                applied_delta = cap_manual_adjustment_delta(delta, cap=self.manual_adjustment_delta_cap)
                 adjustment = (adjustment or 0.0) + applied_delta
                 adjustment = max(-(hi - lo), min(hi - lo, adjustment))
                 if adjustment == 0.0:

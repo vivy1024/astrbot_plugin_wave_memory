@@ -146,6 +146,42 @@ export const SECTION_GROUPS: Record<string, SettingsGroupMeta> = {
     defaultOpen: false,
     bucket: 'restart',
   },
+  Social_Settings: {
+    title: '社交与人际防骚扰',
+    description: '防骚扰冷却、连续对话时间窗、社交能量沉淀上限与跨群权重',
+    defaultOpen: false,
+    bucket: 'always',
+  },
+  Performance_Settings: {
+    title: '性能与批处理调优',
+    description: '向量化批处理大小与数据库异步写入缓冲间隔',
+    defaultOpen: false,
+    bucket: 'restart',
+  },
+  BookLore_Settings: {
+    title: '书设存储路径',
+    description: '只读语料数据库的外部挂载路径配置',
+    defaultOpen: false,
+    bucket: 'restart',
+  },
+  Channel_Settings: {
+    title: '注入通道底层配置',
+    description: '底层各注入通道的自定义优先级序列',
+    defaultOpen: false,
+    bucket: 'always',
+  },
+  Affinity_Settings: {
+    title: '好感度校准边界',
+    description: '控制台人工校准好感时的单次幅度上限',
+    defaultOpen: false,
+    bucket: 'always',
+  },
+  TagWorker_Settings: {
+    title: '标签后台队列',
+    description: '后台异步标签提取与分类任务工作机制',
+    defaultOpen: false,
+    bucket: 'always',
+  },
   // ---- 顶层标量字段：这些是最该先配的，必须单独成组而不是落进「其他设置」 ----
   embedding_provider_id: {
     title: '向量模型',
@@ -182,8 +218,24 @@ export const SECTION_GROUPS: Record<string, SettingsGroupMeta> = {
 /** 不渲染的 schema 键：纯说明文本，不是配置项。 */
 const HIDDEN_SECTIONS = new Set(['_system_status'])
 
+/**
+ * 界面上隐藏的具体配置字段：
+ * 这些字段在历史版本中存在，为避免旧 config.json 报未知字段而在 schema 中保留，
+ * 但对应的后台任务已下线，渲染在前端会导致误导。
+ */
+const HIDDEN_ITEMS = new Set([
+  'Lifecycle_Settings.enable_consolidation',
+  'Lifecycle_Settings.consolidation_interval_hours',
+  'Lifecycle_Settings.consolidation_topic_backfill',
+  'Tag_Settings.consolidation_skip_topics',
+])
+
 export function isHiddenSection(sectionKey: string): boolean {
   return HIDDEN_SECTIONS.has(sectionKey)
+}
+
+export function isHiddenItem(sectionKey: string, itemKey: string): boolean {
+  return HIDDEN_ITEMS.has(`${sectionKey}.${itemKey}`)
 }
 
 const FALLBACK_GROUP: SettingsGroupMeta = {

@@ -108,7 +108,7 @@ function HistoricalAuditPanel({
       ) : error ? (
         <p className="text-xs text-muted-foreground">{error}</p>
       ) : !summary?.available || total <= 0 ? (
-        <p className="text-xs text-muted-foreground">当前群没有正式关系事件。旧审计表不存在时不会用假数据填满。</p>
+        <p className="text-xs text-muted-foreground">当前群暂无已记录的关系事件。</p>
       ) : (
         <div className="grid gap-2 text-xs">
           <p>

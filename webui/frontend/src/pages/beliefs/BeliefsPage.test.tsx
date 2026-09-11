@@ -150,7 +150,7 @@ describe('BeliefsPage scoped 审核恢复', () => {
     expect(screen.getByRole('button', { name: '归档信念 21' })).toBeVisible()
 
     await user.click(screen.getByRole('checkbox', { name: '选择信念 21' }))
-    expect(screen.getByRole('button', { name: '批量物理删除' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '批量删除' })).toBeDisabled()
   })
 
   it('窄屏降级为信念卡片，不保留桌面表格', async () => {

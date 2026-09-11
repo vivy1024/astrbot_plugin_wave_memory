@@ -214,7 +214,7 @@ function BeliefEvidenceDialog({ item, scope, onOpenChange }: { item: BeliefItem 
   const messages = payload?.messages ?? []
   const supportAnchors = payload?.support_anchors ?? []
   const challengeAnchors = payload?.challenge_anchors ?? []
-  return <Dialog open={Boolean(item)} onOpenChange={onOpenChange}><DialogContent className="flex max-h-[86vh] flex-col sm:max-w-4xl max-w-[95vw] overflow-hidden"><DialogHeader><DialogTitle className="flex flex-wrap items-center gap-2"><span>信念形成多阶证据链</span>{item ? <Badge variant="outline">#{item.id}</Badge> : null}</DialogTitle><DialogDescription>只在当前 Bot 和群里还原证据；关系变化和自省插曲没有本群引用时保持禁用。</DialogDescription></DialogHeader>
+  return <Dialog open={Boolean(item)} onOpenChange={onOpenChange}><DialogContent className="flex max-h-[86vh] flex-col sm:max-w-4xl max-w-[95vw] overflow-hidden"><DialogHeader><DialogTitle className="flex flex-wrap items-center gap-2"><span>信念形成多阶证据链</span>{item ? <Badge variant="outline">#{item.id}</Badge> : null}</DialogTitle><DialogDescription>查看支撑该信念的事实、关系变动与关联记忆证据。</DialogDescription></DialogHeader>
     <div className="flex-1 overflow-y-auto pr-1">
     {loading ? <div className="flex min-h-64 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2Icon className="animate-spin" />正在还原同作用域证据链</div> : null}
     {!loading && error ? <Alert variant="destructive"><AlertTitle>证据读取失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
@@ -462,7 +462,7 @@ export function BeliefsPage() {
     <Card>
       <CardHeader>
         <CardTitle className="text-base">信念清单</CardTitle>
-        <CardDescription>恢复旧版高密度裁决入口；跨页全选、自由编辑和物理删除因安全契约保持禁用。</CardDescription>
+        <CardDescription>浏览当前群聊沉淀的共识信念，支持查看多阶证据与生命周期审核。</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <BatchActionBar
@@ -495,13 +495,13 @@ export function BeliefsPage() {
             size="sm"
             variant="destructive"
             disabled
-            title={humanizeReason(payload?.capabilities.physical_delete?.reason_code, '物理删除禁用')}
+            title={humanizeReason(payload?.capabilities.physical_delete?.reason_code, '删除功能暂未开放')}
           >
             <Trash2Icon data-icon="inline-start" />
-            批量物理删除
+            批量删除
           </Button>
         </BatchActionBar>
-      <QueryState status={queryStatus} error={error} onRetry={() => void load()} title={!scope ? '请选择真实 Bot 与会话' : undefined} description={!scope ? '作用域未选择时不会查询，也不会补入默认 Bot。' : undefined}>
+      <QueryState status={queryStatus} error={error} onRetry={() => void load()} title={!scope ? '请选择 Bot 与会话' : undefined} description={!scope ? '请在上方选择 Bot 和目标群聊。' : undefined}>
         <ResponsiveTable
           label="信念清单"
           table={

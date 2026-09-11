@@ -37,11 +37,12 @@ describe('标签图谱观测台配色', () => {
     expect(canvas).toContain('palette.backgroundOuter')
   })
 
-  it('页面外壳恢复深空观测台容器，不再强制 dark', () => {
+  it('页面外壳正常嵌入 AppShell 布局，画布卡片保持深空观测台背景', () => {
     const page = read(PAGE)
-    expect(page).toContain('bg-[#050914]')
-    expect(page).not.toContain('"dark fixed')
-    expect(page).not.toContain('"dark ')
+    expect(page).toContain('data-page="tag-graph"')
+    expect(page).not.toContain('fixed inset-0')
+    const canvas = read(CANVAS)
+    expect(canvas).toContain('bg-[#07101b]')
   })
 
   it('工具栏每个操作只有一份，不重复渲染', () => {

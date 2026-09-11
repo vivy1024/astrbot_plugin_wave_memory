@@ -111,7 +111,7 @@ export function ScopeSelect({
       <span id={`${id}-status`} className="sr-only" aria-live="polite">
         {status === 'loading' ? '正在加载作用域选项' : status === 'ready' ? `已加载 ${options.length} 个真实作用域选项` : status === 'empty' ? '当前授权范围内没有可用作用域' : '作用域选项加载失败'}
       </span>
-      {status === 'empty' ? <p className="text-sm text-muted-foreground">当前真实为空，请先检查 Bot 与会话来源配置。</p> : null}
+      {status === 'empty' ? <p className="text-sm text-muted-foreground">暂无可选项，请先检查 Bot 与会话配置。</p> : null}
       {status === 'error' ? (
         <div className="flex flex-wrap items-center gap-2">
           <FieldError>{error}</FieldError>

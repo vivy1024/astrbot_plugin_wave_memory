@@ -15,6 +15,32 @@ AFFINITY_STEP_CAP = 2.0
 AFFINITY_HOSTILITY_STEP_CAP = 3.0
 UNSETTLED_ENERGY_FULL = 10.0
 IMPACT_CAP = 5.0
+
+# 模块级动态上限配置（可由 main.py 从 Social_Settings 注入）
+_DYNAMIC_LIMITS: dict[str, float] = {}
+
+
+def configure_social_limits(
+    *,
+    step_cap: float | None = None,
+    hostility_step_cap: float | None = None,
+    impact_cap: float | None = None,
+) -> None:
+    """由外部配置更新社交步长与冲击度上限，非法/非正值回退默认。"""
+    if step_cap is not None and step_cap > 0:
+        _DYNAMIC_LIMITS["step_cap"] = float(step_cap)
+    if hostility_step_cap is not None and hostility_step_cap > 0:
+        _DYNAMIC_LIMITS["hostility_step_cap"] = float(hostility_step_cap)
+    if impact_cap is not None and impact_cap > 0:
+        _DYNAMIC_LIMITS["impact_cap"] = float(impact_cap)
+
+
+def get_social_limits() -> dict[str, float]:
+    return {
+        "step_cap": _DYNAMIC_LIMITS.get("step_cap", AFFINITY_STEP_CAP),
+        "hostility_step_cap": _DYNAMIC_LIMITS.get("hostility_step_cap", AFFINITY_HOSTILITY_STEP_CAP),
+        "impact_cap": _DYNAMIC_LIMITS.get("impact_cap", IMPACT_CAP),
+    }
 _REAL_UNIX_TS = 1_000_000_000.0
 ALLOWED_AFFINITY_DIMENSIONS = ("trust", "fun", "depth", "hostility", "familiarity")
 DIMENSION_KEYS = ("familiarity", "trust", "fun", "depth", "hostility")
@@ -516,10 +542,13 @@ def affinity_shift_range(
     dim = str(dimension or "trust").strip() or "trust"
     if dim not in ALLOWED_AFFINITY_DIMENSIONS:
         dim = "trust"
-    cap = AFFINITY_HOSTILITY_STEP_CAP if dim == "hostility" else AFFINITY_STEP_CAP
+    limits = get_social_limits()
+    base_step = limits["step_cap"]
+    base_hostility = limits["hostility_step_cap"]
+    cap = base_hostility if dim == "hostility" else base_step
     amount = energy if energy is not None else unsettled_energy(_as_mapping(metadata))
     if amount >= UNSETTLED_ENERGY_FULL:
-        cap = min(cap + 0.5, AFFINITY_STEP_CAP + 0.5 if dim != "hostility" else AFFINITY_HOSTILITY_STEP_CAP)
+        cap = min(cap + 0.5, base_step + 0.5 if dim != "hostility" else base_hostility)
     return {"min": round(-cap, 2), "max": round(cap, 2), "dimension": dim}
 
 
@@ -732,7 +761,8 @@ def parse_impression_mark(raw: str) -> tuple[str, float]:
             break
     if len(body) < 4:
         return "", 0.0
-    return body[:120], max(0.0, min(IMPACT_CAP, impact))
+    impact_limit = get_social_limits()["impact_cap"]
+    return body[:120], max(0.0, min(impact_limit, impact))
 
 
 def load_unsettled_state(
@@ -764,7 +794,8 @@ def persist_unsettled_trace(
     amount = _finite(impact)
     if amount is None:
         amount = 1.0
-    amount = max(0.0, min(IMPACT_CAP, amount))
+    impact_limit = get_social_limits()["impact_cap"]
+    amount = max(0.0, min(impact_limit, amount))
     if not cleaned or amount <= 0:
         return load_unsettled_state(db, bot_id=bot_id, user_id=user_id, group_id=group_id, connection=connection)
     repo = getattr(db, "person_timeline", None)
@@ -857,7 +888,8 @@ def append_unsettled_trace(
     amount = _finite(impact)
     if amount is None:
         amount = 1.0
-    amount = max(0.0, min(IMPACT_CAP, amount))
+    impact_limit = get_social_limits()["impact_cap"]
+    amount = max(0.0, min(impact_limit, amount))
     if amount <= 0:
         return payload
     stamp = float(now if now is not None else time.time())

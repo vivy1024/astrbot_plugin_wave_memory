@@ -260,8 +260,8 @@ export function ChannelConfigPage() {
     <div className="flex flex-col gap-6">
       <Card>
         <CardHeader>
-          <CardTitle>Channel Config · 通道热配置</CardTitle>
-          <CardDescription>热更新注入通道参数；safety channel / 安全通道在 UI 中不可关闭。</CardDescription>
+          <CardTitle>通道配置</CardTitle>
+          <CardDescription>实时调整各记忆注入通道的启用状态、检索条数与延迟预算。</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <FieldGroup className="grid gap-4 md:grid-cols-3">
@@ -295,7 +295,7 @@ export function ChannelConfigPage() {
               </div>
             </Field>
           </FieldGroup>
-          <Alert><ShieldCheckIcon /><AlertTitle>安全边界</AlertTitle><AlertDescription>安全通道始终保持启用，防止近期上下文重复和身份污染过滤被绕过。</AlertDescription></Alert>
+          <Alert><ShieldCheckIcon /><AlertTitle>运行提示</AlertTitle><AlertDescription>安全通道默认常驻开启，保障对话上下文安全与过滤机制正常运作。</AlertDescription></Alert>
           <div className="flex flex-wrap items-center gap-3">
             <Button disabled={saving || hasNumericErrors} onClick={() => void preview()}>{saving ? <Loader2Icon className="animate-spin" data-icon="inline-start" /> : <WandSparklesIcon data-icon="inline-start" />}校验预览</Button>
             <Button disabled={saving || !preflightFresh || hasNumericErrors} onClick={() => void apply()}>{saving ? <Loader2Icon className="animate-spin" data-icon="inline-start" /> : <SaveIcon data-icon="inline-start" />}应用配置</Button>
@@ -319,7 +319,7 @@ export function ChannelConfigPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>恢复默认通道配置？</DialogTitle>
-            <DialogDescription>这是一次服务端写操作，会立即覆盖当前通道配置并影响运行时。取消不会调用任何 API。</DialogDescription>
+            <DialogDescription>将所有注入通道的条数、预算与优先级重置为出厂推荐值。</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setResetDialogOpen(false)}>取消</Button>

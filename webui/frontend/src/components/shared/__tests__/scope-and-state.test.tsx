@@ -117,7 +117,7 @@ describe('ScopeSelect 与 ObjectDeepLink', () => {
   it('真实 options 为空时禁用选择且明确显示 empty', async () => {
     render(<ScopeSelect loadOptions={async () => []} onValueChange={() => undefined} />)
 
-    expect(await screen.findByText('当前真实为空，请先检查 Bot 与会话来源配置。')).toBeVisible()
+    expect(await screen.findByText('暂无可选项，请先检查 Bot 与会话配置。')).toBeVisible()
     expect(screen.getByRole('combobox', { name: '作用域' })).toBeDisabled()
   })
 
@@ -156,7 +156,7 @@ describe('ScopeSelect 与 ObjectDeepLink', () => {
 describe('QueryState', () => {
   it('区分真实 empty、error 与 unknown', async () => {
     const { rerender } = render(<QueryState status="empty" />)
-    expect(screen.getByText('当前真实为空')).toBeVisible()
+    expect(screen.getByText('暂无记录')).toBeVisible()
 
     // 空态不得复用错误风格标题；只传 error 标题时，empty 显示中性文案
     rerender(<QueryState status="empty" title="事实读取失败" emptyTitle="当前群没有正式事实" />)

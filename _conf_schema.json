@@ -311,6 +311,30 @@
         "type": "int",
         "default": 3,
         "restart_required": false
+      },
+      "orchestrator_active_enabled": {
+        "description": "启用注入编排",
+        "hint": "关闭后不再由编排器统一调度各注入通道，回退到旧的逐通道拼接路径。除非排查注入顺序问题，否则保持开启。",
+        "type": "bool",
+        "default": true
+      },
+      "orchestrator_shadow_enabled": {
+        "description": "启用编排影子模式",
+        "hint": "开启后编排器只计算不实际注入，用于对比新旧路径的差异。默认与「启用注入编排」相反。",
+        "type": "bool",
+        "default": false
+      },
+      "skip_recent_minutes": {
+        "description": "跳过最近多少分钟的消息",
+        "hint": "这些分钟内的消息不进记忆召回，避免刚说过的话被原样复述（默认 30 分钟）。",
+        "type": "int",
+        "default": 30
+      },
+      "facts_max": {
+        "description": "事实注入条数上限",
+        "hint": "单次回复最多注入几条已审核事实（默认 5 条）；填 0 表示不注入事实。",
+        "type": "int",
+        "default": 5
       }
     }
   },
@@ -495,20 +519,20 @@
         "default": 3
       },
       "enable_consolidation": {
-        "description": "已废弃：定时长语篇摘要整合不再装配",
-        "hint": "保留配置键以免旧 config.json 报未知字段。话题标签由 TagWorker 负责，事实/信念由对话现场工具提审。",
+        "description": "已废弃：长语篇整合已下线",
+        "hint": "保留此项以兼容旧版配置，当前版本不再执行后台盲抽。",
         "type": "bool",
         "default": false
       },
       "consolidation_interval_hours": {
-        "description": "长语篇摘要整合间隔",
-        "hint": "每隔多少小时触发一次大篇幅聊天记录整合（默认 4.0 小时）",
+        "description": "已废弃：整合间隔",
+        "hint": "已随自动抽取下线废弃，保留以兼容旧配置。",
         "type": "float",
         "default": 4.0
       },
       "consolidation_topic_backfill": {
-        "description": "摘要话题自动回写",
-        "hint": "整合出来的核心事实标签，自动写入 `memory_tags` 与知识库。推荐开启。",
+        "description": "已废弃：摘要话题回写",
+        "hint": "已随自动抽取下线废弃，保留以兼容旧配置。",
         "type": "bool",
         "default": true
       }
@@ -587,8 +611,8 @@
         "default": ""
       },
       "consolidation_skip_topics": {
-        "description": "话题回写全局过滤黑名单",
-        "hint": "逗号分隔。摘要话题回写到知识库时自动过滤包含这些无意义闲聊词汇的条目（默认已过滤：日常灌水、闲聊等）",
+        "description": "已废弃：话题回写过滤词",
+        "hint": "已随自动抽取下线废弃，保留以兼容旧配置。",
         "type": "string",
         "default": "日常闲聊,日常灌水,闲聊,灌水,群聊,聊天,日常"
       },
@@ -877,6 +901,168 @@
     "items": {
       "self_reflect_enabled": {
         "description": "启用自省纠错系统",
+        "type": "bool",
+        "default": true
+      }
+    }
+  },
+  "Social_Settings": {
+    "description": "社交与人际交往策略",
+    "hint": "防骚扰阈值、冷却机制、社交能量沉淀上限与跨群权重参数。",
+    "type": "object",
+    "items": {
+      "abuse_trigger_count": {
+        "description": "防骚扰触发阈值",
+        "hint": "群友连续进行人身攻击或恶意挑衅达到此次数后，Bot 将进入冷却静默状态（默认 3 次）。",
+        "type": "int",
+        "default": 3,
+        "min": 1,
+        "max": 10
+      },
+      "abuse_cooldown_base": {
+        "description": "防骚扰冷却基础时长（秒）",
+        "hint": "初次触发防骚扰静默的基础时长（默认 120 秒）。",
+        "type": "int",
+        "default": 120,
+        "min": 10,
+        "max": 3600
+      },
+      "abuse_cooldown_max": {
+        "description": "防骚扰冷却最大时长（秒）",
+        "hint": "多次被激怒后冷却时长翻倍的最大上限（默认 3600 秒）。",
+        "type": "int",
+        "default": 3600,
+        "min": 60,
+        "max": 86400
+      },
+      "aba_window_seconds": {
+        "description": "连续对话判定时间窗（秒）",
+        "hint": "群友在该时间窗内连续说话会被判定为同一轮互动会话（默认 30 秒）。",
+        "type": "int",
+        "default": 30,
+        "min": 10,
+        "max": 300
+      },
+      "group_weight_current": {
+        "description": "当前群记忆匹配权重",
+        "hint": "检索记忆时当前所在群的优先加权比例（默认 1.0）。",
+        "type": "float",
+        "default": 1.0,
+        "min": 0.1,
+        "max": 5.0
+      },
+      "group_weight_cross": {
+        "description": "跨群记忆匹配权重",
+        "hint": "跨群检索共享记忆时的折减权重比例（默认 0.7）。",
+        "type": "float",
+        "default": 0.7,
+        "min": 0.1,
+        "max": 2.0
+      },
+      "impact_cap": {
+        "description": "单次交互印象冲击度上限",
+        "hint": "单次对话产生的 impression 冲击度最大上限（默认 5.0）。",
+        "type": "float",
+        "default": 5.0,
+        "min": 1.0,
+        "max": 10.0
+      },
+      "affinity_step_cap": {
+        "description": "阶段性好感单次调整步长上限",
+        "hint": "未结算能量满触发结算时，好感单次增减的最大幅度限制（默认 2.0 分）。",
+        "type": "float",
+        "default": 2.0,
+        "min": 0.5,
+        "max": 10.0
+      },
+      "affinity_hostility_step_cap": {
+        "description": "阶段性敌意单次调整步长上限",
+        "hint": "未结算能量满触发结算时，敌意单次增减的最大幅度限制（默认 3.0 分）。",
+        "type": "float",
+        "default": 3.0,
+        "min": 0.5,
+        "max": 10.0
+      }
+    }
+  },
+  "Performance_Settings": {
+    "description": "底层性能与批处理调优",
+    "hint": "向量化批次尺寸与异步写入落盘缓冲间隔。",
+    "type": "object",
+    "items": {
+      "embedding_batch_size": {
+        "description": "向量化批处理大小",
+        "hint": "单次调用 Embedding API 向量化记忆的最大批次量（默认 16）。",
+        "type": "int",
+        "default": 16,
+        "min": 1,
+        "max": 128
+      },
+      "write_flush_interval": {
+        "description": "数据库写入落盘缓冲间隔（秒）",
+        "hint": "高并发写入时批次协调器的落盘缓冲区间隔（默认 1.0 秒）。",
+        "type": "float",
+        "default": 1.0,
+        "min": 0.1,
+        "max": 10.0
+      }
+    }
+  },
+  "BookLore_Settings": {
+    "description": "书设知识库存储路径",
+    "hint": "只读语料数据库的外部挂载路径配置。",
+    "type": "object",
+    "items": {
+      "book_lore_db_path": {
+        "description": "书设只读数据库绝对或相对路径",
+        "hint": "留空时自动在插件数据目录中查找 book_lore.db。",
+        "type": "string",
+        "default": ""
+      },
+      "lore_db_path": {
+        "description": "书设别名数据库路径（兼容）",
+        "hint": "留空默认沿用 book_lore_db_path。",
+        "type": "string",
+        "default": ""
+      }
+    }
+  },
+  "Channel_Settings": {
+    "description": "注入通道底层配置",
+    "hint": "各通道运行优先级与参数，通常在独立页面管理。",
+    "type": "object",
+    "items": {
+      "layers": {
+        "description": "注入通道优先级图层",
+        "hint": "各注入通道的自定义优先级序列，通常在控制台通道配置页调整。",
+        "type": "string",
+        "default": ""
+      }
+    }
+  },
+  "Affinity_Settings": {
+    "description": "好感度计算与手动校准边界",
+    "hint": "关系系统计算边界与人工干预单次上限。",
+    "type": "object",
+    "items": {
+      "manual_adjustment_delta_cap": {
+        "description": "管理员手动调整好感单次上限",
+        "hint": "管理台手动校准好感时的单次最大变动幅度（默认 20.0 分）。",
+        "type": "float",
+        "default": 20.0,
+        "min": 1.0,
+        "max": 50.0
+      }
+    }
+  },
+  "TagWorker_Settings": {
+    "description": "标签异步处理工兵",
+    "hint": "后台标签提取队列的工作机制。",
+    "type": "object",
+    "items": {
+      "worker_enabled": {
+        "description": "启用后台标签队列",
+        "hint": "是否开启后台常驻协程处理记忆标签提取与分类（默认开启）。",
         "type": "bool",
         "default": true
       }

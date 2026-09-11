@@ -90,7 +90,7 @@ describe('ChannelConfigPage 预检安全', () => {
     renderPage()
 
     await user.click(await screen.findByRole('button', { name: '恢复默认' }))
-    expect(screen.getByRole('dialog')).toHaveTextContent('服务端写操作')
+    expect(screen.getByRole('dialog')).toHaveTextContent('重置为出厂推荐值')
     await user.click(screen.getByRole('button', { name: '取消' }))
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
