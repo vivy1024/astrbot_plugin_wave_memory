@@ -19,10 +19,10 @@ v5 起，事实 / 黑话 / 信念 / 风格不再靠后台定时盲抽，而是�
 
 ### 能做什么
 
-- **记住群聊**：把对话写成长期记忆，按当前 Bot 和群检索，注入到下一次回复。说「昨天 / 上周」会加时间过滤。
-- **记住群友**：昵称、别名、互动次数、好感；同名用户不跨 Bot、不跨群合并。
+- **记住群聊**：把对话写成长期记忆，按当前 Bot 和群检索，注入到下一次回复；意图门禁自动识别追忆意向。
+- **记住群友**：昵称、别名、好感度与事实；同一用户在不同群累加的情感和事实自动合并（不跨 Bot），记忆检索受跨群开关控制。
 - **像群友一样说话**：本群黑话和 Bot 回复风格由现场工具提审，管理台通过后才注入。
-- **有心情和关系**：印象时间线、五维好感（有限范围自选）；人情账可写备忘但不注入账单。关切是人味临场发挥，不再按字数截句入库。
+- **有心情和关系**：印象时间线、五维好感（跨群累加）；人情账可写备忘但不注入账单。关切是人味临场发挥，不再按字数截句入库。
 - **事实要原话，信念要二次审**：提事实必须带群友原话；黑话只用来听懂原话，反串不升格为认真事实。信念必须挂至少两条已审事实。
 - **能看见一次回复用了什么**：注入观测台按通道列出命中、跳过、错误和最终文本。
 - **中文管理台 + 3D 图谱**：记忆、人物、标签、事实、黑话、心智都在 9876 端口；神经云图看记忆和关系。
@@ -230,35 +230,34 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 
 | 模块 | 功能 |
 |------|------|
-| PersonaComposer | 只编自我人格、精选自我经历、当前发言者统计；不读未迁移的全局对象画像 |
+| PersonaComposer | 编排自我人格、精选自我经历与审核信念；不塞虚假的群友刻板画像 |
 | BeliefEngine | 维护已审核稳定判断；只注入当前群 active 信念 |
 | 现场提审工具 | 印象 / 人情 / 黑话 / 事实 / 信念由主对话 LLM 按需调用，进入 pending 审核 |
-| MoodTrajectory | 群聊密度与情绪 tag 写 valence/arousal；由 `soul_state` 通道注入 |
-| SubjectiveTime | 重要事件作时间锚点；由 `soul_state` 通道注入近期时间线 |
+| MoodTrajectory | 群聊密度与情绪 tag 影响 valence/arousal；由 `soul_state` 通道注入近期心境 |
+| SubjectiveTime | 代码仅初始化保留，经历时间线注入直接来源于 Bot 亲笔日记（`scoped_soul_timeline`） |
 | ConcernTracker | 关切只读展示；v5 不再从入站消息截词入库 |
-| DesireEngine | 代码仍初始化，**当前回复路径不调用** `trigger` / `resolve` |
+| DesireEngine | 代码仅初始化保留，**当前回复路径不调用** `trigger` / `resolve` |
 
-### 社交认知（v1.5）
+### 社交认知
 
 | 功能 | 说明 |
 |------|------|
-| 认知度 | bot 在本群看到过此人多少条消息（被动认知） |
-| 互动度 | bot 直接和此人对话过几次（主动互动） |
-| Facts 画像 | 注入已审核事实；提审必须带原话，反串黑话不得当认真事实 |
-| 跨群记忆 | **好感度与事实已跨群合并**：同一人在各群积累的好感维度累加为一份态度（模拟真人认识你不分场合），事实也不再按群过滤，本群与全群都能看见。`cross_group_enabled` 现在只控制**记忆检索**能否看到其他群；`shared_memory_grants_enabled` 控制是否启用共享记忆只读授权 |
-| 别名 | `person_registry` 在好感 flush 时从本群发言名更新；不再由 Consolidation 后台盲抽绰号写 facts |
-| 多 Bot 支持 | 2+ Bot 共存，独立互动数据，`bot_id` 使用 `BotProfile.db_id` 隔离 |
-| 防骚扰 | 辱骂累计到阈值后冷却静默（翻倍，上限 1 小时） |
-| 身份安全 | 拦截认爹/认主/契约/猫娘/RP 等身份污染，不写入长期人格 |
-| 攻击边界 | 身份污染走安全守卫；针对 Bot 的极端辱骂前几次会注入强硬语气，达到阈值后冷却不回 |
+| 跨群好感累加 | 同一人在所有群的好感维度与情感积累自动合并为一份统一态度（模拟真人认识你不分场合） |
+| 广域客观事实 | 注入已审核事实，本群与全群皆可见；提审必须带原话，反串黑话不得当认真事实 |
+| 跨群记忆检索 | `cross_group_enabled` 控制记忆语义召回能否看到其他群；`shared_memory_grants_enabled` 支持共享记忆只读授权 |
+| 别名识别 | `person_registry` 维护群友真实别名，支持多群同人识别 |
+| 多 Bot 隔离 | 2+ Bot 共存时互动与认知数据严格隔离，`bot_id` 使用 `BotProfile.db_id` 区分 |
+| 防骚扰机制 | 辱骂累计到阈值后冷却静默（时间翻倍，上限 1 小时） |
+| 身份安全防线 | 拦截认爹/认主/契约/猫娘/RP 等身份污染，不写入长期人格 |
+| 攻击反制边界 | 针对 Bot 的恶意攻击由安全通道与反思机制联合设防，达到阈值后冷却不回 |
 
 ### 自主学习
 
 | 模块 | 功能 |
 |------|------|
-| SelfReflect | 检测群友纠正信号 → 搜索已有记忆 → 内化为高权重记忆 |
+| SelfReflect | 接收群友纠正信号 → 搜索历史记忆与知识 → 内化为高权重自省记忆 |
 | DreamService | 6h 周期离线联想，强化近期重要记忆 |
-| Consolidation | **v5 默认不自动循环**；事实/信念改由现场工具提审。服务可保留供手工排障 |
+| 现场感知提审 | 彻底废除定时抽取盲抽，事实/信念/黑话改由现场对话大模型精准提审 |
 
 ### 文化融入
 
@@ -273,11 +272,9 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 
 ```
 新消息写入 (importance=1.0)
-  → 被召回 +0.02 · 被做梦联想 +0.05
-  → 时间衰减 ×0.997^天
-  → noise 7天未访问 → 删除
-  → chat 30天未访问 → 脱索引
-  → importance < 0.1 → 深度清理
+  → 被做梦联想触发 +0.05 权重提升 (每轮最多强化 50 条)
+  → 检索时动态加权：时间衰减系数 ×0.997^天
+  → 定期淘汰：noise 记忆超过保存期限 (默认 7 天) 自动彻底清理
 ```
 
 ---
@@ -676,7 +673,7 @@ Runtime_Settings.runtime_mode = memory_only
 效果：
 
 - 保留：消息采集、writer、向量检索、基础 memory 注入、trace、搜索/记住工具、兼容 facade。
-- 默认关闭：persona、belief、jargon、few-shot、BookLore、affinity、mood、dream、consolidation、Study、SelfReflect 等高级能力。
+- 默认关闭：persona、belief、jargon、few-shot、BookLore、affinity、mood、dream、Study、SelfReflect 等高级能力。
 - 验证：注入观察台 trace 只应出现 memory/safety/facts/fts5 等基础通道，不应出现 persona/belief/jargon/fewshot/book_lore。
 
 ### Agent 反馈安全边界
@@ -712,14 +709,10 @@ Runtime_Settings.runtime_mode = memory_only
 
 | 服务 | 周期 | 功能 |
 |------|------|------|
-| TagWorker | 持续 | 新消息自动 Tag 提取（batch 100） |
-| DreamService | 6h | 记忆巩固（三层时间线涟漪浪潮） |
-| LifecycleService | 30min | 互动统计 + 记忆衰减 |
-| EvictionService | 6h | noise/chat 过期清理 |
-| BeliefEmergence | 默认不自动 spawn | 信念改由 `propose_belief` + 已审事实二审 |
-| JargonMining | 入站只 feed | 新梗由文化瞬间工具提审 |
-| FewShot Extract | 现场高光提审 | 写入 `review_candidates.style`，须带消息 id |
-| PersonaComposer | 每次注入 | 自我人格 / 信念 / 经历 / 风格样本排序编排 |
+| TagWorker | 持续运行 | 新消息自动结构化标签提炼与分析队列（异步批量处理） |
+| DreamService | 6h 周期 | 记忆巩固与重放强化（基于多层联想提升重要记忆权重） |
+| LifecycleService | 30min 周期 | 群友互动频率统计归档、心情状态衰退及长期好感自然衰减 |
+| EvictionService | 6h 周期 | 自动扫描并物理清理过期超时的临时 noise 对话记忆 |
 
 ---
 
