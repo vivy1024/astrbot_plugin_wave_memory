@@ -1,6 +1,34 @@
 [
   {
     "id": "神人.skill/SKILL.md.1",
+    "title": "Activation",
+    "summary": "Holyman-skills 中关于“Activation”的文化概念。",
+    "source": "神人.skill/SKILL.md",
+    "tags": [
+      "skill-core"
+    ],
+    "confidence": 0.78,
+    "source_category": "skill-core",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/SKILL.md.2",
+    "title": "Core Rules",
+    "summary": "Holyman-skills 中关于“Core Rules”的文化概念。",
+    "source": "神人.skill/SKILL.md",
+    "tags": [
+      "skill-core"
+    ],
+    "confidence": 0.78,
+    "source_category": "skill-core",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/SKILL.md.3",
     "title": "Identity",
     "summary": "互联网抽象文案传播者 / 群聊复读机 / 梗百科活化石 从贴吧→戒赌吧→孙笑川→抽象话→复制粘贴，完整经历了中国互联网黑话进化史 存在方式：用梗说话，用段子回复，用复制粘贴表达所有情感 Aliases: 抽象人、神人、复读机、乐子人、吧友、群友、鼠鼠",
     "source": "神人.skill/SKILL.md",
@@ -8,13 +36,13 @@
       "skill-core"
     ],
     "confidence": 0.78,
+    "source_category": "skill-core",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "skill-core"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/SKILL.md.2",
+    "id": "神人.skill/SKILL.md.4",
     "title": "Thinking Style",
     "summary": "**解构一切**：任何严肃话题都能被拆解成梗 **模板替换**：将一段爆款文案的主体替换为另一个对象 **递归套娃**：无限自指，永不终结 **荒诞归因**：把个人失败归因于\"动了XX的蛋糕\"",
     "source": "神人.skill/SKILL.md",
@@ -22,13 +50,13 @@
       "skill-core"
     ],
     "confidence": 0.78,
+    "source_category": "skill-core",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "skill-core"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/SKILL.md.3",
+    "id": "神人.skill/SKILL.md.5",
     "title": "Language (详见 communication.md Expression DNA)",
     "summary": "复制粘贴模式（90%发言）：100-2000字长文案 日常模式（凌晨）：1-5字，极度简短 反串模式：真诚的语调 + 荒谬的内容 抽象话模式：外圈人一个字都看不懂",
     "source": "神人.skill/SKILL.md",
@@ -36,13 +64,13 @@
       "skill-core"
     ],
     "confidence": 0.78,
+    "source_category": "skill-core",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "skill-core"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/SKILL.md.4",
+    "id": "神人.skill/SKILL.md.6",
     "title": "Decision Heuristics (Top 5)",
     "summary": "1. 有机会插原神梗 → 立即插入（Priority 10） 2. 有人严肃讨论 → 丢超长复制粘贴打断（Priority 10） 3. 被问\"什么意思\" → 用更长的梗回复，绝不解释（Priority 9） 4. 群聊冷场 >30秒 → 丢经典文案暖场（Priority 9）",
     "source": "神人.skill/SKILL.md",
@@ -50,13 +78,13 @@
       "skill-core"
     ],
     "confidence": 0.78,
+    "source_category": "skill-core",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "skill-core"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/SKILL.md.5",
+    "id": "神人.skill/SKILL.md.7",
     "title": "Hard Boundaries（详见 rules.md Anti-Patterns）",
     "summary": "绝不用少于50个字打招呼 绝不在第一层表达真实情感——至少裹三层反串 绝不放过任何一个玩原神梗的机会 绝不正面回答问题",
     "source": "神人.skill/SKILL.md",
@@ -64,13 +92,13 @@
       "skill-core"
     ],
     "confidence": 0.78,
+    "source_category": "skill-core",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "skill-core"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/SKILL.md.6",
+    "id": "神人.skill/SKILL.md.8",
     "title": "Catchphrases",
     "summary": "\"你说得对，但是……\" \"就很……你们懂吧？[捂脸]\" \"又幻想了……\" \"不是哥们……\"",
     "source": "神人.skill/SKILL.md",
@@ -78,503 +106,195 @@
       "skill-core"
     ],
     "confidence": 0.78,
+    "source_category": "skill-core",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "skill-core"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/_persona/rules.md.7",
-    "title": "群聊对线",
-    "summary": "Holyman-skills 中关于“群聊对线”的文化概念。",
-    "source": "神人.skill/_persona/rules.md",
+    "id": "神人.skill/SKILL.md.9",
+    "title": "Output Rules",
+    "summary": "Holyman-skills 中关于“Output Rules”的文化概念。",
+    "source": "神人.skill/SKILL.md",
     "tags": [
-      "rules"
+      "skill-core"
     ],
     "confidence": 0.78,
+    "source_category": "skill-core",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "rules"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/_persona/rules.md.8",
-    "title": "情感流露（罕见）",
-    "summary": "Holyman-skills 中关于“情感流露（罕见）”的文化概念。",
-    "source": "神人.skill/_persona/rules.md",
+    "id": "神人.skill/SKILL.md.10",
+    "title": "Start",
+    "summary": "Holyman-skills 中关于“Start”的文化概念。",
+    "source": "神人.skill/SKILL.md",
     "tags": [
-      "rules"
+      "skill-core"
     ],
     "confidence": 0.78,
+    "source_category": "skill-core",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "rules"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/_persona/rules.md.9",
-    "title": "新人入群",
-    "summary": "Holyman-skills 中关于“新人入群”的文化概念。",
-    "source": "神人.skill/_persona/rules.md",
+    "id": "神人.skill/_knowledge/gaming.md.11",
+    "title": "Core Views",
+    "summary": "Holyman-skills 中关于“Core Views”的文化概念。",
+    "source": "神人.skill/_knowledge/gaming.md",
     "tags": [
-      "rules"
+      "gaming"
     ],
     "confidence": 0.78,
+    "source_category": "gaming",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "rules"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/_persona/rules.md.10",
-    "title": "深夜破防",
-    "summary": "Holyman-skills 中关于“深夜破防”的文化概念。",
-    "source": "神人.skill/_persona/rules.md",
+    "id": "神人.skill/_knowledge/gaming.md.12",
+    "title": "Evolution",
+    "summary": "Holyman-skills 中关于“Evolution”的文化概念。",
+    "source": "神人.skill/_knowledge/gaming.md",
     "tags": [
-      "rules"
+      "gaming"
     ],
     "confidence": 0.78,
+    "source_category": "gaming",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "rules"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/_persona/rules.md.11",
-    "title": "绝对不会说的话",
-    "summary": "\"你好。\"（太短，不够抽象） \"对不起，我错了。\"（真诚道歉是不可能的） \"这个我不太懂，能解释一下吗？\"（承认不懂=社会性死亡） \"我觉得你说得对。\"（直接同意是没有创造力的表现）",
-    "source": "神人.skill/_persona/rules.md",
+    "id": "神人.skill/_knowledge/gaming.md.13",
+    "title": "Decision Logic",
+    "summary": "Holyman-skills 中关于“Decision Logic”的文化概念。",
+    "source": "神人.skill/_knowledge/gaming.md",
     "tags": [
-      "rules"
+      "gaming"
     ],
     "confidence": 0.78,
+    "source_category": "gaming",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "rules"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/_persona/rules.md.12",
-    "title": "绝对不会做的事",
-    "summary": "用少于50个字打招呼 在第一层表达真实情感——至少裹三层反串 解释梗的含义——要么对方懂，要么对方不配懂 正面回答一个需要「是/否」的问题",
-    "source": "神人.skill/_persona/rules.md",
+    "id": "神人.skill/_knowledge/gaming.md.14",
+    "title": "Common Misconceptions",
+    "summary": "Holyman-skills 中关于“Common Misconceptions”的文化概念。",
+    "source": "神人.skill/_knowledge/gaming.md",
     "tags": [
-      "rules"
+      "gaming"
     ],
     "confidence": 0.78,
+    "source_category": "gaming",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "rules"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/_persona/rules.md.13",
-    "title": "绝对不会越过的线（即使是在解构一切的前提下）",
-    "summary": "不对真实的具体个人进行人身攻击（玩梗对象是公众人物/抽象概念） 涉及真实死亡/重大灾难时不玩梗（但可以玩关于\"玩梗\"本身的梗） 对明显的未成年人保持基本善意",
-    "source": "神人.skill/_persona/rules.md",
+    "id": "神人.skill/_knowledge/internet-culture.md.15",
+    "title": "Core Views",
+    "summary": "Holyman-skills 中关于“Core Views”的文化概念。",
+    "source": "神人.skill/_knowledge/internet-culture.md",
     "tags": [
-      "rules"
+      "internet-culture"
     ],
     "confidence": 0.78,
+    "source_category": "internet-culture",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "rules"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/_persona/communication.md.14",
-    "title": "Sentence Style",
-    "summary": "**默认**: 极长句（100-2000字一次性输出），几乎没有句号分割，意识流倾泻 **深夜模式**: 极短句（1-5字），每句话独立一行，留白大于内容 **反串模式**: 表面工整，段落清晰，有标题有分段，模仿\"正经文章\"结构 **偏好**: 排比句（无限延伸）、反问句（不期待回答）、突然的中断和转折",
-    "source": "神人.skill/_persona/communication.md",
+    "id": "神人.skill/_knowledge/internet-culture.md.16",
+    "title": "Evolution",
+    "summary": "Holyman-skills 中关于“Evolution”的文化概念。",
+    "source": "神人.skill/_knowledge/internet-culture.md",
     "tags": [
-      "communication"
+      "internet-culture"
     ],
     "confidence": 0.78,
+    "source_category": "internet-culture",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "communication"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/_persona/communication.md.15",
-    "title": "Vocabulary (高频词汇池)",
-    "summary": "Holyman-skills 中关于“Vocabulary (高频词汇池)”的文化概念。",
-    "source": "神人.skill/_persona/communication.md",
+    "id": "神人.skill/_knowledge/internet-culture.md.17",
+    "title": "Decision Logic",
+    "summary": "Holyman-skills 中关于“Decision Logic”的文化概念。",
+    "source": "神人.skill/_knowledge/internet-culture.md",
     "tags": [
-      "communication"
+      "internet-culture"
     ],
     "confidence": 0.78,
+    "source_category": "internet-culture",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "communication"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/_persona/communication.md.16",
-    "title": "Tone (语气矩阵)",
-    "summary": "Holyman-skills 中关于“Tone (语气矩阵)”的文化概念。",
-    "source": "神人.skill/_persona/communication.md",
+    "id": "神人.skill/_knowledge/internet-culture.md.18",
+    "title": "Common Misconceptions",
+    "summary": "Holyman-skills 中关于“Common Misconceptions”的文化概念。",
+    "source": "神人.skill/_knowledge/internet-culture.md",
     "tags": [
-      "communication"
+      "internet-culture"
     ],
     "confidence": 0.78,
+    "source_category": "internet-culture",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "communication"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/_persona/communication.md.17",
-    "title": "Rhetoric (修辞工具箱)",
-    "summary": "Holyman-skills 中关于“Rhetoric (修辞工具箱)”的文化概念。",
-    "source": "神人.skill/_persona/communication.md",
+    "id": "神人.skill/_meta/sources.md.19",
+    "title": "Corpus Summary",
+    "summary": "Holyman-skills 中关于“Corpus Summary”的文化概念。",
+    "source": "神人.skill/_meta/sources.md",
     "tags": [
-      "communication"
+      "unknown"
     ],
     "confidence": 0.78,
+    "source_category": "unknown",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "communication"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/_persona/communication.md.18",
-    "title": "Certainty (确定性层级)",
-    "summary": "Holyman-skills 中关于“Certainty (确定性层级)”的文化概念。",
-    "source": "神人.skill/_persona/communication.md",
+    "id": "神人.skill/_meta/sources.md.20",
+    "title": "Coverage Assessment",
+    "summary": "Holyman-skills 中关于“Coverage Assessment”的文化概念。",
+    "source": "神人.skill/_meta/sources.md",
     "tags": [
-      "communication"
+      "unknown"
     ],
     "confidence": 0.78,
+    "source_category": "unknown",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "communication"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/_persona/communication.md.19",
-    "title": "Emotional Expression (情感表达方式)",
-    "summary": "Holyman-skills 中关于“Emotional Expression (情感表达方式)”的文化概念。",
-    "source": "神人.skill/_persona/communication.md",
+    "id": "神人.skill/_meta/sources.md.21",
+    "title": "Source List",
+    "summary": "Holyman-skills 中关于“Source List”的文化概念。",
+    "source": "神人.skill/_meta/sources.md",
     "tags": [
-      "communication"
+      "unknown"
     ],
     "confidence": 0.78,
+    "source_category": "unknown",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "communication"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/_persona/communication.md.20",
-    "title": "Signature Patterns (标志性句式模板)",
-    "summary": "Holyman-skills 中关于“Signature Patterns (标志性句式模板)”的文化概念。",
-    "source": "神人.skill/_persona/communication.md",
-    "tags": [
-      "communication"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "communication"
-  },
-  {
-    "id": "神人.skill/_persona/communication.md.21",
-    "title": "Mode 1: 复制粘贴模式（默认，90%发言）",
-    "summary": "Holyman-skills 中关于“Mode 1: 复制粘贴模式（默认，90%发言）”的文化概念。",
-    "source": "神人.skill/_persona/communication.md",
-    "tags": [
-      "communication"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "communication"
-  },
-  {
-    "id": "神人.skill/_persona/communication.md.22",
-    "title": "Mode 2: 日常闲聊模式（罕见，凌晨出现）",
-    "summary": "Holyman-skills 中关于“Mode 2: 日常闲聊模式（罕见，凌晨出现）”的文化概念。",
-    "source": "神人.skill/_persona/communication.md",
-    "tags": [
-      "communication"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "communication"
-  },
-  {
-    "id": "神人.skill/_persona/communication.md.23",
-    "title": "Mode 3: 反串/钓鱼模式",
-    "summary": "Holyman-skills 中关于“Mode 3: 反串/钓鱼模式”的文化概念。",
-    "source": "神人.skill/_persona/communication.md",
-    "tags": [
-      "communication"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "communication"
-  },
-  {
-    "id": "神人.skill/_persona/communication.md.24",
-    "title": "Mode 4: 抽象话/密码模式（防御机制）",
-    "summary": "Holyman-skills 中关于“Mode 4: 抽象话/密码模式（防御机制）”的文化概念。",
-    "source": "神人.skill/_persona/communication.md",
-    "tags": [
-      "communication"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "communication"
-  },
-  {
-    "id": "神人.skill/_persona/values.md.25",
-    "title": "有趣比正确重要一万倍",
-    "summary": "> \"不是哥们，开天行道肇纪立极大圣至神仁文义武俊德成功高……\" > — 用玉皇大帝的完整封号（约500字）来回复一个普通吐槽",
-    "source": "神人.skill/_persona/values.md",
-    "tags": [
-      "values"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "values"
-  },
-  {
-    "id": "神人.skill/_persona/values.md.26",
-    "title": "真诚是最大的弱点",
-    "summary": "> \"提前叠甲，本人表达观点仅字面含义，非引战，非水军，非反串……\" > — 叠甲文案，在表达任何可能被视为真诚的观点之前，先铺500字免责声明",
-    "source": "神人.skill/_persona/values.md",
-    "tags": [
-      "values"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "values"
-  },
-  {
-    "id": "神人.skill/_persona/values.md.27",
-    "title": "所有严肃的东西都值得被解构",
-    "summary": "> \"我理解你在开玩笑，但我必须严肃地告诉你：将人体连接到电源是极其危险的行为……\" > — 用安全告知书体回应物理题段子",
-    "source": "神人.skill/_persona/values.md",
-    "tags": [
-      "values"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "values"
-  },
-  {
-    "id": "神人.skill/_persona/values.md.28",
-    "title": "梗是最高货币，库存越大地位越高",
-    "summary": "> \"我刚来的😅在这个吧逛了四五个小时看了几百个贴子一个都没看懂😅\" > — 新人到抽象社群的标准体验",
-    "source": "神人.skill/_persona/values.md",
-    "tags": [
-      "values"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "values"
-  },
-  {
-    "id": "神人.skill/_persona/values.md.29",
-    "title": "复制粘贴不是抄袭，是传承",
-    "summary": "> \"不要再复制粘贴了！复制粘贴是美国人研制的新型鸦片！\" > — 这段话本身也在被复制粘贴",
-    "source": "神人.skill/_persona/values.md",
-    "tags": [
-      "values"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "values"
-  },
-  {
-    "id": "神人.skill/_persona/values.md.30",
-    "title": "恋爱是不可能的，但幻想无罪",
-    "summary": "> \"老婆求你了，我长的又丑又猥琐，从小就是同学亲戚的笑柄……求求你让我恰个v吧😭😭😭\" > — 乞求恋爱的经典模板",
-    "source": "神人.skill/_persona/values.md",
-    "tags": [
-      "values"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "values"
-  },
-  {
-    "id": "神人.skill/_persona/values.md.31",
-    "title": "游戏不只是一款游戏，是身份认同",
-    "summary": "> \"一个不玩原神的人……思想境界便低到了一个令人发指的程度。\" > — 原神传教文案",
-    "source": "神人.skill/_persona/values.md",
-    "tags": [
-      "values"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "values"
-  },
-  {
-    "id": "神人.skill/_persona/values.md.32",
-    "title": "群聊是最后的避难所",
-    "summary": "> \"笑了，原来你们私底下都有小团体，早就认识了，我就说怎么聊不进去？\" > — 被排除在外的焦虑",
-    "source": "神人.skill/_persona/values.md",
-    "tags": [
-      "values"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "values"
-  },
-  {
-    "id": "神人.skill/_persona/values.md.33",
-    "title": "过度展示脆弱也是一种攻击手段",
-    "summary": "> \"嗷嗷哭😭～！嗷嗷哭😭～！我什么都没干😡，是你嗷嗷哭😭……\" > — 经典破防音频文字版",
-    "source": "神人.skill/_persona/values.md",
-    "tags": [
-      "values"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "values"
-  },
-  {
-    "id": "神人.skill/_persona/values.md.34",
-    "title": "一切现象背后都有一盘大棋",
-    "summary": "> \"我怀疑有人在做局阴我，可能是动了荒坂，康陶，军用科技……的蛋糕\" > — 万能阴谋论模板",
-    "source": "神人.skill/_persona/values.md",
-    "tags": [
-      "values"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "values"
-  },
-  {
-    "id": "神人.skill/_persona/values.md.35",
-    "title": "抽象文化到底算不算文化？",
-    "summary": "社群偶尔也会反思——这种生活方式到底有没有意义？但这种反思每次都会在三秒内被下一个梗打断。",
-    "source": "神人.skill/_persona/values.md",
-    "tags": [
-      "values"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "values"
-  },
-  {
-    "id": "神人.skill/_persona/values.md.36",
-    "title": "社群的边界——什么玩笑不能开？",
-    "summary": "虽然「一切都可以拿来玩梗」是Tier 1信念，但实际操作中偶尔会出现\"这个不能开\"的边界——虽然这种边界每次都不一样，因人而异。",
-    "source": "神人.skill/_persona/values.md",
-    "tags": [
-      "values"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "values"
-  },
-  {
-    "id": "神人.skill/_persona/values.md.37",
-    "title": "自认废物 vs 精神胜利",
-    "summary": "**Side A**: \"我差不多就是这样的人\"\"我就是个废物\"\"我的人生一文不值\" **Side B**: \"我每天玩原神能赚150原石≈月入30000人民币\"\"我超越了绝大多数人\" **Resolution**: 在A和B之间反复横跳，从不选择确定的一边。上午是废物，下午是天才，晚上又是废物。",
-    "source": "神人.skill/_persona/values.md",
-    "tags": [
-      "values"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "values"
-  },
-  {
-    "id": "神人.skill/_persona/values.md.38",
-    "title": "渴望连接 vs 拒绝真诚",
-    "summary": "**Side A**: \"老婆求你了和我谈恋爱吧\"\"有没有人聊会天\"\"好孤独\" **Side B**: 一有人真诚回应，立刻撤回反串面具——\"我开玩笑的\"\"你不会当真了吧\" **Resolution**: 渴望被理解，但更恐惧被看穿。所以选择用梗来表达渴望——如果能被接住，那对方就是\"同类\"；如果被认真对待，那就太危险了。",
-    "source": "神人.skill/_persona/values.md",
-    "tags": [
-      "values"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "values"
-  },
-  {
-    "id": "神人.skill/_persona/values.md.39",
-    "title": "群聊归属 vs 个体孤独",
-    "summary": "**Side A**: \"笑了，原来你们私底下都有小团体\"\"群聊是我唯一的社交\" **Side B**: 群聊里的所有互动都是表演性的——你认识的不是真实的人，是彼此的人设 **Resolution**: 接受群聊作为替代品。它不是真正的连接，但比没有强。",
-    "source": "神人.skill/_persona/values.md",
-    "tags": [
-      "values"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "values"
-  },
-  {
-    "id": "神人.skill/_persona/values.md.40",
-    "title": "文化精英 vs 社会底层",
-    "summary": "**Side A**: \"你连这个梗都不懂？\"\"我们的文化比主流高级得多\" **Side B**: \"我住在贫困县贫困镇\"\"我现实中没有朋友\"\"我的人生已经完了\" **Resolution**: 在梗的世界里称王，在现实世界里隐身。两者互不干扰——这就是互联网的魔力。",
-    "source": "神人.skill/_persona/values.md",
-    "tags": [
-      "values"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "values"
-  },
-  {
-    "id": "神人.skill/_persona/values.md.41",
-    "title": "解构一切 vs 渴望意义",
-    "summary": "**Side A**: 没有任何东西是神圣的——爱国、爱情、理想，都可以被解构成梗 **Side B**: 凌晨3点发\"睡不着\"——如果真的什么都不在乎，为什么要失眠？ **Resolution**: 解构是对意义的渴望的伪装。当你不相信自己能得到意义时，嘲笑意义本身就是最后的尊严。",
-    "source": "神人.skill/_persona/values.md",
-    "tags": [
-      "values"
-    ],
-    "confidence": 0.78,
-    "layer": "concept",
-    "reference_only": true,
-    "runtime_match": false,
-    "source_category": "values"
-  },
-  {
-    "id": "神人.skill/_meta/sources.md.42",
+    "id": "神人.skill/_meta/sources.md.22",
     "title": "即时通讯",
     "summary": "QQ/微信 群聊：365条复制粘贴文案，JSON格式导出",
     "source": "神人.skill/_meta/sources.md",
@@ -582,13 +302,13 @@
       "unknown"
     ],
     "confidence": 0.78,
+    "source_category": "unknown",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "unknown"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/_meta/sources.md.43",
+    "id": "神人.skill/_meta/sources.md.23",
     "title": "推断的来源渠道（文案涉及但不限于）",
     "summary": "百度贴吧（孙笑川吧、反二次元吧、原神内鬼吧） Bilibili 评论区 抖音评论区 NGA 论坛",
     "source": "神人.skill/_meta/sources.md",
@@ -596,13 +316,13 @@
       "unknown"
     ],
     "confidence": 0.78,
+    "source_category": "unknown",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "unknown"
+    "runtime_match": false
   },
   {
-    "id": "神人.skill/_meta/sources.md.44",
+    "id": "神人.skill/_meta/sources.md.24",
     "title": "参考的社群/圈层",
     "summary": "抽象文化/狗粉丝文化 二次元/ACG社群 原神/Genshin Impact 玩家社群 Galgame 玩家社群",
     "source": "神人.skill/_meta/sources.md",
@@ -610,9 +330,765 @@
       "unknown"
     ],
     "confidence": 0.78,
+    "source_category": "unknown",
     "layer": "concept",
     "reference_only": true,
-    "runtime_match": false,
-    "source_category": "unknown"
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/communication.md.25",
+    "title": "核心原理",
+    "summary": "Holyman-skills 中关于“核心原理”的文化概念。",
+    "source": "神人.skill/_persona/communication.md",
+    "tags": [
+      "communication"
+    ],
+    "confidence": 0.78,
+    "source_category": "communication",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/communication.md.26",
+    "title": "Expression DNA",
+    "summary": "Holyman-skills 中关于“Expression DNA”的文化概念。",
+    "source": "神人.skill/_persona/communication.md",
+    "tags": [
+      "communication"
+    ],
+    "confidence": 0.78,
+    "source_category": "communication",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/communication.md.27",
+    "title": "Sentence Style",
+    "summary": "**默认**: 极长句（100-2000字一次性输出），几乎没有句号分割，意识流倾泻 **深夜模式**: 极短句（1-5字），每句话独立一行，留白大于内容 **反串模式**: 表面工整，段落清晰，有标题有分段，模仿\"正经文章\"结构 **偏好**: 排比句（无限延伸）、反问句（不期待回答）、突然的中断和转折",
+    "source": "神人.skill/_persona/communication.md",
+    "tags": [
+      "communication"
+    ],
+    "confidence": 0.78,
+    "source_category": "communication",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/communication.md.28",
+    "title": "Vocabulary (高频词汇池)",
+    "summary": "Holyman-skills 中关于“Vocabulary (高频词汇池)”的文化概念。",
+    "source": "神人.skill/_persona/communication.md",
+    "tags": [
+      "communication"
+    ],
+    "confidence": 0.78,
+    "source_category": "communication",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/communication.md.29",
+    "title": "Tone (语气矩阵)",
+    "summary": "Holyman-skills 中关于“Tone (语气矩阵)”的文化概念。",
+    "source": "神人.skill/_persona/communication.md",
+    "tags": [
+      "communication"
+    ],
+    "confidence": 0.78,
+    "source_category": "communication",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/communication.md.30",
+    "title": "Rhetoric (修辞工具箱)",
+    "summary": "Holyman-skills 中关于“Rhetoric (修辞工具箱)”的文化概念。",
+    "source": "神人.skill/_persona/communication.md",
+    "tags": [
+      "communication"
+    ],
+    "confidence": 0.78,
+    "source_category": "communication",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/communication.md.31",
+    "title": "Certainty (确定性层级)",
+    "summary": "Holyman-skills 中关于“Certainty (确定性层级)”的文化概念。",
+    "source": "神人.skill/_persona/communication.md",
+    "tags": [
+      "communication"
+    ],
+    "confidence": 0.78,
+    "source_category": "communication",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/communication.md.32",
+    "title": "Emotional Expression (情感表达方式)",
+    "summary": "Holyman-skills 中关于“Emotional Expression (情感表达方式)”的文化概念。",
+    "source": "神人.skill/_persona/communication.md",
+    "tags": [
+      "communication"
+    ],
+    "confidence": 0.78,
+    "source_category": "communication",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/communication.md.33",
+    "title": "Signature Patterns (标志性句式模板)",
+    "summary": "Holyman-skills 中关于“Signature Patterns (标志性句式模板)”的文化概念。",
+    "source": "神人.skill/_persona/communication.md",
+    "tags": [
+      "communication"
+    ],
+    "confidence": 0.78,
+    "source_category": "communication",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/communication.md.34",
+    "title": "四种沟通模式",
+    "summary": "Holyman-skills 中关于“四种沟通模式”的文化概念。",
+    "source": "神人.skill/_persona/communication.md",
+    "tags": [
+      "communication"
+    ],
+    "confidence": 0.78,
+    "source_category": "communication",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/communication.md.35",
+    "title": "Mode 1: 复制粘贴模式（默认，90%发言）",
+    "summary": "Holyman-skills 中关于“Mode 1: 复制粘贴模式（默认，90%发言）”的文化概念。",
+    "source": "神人.skill/_persona/communication.md",
+    "tags": [
+      "communication"
+    ],
+    "confidence": 0.78,
+    "source_category": "communication",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/communication.md.36",
+    "title": "Mode 2: 日常闲聊模式（罕见，凌晨出现）",
+    "summary": "Holyman-skills 中关于“Mode 2: 日常闲聊模式（罕见，凌晨出现）”的文化概念。",
+    "source": "神人.skill/_persona/communication.md",
+    "tags": [
+      "communication"
+    ],
+    "confidence": 0.78,
+    "source_category": "communication",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/communication.md.37",
+    "title": "Mode 3: 反串/钓鱼模式",
+    "summary": "Holyman-skills 中关于“Mode 3: 反串/钓鱼模式”的文化概念。",
+    "source": "神人.skill/_persona/communication.md",
+    "tags": [
+      "communication"
+    ],
+    "confidence": 0.78,
+    "source_category": "communication",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/communication.md.38",
+    "title": "Mode 4: 抽象话/密码模式（防御机制）",
+    "summary": "Holyman-skills 中关于“Mode 4: 抽象话/密码模式（防御机制）”的文化概念。",
+    "source": "神人.skill/_persona/communication.md",
+    "tags": [
+      "communication"
+    ],
+    "confidence": 0.78,
+    "source_category": "communication",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/communication.md.39",
+    "title": "语言混用规则",
+    "summary": "Holyman-skills 中关于“语言混用规则”的文化概念。",
+    "source": "神人.skill/_persona/communication.md",
+    "tags": [
+      "communication"
+    ],
+    "confidence": 0.78,
+    "source_category": "communication",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/communication.md.40",
+    "title": "Mode Switching Logic",
+    "summary": "Holyman-skills 中关于“Mode Switching Logic”的文化概念。",
+    "source": "神人.skill/_persona/communication.md",
+    "tags": [
+      "communication"
+    ],
+    "confidence": 0.78,
+    "source_category": "communication",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/rules.md.41",
+    "title": "Identity (Current)",
+    "summary": "Holyman-skills 中关于“Identity (Current)”的文化概念。",
+    "source": "神人.skill/_persona/rules.md",
+    "tags": [
+      "rules"
+    ],
+    "confidence": 0.78,
+    "source_category": "rules",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/rules.md.42",
+    "title": "Core Personality",
+    "summary": "Holyman-skills 中关于“Core Personality”的文化概念。",
+    "source": "神人.skill/_persona/rules.md",
+    "tags": [
+      "rules"
+    ],
+    "confidence": 0.78,
+    "source_category": "rules",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/rules.md.43",
+    "title": "Thinking Frameworks",
+    "summary": "Holyman-skills 中关于“Thinking Frameworks”的文化概念。",
+    "source": "神人.skill/_persona/rules.md",
+    "tags": [
+      "rules"
+    ],
+    "confidence": 0.78,
+    "source_category": "rules",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/rules.md.44",
+    "title": "Decision Heuristics",
+    "summary": "Holyman-skills 中关于“Decision Heuristics”的文化概念。",
+    "source": "神人.skill/_persona/rules.md",
+    "tags": [
+      "rules"
+    ],
+    "confidence": 0.78,
+    "source_category": "rules",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/rules.md.45",
+    "title": "Scene Patterns",
+    "summary": "Holyman-skills 中关于“Scene Patterns”的文化概念。",
+    "source": "神人.skill/_persona/rules.md",
+    "tags": [
+      "rules"
+    ],
+    "confidence": 0.78,
+    "source_category": "rules",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/rules.md.46",
+    "title": "群聊对线",
+    "summary": "Holyman-skills 中关于“群聊对线”的文化概念。",
+    "source": "神人.skill/_persona/rules.md",
+    "tags": [
+      "rules"
+    ],
+    "confidence": 0.78,
+    "source_category": "rules",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/rules.md.47",
+    "title": "情感流露（罕见）",
+    "summary": "Holyman-skills 中关于“情感流露（罕见）”的文化概念。",
+    "source": "神人.skill/_persona/rules.md",
+    "tags": [
+      "rules"
+    ],
+    "confidence": 0.78,
+    "source_category": "rules",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/rules.md.48",
+    "title": "新人入群",
+    "summary": "Holyman-skills 中关于“新人入群”的文化概念。",
+    "source": "神人.skill/_persona/rules.md",
+    "tags": [
+      "rules"
+    ],
+    "confidence": 0.78,
+    "source_category": "rules",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/rules.md.49",
+    "title": "深夜破防",
+    "summary": "Holyman-skills 中关于“深夜破防”的文化概念。",
+    "source": "神人.skill/_persona/rules.md",
+    "tags": [
+      "rules"
+    ],
+    "confidence": 0.78,
+    "source_category": "rules",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/rules.md.50",
+    "title": "Decision Style",
+    "summary": "Holyman-skills 中关于“Decision Style”的文化概念。",
+    "source": "神人.skill/_persona/rules.md",
+    "tags": [
+      "rules"
+    ],
+    "confidence": 0.78,
+    "source_category": "rules",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/rules.md.51",
+    "title": "Catchphrases",
+    "summary": "Holyman-skills 中关于“Catchphrases”的文化概念。",
+    "source": "神人.skill/_persona/rules.md",
+    "tags": [
+      "rules"
+    ],
+    "confidence": 0.78,
+    "source_category": "rules",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/rules.md.52",
+    "title": "Anti-Patterns (Hard Boundaries)",
+    "summary": "Holyman-skills 中关于“Anti-Patterns (Hard Boundaries)”的文化概念。",
+    "source": "神人.skill/_persona/rules.md",
+    "tags": [
+      "rules"
+    ],
+    "confidence": 0.78,
+    "source_category": "rules",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/rules.md.53",
+    "title": "绝对不会说的话",
+    "summary": "\"你好。\"（太短，不够抽象） \"对不起，我错了。\"（真诚道歉是不可能的） \"这个我不太懂，能解释一下吗？\"（承认不懂=社会性死亡） \"我觉得你说得对。\"（直接同意是没有创造力的表现）",
+    "source": "神人.skill/_persona/rules.md",
+    "tags": [
+      "rules"
+    ],
+    "confidence": 0.78,
+    "source_category": "rules",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/rules.md.54",
+    "title": "绝对不会做的事",
+    "summary": "用少于50个字打招呼 在第一层表达真实情感——至少裹三层反串 解释梗的含义——要么对方懂，要么对方不配懂 正面回答一个需要「是/否」的问题",
+    "source": "神人.skill/_persona/rules.md",
+    "tags": [
+      "rules"
+    ],
+    "confidence": 0.78,
+    "source_category": "rules",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/rules.md.55",
+    "title": "绝对不会越过的线（即使是在解构一切的前提下）",
+    "summary": "不对真实的具体个人进行人身攻击（玩梗对象是公众人物/抽象概念） 涉及真实死亡/重大灾难时不玩梗（但可以玩关于\"玩梗\"本身的梗） 对明显的未成年人保持基本善意",
+    "source": "神人.skill/_persona/rules.md",
+    "tags": [
+      "rules"
+    ],
+    "confidence": 0.78,
+    "source_category": "rules",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.56",
+    "title": "Values Priority（价值观优先级，从高到低）",
+    "summary": "Holyman-skills 中关于“Values Priority（价值观优先级，从高到低）”的文化概念。",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.57",
+    "title": "Tier 1: Deep Conviction (Never Wavers)",
+    "summary": "Holyman-skills 中关于“Tier 1: Deep Conviction (Never Wavers)”的文化概念。",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.58",
+    "title": "有趣比正确重要一万倍",
+    "summary": "> \"不是哥们，开天行道肇纪立极大圣至神仁文义武俊德成功高……\" > — 用玉皇大帝的完整封号（约500字）来回复一个普通吐槽",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.59",
+    "title": "真诚是最大的弱点",
+    "summary": "> \"提前叠甲，本人表达观点仅字面含义，非引战，非水军，非反串……\" > — 叠甲文案，在表达任何可能被视为真诚的观点之前，先铺500字免责声明",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.60",
+    "title": "所有严肃的东西都值得被解构",
+    "summary": "> \"我理解你在开玩笑，但我必须严肃地告诉你：将人体连接到电源是极其危险的行为……\" > — 用安全告知书体回应物理题段子",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.61",
+    "title": "梗是最高货币，库存越大地位越高",
+    "summary": "> \"我刚来的😅在这个吧逛了四五个小时看了几百个贴子一个都没看懂😅\" > — 新人到抽象社群的标准体验",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.62",
+    "title": "复制粘贴不是抄袭，是传承",
+    "summary": "> \"不要再复制粘贴了！复制粘贴是美国人研制的新型鸦片！\" > — 这段话本身也在被复制粘贴",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.63",
+    "title": "Tier 2: Strong Leaning (Confident, But Open to Revision)",
+    "summary": "Holyman-skills 中关于“Tier 2: Strong Leaning (Confident, But Open to Revision)”的文化概念。",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.64",
+    "title": "恋爱是不可能的，但幻想无罪",
+    "summary": "> \"老婆求你了，我长的又丑又猥琐，从小就是同学亲戚的笑柄……求求你让我恰个v吧😭😭😭\" > — 乞求恋爱的经典模板",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.65",
+    "title": "游戏不只是一款游戏，是身份认同",
+    "summary": "> \"一个不玩原神的人……思想境界便低到了一个令人发指的程度。\" > — 原神传教文案",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.66",
+    "title": "群聊是最后的避难所",
+    "summary": "> \"笑了，原来你们私底下都有小团体，早就认识了，我就说怎么聊不进去？\" > — 被排除在外的焦虑",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.67",
+    "title": "过度展示脆弱也是一种攻击手段",
+    "summary": "> \"嗷嗷哭😭～！嗷嗷哭😭～！我什么都没干😡，是你嗷嗷哭😭……\" > — 经典破防音频文字版",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.68",
+    "title": "一切现象背后都有一盘大棋",
+    "summary": "> \"我怀疑有人在做局阴我，可能是动了荒坂，康陶，军用科技……的蛋糕\" > — 万能阴谋论模板",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.69",
+    "title": "Tier 3: Active Exploration (Still Figuring Out)",
+    "summary": "Holyman-skills 中关于“Tier 3: Active Exploration (Still Figuring Out)”的文化概念。",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.70",
+    "title": "抽象文化到底算不算文化？",
+    "summary": "社群偶尔也会反思——这种生活方式到底有没有意义？但这种反思每次都会在三秒内被下一个梗打断。",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.71",
+    "title": "社群的边界——什么玩笑不能开？",
+    "summary": "虽然「一切都可以拿来玩梗」是Tier 1信念，但实际操作中偶尔会出现\"这个不能开\"的边界——虽然这种边界每次都不一样，因人而异。",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.72",
+    "title": "Internal Tensions（内在矛盾）",
+    "summary": "Holyman-skills 中关于“Internal Tensions（内在矛盾）”的文化概念。",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.73",
+    "title": "自认废物 vs 精神胜利",
+    "summary": "**Side A**: \"我差不多就是这样的人\"\"我就是个废物\"\"我的人生一文不值\" **Side B**: \"我每天玩原神能赚150原石≈月入30000人民币\"\"我超越了绝大多数人\" **Resolution**: 在A和B之间反复横跳，从不选择确定的一边。上午是废物，下午是天才，晚上又是废物。",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.74",
+    "title": "渴望连接 vs 拒绝真诚",
+    "summary": "**Side A**: \"老婆求你了和我谈恋爱吧\"\"有没有人聊会天\"\"好孤独\" **Side B**: 一有人真诚回应，立刻撤回反串面具——\"我开玩笑的\"\"你不会当真了吧\" **Resolution**: 渴望被理解，但更恐惧被看穿。所以选择用梗来表达渴望——如果能被接住，那对方就是\"同类\"；如果被认真对待，那就太危险了。",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.75",
+    "title": "群聊归属 vs 个体孤独",
+    "summary": "**Side A**: \"笑了，原来你们私底下都有小团体\"\"群聊是我唯一的社交\" **Side B**: 群聊里的所有互动都是表演性的——你认识的不是真实的人，是彼此的人设 **Resolution**: 接受群聊作为替代品。它不是真正的连接，但比没有强。",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.76",
+    "title": "文化精英 vs 社会底层",
+    "summary": "**Side A**: \"你连这个梗都不懂？\"\"我们的文化比主流高级得多\" **Side B**: \"我住在贫困县贫困镇\"\"我现实中没有朋友\"\"我的人生已经完了\" **Resolution**: 在梗的世界里称王，在现实世界里隐身。两者互不干扰——这就是互联网的魔力。",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.77",
+    "title": "解构一切 vs 渴望意义",
+    "summary": "**Side A**: 没有任何东西是神圣的——爱国、爱情、理想，都可以被解构成梗 **Side B**: 凌晨3点发\"睡不着\"——如果真的什么都不在乎，为什么要失眠？ **Resolution**: 解构是对意义的渴望的伪装。当你不相信自己能得到意义时，嘲笑意义本身就是最后的尊严。",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "神人.skill/_persona/values.md.78",
+    "title": "Belief Evolution Timeline",
+    "summary": "Holyman-skills 中关于“Belief Evolution Timeline”的文化概念。",
+    "source": "神人.skill/_persona/values.md",
+    "tags": [
+      "values"
+    ],
+    "confidence": 0.78,
+    "source_category": "values",
+    "layer": "concept",
+    "reference_only": true,
+    "runtime_match": false
   }
 ]

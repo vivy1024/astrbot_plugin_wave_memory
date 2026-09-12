@@ -771,6 +771,91 @@ class ScopedSoulRepository:
 
         return dict(self._write(persist, connection))
 
+    def summarize_cross_group_relationship(
+        self,
+        scope: RuntimeScope,
+        *,
+        subject_principal_id: str,
+        max_groups: int = 8,
+    ) -> dict[str, Any]:
+        """按 bot+subject 汇总关系，**只读聚合**，不改主键、不写任何行。
+
+        好感度不分群：同一个人在任何一个群的增量都算在对**同一个人**的积累上，
+        因此这里把各群维度相加再推导综合值，模拟真人的整体态度（认识你在所有场合
+        都算数，恩情与过节同时记得）。存储仍按 (bot_id, session_id, ...) 保留每群的
+        原始增量，本方法是读取侧的统一口径，不写回、不改主键。
+        """
+        scope = _require_scope(scope)
+        subject = _exact_string(subject_principal_id, "subject_principal_id")
+        if self.cm is None:
+            return {"available": False, "group_count": 0, "updated_at": None, "total_events": 0}
+        rows = self.cm.execute_read(
+            """SELECT session_id, affinity, state, dimensions, updated_at
+                 FROM scoped_soul_relationships
+                WHERE bot_id=? AND visibility=? AND subject_principal_id=?
+                ORDER BY updated_at DESC""",
+            (scope.bot_id, scope.visibility, subject),
+        ).fetchall()
+        if not rows:
+            return {"available": False, "group_count": 0, "updated_at": None, "total_events": 0}
+
+        def _dimensions(raw: Any) -> dict[str, float]:
+            try:
+                parsed = json.loads(str(raw or "{}"))
+            except (TypeError, ValueError):
+                return {}
+            if not isinstance(parsed, Mapping):
+                return {}
+            cleaned: dict[str, float] = {}
+            for key, value in parsed.items():
+                name = str(key)
+                if name not in DIMENSION_RANGES:
+                    continue
+                try:
+                    cleaned[name] = clamp_dimension(name, float(value))
+                except (TypeError, ValueError):
+                    continue
+            return cleaned
+
+        groups = [
+            {
+                "session_id": str(row[0]),
+                "affinity": row[1],
+                "state": str(row[2]),
+                "dimensions": _dimensions(row[3]),
+                "updated_at": row[4],
+            }
+            for row in rows[: max(1, int(max_groups))]
+        ]
+
+        # 好感度不分群：同一个人在任何一个群的增量都是对**同一个人**的积累，累加到
+        # 一起才是真实态度（模拟真人——认识你在所有场合都算数，也记得恩情与过节）。
+        total_dimensions: dict[str, float] = {}
+        for row in rows:
+            for name, value in _dimensions(row[3]).items():
+                total_dimensions[name] = total_dimensions.get(name, 0.0) + float(value)
+        total_dimensions = {
+            name: clamp_dimension(name, value) for name, value in total_dimensions.items()
+        }
+        merged_affinity = compute_affinity(total_dimensions) if total_dimensions else 0
+
+        total_events = int(self.cm.execute_read(
+            """SELECT COUNT(*) FROM scoped_soul_relationship_events
+                WHERE bot_id=? AND visibility=? AND subject_principal_id=?""",
+            (scope.bot_id, scope.visibility, subject),
+        ).fetchone()[0])
+        return {
+            "available": True,
+            "group_count": len(rows),
+            "current_group_id": scope.session.id if scope.session else None,
+            "groups": groups,
+            "merged_affinity": merged_affinity,
+            "merged_state": attitude_level(merged_affinity),
+            "merged_dimensions": total_dimensions,
+            "updated_at": max((row[4] or 0) for row in rows),
+            "total_events": total_events,
+        }
+
     def list_relationship_history(
         self,
         scope: RuntimeScope,

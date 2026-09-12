@@ -235,3 +235,69 @@ export function previewHolymanSync(useProxy = true): Promise<HolymanSyncPreviewP
 export function getCatalogAudit(): Promise<CatalogAuditPayload> {
   return fetchJson<CatalogAuditPayload>('/api/jargon/holyman')
 }
+
+// ─── 广域（Bot 级）黑话 ───
+// 与群级黑话不同，这一层按 bot_id 归属，可被该 Bot 的所有群共享；请求用 bot_private
+// scope（不带 session），这是它与 group scope 的关键区别。
+
+export type BotJargonStatus = 'active' | 'inactive'
+export type BotJargonSource = 'manual' | 'promoted' | 'holyman_import' | 'manual_deleted' | 'holyman_skills'
+
+export interface BotJargonItem {
+  id: number | null
+  word: string
+  meaning: string
+  status: BotJargonStatus
+  source: BotJargonSource
+  confidence: number | null
+  origin_scope: string | null
+  reference_key: string | null
+  updated_at: number | null
+  /** true = 来自内置 holyman 资产（默认启用，无覆盖行）。 */
+  is_builtin?: boolean
+}
+
+export interface BotJargonResponse extends PageResponse<BotJargonItem> {
+  bot_id: string
+  capabilities: Record<'create' | 'update' | 'status' | 'delete', JargonCapability>
+}
+
+function botScopeEnvelope(botId: string) {
+  return { kind: 'RuntimeScope', payload: { bot_id: botId, visibility: 'bot_private', session: null, subject_principal_id: null } }
+}
+
+export function listGlobalJargon(botId: string, status?: BotJargonStatus): Promise<BotJargonResponse> {
+  const params = new URLSearchParams({ bot_id: botId })
+  if (status) params.set('status', status)
+  return fetchJson<BotJargonResponse>(`/api/jargon/global?${params.toString()}`)
+}
+
+export function upsertGlobalJargon(botId: string, payload: { word: string; meaning: string; status?: BotJargonStatus; confidence?: number }) {
+  return fetchJson<{ ok: boolean }>('/api/jargon/commands/global/upsert', {
+    method: 'POST',
+    body: JSON.stringify({ scope: botScopeEnvelope(botId), ...payload }),
+  })
+}
+
+export function setGlobalJargonStatus(botId: string, word: string, status: BotJargonStatus) {
+  return fetchJson<{ ok: boolean }>('/api/jargon/commands/global/status', {
+    method: 'POST',
+    body: JSON.stringify({ scope: botScopeEnvelope(botId), word, status }),
+  })
+}
+
+export function deleteGlobalJargon(botId: string, word: string) {
+  return fetchJson<{ ok: boolean }>('/api/jargon/commands/global/delete', {
+    method: 'POST',
+    body: JSON.stringify({ scope: botScopeEnvelope(botId), word }),
+  })
+}
+
+export function promoteJargonToGlobal(item: JargonItem, scope: JargonScopeSelection) {
+  if (!item.object_ref?.ref) throw new Error('该黑话没有服务端签发的 ObjectRef，不能安全提升为广域')
+  return fetchJson<{ ok: boolean; item: { word: string; status: string } }>(`/api/jargon/commands/${item.id}/promote`, {
+    method: 'POST',
+    body: JSON.stringify({ scope: scopeEnvelope(scope), object_ref: item.object_ref, revision: item.revision }),
+  })
+}
+

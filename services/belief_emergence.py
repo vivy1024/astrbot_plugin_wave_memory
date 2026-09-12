@@ -82,14 +82,18 @@ class BeliefEmergenceService:
             belief_key = "episode-v1:" + hashlib.sha256(
                 f"{scope.bot_id}\0{scope.session.id}\0{content.casefold()}".encode("utf-8")
             ).hexdigest()[:32]
+            # 不写死 activation_eligible=False：涌现出的经历本身就是一类证据，但要真的
+            # 够格激活必须能被 is_episode_backed 验证（同 Scope 内至少两条健康记忆）。
+            # 这里只如实记录证据，是否够格由 belief_engine 判定，避免把资格判断复制两份。
             provenance = {
                 "producer": "belief_emergence",
                 "confidence_policy_version": POLICY_VERSION,
                 "episode_id": episode.get("id"),
                 "episode_type": episode.get("episode_type"),
                 "source_memory_ids": memory_ids,
-                "activation_eligible": False,
-                "tag_chain_status": "empty",
+                "evidence": {"memory_ids": memory_ids, "episode_id": episode.get("id")},
+                "activation_eligible": len(memory_ids) >= 2,
+                "tag_chain_status": "complete" if len(memory_ids) >= 2 else "empty",
             }
             belief_id = upsert(
                 scope,

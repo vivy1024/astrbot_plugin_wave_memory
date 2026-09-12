@@ -64,7 +64,6 @@ from .services.runtime_mode import effective_native_injection_enabled, effective
 from .services.compat import build_duplicate_memory_warnings, build_livingmemory_compat_surface, detect_memory_plugins
 from .services.impression_timeline import configure_social_limits, parse_impression_mark, persist_unsettled_trace
 from .services.lifecycle import LifecycleService
-from .services.persona_evolution import PersonaEvolution
 from .tools.memory_search import WaveMemorySearchTool, WaveMemoryRememberTool
 from .tools.deep_search import WaveMemoryDeepSearchTool
 from .tools.extra_tools import WaveMemoryFactsTool
@@ -105,7 +104,7 @@ from .services.desire_engine import DesireEngine
 from .services.belief_engine import BeliefEngine
 from .services.belief_emergence import BeliefEmergenceService
 from .services.belief_gating import snapshot_from_relationship
-from .services.proactive_audit import read_proactive_relationship_context, record_proactive_timeline
+from .services.proactive_audit import record_proactive_timeline
 from .services.jargon.service import JargonService
 from .services.few_shot.service import FewShotService
 from .services.reflection_trigger import ReflectionTriggerService
@@ -479,14 +478,11 @@ class WaveMemoryPlugin(Star):
             cross_group_cfg.get("shared_memory_grants_enabled"),
             False,
         )
-        self.cross_group_persona_merge = cross_group_cfg.get("cross_group_persona_merge", True)
-
         # 好感度引擎配置
         self.affinity_cfg = affinity_cfg
 
         # 生命周期配置：memory_only/compat_only 强制关闭高级社交/人格/情绪能力，避免旧 default=true 穿透模式边界。
         self.enable_affinity = runtime_capability_enabled(self.runtime_mode, "affinity", lifecycle_cfg.get("enable_affinity", True))
-        self.enable_persona = runtime_capability_enabled(self.runtime_mode, "persona", lifecycle_cfg.get("enable_persona_evolution", True))
         self.enable_mood = runtime_capability_enabled(self.runtime_mode, "mood", lifecycle_cfg.get("enable_mood", True))
         self.mood_duration_hours = float(lifecycle_cfg.get("mood_duration_hours", "2.0"))
         self.mood_msg_threshold = int(lifecycle_cfg.get("mood_msg_threshold", 30))
@@ -816,6 +812,18 @@ class WaveMemoryPlugin(Star):
         }
         maintenance_handlers.update(self.data_governance_jobs.handlers())
         maintenance_handlers.update(self.scope_recovery_jobs)
+        # WebUI 的记忆重嵌入 / 批量打标端点入队这些 kind；缺少注册会让作业以
+        # job_handler_missing 失败（DurableJobRunner 找不到 handler 即 mark_failed）。
+        from .services.memory_jobs import MemoryDurableJobHandlers
+
+        maintenance_handlers.update(
+            MemoryDurableJobHandlers(
+                write_gateway=self.write_gateway,
+                db=self.db,
+                embedding_service=self.embedding_service,
+                tag_extractor=self.tag_extractor,
+            ).handlers()
+        )
         self.maintenance_job_runner = DurableJobRunner(
             self.write_gateway.jobs,
             maintenance_handlers,
@@ -839,7 +847,6 @@ class WaveMemoryPlugin(Star):
         self.subjective_time = None
         self.desire_engine = None
         self.lifecycle = None
-        self.persona_evolution = None
         self.webui = None
         self.injection_trace_store = None
         self.injection_shadow_channels = []
@@ -986,9 +993,11 @@ class WaveMemoryPlugin(Star):
             from .services.injection.channels.book_lore import BookLoreChannel
             from .services.injection.channels.fewshot import FewShotChannel
             from .services.injection.channels.jargon import JargonChannel
+            from .services.injection.channels.holyman_persona import HolymanPersonaChannel
             from .services.injection.channels.fts5 import FTS5Channel
             from .services.injection.channels.relationship import RelationshipChannel
             from .services.injection.channels.soul_state import SoulStateChannel
+            from .services.jargon.holyman_persona import HolymanPersonaPack
             from .services.persona_composer import PersonaComposer
 
             self.injection_trace_store = InjectionTraceStore(
@@ -1014,10 +1023,11 @@ class WaveMemoryPlugin(Star):
                     shared_memory_grants_enabled=self.shared_memory_grants_enabled,
                 ),
                 FactsChannel(db=self.db, facts_decay_rate=getattr(self, "_facts_decay_rate", 0.005)),
-                # PersonaEvolution 仍依赖 legacy social/facts read-model，不能进入正式注入。
-                PersonaChannel(composer=persona_composer, persona_evolution=None),
+                PersonaChannel(composer=persona_composer),
                 BeliefChannel(belief_engine=getattr(self, "belief_engine", None)),
                 JargonChannel(jargon_service=getattr(self, "jargon_service", None)),
+                # 可选风格人格包：默认关闭，需在通道配置里显式开启。
+                HolymanPersonaChannel(persona_pack=HolymanPersonaPack()),
                 FewShotChannel(few_shot_service=getattr(self, "few_shot_service", None)),
                 RelationshipChannel(repository=self.db.soul_repository, db=self.db),
                 SoulStateChannel(repository=self.db.soul_repository),
@@ -1615,13 +1625,6 @@ class WaveMemoryPlugin(Star):
         else:
             self.eviction_service = None
 
-        # 人格进化引擎
-        self.persona_evolution = PersonaEvolution(
-            db=self.db,
-            cross_group_merge=self.cross_group_persona_merge,
-            affinity_cfg=self.affinity_cfg,
-        ) if self.enable_persona else None
-
         # 黑话系统 (US-4.1~4.5)：memory_only/compat_only 强制关闭，避免黑话学习/注入越过纯记忆边界。
         jargon_cfg = self.config.get("Jargon_Settings", {})
         if runtime_capability_enabled(self.runtime_mode, "jargon", jargon_cfg.get("enabled", True)) and self.tag_llm_provider_id:
@@ -2209,8 +2212,8 @@ class WaveMemoryPlugin(Star):
             tracker["count"] += 1
             # v2.0: 不再硬拦截，把频率信息注入 persona 让 bot 自己判断
 
-        # ─── 态度判断由 inject_memory 的 PersonaEvolution 通道统一完成 ───
-        # 不再有独立 LLM 调用。bot 在主对话中用自己的人格自然思考态度。
+        # ─── 态度由 affinity 通道按当前关系状态注入，无独立 LLM 调用 ───
+        # bot 在主对话中用自己的人格自然思考态度。
         # 好感度变化靠 LifecycleService 互动频率 + 极端事件规则驱动。
 
     async def _belief_emergence_task(self, runtime_scope: RuntimeScope | None = None) -> None:
@@ -3279,23 +3282,6 @@ class WaveMemoryPlugin(Star):
             "db_watermark": int(watermark),
             "verified": manifest is not None and manifest.count == len(valid_rows),
         }
-
-    async def _read_proactive_relationship_context(
-        self,
-        scope: RuntimeScope | None,
-        event,
-        *,
-        now: float | None = None,
-    ) -> dict:
-        """Read formal relationship snapshots for the current human message turn."""
-        return await read_proactive_relationship_context(
-            scope,
-            event,
-            coordinator=getattr(getattr(self, "write_gateway", None), "coordinator", None),
-            repository=getattr(getattr(self, "db", None), "soul_repository", None),
-            bot_ids=getattr(self, "_bot_qq_ids", ()),
-            now=now,
-        )
 
     async def _record_proactive_timeline(
         self,

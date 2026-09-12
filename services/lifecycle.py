@@ -78,23 +78,17 @@ def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
 
-def _compute_affection(dims: dict) -> int:
-    score = sum(dims.get(k, 0) * w for k, w in DIMENSION_WEIGHTS.items())
-    score -= dims.get("hostility", 0) * HOSTILITY_WEIGHT
-    return int(_clamp(score, -100, 100))
-
-
 def _get_attitude_level(affection: int) -> str:
-    if affection >= 60:
-        return "intimate"
-    elif affection >= 30:
-        return "friendly"
-    elif affection >= 0:
-        return "neutral"
-    elif affection >= -30:
-        return "cold"
-    else:
-        return "hostile"
+    """态度分档：单一事实来源在 domain.relationship_policy。
+
+    此前这里自研了一份同样的公式与分档，与正式实现重复；任何一侧改动都会让
+    生活周期与亲和通道对同一个人给出不同态度。
+    """
+    try:
+        from ..domain.relationship_policy import attitude_level
+    except ImportError:  # pragma: no cover - repository tests import top-level packages
+        from domain.relationship_policy import attitude_level
+    return attitude_level(affection)
 
 
 def _project_group_subject_scope(scope: RuntimeScope) -> tuple[str, str, str]:
@@ -128,7 +122,6 @@ class AffinityEngine:
         db: WaveMemoryDB,
         bot_qq_id: str = "",
         bot_db_id: str = "yushu",
-        record_relationship_events: bool = True,
         target_profiles: dict[str, dict[str, str]] | None = None,
         relationship_service: Any | None = None,
         jargon_service: Any | None = None,
@@ -138,7 +131,6 @@ class AffinityEngine:
         self.jargon_service = jargon_service
         self.bot_qq_id = bot_qq_id
         self.bot_db_id = bot_db_id  # 写 user_profiles 时用的 bot_id 值
-        self.record_relationship_events = record_relationship_events
         self.target_profiles = target_profiles or {}
         self._buffer: dict[tuple[str, str], dict[str, float]] = defaultdict(
             lambda: defaultdict(float)
@@ -196,132 +188,6 @@ class AffinityEngine:
         # 触达记录只更新缓冲，不把关键词增量写入正式五维。
         self._buffer[(sender_id, group_id)].setdefault("_touched", 1.0)
         return True
-
-    def _record_relationship_events(
-        self,
-        *,
-        user_id: str,
-        group_id: str,
-        before: dict,
-        after: dict,
-        reasons: dict,
-        scope: RuntimeScope | None = None,
-        classified: Mapping[str, Any] | None = None,
-    ):
-        """记录关系事件日志；Scope 路径只使用已验证的 legacy 投影。"""
-        if not self.record_relationship_events:
-            return
-        event_bot_id = self.bot_db_id
-        if scope is not None:
-            try:
-                scoped_bot_id, scoped_group_id, scoped_user_id = _project_group_subject_scope(scope)
-            except ScopeValidationError:
-                return
-            if (
-                scoped_bot_id != self.bot_db_id
-                or scoped_group_id != group_id
-                or scoped_user_id != user_id
-            ):
-                return
-            event_bot_id = scoped_bot_id
-        now = time.time()
-        try:
-            from ..domain.relationship_policy import is_noisy_relationship_event
-        except ImportError:  # pragma: no cover
-            from domain.relationship_policy import is_noisy_relationship_event
-        entries = [
-            entry
-            for entry in list((classified or {}).get("entries") or [])
-            if isinstance(entry, Mapping)
-            and not is_noisy_relationship_event(entry.get("event_type"), entry.get("reason"))
-        ]
-        if not entries:
-            return
-        write_ledger = bool((classified or {}).get("ledger"))
-        try:
-            from .impression_timeline import persist_timeline_event, synthesize_milestone_phrase
-        except ImportError:  # pragma: no cover
-            from services.impression_timeline import persist_timeline_event, synthesize_milestone_phrase
-        try:
-            for entry in entries:
-                dim_name = str(entry.get("dimension") or "")
-                delta = float(entry.get("delta") or 0.0)
-                reason_text = str(entry.get("reason") or "").strip()
-                formal_event_type = str(entry.get("event_type") or "").strip()
-                if not dim_name or not reason_text or is_noisy_relationship_event(formal_event_type, reason_text):
-                    continue
-                stored = None
-                if self.relationship_service is not None and scope is not None:
-                    try:
-                        stored = self.relationship_service.record_event(
-                            scope=scope,
-                            event_type=formal_event_type,
-                            dimension=dim_name,
-                            delta=round(delta, 2),
-                            reason=reason_text,
-                        )
-                    except Exception as formal_error:
-                        logger.debug(f"[WaveMemory] scoped relationship event skipped: {formal_error}")
-                        stored = None
-                event_id = int(getattr(stored, "event_id", 0) or 0) if stored is not None else 0
-                self.db.conn.execute(
-                    """INSERT INTO relationship_events
-                       (bot_id, group_id, user_id, event_type, dimension, delta, reason, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (event_bot_id, group_id, user_id, formal_event_type, dim_name, round(delta, 2), reason_text, now),
-                )
-                if stored is None or event_id <= 0:
-                    continue
-                if write_ledger and formal_event_type != "message_seen":
-                    before_aff = int(getattr(stored, "before_affection", getattr(stored, "before_affinity", 0)) or 0)
-                    after_aff = int(getattr(stored, "after_affection", getattr(stored, "after_affinity", 0)) or 0)
-                    if before_aff != after_aff:
-                        phrase = synthesize_milestone_phrase(
-                            event_type=formal_event_type,
-                            reason=reason_text,
-                            before_affinity=before_aff,
-                            after_affinity=after_aff,
-                            dimension=dim_name,
-                            delta=round(delta, 2),
-                        )
-                        persist_timeline_event(
-                            self.db,
-                            bot_id=event_bot_id,
-                            user_id=user_id,
-                            group_id=group_id,
-                            kind="affinity",
-                            summary=phrase,
-                            detail=reason_text,
-                            occurred_at=now,
-                            provenance={
-                                "actor": "affinity_milestone",
-                                "event_type": formal_event_type,
-                                "dimension": dim_name,
-                                "delta": round(delta, 2),
-                                "event_id": event_id,
-                            },
-                        )
-                    else:
-                        persist_timeline_event(
-                            self.db,
-                            bot_id=event_bot_id,
-                            user_id=user_id,
-                            group_id=group_id,
-                            kind="affinity",
-                            summary=f"{formal_event_type} {dim_name}{delta:+g}：{reason_text}"[:240],
-                            detail=reason_text,
-                            occurred_at=now,
-                            provenance={
-                                "actor": "relationship_ledger",
-                                "event_type": formal_event_type,
-                                "dimension": dim_name,
-                                "delta": round(delta, 2),
-                                "event_id": event_id,
-                            },
-                        )
-            self.db.conn.commit()
-        except Exception as e:
-            logger.debug(f"[WaveMemory] relationship event log skipped: {e}")
 
     def flush(self):
         """将缓冲增量持久化到数据库，并执行衰减。"""

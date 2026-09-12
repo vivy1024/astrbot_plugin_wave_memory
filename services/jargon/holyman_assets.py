@@ -243,6 +243,12 @@ def parse_curated_phrases(fetched: dict[str, str], existing_phrases: dict[str, A
 
 
 def parse_concepts(fetched: dict[str, str]) -> list[dict[str, Any]]:
+    """抽取只读文化概念。
+
+    Holyman 各类文档的标题层级并不统一：SKILL/_persona 用 `### `，而
+    `_knowledge/*.md` 用 `## `。只认 `### ` 会让知识文档整段解析为 0 条
+    （manifest 仍记 ok），因此这里同时接受 `## ` 与 `### `。
+    """
     concepts: list[dict[str, Any]] = []
     for source, text in (fetched or {}).items():
         if source == "README.md" or source.startswith("神人.skill/_quotes/") or source == "神言.txt":
@@ -250,9 +256,10 @@ def parse_concepts(fetched: dict[str, str]) -> list[dict[str, Any]]:
         lines = (text or "").splitlines()
         for idx, raw in enumerate(lines):
             line = raw.strip()
-            if not line.startswith("### "):
+            marker = _heading_marker(line)
+            if marker is None:
                 continue
-            title = clean_word(line[4:])
+            title = clean_word(line[marker:])
             if not title or title in NOISE_WORDS:
                 continue
             summary_parts = []
@@ -277,21 +284,50 @@ def parse_concepts(fetched: dict[str, str]) -> list[dict[str, Any]]:
     return concepts
 
 
+def _heading_marker(line: str) -> int | None:
+    """返回标题标记长度（`## `=3、`### `=4、`#### `=5），非标题返回 None。
+
+    `# ` 一级标题是文档名/大章节，不作为概念标题；过深层级同理不取。
+    """
+    if not line.startswith("#"):
+        return None
+    hashes = len(line) - len(line.lstrip("#"))
+    if hashes < 2 or hashes > 3:
+        return None
+    if len(line) <= hashes or line[hashes] != " ":
+        return None
+    return hashes + 1
+
+
 def parse_examples(fetched: dict[str, str], phrases: dict[str, Any]) -> list[dict[str, Any]]:
+    """抽取只读语录/声音样本。
+
+    语录在各类文档里的载体并不统一：`iconic.md` 用 `> ` 引用，`communication.md`
+    用 `- ` 列表，而 `internal.md` 把语录包在 ``` 代码围栏里。只认前两种会让
+    `internal.md` 74 行只抽出 1 条，因此这里补上代码围栏内的引用识别。
+    """
     examples: list[dict[str, Any]] = []
     terms = list(content_entries(phrases).keys())
     for source, text in (fetched or {}).items():
         if not (source.startswith("神人.skill/_quotes/") or source.endswith("communication.md")):
             continue
         category = CATEGORY_BY_SOURCE.get(source, "unknown")
+        in_fence = False
         for raw in (text or "").splitlines():
             line = raw.strip()
+            if line.startswith("```"):
+                in_fence = not in_fence
+                continue
             if line.startswith(">"):
                 line = line.lstrip(">").strip()
+            elif in_fence:
+                # 代码围栏内是纯语录：去掉包裹引号即可，不做长度门槛。
+                line = line.strip().strip('"“”\'')
             elif line.startswith(("- ", "* ")) and len(line) > 20:
                 line = line[2:].strip()
             else:
                 continue
+            line = line.strip()
             if not line:
                 continue
             linked = [term for term in terms if term and term in line][:5]
@@ -305,7 +341,7 @@ def parse_examples(fetched: dict[str, str], phrases: dict[str, Any]) -> list[dic
                 "reference_only": True,
                 "runtime_match": False,
             })
-    return examples[:200]
+    return examples[:400]
 
 
 def parse_corpus(corpus_data: str) -> list[dict[str, Any]]:

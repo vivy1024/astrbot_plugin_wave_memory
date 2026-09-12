@@ -33,6 +33,7 @@ KNOWN_CHANNELS = (
     "memory",
     "facts",
     "persona",
+    "holyman_persona",
     "belief",
     "jargon",
     "fewshot",
@@ -44,7 +45,7 @@ KNOWN_CHANNELS = (
 # 已退役通道：旧 Channel_Settings 里可能仍保存其覆盖项；校验时静默忽略而不是拒绝。
 RETIRED_CHANNELS = frozenset({"timeline"})
 
-_ADVANCED_FULL_ONLY = {"persona", "belief", "jargon", "fewshot", "book_lore", "affinity", "soul_state"}
+_ADVANCED_FULL_ONLY = {"persona", "holyman_persona", "belief", "jargon", "fewshot", "book_lore", "affinity", "soul_state"}
 _OPTIONAL_MEMORY_ONLY = {"facts", "fts5"}
 _QUERY_STAGE_NAMES = frozenset({"epa", "pyramid", "spike", "geodesic"})
 _QUERY_PARAM_LIMITS = {
@@ -190,6 +191,10 @@ def _modes_for(name: str, mode: str) -> tuple[str, ...]:
 def _enabled_for(name: str, mode: str, inject_cfg: Mapping[str, Any]) -> bool:
     if name == "safety":
         return True
+    # 风格人格包默认关闭：只接受配置里的显式开关作为默认值，
+    # 最终生效值仍由通道覆盖（Channel_Settings）决定，不设第二个激活入口。
+    if name == "holyman_persona":
+        return bool(inject_cfg.get("enable_holyman_persona", False))
     if mode == "compat_only":
         return False
     if mode == "memory_only" and name in _ADVANCED_FULL_ONLY:
@@ -221,9 +226,11 @@ def build_default_channel_config(
         # soft-timeout at 2s so remote vector recall is not cancelled early.
         "memory": ChannelConfig("memory", _enabled_for("memory", mode, inject_cfg), priority=100, top_k=inject_top_k, token_budget=600, timeout_ms=2000, min_score=min_similarity, modes=_modes_for("memory", mode)),
         "facts": ChannelConfig("facts", _enabled_for("facts", mode, inject_cfg), priority=75, max_items=facts_max, token_budget=260, timeout_ms=120, modes=_modes_for("facts", mode)),
-        # max_items=2 lets the scope-keyed speaker statistics block ride along with
-        # the bot's own persona block; at 1 only self_persona could ever be injected.
+        # max_items=2 允许自我人格块与自我经历块同时注入；对话者统计块已移除
+        # （其能力由 affinity 印象时间线与 fewshot 覆盖，且两者都有前端出口）。
         "persona": ChannelConfig("persona", _enabled_for("persona", mode, inject_cfg), priority=70, max_items=2, token_budget=460, timeout_ms=500, modes=_modes_for("persona", mode)),
+        # 可选风格人格包：默认关闭，优先级低于 persona/fewshot，作为补充风格层。
+        "holyman_persona": ChannelConfig("holyman_persona", _enabled_for("holyman_persona", mode, inject_cfg), priority=48, max_items=6, token_budget=900, timeout_ms=200, modes=_modes_for("holyman_persona", mode)),
         "belief": ChannelConfig("belief", _enabled_for("belief", mode, inject_cfg), priority=65, max_items=5, token_budget=220, timeout_ms=300, modes=_modes_for("belief", mode)),
         "jargon": ChannelConfig("jargon", _enabled_for("jargon", mode, inject_cfg), priority=60, max_items=3, token_budget=180, timeout_ms=160, modes=_modes_for("jargon", mode)),
         "fewshot": ChannelConfig("fewshot", _enabled_for("fewshot", mode, inject_cfg), priority=50, max_items=3, token_budget=260, timeout_ms=300, modes=_modes_for("fewshot", mode)),
@@ -440,10 +447,19 @@ def _config_set_from_payload(payload: Mapping[str, Any]) -> ChannelConfigSet:
     if not isinstance(payload, Mapping):
         raise ValueError("effective channel config must be an object")
     raw_channels_payload = payload.get("channels")
-    if not isinstance(raw_channels_payload, Mapping) or not set(KNOWN_CHANNELS).issubset(set(raw_channels_payload)):
+    if not isinstance(raw_channels_payload, Mapping):
         raise ValueError("effective channel config must contain every known channel")
+    # 向后兼容：历史有效层是在新增通道之前写入的，因此允许缺少后加通道，
+    # 用当前默认值补齐后再校验；其余"已知但缺失"仍视为损坏配置。
+    defaults = build_default_channel_config().channels
+    missing_known = [name for name in KNOWN_CHANNELS if name not in raw_channels_payload]
+    if missing_known and not set(missing_known).issubset({"holyman_persona"}):
+        raise ValueError("effective channel config must contain every known channel")
+    filled = dict(raw_channels_payload)
+    for name in missing_known:
+        filled[name] = asdict(defaults[name])
     # 只读取当前已知通道；历史有效层里可能还带着已退役通道（如 timeline）。
-    channels_payload = {name: raw_channels_payload[name] for name in KNOWN_CHANNELS}
+    channels_payload = {name: filled[name] for name in KNOWN_CHANNELS}
     channels: dict[str, ChannelConfig] = {}
     for name in KNOWN_CHANNELS:
         raw = channels_payload[name]

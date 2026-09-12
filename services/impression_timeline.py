@@ -330,58 +330,6 @@ def current_impression_text(events: Sequence[Any] | None, metadata: Any = None) 
     return str(_as_mapping(metadata).get("impression") or "").strip()
 
 
-def record_affinity_milestone(
-    metadata: Any,
-    *,
-    event_type: str,
-    reason: str,
-    before_affinity: int,
-    after_affinity: int,
-    dimension: str,
-    delta: float,
-    now: float | None = None,
-    event_id: int | None = None,
-    snapshot: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    """仅当产生真实好感度变化时，在印象时间线钉下一枚带因果快照的钢印。"""
-    if before_affinity == after_affinity or event_type == "message_seen":
-        return _as_mapping(metadata)
-    phrase = synthesize_milestone_phrase(
-        event_type=event_type,
-        reason=reason,
-        before_affinity=before_affinity,
-        after_affinity=after_affinity,
-        dimension=dimension,
-        delta=delta,
-    )
-    event_meta = {
-        "event_type": event_type,
-        "reason": reason,
-        "dimension": dimension,
-        "delta": delta,
-        "before_affinity": before_affinity,
-        "after_affinity": after_affinity,
-    }
-    if event_id is not None:
-        event_meta["event_id"] = event_id
-    result = append_impression(
-        metadata,
-        phrase,
-        now=now,
-        actor="affinity_milestone",
-        snapshot=snapshot,
-        event=event_meta,
-    )
-    history = result.get("impression_history")
-    if not isinstance(history, list) or not history:
-        result["impression_history"] = [{
-            "text": phrase,
-            "updated_at": float(now if now is not None else time.time()),
-            "actor": "affinity_milestone",
-            **_context_fields(snapshot=snapshot, event=event_meta),
-        }]
-    return result
-
 
 def append_impression(
     metadata: Any,
@@ -468,68 +416,7 @@ def _format_event(event: Mapping[str, Any] | None) -> str:
     return "：".join(parts[:2]) + (f"（{parts[2]}）" if len(parts) > 2 else "")
 
 
-def relationship_context(repository: Any, scope: Any) -> tuple[dict[str, float], dict[str, Any] | None]:
-    if repository is None or scope is None or not hasattr(repository, "get_state"):
-        return {}, None
-    try:
-        state = repository.get_state(scope, subject_principal_id=getattr(scope, "subject_principal_id", None), limit=25, offset=0)
-    except Exception:
-        return {}, None
-    payload = state if isinstance(state, Mapping) else {}
-    relationship = payload.get("relationship") if isinstance(payload.get("relationship"), Mapping) else {}
-    history = payload.get("relationship_history") if isinstance(payload.get("relationship_history"), Mapping) else {}
-    items = history.get("items") if isinstance(history, Mapping) else None
-    return snapshot_from_relationship(relationship), meaningful_event_anchor(items if isinstance(items, Sequence) else None)
 
-
-def append_ledger_entry(
-    metadata: Any,
-    *,
-    event_type: str,
-    dimension: str,
-    delta: float,
-    reason: str,
-    at: float | None = None,
-    event_id: int | None = None,
-) -> dict[str, Any]:
-    """Append one scored social-ledger row. Does not touch the summary impression."""
-    payload = _as_mapping(metadata)
-    normalized_type = str(event_type or "").strip()
-    normalized_dimension = str(dimension or "").strip()
-    normalized_reason = str(reason or "").strip().replace("\n", " ")[:80]
-    amount = _finite(delta)
-    if not normalized_type or not normalized_dimension or amount is None:
-        return payload
-    if normalized_type == "message_seen":
-        return payload
-    ledger = payload.get("impression_ledger")
-    if not isinstance(ledger, list):
-        ledger = []
-    entry: dict[str, Any] = {
-        "event_type": normalized_type,
-        "dimension": normalized_dimension,
-        "delta": round(amount, 2),
-        "reason": normalized_reason,
-        "at": float(at if at is not None else time.time()),
-    }
-    if event_id not in {None, ""}:
-        try:
-            entry["event_id"] = int(event_id)
-        except (TypeError, ValueError):
-            pass
-    ledger.append(entry)
-    payload["impression_ledger"] = ledger
-    return payload
-
-
-def ledger_entries(metadata: Any, *, limit: int = 5) -> list[dict[str, Any]]:
-    payload = _as_mapping(metadata)
-    stored = payload.get("impression_ledger")
-    if not isinstance(stored, list):
-        return []
-    items = [item for item in stored if isinstance(item, Mapping) and str(item.get("event_type") or "") != "message_seen"]
-    cap = max(1, int(limit or 5))
-    return [dict(item) for item in items[-cap:]]
 
 
 def affinity_shift_range(
@@ -873,49 +760,6 @@ def unsettled_energy_line(
     return line
 
 
-def append_unsettled_trace(
-    metadata: Any,
-    text: str,
-    *,
-    now: float | None = None,
-    impact: float | int | None = 1.0,
-) -> dict[str, Any]:
-    """Compatibility helper for tests; production writes person_unsettled_state."""
-    payload = _as_mapping(metadata)
-    cleaned = str(text or "").strip().replace("\n", " ")[:120]
-    if not cleaned:
-        return payload
-    amount = _finite(impact)
-    if amount is None:
-        amount = 1.0
-    impact_limit = get_social_limits()["impact_cap"]
-    amount = max(0.0, min(impact_limit, amount))
-    if amount <= 0:
-        return payload
-    stamp = float(now if now is not None else time.time())
-    unsettled = payload.get("unsettled_traces")
-    if not isinstance(unsettled, list):
-        unsettled = []
-    current_energy = unsettled_energy(payload)
-    unsettled.append({
-        "text": cleaned,
-        "summary": cleaned,
-        "detail": cleaned,
-        "impact": amount,
-        "ts": stamp,
-    })
-    payload["unsettled_traces"] = unsettled
-    payload["unsettled_energy"] = round(current_energy + amount, 2)
-    payload["unsettled_interaction_count"] = int(payload.get("unsettled_interaction_count") or 0) + 1
-    return payload
-
-
-def clear_unsettled_traces(metadata: Any) -> dict[str, Any]:
-    payload = _as_mapping(metadata)
-    payload.pop("unsettled_traces", None)
-    payload.pop("unsettled_interaction_count", None)
-    payload.pop("unsettled_energy", None)
-    return payload
 
 
 def should_trigger_affinity_transition(

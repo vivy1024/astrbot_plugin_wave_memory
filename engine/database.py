@@ -34,8 +34,11 @@ from .db.migrations.scoped_tag_governance import ensure_scoped_tag_governance_sc
 from .db.migrations.scoped_relationship_calibration import ensure_scoped_relationship_calibration_schema
 from .db.migrations.scoped_soul import ensure_scoped_soul_schema
 from .db.migrations.scoped_fact_history import ensure_scoped_fact_history_schema
+from .db.migrations.scoped_fact_review import ensure_scoped_fact_review_schema
+from .db.migrations.bot_jargon import ensure_bot_jargon_schema
 from .db.migrations.person_timeline import ensure_person_timeline_schema
 from .db.migrations.shared_memory_grants import ensure_shared_memory_grants_schema
+from .db.bot_jargon_repo import BotJargonRepository
 from .db.scoped_knowledge_repo import ScopedKnowledgeRepo
 from .db.scoped_learning_projection_repo import ScopedFewShotRepository
 from .db.person_timeline_repo import PersonTimelineRepo
@@ -77,12 +80,15 @@ class WaveMemoryDB:
             ensure_scoped_soul_schema(self._cm)
             ensure_scoped_relationship_calibration_schema(self._cm)
             ensure_scoped_fact_history_schema(self._cm)
+            ensure_scoped_fact_review_schema(self._cm)
+            ensure_bot_jargon_schema(self._cm)
             ensure_person_timeline_schema(self._cm)
             ensure_scoped_learning_projection_schema(self._cm)
             # Shared-memory grants: read authorization only; never physical fanout.
             ensure_shared_memory_grants_schema(self._cm)
             self._shared_memory_grants = SharedMemoryGrantRepository(self._cm)
             self._scoped_knowledge_repo = ScopedKnowledgeRepo(self._cm)
+            self._bot_jargon = BotJargonRepository(self._cm)
             self._soul_repository = ScopedSoulRepository(
                 self._cm,
                 soul_context_provider=self._soul_context_provider,
@@ -110,6 +116,11 @@ class WaveMemoryDB:
     def scoped_knowledge(self):
         """正式 scoped 派生知识边界；禁止调用方回退 legacy 表。"""
         return self._scoped_knowledge_repo
+
+    @property
+    def bot_jargon(self):
+        """Bot 级广域黑话仓储；按 bot_id 归属，可被该 Bot 的所有群共享。"""
+        return self._bot_jargon
 
     @property
     def belief_repo(self) -> BeliefRepo:
@@ -282,20 +293,6 @@ class WaveMemoryDB:
     def delete_memory(self, memory_id):
         return self._memory_repo.delete_memory(memory_id)
 
-    def update_source(self, memory_id: int, new_source: str):
-        """更新记忆的 source 分类。"""
-        self.conn.execute("UPDATE memories SET source = ? WHERE id = ?", (new_source, memory_id))
-        self.conn.commit()
-
-    def get_stale_memories(self, source: str, last_accessed_before: float) -> list[int]:
-        """获取指定 source 中长时间未被访问的记忆 ID。"""
-        cutoff = time.time() - last_accessed_before
-        rows = self.conn.execute(
-            "SELECT id FROM memories WHERE source = ? AND (last_accessed IS NULL OR last_accessed < ?)",
-            (source, cutoff),
-        ).fetchall()
-        return [r[0] for r in rows]
-
     def delete_memories_by_source(self, source: str, older_than_seconds: float) -> int:
         """删除指定 source 中超过一定时间的记忆。返回删除数量。"""
         cutoff = time.time() - older_than_seconds
@@ -305,22 +302,6 @@ class WaveMemoryDB:
         )
         self.conn.commit()
         return cursor.rowcount
-
-    def mark_evicted(self, memory_id: int):
-        """标记记忆为已从索引中移除（保留 DB 数据）。"""
-        self.conn.execute(
-            "UPDATE memories SET memory_type = 'evicted' WHERE id = ?",
-            (memory_id,),
-        )
-        self.conn.commit()
-
-    def get_memory_ids_by_source(self, source: str) -> list[int]:
-        """获取指定 source 的所有记忆 ID（用于索引重建）。"""
-        rows = self.conn.execute(
-            "SELECT id FROM memories WHERE source = ? AND vector IS NOT NULL",
-            (source,),
-        ).fetchall()
-        return [r[0] for r in rows]
 
     def delete_memories(self, ids):
         return self._memory_repo.delete_memories(ids)
@@ -492,15 +473,6 @@ class WaveMemoryDB:
         ).fetchall()
         return [r[0] for r in rows]
 
-    def get_today_new_count(self) -> int:
-        import datetime
-        today_start = datetime.datetime.now().replace(
-            hour=0, minute=0, second=0, microsecond=0
-        ).timestamp()
-        return self.conn.execute(
-            "SELECT COUNT(*) FROM memories WHERE timestamp >= ?", (today_start,)
-        ).fetchone()[0]
-
     def list_memories(self, offset=0, limit=20, group_id=None, sender=None, from_ts=None, to_ts=None, search=None, has_tags=None, has_vector=None):
         conditions = []
         params = []
@@ -573,14 +545,6 @@ class WaveMemoryDB:
             "tags": [{"id": t[0], "name": t[1]} for t in tags],
         }
 
-    def get_memory_brief(self, memory_id):
-        row = self.conn.execute(
-            "SELECT id, content, sender_name, group_id, timestamp FROM memories WHERE id=?", (memory_id,)
-        ).fetchone()
-        if not row:
-            return None
-        return {"memory_id": row[0], "content": row[1][:200] if row[1] else "", "sender_name": row[2], "group_id": row[3], "timestamp": row[4]}
-
     def list_tags(self, offset=0, limit=50):
         total = self.conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0]
         rows = self.conn.execute(
@@ -590,42 +554,6 @@ class WaveMemoryDB:
         ).fetchall()
         items = [{"id": r[0], "name": r[1], "created_at": r[2], "has_vector": bool(r[3]), "memory_count": r[4]} for r in rows]
         return items, total
-
-    def get_tag_graph_data(self, max_nodes=200):
-        edge_rows = self.conn.execute("""
-            SELECT a.tag_id, b.tag_id, COUNT(*) as cnt
-            FROM memory_tags a JOIN memory_tags b ON a.memory_id = b.memory_id AND a.tag_id < b.tag_id
-            GROUP BY a.tag_id, b.tag_id ORDER BY cnt DESC LIMIT 500
-        """).fetchall()
-        edges = [{"from": r[0], "to": r[1], "value": r[2]} for r in edge_rows]
-        tag_ids_in_edges = set()
-        for r in edge_rows:
-            tag_ids_in_edges.add(r[0])
-            tag_ids_in_edges.add(r[1])
-        if tag_ids_in_edges:
-            limited_ids = list(tag_ids_in_edges)[:max_nodes]
-            placeholders = ",".join("?" * len(limited_ids))
-            tag_rows = self.conn.execute(
-                f"SELECT t.id, t.name, (SELECT COUNT(*) FROM memory_tags mt WHERE mt.tag_id = t.id) as mem_count FROM tags t WHERE t.id IN ({placeholders})",
-                limited_ids,
-            ).fetchall()
-        else:
-            tag_rows = []
-        nodes = [{"id": r[0], "label": r[1], "value": r[2]} for r in tag_rows]
-        return nodes, edges
-
-    def get_senders_list(self):
-        rows = self.conn.execute(
-            """SELECT sender_id,
-                    (SELECT sender_name FROM memories m2
-                     WHERE m2.sender_id = m.sender_id AND m2.sender_name IS NOT NULL AND m2.sender_name != ''
-                     ORDER BY m2.timestamp DESC LIMIT 1) as latest_name,
-                    COUNT(*) as cnt
-               FROM memories m
-               WHERE sender_id IS NOT NULL AND sender_id != '' AND sender_id != 'bot_self'
-               GROUP BY sender_id ORDER BY cnt DESC LIMIT 100"""
-        ).fetchall()
-        return [{"id": r[0], "name": r[1] or r[0], "count": r[2]} for r in rows]
 
     # ─── _sync_index_delete 委托 ───
     def _sync_index_delete(self, ids):
@@ -976,20 +904,8 @@ class WaveMemoryDB:
     def get_belief_by_id(self, belief_id):
         return self._belief_repo.get_belief_by_id(belief_id)
 
-    def reinforce_belief(self, belief_id, amount=0.05):
-        return self._belief_repo.reinforce(belief_id, amount)
-
-    def weaken_belief(self, belief_id, amount=0.1):
-        return self._belief_repo.weaken(belief_id, amount)
-
     def archive_belief(self, belief_id, reason=""):
         return self._belief_repo.archive(belief_id, reason)
-
-    def add_belief_source(self, belief_id, memory_id):
-        return self._belief_repo.add_source(belief_id, memory_id)
-
-    def search_beliefs(self, keywords, bot_id=None, limit=5):
-        return self._belief_repo.search_by_content(keywords, bot_id, limit)
 
     def belief_count(self, bot_id=None):
         return self._belief_repo.count(bot_id)

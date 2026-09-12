@@ -9,10 +9,20 @@ except ImportError:  # pragma: no cover
 
 try:
     from .belief_confidence import is_activation_eligible
-    from .belief_engine import approved_source_fact_ids, first_memory_id_from_facts
+    from .belief_engine import (
+        approved_source_fact_ids,
+        first_memory_id_from_episode,
+        first_memory_id_from_facts,
+        is_episode_backed,
+    )
 except ImportError:  # pragma: no cover
     from services.belief_confidence import is_activation_eligible
-    from services.belief_engine import approved_source_fact_ids, first_memory_id_from_facts
+    from services.belief_engine import (
+        approved_source_fact_ids,
+        first_memory_id_from_episode,
+        first_memory_id_from_facts,
+        is_episode_backed,
+    )
 
 
 class BeliefLifecycleService:
@@ -59,10 +69,15 @@ class BeliefLifecycleService:
             if candidate and relation not in {"", "new"}:
                 raise ValueError("candidate_relation_unsupported")
             fact_ids = approved_source_fact_ids(self.repository, scope, provenance.get("source_fact_ids"))
-            if len(fact_ids) < 2:
+            episode_backed = is_episode_backed(self.repository, scope, provenance)
+            # 双路准入：事实底座（≥2 条已批准事实）或 经历证据（≥2 条同 Scope 健康记忆）。
+            # 后者是冷启动路径——一条已批准事实都没有时，靠 Bot 亲历的经历也能升格。
+            if len(fact_ids) < 2 and not episode_backed:
                 raise ValueError("belief_facts_required")
             if not current.get("source_memory_id"):
                 memory_id = first_memory_id_from_facts(self.repository, scope, fact_ids)
+                if not memory_id:
+                    memory_id = first_memory_id_from_episode(self.repository, scope, provenance)
                 if not memory_id:
                     raise ValueError("belief_anchor_required")
                 current = dict(current)

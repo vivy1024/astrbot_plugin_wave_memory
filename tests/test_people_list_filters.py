@@ -12,7 +12,6 @@ def _load_filter():
         "_optional_float",
         "_optional_int",
         "_normalized_sort_order",
-        "_person_from_relationship",
         "_relationship_affinity",
         "_interaction_count",
         "_alias_count",

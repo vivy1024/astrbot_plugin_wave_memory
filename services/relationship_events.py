@@ -14,8 +14,6 @@ try:  # 兼容插件包导入和仓库测试直接导入
         HOSTILITY_WEIGHT,
         VALID_DIMENSIONS,
         VALID_EVENT_TYPES,
-        attitude_level,
-        compute_affinity,
         is_noisy_relationship_event,
     )
     from ..domain.scope import RuntimeScope, ScopeValidationError
@@ -26,8 +24,6 @@ except ImportError:  # pragma: no cover - 由仓库测试直接导入 services �
         HOSTILITY_WEIGHT,
         VALID_DIMENSIONS,
         VALID_EVENT_TYPES,
-        attitude_level,
-        compute_affinity,
         is_noisy_relationship_event,
     )
     from domain.scope import RuntimeScope, ScopeValidationError
@@ -43,16 +39,6 @@ DEFAULT_DIMS = {name: 0.0 for name in DIM_RANGES}
 
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
-
-
-def compute_affection(dims: dict[str, float]) -> int:
-    """Legacy-compatible alias for the single formal Affinity formula."""
-    return compute_affinity(dims)
-
-
-def get_attitude_level(affection: int) -> str:
-    """Legacy-compatible alias for the single formal attitude policy."""
-    return attitude_level(affection)
 
 
 def _project_group_subject_scope(scope: RuntimeScope) -> tuple[str, str, str]:

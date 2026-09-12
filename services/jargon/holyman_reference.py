@@ -245,6 +245,18 @@ class HolymanReference:
         # examples/corpus are evidence only. They may hint in context, but never confirm a match.
         return self._no_match(term)
 
+    def runtime_matchable_entries(self) -> dict[str, Any]:
+        """返回可参与运行时匹配的内置条目（供 WebUI 导入成 Bot 级广域黑话）。
+
+        过滤口径与 ``match_text`` 完全一致：只放行 ``_is_runtime_phrase`` 认可的
+        catchphrase 层条目。concepts / examples / corpus 永远不在这里。
+        """
+        return {
+            phrase: value
+            for phrase, value in self._phrases.items()
+            if self._is_runtime_phrase(phrase, value)
+        }
+
     def match_text(self, text: str, *, max_items: int | None = None) -> list[dict[str, Any]]:
         """Match curated runtime phrases explicitly present in a message.
 

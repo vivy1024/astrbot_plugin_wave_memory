@@ -409,6 +409,10 @@ COMMAND_SCOPE_MATRIX: Mapping[str, ScopeRequirement] = MappingProxyType({
     "jargon.mine": ScopeRequirement(("runtime",), ("group",)),
     "jargon.inject": ScopeRequirement(("runtime",), ("group",)),
     "jargon.manage": ScopeRequirement(("runtime",), ("group",)),
+    # 广域黑话提升由 group scope 进入（必须校验源黑话归属某个群），只取 bot_id 落库；
+    # Bot 级表的直管则明确声明为 bot_private——它不带 session，是 Bot 私有认知而非群会话资源。
+    "jargon.promote_global": ScopeRequirement(("runtime",), ("group",)),
+    "jargon.global.manage": ScopeRequirement(("runtime",), ("bot_private",)),
     "consolidation.run": ScopeRequirement(("runtime",), ("group",)),
     "fact.read": ScopeRequirement(("runtime",), ("group",)),
     "fact.write": ScopeRequirement(("runtime",), ("group",)),
@@ -424,6 +428,8 @@ COMMAND_SCOPE_MATRIX: Mapping[str, ScopeRequirement] = MappingProxyType({
     "belief.extract": ScopeRequirement(("runtime",), ("group",)),
     "belief.inject": ScopeRequirement(("runtime",), ("group",)),
     "persona.inject": ScopeRequirement(("runtime",), ("group",)),
+    # 可选风格人格包：与 persona.inject 同为群会话内的注入，默认关闭由通道配置决定。
+    "holyman_persona.inject": ScopeRequirement(("runtime",), ("group",)),
     "affinity.update": ScopeRequirement(("runtime",), ("group",), subject_required=True),
     "social_impression.record": ScopeRequirement(("runtime",), ("group",), subject_required=True),
     "social_anchor.note": ScopeRequirement(("runtime",), ("group",), subject_required=True),

@@ -21,14 +21,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "_conf_schema.json"
 
-# 允许「只定义、代码不读」的键：出于旧 config.json 兼容必须保留，
-# 但功能已废弃。新增条目必须写明原因。
-LEGACY_ONLY_KEYS = {
-    ("Lifecycle_Settings", "enable_consolidation"),
-    ("Lifecycle_Settings", "consolidation_interval_hours"),
-    ("Lifecycle_Settings", "consolidation_topic_backfill"),
-    ("Tag_Settings", "consolidation_skip_topics"),
-}
+# 允许「只定义、代码不读」的键。当前为空：已废弃的键必须从 schema 删除，
+# 而不是留在 schema 里靠前端隐藏（AstrBot 不会因 config.json 多出未知键而拒绝启动）。
+LEGACY_ONLY_KEYS: set[tuple[str, str]] = set()
 
 # 纯说明项，不是配置。
 DOC_ONLY_KEYS = {"_system_status"}

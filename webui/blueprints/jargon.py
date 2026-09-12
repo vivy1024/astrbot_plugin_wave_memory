@@ -112,18 +112,28 @@ def _normalize_holyman_phrase(word: str, value) -> dict:
         "layer": layer,
         "reference_only": reference_only,
         "runtime_match": runtime_match,
-        "is_activated": False,
+        # 内置条目默认启用；覆盖层里的 inactive/manual_deleted 会把它翻成 False。
+        "is_activated": runtime_match,
         "db_id": None,
         "custom_meaning": None,
     }
 
 
 def _merge_holyman_db_activation(item: dict, db_item: dict | None) -> dict:
+    """用 bot_jargon 覆盖层修正启用状态与自定义释义。
+
+    没有覆盖行 = 继承内置默认（启用）。``inactive`` / ``manual_deleted`` 表示用户已停用或
+    移除，此时不得再报告为「已启用」——这正是过去那个开关失效的地方。
+    """
     if not db_item:
         return item
-    meaning = str(db_item.get("meaning") or "")
-    item["is_activated"] = True
     item["db_id"] = db_item.get("id")
+    status = str(db_item.get("status") or "")
+    if status in {"inactive", "deleted"}:
+        item["is_activated"] = False
+        return item
+    item["is_activated"] = True
+    meaning = str(db_item.get("meaning") or "")
     if is_generic_meaning(meaning) or len(meaning.strip()) < 8:
         return item
     item.update({
@@ -1130,6 +1140,161 @@ async def toggle_global(jargon_id: int):
     """旧 jargon 全局状态切换绕过 scoped review 命令，永久禁用。"""
     return _scope_error("legacy_mutation_disabled", 410)
 
+
+# ─── 广域（Bot 级）黑话 ───
+# 与 legacy toggle_global 无关：这里操作的是 bot_jargon 表（只按 bot_id 归属），
+# 而不是把某条群黑话的 legacy scope 字段改成 global。
+
+def _bot_private_scope_from_query() -> RuntimeScope:
+    """广域黑话只按 Bot 归属，不需要也不接受 session。
+
+    bot_private 按定义不带 session（见 domain/scope.py 的 RuntimeScope 校验），因此这里
+    不能复用 _group_scope_from_query。
+    """
+    bot_id = str(request.args.get("bot_id") or "").strip()
+    if not bot_id:
+        raise ScopedKnowledgeScopeError("bot_scope_required")
+    return RuntimeScope(bot_id, "bot_private", None)
+
+
+def _bot_id_from_envelope(body: dict) -> str:
+    scope = body.get("scope")
+    if scope is None:
+        raise ScopedKnowledgeScopeError("scope_required")
+    decoded = ScopeCodec.from_dict(scope)
+    if not isinstance(decoded, RuntimeScope) or decoded.visibility != "bot_private" or decoded.session is not None:
+        raise ScopedKnowledgeScopeError("bot_private_scope_required")
+    return decoded.bot_id
+
+
+def _global_jargon_service():
+    service = getattr(get_container(), "jargon_service", None)
+    if service is None:
+        raise ScopedKnowledgeScopeError("jargon_service_unavailable")
+    return service
+
+
+@jargon_bp.route("/global", methods=["GET"])
+@require_auth
+async def list_global_jargon():
+    """列出该 Bot 的广域黑话（可被所有群共享）。"""
+    try:
+        bot_scope = _bot_private_scope_from_query()
+        status = (request.args.get("status") or "").strip() or None
+        if status is not None and status not in {"active", "inactive"}:
+            raise ValueError("invalid_status")
+        service = _global_jargon_service()
+        rows = [
+            {
+                "id": row.get("id"), "word": row.get("word"), "meaning": row.get("meaning"),
+                "status": row.get("status"), "source": row.get("source"),
+                "confidence": row.get("confidence"), "origin_scope": row.get("origin_scope"),
+                "reference_key": row.get("reference_key"), "updated_at": row.get("updated_at"),
+            }
+            for row in service.list_global_jargon(bot_scope.bot_id, status=status, limit=500)
+        ]
+        payload = page_response(rows, total=len(rows), limit=max(1, len(rows)), offset=0)
+        payload["bot_id"] = bot_scope.bot_id
+        payload["capabilities"] = {
+            "create": {"available": True, "reason_code": None, "command": "/api/jargon/commands/global/upsert"},
+            "update": {"available": True, "reason_code": None, "command": "/api/jargon/commands/global/upsert"},
+            "status": {"available": True, "reason_code": None, "command": "/api/jargon/commands/global/status"},
+            "delete": {"available": True, "reason_code": None, "command": "/api/jargon/commands/global/delete"},
+        }
+        return jsonify(payload)
+    except (ScopeValidationError, ScopedKnowledgeScopeError, TypeError, ValueError) as exc:
+        return _scope_failure(exc)
+
+
+@jargon_bp.route("/commands/global/upsert", methods=["POST"])
+@require_auth
+async def upsert_global_jargon():
+    """手工新增或编辑一条广域黑话。"""
+    body = await request.get_json(silent=True) or {}
+    try:
+        bot_id = _bot_id_from_envelope(body)
+        result = _global_jargon_service().upsert_global_jargon(
+            bot_id,
+            word=str(body.get("word") or ""),
+            meaning=str(body.get("meaning") or ""),
+            status=str(body.get("status") or "active"),
+            confidence=float(body.get("confidence") or 0.0),
+        )
+        return jsonify(mutation_response(
+            operation_kind="jargon.global.upsert", status="succeeded",
+            revision=None, item=result, include_item=True,
+        ))
+    except (ScopeValidationError, ScopedKnowledgeScopeError, TypeError, ValueError) as exc:
+        return _scope_failure(exc)
+
+
+@jargon_bp.route("/commands/global/status", methods=["POST"])
+@require_auth
+async def set_global_jargon_status():
+    """启用/停用一条广域黑话（停用后不再参与注入）。"""
+    body = await request.get_json(silent=True) or {}
+    try:
+        bot_id = _bot_id_from_envelope(body)
+        status = str(body.get("status") or "").strip()
+        if status not in {"active", "inactive"}:
+            raise ValueError("invalid_status")
+        result = _global_jargon_service().set_global_jargon_status(
+            bot_id, word=str(body.get("word") or ""), status=status,
+        )
+        return jsonify(mutation_response(
+            operation_kind="jargon.global.status", status="succeeded",
+            revision=None, item=result, include_item=True,
+        ))
+    except LookupError:
+        return _scope_error("scoped_object_not_found", 404)
+    except (ScopeValidationError, ScopedKnowledgeScopeError, TypeError, ValueError) as exc:
+        return _scope_failure(exc)
+
+
+@jargon_bp.route("/commands/global/delete", methods=["POST"])
+@require_auth
+async def delete_global_jargon():
+    """移除一条广域黑话；默认留墓碑，避免下次从内置资产导入时复活。"""
+    body = await request.get_json(silent=True) or {}
+    try:
+        bot_id = _bot_id_from_envelope(body)
+        result = _global_jargon_service().delete_global_jargon(bot_id, word=str(body.get("word") or ""))
+        return jsonify(mutation_response(
+            operation_kind="jargon.global.delete", status="succeeded",
+            revision=None, item=result, include_item=True,
+        ))
+    except LookupError:
+        return _scope_error("scoped_object_not_found", 404)
+    except (ScopeValidationError, ScopedKnowledgeScopeError, TypeError, ValueError) as exc:
+        return _scope_failure(exc)
+
+
+@jargon_bp.route("/commands/<int:jargon_id>/promote", methods=["POST"])
+@require_auth
+async def promote_jargon_to_global(jargon_id: int):
+    """把本群一条已生效黑话提升为该 Bot 的广域黑话。"""
+    body = await request.get_json(silent=True) or {}
+    try:
+        scope = _scope_from_envelope(body)
+        container = get_container()
+        repo = _scoped_repo(container)
+        current = _find_scoped_jargon(repo, scope, jargon_id)
+        _require_object_ref(body, kind="jargon", locator=jargon_id, scope=scope, item=current)
+        service = getattr(container, "jargon_service", None)
+        promote = getattr(service, "promote_to_global", None)
+        if not callable(promote):
+            return _scope_error("jargon_global_command_unavailable", 503)
+        result = promote(scope, jargon_id)
+        return jsonify(mutation_response(
+            operation_kind="jargon.promote_global", status="succeeded",
+            revision=None, item=result, include_item=True,
+        ))
+    except LookupError:
+        return _scope_error("scoped_object_not_found", 404)
+    except (ScopeValidationError, ScopedKnowledgeScopeError, TypeError, ValueError) as exc:
+        return _scope_failure(exc)
+
+
 def _fetch_github_commit_info_sync() -> str:
     """同步阻塞式获取远程最新提交的版本哈希；将被托付给外部线程池。"""
     try:
@@ -1301,15 +1466,24 @@ async def get_holyman():
         except Exception:
             pass
             
-    # 2. 查询数据库中已激活的条目 (增加 c.db 非空安全卫士防御，防止早期请求崩溃)
-    db_items = {}
-    if c.db and hasattr(c.db, "conn") and c.db.conn and _table_exists(c.db.conn, "jargon"):
+    # 2. 读取真实的启用覆盖层。内置口癖默认启用，只有 bot_jargon 里显式的 inactive
+    #    或 manual_deleted 才算停用——legacy jargon 表已经不是这条链路的存储。
+    db_items: dict[str, dict] = {}
+    bot_repo = getattr(c.db, "bot_jargon", None)
+    try:
+        bot_id = (request.args.get("bot_id") or "").strip()
+    except RuntimeError:
+        # 聚焦测试/脚本可能在没有请求上下文时直接调用本函数。
+        bot_id = ""
+    if bot_repo is not None and bot_id:
         try:
-            rows = c.db.conn.execute(
-                "SELECT id, word, meaning, status FROM jargon WHERE scope = 'global' AND source = 'holyman_skills' AND is_jargon = 1 AND status = 'confirmed'"
-            ).fetchall()
-            for r in rows:
-                db_items[r[1]] = {"id": r[0], "meaning": r[2], "status": r[3]}
+            for row in bot_repo.list_bot_jargon(bot_id, limit=500):
+                if row.get("source") == "manual_deleted":
+                    db_items[str(row.get("word"))] = {"id": row.get("id"), "meaning": "", "status": "deleted"}
+                    continue
+                db_items[str(row.get("word"))] = {
+                    "id": row.get("id"), "meaning": row.get("meaning"), "status": row.get("status"),
+                }
         except Exception:
             pass
             

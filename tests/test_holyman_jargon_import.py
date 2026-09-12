@@ -437,6 +437,33 @@ class HolymanJargonImportTest(unittest.TestCase):
         self.assertIsNone(item["custom_meaning"])
         self.assertIn("索要 50", item["meaning"])
 
+    def test_holyman_phrase_defaults_to_activated_and_respects_disable(self):
+        """修复的开关：无覆盖行=默认启用；inactive/manual_deleted 必须报告为未启用。"""
+        from webui.blueprints.jargon import _normalize_holyman_phrase, _merge_holyman_db_activation
+
+        payload = {"meaning": "长篇铺垫后突然索要 50 元，制造荒诞转折。", "layer": "catchphrase", "runtime_match": True}
+
+        default_item = _normalize_holyman_phrase("v我50", payload)
+        self.assertTrue(default_item["is_activated"])
+
+        disabled = _normalize_holyman_phrase("v我50", payload)
+        _merge_holyman_db_activation(disabled, {"id": 7, "meaning": "", "status": "inactive"})
+        self.assertFalse(disabled["is_activated"])
+
+        removed = _normalize_holyman_phrase("v我50", payload)
+        _merge_holyman_db_activation(removed, {"id": 8, "meaning": "", "status": "deleted"})
+        self.assertFalse(removed["is_activated"])
+
+    def test_get_holyman_reads_activation_from_bot_jargon_not_legacy_table(self):
+        """启用状态必须来自 bot_jargon 覆盖层；legacy jargon 表不再是这条链路的存储。"""
+        import inspect
+
+        from webui.blueprints import jargon
+
+        source = inspect.getsource(jargon.get_holyman)
+        self.assertNotIn("FROM jargon WHERE scope = 'global'", source)
+        self.assertIn("bot_jargon", source)
+
     def test_holyman_candidate_batch_review_word_fallback_is_fail_closed(self):
         from webui.blueprints.jargon import _review_holyman_candidate_ids
 

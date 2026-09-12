@@ -30,7 +30,7 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { validateNumericDraft } from '@/lib/numeric-draft'
 import { changedPayload } from '@/pages/settings/settings-state'
-import { groupMeta, isHiddenItem, isHiddenSection, matchesSearch } from '@/pages/settings/settings-groups'
+import { groupMeta, isHiddenSection, matchesSearch } from '@/pages/settings/settings-groups'
 
 function cloneGroups(groups: ConfigGroup[]): ConfigGroup[] {
   return typeof structuredClone === 'function'
@@ -364,7 +364,7 @@ export function SettingsPage() {
     return schemaGroups.filter((group) => !isHiddenSection(group.key)).map((group) => {
       const meta = groupMeta(group.key)
       const allItems = group.kind === 'object'
-        ? (group.items ?? []).filter((item) => !isHiddenItem(group.key, item.key))
+        ? (group.items ?? [])
         : []
       if (!matchesSearch(meta, group.key, group, allItems, term)) return null
       if (searching) return group

@@ -64,10 +64,8 @@ class PersonaChannel:
         self,
         *,
         composer: Any = None,
-        persona_evolution: Any = None,
     ):
         self.composer = composer
-        self.persona_evolution = persona_evolution
 
     async def build(self, ctx: Any) -> InjectionResult:
         started = time.perf_counter()
@@ -148,30 +146,8 @@ class PersonaChannel:
                     "source": "PersonaComposer.experience_block",
                     "source_ids": list(debug.get("experience_ids", []) or []),
                 })
-            # Speaker statistics come from scope-keyed tables only and need no LLM,
-            # so they survive summary/provider outages.
-            speaker = str(payload.get("speaker_block") or "").strip()
-            if speaker:
-                candidates.append({
-                    "block": "speaker_profile",
-                    "text": speaker,
-                    "source": "PersonaComposer.speaker_block",
-                    "source_ids": list(debug.get("speaker_sources", []) or []),
-                })
 
-        user_persona = self._build_user_persona(ctx)
-        if user_persona:
-            candidates.append(user_persona)
         return candidates
-
-    def _build_user_persona(self, ctx: Any) -> dict[str, Any] | None:
-        """Do not inject the unmigrated legacy PersonaEvolution read-model.
-
-        It aggregates global profiles and legacy facts by bare IDs.  A future
-        scoped social read-model may replace this branch, but current formal
-        injection must fail closed rather than re-derive a person scope.
-        """
-        return None
 
     @staticmethod
     def _filter_and_budget(

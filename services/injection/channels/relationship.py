@@ -218,20 +218,34 @@ class RelationshipChannel:
             )
             if energy_line and not is_identity_contamination(energy_line):
                 impression_block.append(energy_line)
+            parts = list(impression_block)
+            # 好感度不分群：汇总该用户在所有群的积累，作为对该用户的统一态度。
+            # 记忆与印象时间线本就跨群，关系再按群拆分会让 bot 对不同群里的同一个人
+            # 有 N 份互相矛盾的态度，不符合真人对人的认知方式。
+            relation_state = relationship.get("state") or "unknown"
+            relation_affinity = relationship.get("affinity")
+            aggregate: Mapping[str, Any] = {}
+            if sender_id:
+                aggregate = self._relationship_totals(scope, sender_id)
+            merged_dimensions = _mapping(aggregate.get("merged_dimensions")) if aggregate else {}
+            if merged_dimensions:
+                relation_affinity = aggregate.get("merged_affinity")
+                relation_state = aggregate.get("merged_state") or relation_state
             labels = []
             for name in ("familiarity", "trust", "fun", "depth", "hostility"):
-                item = _mapping(values.get(name))
-                value = item.get("effective_value", dimensions.get(name))
+                value = merged_dimensions.get(name)
+                if value is None:
+                    item = _mapping(values.get(name))
+                    value = item.get("effective_value", dimensions.get(name))
                 if value is not None:
                     labels.append(f"{name}={round(float(value), 1)}")
-            parts = list(impression_block)
             status = (
                 "[当前关系状态：仅用于调整对当前用户的自然回应，不代表必须改变事实或主动提及关系] "
-                f"态度={relationship.get('state') or 'unknown'}，综合值={relationship.get('affinity')}"
+                f"态度={relation_state}，综合值={relation_affinity}"
             )
             if labels:
                 status += "；" + "、".join(labels)
-            if relationship.get("affinity") is not None:
+            if relation_affinity is not None:
                 parts.append(status)
             if not any(line.startswith("最近关系线索：") or line.startswith("印象时间线") for line in impression_block):
                 try:
@@ -306,6 +320,25 @@ class RelationshipChannel:
             result = InjectionResult.error_result(self.name, exc)
             result.latency_ms = self._latency_ms(started)
             return result
+
+    def _relationship_totals(self, scope: Any, sender_id: str) -> dict[str, Any]:
+        """汇总该用户在所有群的关系积累；不可用时返回空 dict。
+
+        好感度不分群，因此这里拿到的是同一个人跨全部群的合并结果，不是「其他群的补充」。
+        """
+        summarizer = getattr(self.repository, "summarize_cross_group_relationship", None)
+        if not callable(summarizer) or not sender_id:
+            return {}
+        subject = getattr(scope, "subject_principal_id", None)
+        if not subject:
+            return {}
+        try:
+            data = summarizer(scope, subject_principal_id=subject)
+        except Exception:
+            return {}
+        if not isinstance(data, Mapping) or not data.get("available"):
+            return {}
+        return dict(data)
 
     @staticmethod
     def _latency_ms(started: float) -> float:

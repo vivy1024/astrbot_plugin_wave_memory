@@ -187,42 +187,6 @@ class HolymanSyncService:
     def _parse_examples(self, fetched: dict[str, str], phrases: dict[str, Any]) -> list[dict[str, Any]]:
         return parse_examples(fetched, phrases)
 
-    def _parse_markdown_phrases(self, text: str, source_name: str, phrases: dict) -> None:
-        if source_name in {"README.md", "神人.skill/_meta/sources.md"}:
-            return
-        from .holyman_assets import add_phrase
-        category = {
-            "神人.skill/SKILL.md": "skill-core",
-            "神人.skill/_knowledge/gaming.md": "gaming",
-            "神人.skill/_knowledge/internet-culture.md": "internet-culture",
-            "神人.skill/_persona/communication.md": "communication",
-            "神人.skill/_persona/rules.md": "rules",
-            "神人.skill/_persona/values.md": "values",
-            "神人.skill/_quotes/iconic.md": "iconic-quotes",
-            "神人.skill/_quotes/internal.md": "internal-quotes",
-        }.get(source_name, "unknown")
-        colon_pattern = re.compile(r"^\s*(?:[-*]\s*)?(?:\d+[.、]\s*)?(?:\*\*)?([^*：:]{2,50})(?:\*\*)?\s*[:：]\s*(.{2,})$")
-        quote_pattern = re.compile(r"[\"“「『]([^\"”」』]{2,40})[\"”」』]")
-        for raw in (text or "").splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            match = colon_pattern.match(line)
-            if match:
-                kind = "bold_term" if "**" in line else "colon_term"
-                add_phrase(phrases, match.group(1), match.group(2), category=category, source=source_name, kind=kind)
-            for quote in quote_pattern.findall(line):
-                if quote == "v我50":
-                    continue
-                phrases.setdefault(quote, {
-                    "meaning": f"Holyman-skills《{source_name}》中的典型语录/表达样本。仅作为理解参考。",
-                    "category": category,
-                    "source": source_name,
-                    "kind": "quote_term",
-                    "confidence": 0.6,
-                    "safety_level": "safe_reference",
-                })
-
     def _parse_corpus(self, corpus_data: str, phrases: dict | None = None) -> list[dict[str, Any]]:
         corpus = parse_corpus(corpus_data)
         if phrases is not None:
@@ -239,13 +203,6 @@ class HolymanSyncService:
                             "safety_level": "safe_reference",
                         })
         return corpus
-
-    def _merge_phrases_for_save(self, existing_phrases: dict, parsed_phrases: dict) -> dict:
-        if isinstance(parsed_phrases, dict) and len(content_entries(parsed_phrases)) >= 50:
-            return dict(content_entries(parsed_phrases))
-        merged = dict(content_entries(existing_phrases or {}))
-        merged.update(content_entries(parsed_phrases or {}))
-        return merged
 
     def _generate_candidates(self, corpus: list[Any], phrases: dict[str, Any]) -> list[dict[str, Any]]:
         return generate_candidates(corpus, phrases, DEFAULT_BLOCKED)

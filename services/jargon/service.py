@@ -63,6 +63,10 @@ class JargonService:
             max_inject=int(self._config.get("max_inject", 3)),
             holyman_reference=self._holyman,
             blocklist_checker=blocklist_checker,
+            global_limit=int(self._config.get(
+                "global_max_inject",
+                int(self._config.get("bot_global_max_inject", 3)) + int(self._config.get("reference_max_inject", 3)),
+            )),
         )
         self._last_mine: Dict[tuple[str, str, str], float] = {}
         self._msg_count: Dict[tuple[str, str, str], int] = {}
@@ -336,6 +340,206 @@ class JargonService:
             provenance=provenance,
         )
         return {"id": int(jargon_id), "status": "archived", "scope": scope}
+
+    # ─── 广域（Bot 级）黑话 ───
+    # 群级 scoped_jargon 只能被本群看到；这里的方法读写 bot_jargon，供该 Bot 的所有群共享。
+
+    def _bot_jargon_repo(self) -> Any:
+        repo = getattr(self._db, "bot_jargon", None)
+        if repo is None:
+            raise ValueError("bot_jargon_repository_unavailable")
+        return repo
+
+    def promote_to_global(self, runtime_scope: RuntimeScope, jargon_id: int) -> dict[str, Any]:
+        """把本群一条已生效黑话提升为该 Bot 的广域黑话。
+
+        只接受 ``status='confirmed'``：未生效（pending/rejected/archived）的候选不该被
+        扩散到所有群。提升是幂等 upsert，重复点击不会产生重复行。
+        """
+        scope = self._group_scope(runtime_scope)
+        if scope is None or not self._repository_available():
+            raise ValueError("jargon_promote_command_unavailable")
+        current = next(
+            (row for row in self._repo.list_scoped_jargon(scope, limit=10000) if int(row.get("id", -1)) == int(jargon_id)),
+            None,
+        )
+        if current is None:
+            raise LookupError("scoped_object_not_found")
+        word = normalize_jargon_word(current.get("word") or "")
+        if not word:
+            raise ValueError("invalid_jargon_word")
+        meaning = str(current.get("meaning") or "").strip()
+        if current.get("status") != "confirmed":
+            raise ValueError("jargon_not_confirmed")
+        if not meaning:
+            raise ValueError("jargon_meaning_required")
+        if self._is_globally_blocked(word):
+            raise ValueError("jargon_globally_blocked")
+        repo = self._bot_jargon_repo()
+        repo.upsert_bot_jargon(
+            scope.bot_id,
+            word=word,
+            meaning=meaning,
+            status="active",
+            source="promoted",
+            confidence=float(current.get("confidence") or 0.0),
+            origin_scope=scope.session.id if scope.session else None,
+            provenance={"promoted_from_scope": scope.session.id if scope.session else None, "promoted_by": "webui"},
+        )
+        return {"word": word, "status": "active", "source": "promoted", "bot_id": scope.bot_id}
+
+    def list_global_jargon(self, bot_id: str, *, status: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        """列出该 Bot 的广域黑话：内置资产条目 + Bot 级覆盖层合并后的完整视图。
+
+        内置可匹配口癖默认启用（无覆盖行即 ``active``），停用/自定义释义/群内提升统一
+        落 ``bot_jargon``。返回顺序与注入优先级一致：Bot 级覆盖层在前，内置资产在后。
+        """
+        repo = self._bot_jargon_repo()
+        rows = repo.list_bot_jargon(bot_id, limit=max(1, min(int(limit) or 1, 500)))
+        overrides: dict[str, dict[str, Any]] = {}
+        tombstoned: set[str] = set()
+        for row in rows:
+            word = normalize_jargon_word(row.get("word"))
+            if not word:
+                continue
+            if row.get("source") == "manual_deleted":
+                tombstoned.add(word)
+                continue
+            overrides[word] = row
+
+        items: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for word, row in overrides.items():
+            seen.add(word)
+            items.append({
+                "id": row.get("id"),
+                "word": row.get("word"),
+                "meaning": str(row.get("meaning") or ""),
+                "status": str(row.get("status") or "active"),
+                "source": str(row.get("source") or "manual"),
+                "confidence": row.get("confidence"),
+                "origin_scope": row.get("origin_scope"),
+                "reference_key": row.get("reference_key"),
+                "updated_at": row.get("updated_at"),
+                "is_builtin": False,
+            })
+
+        for word, payload in self._holyman.runtime_matchable_entries().items():
+            normalized = normalize_jargon_word(word)
+            # 有覆盖行（含已停用/已删除）的同词条目已在上面处理，此处只剩「默认启用」的内置条目。
+            if not normalized or normalized in seen or normalized in tombstoned:
+                continue
+            if not self._holyman_is_matchable(word):
+                continue
+            seen.add(normalized)
+            payload = payload if isinstance(payload, dict) else {"meaning": str(payload or "")}
+            items.append({
+                "id": None,
+                "word": normalized,
+                "meaning": str(payload.get("meaning") or payload.get("explanation") or "").strip(),
+                "status": "active",
+                "source": "holyman_skills",
+                "confidence": payload.get("confidence"),
+                "origin_scope": None,
+                "reference_key": word,
+                "updated_at": None,
+                "is_builtin": True,
+            })
+
+        if status is not None:
+            items = [item for item in items if item["status"] == status]
+        return items
+
+    def _holyman_is_matchable(self, word: str) -> bool:
+        checker = getattr(self._holyman, "_is_matchable_phrase", None)
+        if not callable(checker):
+            return True
+        try:
+            return bool(checker(word))
+        except Exception:
+            return True
+
+    def upsert_global_jargon(
+        self,
+        bot_id: str,
+        *,
+        word: str,
+        meaning: str,
+        status: str = "active",
+        confidence: float = 0.0,
+    ) -> dict[str, Any]:
+        """WebUI 手工新增/编辑广域黑话。
+
+        以 ``source='manual'`` 覆盖写入，顺带解掉删除墓碑（``manual_deleted``）——否则
+        用户重新添加同一个词时会看到它依然不生效。
+        """
+        word = normalize_jargon_word(word)
+        if not word:
+            raise ValueError("invalid_jargon_word")
+        meaning = str(meaning or "").strip()
+        if not meaning:
+            raise ValueError("jargon_meaning_required")
+        if self._is_globally_blocked(word):
+            raise ValueError("jargon_globally_blocked")
+        self._bot_jargon_repo().upsert_bot_jargon(
+            bot_id, word=word, meaning=meaning, status=status,
+            source="manual", confidence=confidence, provenance={"edited_by": "webui"},
+        )
+        return {"word": word, "status": status, "source": "manual", "bot_id": bot_id}
+
+    def set_global_jargon_status(self, bot_id: str, *, word: str, status: str) -> dict[str, Any]:
+        """启用/停用一条广域黑话。
+
+        内置资产条目默认启用且没有覆盖行，因此停用它们时要先落一条 enabled↔disabled 的
+        覆盖行；停用保留内置释义（便于一键恢复），启用则清掉墓碑让它真正回到注入集合。
+        """
+        normalized = normalize_jargon_word(word)
+        if not normalized:
+            raise ValueError("invalid_jargon_word")
+        repo = self._bot_jargon_repo()
+        current = repo.find_bot_jargon(bot_id, word=normalized)
+        if current is not None and current.get("source") != "manual_deleted":
+            return repo.set_bot_jargon_status(bot_id, word=normalized, status=status)
+        if normalized not in self._builtin_meanings():
+            raise LookupError("scoped_object_not_found")
+        if normalized in self._builtin_meanings() and current is None:
+            repo.upsert_bot_jargon(
+                bot_id, word=normalized, meaning="", status=status, source="manual",
+                provenance={"overlay": "builtin_toggle"},
+            )
+            return {"id": None, "word": normalized, "status": status, "bot_id": bot_id, "is_builtin": True}
+        return repo.set_bot_jargon_status(bot_id, word=normalized, status=status)
+
+    def delete_global_jargon(self, bot_id: str, *, word: str) -> dict[str, Any]:
+        """移除一条广域黑话。
+
+        内置资产条目不能物理删除（下次启动就会重新出现），因此对内置词只落一条墓碑行，
+        让「移除」在注入层真正生效且不被资产重新复活。
+        """
+        normalized = normalize_jargon_word(word)
+        if not normalized:
+            raise ValueError("invalid_jargon_word")
+        repo = self._bot_jargon_repo()
+        current = repo.find_bot_jargon(bot_id, word=normalized)
+        if current is not None:
+            return repo.delete_bot_jargon(bot_id, word=normalized)
+        if normalized not in self._builtin_meanings():
+            raise LookupError("scoped_object_not_found")
+        repo.upsert_bot_jargon(
+            bot_id, word=normalized, meaning="", status="inactive", source="manual",
+            provenance={"overlay": "builtin_delete"},
+        )
+        return repo.delete_bot_jargon(bot_id, word=normalized)
+
+    def _builtin_meanings(self) -> dict[str, str]:
+        result: dict[str, str] = {}
+        for word, payload in self._holyman.runtime_matchable_entries().items():
+            normalized = normalize_jargon_word(word)
+            if not normalized or not self._holyman_is_matchable(word):
+                continue
+            payload = payload if isinstance(payload, dict) else {"meaning": str(payload or "")}
+            result[normalized] = str(payload.get("meaning") or payload.get("explanation") or "").strip()
+        return result
 
     def get_injection(self, text: str, runtime_scope: RuntimeScope | None) -> str:
         if not self._enabled or self._group_scope(runtime_scope) is None:

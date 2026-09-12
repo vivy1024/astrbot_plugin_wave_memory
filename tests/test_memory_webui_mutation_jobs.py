@@ -537,3 +537,39 @@ async def test_legacy_batch_ids_receive_stable_migration_error(monkeypatch):
 
     assert status == 410
     assert payload["error"]["code"] == "memory_object_ref_migration_required"
+
+
+# ── 回归守卫：WebUI 记忆作业 kind 必须有生产 handler ──
+# 这两个 kind 由 webui/blueprints/memories.py 的 re_embed_memory / batch_re_embed 入队；
+# 若 main.py 不把 MemoryDurableJobHandlers 合并进 DurableJobRunner，作业会以
+# job_handler_missing 直接失败（durable_jobs.py 找不到 handler 即 mark_failed）。
+
+
+def test_memory_job_kinds_are_registered_in_main_runner():
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1] / "main.py"
+    text = source.read_text(encoding="utf-8")
+
+    assert "MemoryDurableJobHandlers" in text, "记忆作业 handler 必须接入生产 runner"
+    assert "maintenance_handlers.update(" in text
+
+
+def test_memory_job_kinds_match_webui_enqueue_sites():
+    """入队点使用的 kind 必须落在 handler 覆盖范围内，否则作业永远失败。"""
+    from pathlib import Path
+
+    memories_src = (
+        Path(__file__).resolve().parents[1] / "webui" / "blueprints" / "memories.py"
+    ).read_text(encoding="utf-8")
+    provided = set(MemoryDurableJobHandlers.REEMBED_KINDS) | {
+        MemoryDurableJobHandlers.TAG_KIND
+    }
+
+    for kind in MemoryDurableJobHandlers.REEMBED_KINDS:
+        assert f'kind="{kind}"' in memories_src, f"{kind} 应仍由记忆端点入队"
+    assert provided == {
+        "memory.reembed.v1",
+        "memory.batch.reembed.v1",
+        "memory.batch.extract_tags.v1",
+    }

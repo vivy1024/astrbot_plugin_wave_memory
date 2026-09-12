@@ -20,6 +20,7 @@ try:
     from .jargon import jargon_bp
     from .kg import kg_bp
     from .knowledge import knowledge_bp
+    from .facts import facts_bp
     from .options import options_bp
     from .people import people_bp
     from .maintenance import maintenance_bp
@@ -44,7 +45,7 @@ except Exception:  # pragma: no cover - 本地单测未安装 Quart 时只导入
         pass
 
     auth_bp = pages_bp = explore_bp = memories_bp = tags_bp = tag_graph_bp = config_bp = system_bp = None
-    beliefs_bp = soul_bp = jargon_bp = kg_bp = knowledge_bp = options_bp = people_bp = maintenance_bp = injection_observatory_bp = channel_config_bp = agent_feedback_bp = compatibility_bp = None
+    beliefs_bp = soul_bp = jargon_bp = kg_bp = knowledge_bp = facts_bp = options_bp = people_bp = maintenance_bp = injection_observatory_bp = channel_config_bp = agent_feedback_bp = compatibility_bp = None
 
 
 def get_blueprints() -> List[Blueprint]:
@@ -64,6 +65,7 @@ def get_blueprints() -> List[Blueprint]:
             jargon_bp,
             kg_bp,
             knowledge_bp,
+            facts_bp,
             people_bp,
             options_bp,
             maintenance_bp,

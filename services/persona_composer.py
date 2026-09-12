@@ -28,46 +28,6 @@ from .identity_safety import is_identity_contamination
 _EXPERIENCE_STYLE_CONTAMINATION_RE = re.compile(r"(猫耳|猫耳朵|兽耳|尾巴|小爪子|飞机耳|本真君|小鱼干|灵鱼干|喵)")
 
 
-def default_recall_sources() -> list[str]:
-    """Sources for ordinary memory recall; lived bzz sources are composer-owned."""
-    return ["core", "evolution", "experience", "lore", "book_lore"]
-
-
-def build_layered_injection_parts(
-    *,
-    self_persona_text: str = "",
-    belief_text: str = "",
-    self_experience_text: str = "",
-    persona_text: str = "",
-    timeline_text: str = "",
-    facts_text: str = "",
-    lore_text: str = "",
-    concern_summary: str = "",
-    mood_text: str = "",
-    mood_traj_text: str = "",
-    jargon_text: str = "",
-    fewshot_text: str = "",
-    memories_text: str = "",
-) -> list[str]:
-    """Return prompt blocks in persona-first order."""
-    ordered = [
-        self_persona_text,
-        belief_text,
-        self_experience_text,
-        persona_text,
-        timeline_text,
-        facts_text,
-        lore_text,
-        concern_summary,
-        mood_text,
-        mood_traj_text,
-        jargon_text,
-        fewshot_text,
-        memories_text,
-    ]
-    return [part for part in ordered if part]
-
-
 class PersonaComposer:
     """Build layered self-persona context for the current bot."""
 
@@ -134,198 +94,22 @@ class PersonaComposer:
         # few_shot_examples only carry legacy bot_id and cannot prove the current
         # RuntimeScope.  Do not re-inject them through the persona path.
         style_block, style_ids = "", []
-        speaker_block, speaker_debug = self._build_speaker_block(
-            sender_id=sender_id,
-            sender_name=sender_name,
-            bot_db_id=bot_db_id,
-            scope=scope,
-        )
 
         return {
             "persona_block": persona_block,
             "belief_block": belief_block,
             "experience_block": experience_block,
             "style_block": style_block,
-            "speaker_block": speaker_block,
             "debug": {
                 "persona_sources": ["bot_profile"],
                 "belief_ids": belief_debug.get("belief_ids", []),
                 "belief_source": belief_debug.get("source", ""),
                 "experience_ids": experience_ids,
                 "style_ids": style_ids,
-                "speaker_sources": speaker_debug.get("sources", []),
-                "speaker_source": speaker_debug.get("source", ""),
             },
         }
 
-    def _build_speaker_block(
-        self,
-        *,
-        sender_id: str,
-        sender_name: str,
-        bot_db_id: str,
-        scope: RuntimeScope | None,
-    ) -> tuple[str, dict[str, Any]]:
-        """Build the current speaker's conversation statistics block.
-
-        Reads only scope-keyed sources: ``user_profiles`` is keyed by
-        ``(user_id, group_id, bot_id)`` and ``scoped_facts`` carries the full
-        RuntimeScope tuple.  The unmigrated PersonaEvolution read-model, which
-        aggregates global profiles by bare id, is deliberately not used here.
-
-        No LLM is involved, so this block keeps working while summary generation
-        is degraded by provider outages.
-        """
-        if not sender_id or not isinstance(scope, RuntimeScope) or scope.session is None:
-            return "", {"sources": [], "source": "scope_required"}
-        if sender_id in {"bot", "bot_self", bot_db_id}:
-            return "", {"sources": [], "source": "speaker_is_bot"}
-
-        group_id = scope.session.conversation_id
-        sources: list[str] = []
-        profile = self._read_scoped_profile(
-            sender_id=sender_id, group_id=group_id, bot_db_id=bot_db_id
-        )
-        if profile:
-            sources.append("user_profiles")
-        message_count = self._count_scoped_messages(sender_id=sender_id, scope=scope)
-        if message_count:
-            sources.append("memories")
-
-        display = str(
-            (profile.get("nickname") if profile else "") or sender_name or sender_id
-        ).strip()
-        if is_identity_contamination(display):
-            display = sender_id
-
-        stats: list[str] = []
-        if message_count > 0:
-            regular = "，群里常客" if message_count > 200 else ""
-            stats.append(f"本群发言 {message_count} 条{regular}")
-        interactions = int(profile.get("interaction_count") or 0) if profile else 0
-        if interactions > 0:
-            stats.append(f"与你直接互动 {interactions} 次")
-        first_seen = self._format_day(profile.get("first_seen")) if profile else ""
-        last_seen = self._format_day(profile.get("last_seen")) if profile else ""
-        if first_seen:
-            stats.append(f"首次出现 {first_seen}")
-        if last_seen:
-            stats.append(f"最近出现 {last_seen}")
-
-        fact_lines = self._read_scoped_speaker_facts(display=display, scope=scope)
-        if fact_lines:
-            sources.append("scoped_facts")
-
-        if not stats and not fact_lines:
-            return "", {"sources": sources, "source": "no_speaker_signal"}
-
-        lines = ["<speaker_profile>", f"当前对话者：{display}（ID {sender_id}）"]
-        if stats:
-            lines.append(" | ".join(stats))
-        if fact_lines:
-            lines.append("已知信息：" + " / ".join(fact_lines))
-        lines.append("以上仅为已落库的统计与事实，不要据此编造未记录的经历。")
-        lines.append("</speaker_profile>")
-        text = "\n".join(lines)
-        if is_identity_contamination(text):
-            return "", {"sources": sources, "source": "identity_contamination"}
-        return text, {"sources": sources, "source": "scoped_speaker_profile"}
-
-    def _read_scoped_profile(
-        self, *, sender_id: str, group_id: str, bot_db_id: str
-    ) -> dict[str, Any]:
-        """Read one user_profiles row on its exact (user_id, group_id, bot_id) key."""
-        conn = getattr(self.db, "conn", None)
-        if conn is None or not group_id or not bot_db_id:
-            return {}
-        try:
-            row = conn.execute(
-                """SELECT nickname, interaction_count, first_seen, last_seen
-                     FROM user_profiles
-                    WHERE user_id = ? AND group_id = ? AND bot_id = ?""",
-                (sender_id, group_id, bot_db_id),
-            ).fetchone()
-        except Exception as exc:  # pragma: no cover - defensive read path
-            logger.debug(f"[PersonaComposer] speaker profile read failed: {exc}")
-            return {}
-        if not row:
-            return {}
-        return {
-            "nickname": row[0] or "",
-            "interaction_count": row[1] or 0,
-            "first_seen": row[2],
-            "last_seen": row[3],
-        }
-
-    def _count_scoped_messages(self, *, sender_id: str, scope: RuntimeScope) -> int:
-        """Count the speaker's active messages inside this exact scope."""
-        conn = getattr(self.db, "conn", None)
-        if conn is None or scope.session is None:
-            return 0
-        try:
-            row = conn.execute(
-                """SELECT COUNT(*) FROM memories
-                    WHERE sender_id = ?
-                      AND bot_id = ?
-                      AND session_id = ?
-                      AND COALESCE(quarantine, 0) = 0
-                      AND COALESCE(visibility, '') != 'private'""",
-                (sender_id, scope.bot_id, scope.session.id),
-            ).fetchone()
-        except Exception as exc:  # pragma: no cover - defensive read path
-            logger.debug(f"[PersonaComposer] speaker message count failed: {exc}")
-            return 0
-        return int(row[0]) if row and row[0] else 0
-
-    def _read_scoped_speaker_facts(
-        self, *, display: str, scope: RuntimeScope, limit: int = 3
-    ) -> list[str]:
-        """Read scoped facts about the speaker; never touch the legacy facts table."""
-        reader = getattr(self.db, "list_scoped_facts", None)
-        if not callable(reader) or not display:
-            return []
-        try:
-            rows = reader(scope, subject=display, limit=limit * 3) or []
-        except Exception as exc:  # pragma: no cover - defensive read path
-            logger.debug(f"[PersonaComposer] speaker facts read failed: {exc}")
-            return []
-        # Consolidation writes scoped facts as ``pending`` and nothing promotes them
-        # to ``active`` today, so an allow-list would drop every real row.  Exclude
-        # only explicitly rejected/retracted states instead.
-        rejected = {"rejected", "retracted", "deleted", "superseded", "quarantined"}
-        lines: list[str] = []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            if str(row.get("status") or "").strip().lower() in rejected:
-                continue
-            predicate = str(row.get("predicate") or "").strip()
-            obj = str(row.get("object") or "").strip()
-            if not predicate or not obj:
-                continue
-            text = f"{predicate}{obj}"
-            if is_identity_contamination(text):
-                continue
-            if text not in lines:
-                lines.append(text)
-            if len(lines) >= limit:
-                break
-        return lines
-
     @staticmethod
-    def _format_day(value: Any) -> str:
-        """Render a stored timestamp as MM-DD; unusable values yield an empty string."""
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            return ""
-        if number <= 0:
-            return ""
-        try:
-            return time.strftime("%m-%d", time.localtime(number))
-        except (OSError, OverflowError, ValueError):  # pragma: no cover - clock guard
-            return ""
-
     @staticmethod
     def _empty_payload(*, source: str) -> dict[str, Any]:
         return {
@@ -333,15 +117,12 @@ class PersonaComposer:
             "belief_block": "",
             "experience_block": "",
             "style_block": "",
-            "speaker_block": "",
             "debug": {
                 "persona_sources": [],
                 "belief_ids": [],
                 "belief_source": source,
                 "experience_ids": [],
                 "style_ids": [],
-                "speaker_sources": [],
-                "speaker_source": source,
             },
         }
 
@@ -507,19 +288,6 @@ class PersonaComposer:
         if _EXPERIENCE_STYLE_CONTAMINATION_RE.search(text or ""):
             return False
         return True
-
-    def _build_style_block(self, *, bot_id: str) -> tuple[str, list[int]]:
-        if not self.few_shot_service:
-            return "", []
-        try:
-            text = self.few_shot_service.get_injection(bot_id=bot_id, max_items=2) or ""
-            text = text.strip()
-            if not text or is_identity_contamination(text):
-                return "", []
-            return text, list(getattr(self.few_shot_service, "_last_injected_ids", []) or [])
-        except Exception as e:
-            logger.debug(f"[PersonaComposer] style block failed: {e}")
-            return "", []
 
     @staticmethod
     def _keywords(message: str) -> list[str]:

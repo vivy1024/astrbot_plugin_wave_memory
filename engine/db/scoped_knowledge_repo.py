@@ -623,6 +623,36 @@ class ScopedKnowledgeRepo:
         except Exception:
             return {}
 
+    def list_scoped_memories_for_belief(
+        self,
+        scope: RuntimeScope,
+        *,
+        memory_ids: Sequence[int],
+    ) -> list[dict[str, Any]]:
+        """按 Scope 三列等值批量读取记忆的健康状态，供经历证据升格判定使用。
+
+        只返回同一 Bot + Session + visibility 内的行；跨 Scope 的 id 不会被返回，
+        调用方据此判定时自然 fail-closed。
+        """
+        scope = _require_group_scope(scope)
+        ids = _positive_ints(memory_ids)
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = self.cm.execute_read(
+            f"""SELECT id, resolution_state, COALESCE(quarantine, 0), content, timestamp
+                  FROM memories
+                 WHERE id IN ({placeholders}) AND bot_id=? AND session_id=? AND visibility=?""",
+            [*ids, *_scope_params(scope)],
+        ).fetchall()
+        return [
+            {
+                "id": row[0], "resolution_state": row[1], "quarantine": bool(row[2]),
+                "content": row[3], "timestamp": row[4],
+            }
+            for row in rows
+        ]
+
     def list_scoped_memory_tags(self, scope: RuntimeScope, memory_ids: Sequence[int]) -> list[dict[str, Any]]:
         scope = _require_group_scope(scope)
         ids = list(memory_ids)
@@ -873,6 +903,44 @@ class ScopedKnowledgeRepo:
         scope = _require_group_scope(scope)
         if relation not in {"compatible","scoped","conflicts","supersedes"}: raise ValueError("invalid fact relation")
         self.cm.execute_write("UPDATE scoped_fact_history SET relation=?,review_status=? WHERE id=? AND bot_id=? AND session_id=? AND visibility=?",(relation,review_status,observation_id,*_scope_params(scope))); self.cm.commit()
+
+    # ─── 人工事实审核的读取原语 ───
+    # 写路径不在这里：状态变更与审计行必须与 scoped_facts 的 revision 校验处于同一个
+    # coordinator 事务，因此由 ScopedKnowledgeMutationGateway.review_fact 在它拿到的
+    # connection 上完成；本仓储只提供带 Scope 约束的只读查询。
+
+    def list_scoped_fact_reviews(
+        self,
+        scope: RuntimeScope,
+        *,
+        fact_id: int | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """读取人工审核流水（只读、带 Scope 三列等值约束）。"""
+        scope = _require_group_scope(scope)
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        conditions = ["bot_id=?", "session_id=?", "visibility=?"]
+        params: list[Any] = list(_scope_params(scope))
+        if fact_id is not None:
+            conditions.append("fact_id=?")
+            params.append(int(fact_id))
+        rows = self.cm.execute_read(
+            f"""SELECT id, fact_id, action, actor, reason, from_status, to_status,
+                       relation, conflict_with_fact_id, reviewed_at
+                  FROM scoped_fact_reviews
+                 WHERE {' AND '.join(conditions)}
+                 ORDER BY reviewed_at DESC, id DESC LIMIT ?""",
+            [*params, limit],
+        ).fetchall()
+        return [
+            {
+                "id": row[0], "fact_id": row[1], "action": row[2], "actor": row[3],
+                "reason": row[4], "from_status": row[5], "to_status": row[6],
+                "relation": row[7], "conflict_with_fact_id": row[8], "reviewed_at": row[9],
+            }
+            for row in rows
+        ]
 
     def upsert_scoped_belief(
         self,

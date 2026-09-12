@@ -308,18 +308,17 @@ class FactsChannel:
         return payload
 
     def _legacy_fact_rows(self, ctx: Any, scope: Any, *, limit: int) -> list[dict[str, Any]]:
-        """Read-only fallback to the existing facts table. Does not copy rows."""
+        """Read-only fallback to the existing facts table. Does not copy rows.
+
+        事实不分群：同一个人在哪个群被记录的事实都成立，按群过滤会让 bot 换个群就
+        忘掉已知信息（如某人在 A 群被记下的身份，在 B 群变成空白）。这里只按人物与
+        关键词匹配，不限制 group_id。
+        """
         if limit <= 0:
             return []
         conn = getattr(self.db, "conn", None)
         if conn is None or not hasattr(conn, "execute"):
             return []
-        group_id = ""
-        session = getattr(scope, "session", None)
-        if session is not None:
-            group_id = str(getattr(session, "conversation_id", "") or "")
-        if not group_id:
-            group_id = str(getattr(ctx, "group_id", "") or "")
         sender_id = str(getattr(ctx, "sender_id", "") or "").strip()
         sender_name = str(getattr(ctx, "sender_name", "") or "").strip()
         keywords = _keywords(str(getattr(ctx, "message", "") or ""), limit=6)
@@ -329,9 +328,6 @@ class FactsChannel:
             "(valid_until IS NULL OR valid_until > ?)",
         ]
         params: list[Any] = [now]
-        if group_id:
-            clauses.append("COALESCE(group_id, '') = ?")
-            params.append(group_id)
         match_clauses: list[str] = []
         if sender_id:
             match_clauses.append("subject = ?")

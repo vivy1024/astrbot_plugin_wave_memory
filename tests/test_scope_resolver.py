@@ -24,7 +24,6 @@ from domain.scope import (
     scope_from_value,
     scope_to_dict,
 )
-from services.compat.scope_adapter import LegacyScopeAdapter, LegacyScopeProjectionError
 from services.scopes import (
     BotIdentityBinding,
     ScopeResolutionError,
@@ -540,68 +539,3 @@ def test_validator_accepts_only_complete_reviewed_catalog_to_runtime_derivation(
     assert rejected.reason_code == "derivation_policy_unsupported"
     assert rejected.policy_version == "scope-derivation/v1"
 
-
-def test_legacy_adapter_projects_only_allowlisted_information_preserving_views():
-    hook_calls: list[tuple[str, dict[str, str]]] = []
-
-    def hook(name, payload):
-        hook_calls.append((name, dict(payload)))
-
-    adapter = LegacyScopeAdapter(
-        allowed_callers={"legacy.writer": {"group", "session"}},
-        warning_hook=hook,
-        metric_hook=lambda *_: (_ for _ in ()).throw(RuntimeError("ignored")),
-    )
-    group = adapter.project_runtime(
-        _group_scope(),
-        caller="legacy.writer",
-        target="group",
-        require_subject=True,
-    )
-    assert group.bot_id == "bot-alpha"
-    assert group.canonical_session_id == "qq-main:group:20001"
-    assert group.group_id == "20001"
-    assert group.user_id == "30001"
-    assert hook_calls[-1][0] == "legacy_scope_adapter"
-    assert set(hook_calls[-1][1]) == {
-        "caller",
-        "target",
-        "outcome",
-        "reason_code",
-        "visibility",
-        "policy_version",
-    }
-    assert hook_calls[-1][1]["reason_code"] == "legacy_scope_projection"
-
-    with pytest.raises(LegacyScopeProjectionError) as disallowed:
-        adapter.project_runtime(_group_scope(), caller="legacy.writer", target="bot_private")
-    assert disallowed.value.reason_code == "legacy_caller_not_allowed"
-
-    with pytest.raises(ScopeValidationError) as catalog:
-        adapter.project_runtime(_catalog_scope(), caller="legacy.writer", target="session")
-    assert catalog.value.reason_code == "catalog_runtime_derivation_required"
-
-
-def test_legacy_private_projection_never_invents_group_id_and_unknown_is_rejected():
-    adapter = LegacyScopeAdapter(allowed_callers={"legacy.reader": {"session"}})
-    private = ScopeResolver(
-        [BotIdentityBinding(self_id="10001", db_id="bot-alpha")]
-    ).resolve_event(_Event(message_type=_MessageType.PRIVATE)).scope
-    projection = adapter.project_runtime(
-        private,
-        caller="legacy.reader",
-        target="session",
-        require_subject=True,
-    )
-    assert projection.group_id is None
-    assert projection.conversation_id == "private-session-1"
-    assert projection.user_id == "30001"
-
-    unresolved = UnresolvedScopeRef(
-        original_fields={"group_id": "private:30001"},
-        reason_code="legacy_session_ambiguous",
-        provenance={"source": "legacy"},
-    )
-    with pytest.raises(ScopeValidationError) as rejected:
-        adapter.project_runtime(unresolved, caller="legacy.reader", target="session")
-    assert rejected.value.reason_code == "unresolved_scope"

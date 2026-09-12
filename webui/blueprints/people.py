@@ -317,11 +317,6 @@ def _people_query_from_request() -> dict[str, Any]:
     }
 
 
-def _person_from_relationship(item: Mapping[str, Any]) -> dict[str, Any]:
-    person = item.get("person")
-    return dict(person) if isinstance(person, Mapping) else {}
-
-
 def _relationship_affinity(item: Mapping[str, Any]) -> float | None:
     value = item.get("affinity")
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):

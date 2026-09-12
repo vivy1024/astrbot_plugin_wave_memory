@@ -17,6 +17,11 @@ from .experience_episodes import fetch_recent_episodes
 from .identity_safety import is_identity_contamination
 
 try:
+    from .belief_engine import APPROVED_FACT_STATUSES
+except ImportError:  # pragma: no cover - 插件根目录直接导入
+    from services.belief_engine import APPROVED_FACT_STATUSES
+
+try:
     from ..domain.scope import RuntimeScope
 except ImportError:  # pragma: no cover
     from domain.scope import RuntimeScope
@@ -310,10 +315,13 @@ class ReflectionTriggerService:
                 outcome.record_failure("fact", exc)
 
             try:
+                # 信念提审的 source_fact_ids 只接受 scoped_facts 里 active/approved 的 id
+                # （见 belief_engine.approved_source_fact_ids）。这里过去误查 scoped_beliefs，
+                # 导致下发的是 belief id，模型拿去提审必然被拒。
                 approved = [
                     item
-                    for item in knowledge.list_scoped_beliefs(scope, status="active", limit=4)
-                    if not is_identity_contamination(item.get("content"))
+                    for item in knowledge.list_scoped_facts(scope, limit=8)
+                    if str(item.get("status") or "") in APPROVED_FACT_STATUSES
                 ]
                 if len(approved) >= 2:
                     ids = ",".join(str(item.get("id")) for item in approved[:3])

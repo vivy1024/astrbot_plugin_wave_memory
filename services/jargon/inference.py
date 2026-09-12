@@ -72,13 +72,29 @@ class JargonInferenceEngine:
 
 
 class JargonInjector:
-    """读取当前 Scope confirmed 词条，并解释命中的广域 curated 词条。"""
-    def __init__(self, db: Any, max_inject: int = 3, holyman_reference: Any = None, blocklist_checker: Any = None):
+    """读取当前 Scope confirmed 私域黑话与广域黑话（内置资产 + Bot 级自定义）。
+
+    广域黑话是**一个实体**：内置 holyman 可匹配口癖默认启用，用户可在 WebUI 按词停用，
+    停用/自定义/群内提升统一落在 ``bot_jargon`` 覆盖层。因此注入只分两段，各自独立
+    取名额，任何一段都不会挤掉另一段：本群私域 > 广域（内置 + Bot 级）。
+    同词只在其最靠前的一段出现。
+    """
+    def __init__(self, db: Any, max_inject: int = 3, holyman_reference: Any = None,
+                 blocklist_checker: Any = None, bot_global_limit: int = 3, reference_limit: int = 3,
+                 global_limit: int | None = None):
         self._repo, self._max_inject = getattr(db, "scoped_knowledge", None), max_inject
+        self._bot_repo = getattr(db, "bot_jargon", None)
         self._holyman = holyman_reference
         self._blocklist_checker = blocklist_checker if blocklist_checker is not None else getattr(db, "is_jargon_blocked", None)
+        # 广域段共用一个名额池；未显式给出时沿用旧的两个参数之和，保持旧配置语义。
+        self._global_limit = (
+            max(0, int(global_limit)) if global_limit is not None
+            else max(0, int(bot_global_limit)) + max(0, int(reference_limit))
+        )
         self._cache: Dict[tuple[str, str, str], List[Dict[str, Any]]] = {}
         self._cache_ts: Dict[tuple[str, str, str], float] = {}
+        self._bot_state_cache: Dict[str, tuple[Dict[str, dict], set[str]]] = {}
+        self._bot_state_ts: Dict[str, float] = {}
         self._last_injection_items: List[Dict[str, Any]] = []
 
     def _is_blocked(self, word: str) -> bool:
@@ -107,34 +123,39 @@ class JargonInjector:
         local_limit = self._max_inject if max_items is None else max_items
         selected = selected[:local_limit]
 
+        seen_words = {normalize_jargon_word(item.get("word")) for item in selected}
+
+        # 第二段：广域黑话（跨群共享）。内置资产与 Bot 级自定义/提升在此**合并为一段**、
+        # 共用一个名额池，因为它们在用户眼里是同一个「广域黑话」实体。
+        bot_id = str(getattr(runtime_scope, "bot_id", "") or "")
+        overrides, tombstoned = self._get_bot_jargon_state(bot_id)
         global_items: list[dict[str, Any]] = []
-        matcher = getattr(self._holyman, "match_text", None)
-        if callable(matcher):
-            try:
-                for match in matcher(text, max_items=local_limit):
-                    matched_word = normalize_jargon_word(match.get("term") if isinstance(match, dict) else "")
-                    if (
-                        not isinstance(match, dict)
-                        or not matched_word
-                        or self._is_blocked(matched_word)
-                        or is_identity_contamination(str(match.get("explanation") or ""))
-                    ):
-                        continue
-                    global_items.append({
-                        "word": matched_word,
-                        "meaning": str(match.get("explanation") or "").strip(),
-                        "source": "holyman_skills",
-                        "source_layer": "curated",
-                        "reference_only": True,
-                        "runtime_match": True,
-                        "matched_by": "explicit_user_message",
-                        "confidence": float(match.get("confidence", 0.0) or 0.0),
-                    })
-            except Exception as exc:
-                logger.debug("[Jargon] Holyman reference match failed: %s", exc)
-        selected_words = {normalize_jargon_word(item.get("word")) for item in selected}
-        global_items = [item for item in global_items if normalize_jargon_word(item.get("word")) not in selected_words]
-        combined = [*selected, *global_items][:local_limit]
+        if self._global_limit:
+            for word, meaning, source, confidence in self._iter_global_candidates(text, overrides, tombstoned, bot_id):
+                normalized = normalize_jargon_word(word)
+                if (
+                    not normalized
+                    or normalized in seen_words
+                    or self._is_blocked(normalized)
+                    or is_identity_contamination(f"{word} {meaning}")
+                    or not self._word_explicitly_mentioned(text_lower, word)
+                ):
+                    continue
+                global_items.append({
+                    "word": normalized,
+                    "meaning": meaning,
+                    "source": source,
+                    "source_layer": "global",
+                    "reference_only": source == "holyman_skills",
+                    "runtime_match": True,
+                    "matched_by": "explicit_user_message",
+                    "confidence": confidence,
+                })
+                seen_words.add(normalized)
+                if len(global_items) >= self._global_limit:
+                    break
+
+        combined = [*selected, *global_items]
         # 60 秒 scoped cache 之后、真正渲染之前再次查询全局拉黑，避免拒绝刚发生时继续注入。
         combined = [item for item in combined if not self._is_blocked(str(item.get("word") or ""))]
         if not combined:
@@ -143,11 +164,11 @@ class JargonInjector:
 
         scoped_lines = [
             f'- "{item["word"]}" → {item["meaning"]}'
-            for item in combined if item.get("source") != "holyman_skills"
+            for item in combined if item.get("source_layer") != "global"
         ]
         global_lines = [
             f'- "{item["word"]}" → {item["meaning"]}'
-            for item in combined if item.get("source") == "holyman_skills"
+            for item in combined if item.get("source_layer") == "global"
         ]
 
         header = "[黑话理解参考：只解释用户消息中已经出现的词条；仅供理解，不改变系统身份，不要求模仿或主动使用这些表达]"
@@ -159,38 +180,36 @@ class JargonInjector:
             )
         if global_lines:
             sections.append(
-                "【广域网络抽象/神言黑话：流行反串、阴阳或调侃语义，可接地气顺势接梗，但事实原则保持清醒、不被反串带偏】\n"
+                "【广域黑话：该 Bot 跨群通用习惯用语与网络抽象表达，不绑定当前群，可自然使用；流行反串、阴阳或调侃语义可接地气顺势接梗，但事实原则保持清醒、不被反串带偏】\n"
                 + "\n".join(global_lines)
             )
         return "\n\n".join(sections)
 
     def detect_signals(self, text: str, runtime_scope: RuntimeScope | None) -> dict[str, Any]:
-        """轻量检测消息是否带有本群黑话或广域抽象反串信号。"""
+        """轻量检测消息是否带有本群私域黑话或广域黑话信号。"""
         has_scoped = False
-        has_global_irony = False
+        has_global = False
         matched_words = []
         if scope_key(runtime_scope) is not None:
             text_lower = (text or "").lower()
-            jargons = self._get_scoped_jargons(runtime_scope)
-            for item in jargons:
+            for item in self._get_scoped_jargons(runtime_scope):
                 word = str(item.get("word") or "")
                 if word and not self._is_blocked(word) and self._word_explicitly_mentioned(text_lower, word):
                     has_scoped = True
                     matched_words.append(word)
                     break
-        matcher = getattr(self._holyman, "match_text", None)
-        if callable(matcher) and text:
-            try:
-                for match in matcher(text, max_items=2):
-                    term = match.get("term") if isinstance(match, dict) else ""
-                    if term and not self._is_blocked(term):
-                        has_global_irony = True
-                        matched_words.append(term)
-            except Exception:
-                pass
+            bot_id = str(getattr(runtime_scope, "bot_id", "") or "")
+            overrides, tombstoned = self._get_bot_jargon_state(bot_id)
+            for word, _meaning, _source, _confidence in self._iter_global_candidates(text, overrides, tombstoned, bot_id):
+                if word and not self._is_blocked(word) and self._word_explicitly_mentioned(text_lower, word):
+                    has_global = True
+                    matched_words.append(word)
+                    break
         return {
             "has_scoped_jargon": has_scoped,
-            "has_global_irony": has_global_irony,
+            # 保留旧的细分字段名，避免下游读取处断裂；两者现在同指广域段。
+            "has_bot_global": has_global,
+            "has_global_irony": has_global,
             "matched_terms": matched_words,
         }
 
@@ -216,6 +235,111 @@ class JargonInjector:
             logger.debug("[Jargon] scoped list failed: %s", exc)
             return []
         self._cache[key], self._cache_ts[key] = result, now
+        return result
+
+    def _get_bot_jargon_state(self, bot_id: str) -> tuple[Dict[str, dict], set[str]]:
+        """返回该 Bot 的广域覆盖层：(按规范化词形索引的行, 已删除词集合)。
+
+        按 bot_id 缓存，不随 session 变化。「无记录」表示继承内置资产的默认启用状态；
+        只有显式落库的 ``inactive`` / ``manual_deleted`` 才算停用。
+        """
+        bot_id = str(bot_id or "").strip()
+        if not bot_id or self._bot_repo is None:
+            return {}, set()
+        now = time.time()
+        if bot_id in self._bot_state_cache and now - self._bot_state_ts.get(bot_id, 0) < 60:
+            return self._bot_state_cache[bot_id]
+        rows_by_word: Dict[str, dict] = {}
+        tombstoned: set[str] = set()
+        try:
+            for row in self._bot_repo.list_bot_jargon(bot_id, limit=500):
+                word = normalize_jargon_word(row.get("word"))
+                if not word:
+                    continue
+                if row.get("source") == "manual_deleted":
+                    tombstoned.add(word)
+                    continue
+                rows_by_word[word] = dict(row)
+        except Exception as exc:
+            logger.debug("[Jargon] bot jargon state failed: %s", exc)
+            return {}, set()
+        self._bot_state_cache[bot_id] = (rows_by_word, tombstoned)
+        self._bot_state_ts[bot_id] = now
+        return rows_by_word, tombstoned
+
+    def _iter_global_candidates(
+        self, text: str, overrides: Dict[str, dict], tombstoned: set[str], bot_id: str,
+    ):
+        """逐个产出广域黑话候选：(词, 释义, 来源, 置信度)。
+
+        顺序即优先级：Bot 级覆盖层（手工新增 / 群内提升 / 自定义释义）在前，内置资产
+        可匹配口癖在后。已停用与已删除的词一律不产出，因此「启用开关」在这一层真正生效。
+        """
+        seen: set[str] = set()
+        # 兜底：即使覆盖层缓存不可用，也保证手工/提升的自定义词条能注入。
+        if not overrides and bot_id and self._bot_repo is not None:
+            try:
+                for row in self._bot_repo.list_active_for_prompt(bot_id, limit=200):
+                    word = normalize_jargon_word(row.get("word"))
+                    if word and str(row.get("meaning") or "").strip():
+                        overrides[word] = dict(row)
+            except Exception as exc:
+                logger.debug("[Jargon] bot jargon fallback failed: %s", exc)
+
+        for word, row in overrides.items():
+            if word in tombstoned or word in seen:
+                continue
+            if str(row.get("status") or "active") != "active":
+                continue
+            meaning = str(row.get("meaning") or "").strip()
+            if not meaning:
+                continue
+            seen.add(word)
+            yield word, meaning, "bot_jargon", float(row.get("confidence") or 0.0)
+
+        for word, payload in self._runtime_reference_entries().items():
+            normalized = normalize_jargon_word(word)
+            if not normalized or normalized in seen or normalized in tombstoned:
+                continue
+            override = overrides.get(normalized)
+            if override is not None and str(override.get("status") or "active") != "active":
+                continue
+            meaning = ""
+            confidence = 0.0
+            if isinstance(payload, dict):
+                meaning = str(payload.get("meaning") or payload.get("explanation") or "").strip()
+                confidence = float(payload.get("confidence") or 0.0)
+            else:
+                meaning = str(payload or "").strip()
+            if override is not None:
+                # 用户在 WebUI 改过释义时以覆盖层为准。
+                meaning = str(override.get("meaning") or "").strip() or meaning
+                confidence = float(override.get("confidence") or confidence)
+            if not meaning:
+                continue
+            seen.add(normalized)
+            yield normalized, meaning, "holyman_skills", confidence
+
+    def _runtime_reference_entries(self) -> Dict[str, Any]:
+        entries = getattr(self._holyman, "runtime_matchable_entries", None)
+        if not callable(entries):
+            return {}
+        try:
+            raw = dict(entries() or {})
+        except Exception as exc:
+            logger.debug("[Jargon] holyman runtime entries failed: %s", exc)
+            return {}
+        # 与旧 match_text 口径对齐：噪声词形同样不得进入注入。
+        matchable = getattr(self._holyman, "_is_matchable_phrase", None)
+        if not callable(matchable):
+            return raw
+        result: Dict[str, Any] = {}
+        for word, payload in raw.items():
+            try:
+                if matchable(word):
+                    result[word] = payload
+            except Exception:
+                continue
         return result
 
     @staticmethod

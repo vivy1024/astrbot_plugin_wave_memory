@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 try:
@@ -68,6 +68,91 @@ def is_fact_backed(repository: Any, scope: RuntimeScope, provenance: Any) -> boo
     """True when provenance currently cites at least two approved facts in this scope."""
     payload = provenance if isinstance(provenance, Mapping) else {}
     return len(approved_source_fact_ids(repository, scope, payload.get("source_fact_ids"))) >= 2
+
+
+def is_episode_backed(repository: Any, scope: RuntimeScope, provenance: Any) -> bool:
+    """经历证据路径：用于事实底座尚未建立时的冷启动升格。
+
+    与 is_fact_backed 是并行的两条准入路径，不是替代关系。要求：
+    - provenance 由 belief_emergence 产出，且带 episode_id；
+    - 引用的记忆在同 Scope 内去重后 ≥ 2 条，且全部是健康、未隔离的已解析记忆
+      （跨 Bot / 跨群 / 已隔离的记忆一律不算）。
+
+    「至少两条」与 evidence-v1 的 ACTIVATION_MIN_SUPPORT_WINDOWS 同量级，但这里是
+    独立的证据形态（经历窗口）判定，不复用 confidence_components，避免把需要
+    tag 链路完整的证据门槛错误地套到经历上。
+    """
+    payload = provenance if isinstance(provenance, Mapping) else {}
+    if str(payload.get("producer") or "") != "belief_emergence":
+        return False
+    if payload.get("episode_id") in (None, ""):
+        return False
+    candidate_ids = _positive_unique_ids(payload.get("source_memory_ids"))
+    if len(candidate_ids) < 2:
+        return False
+    if repository is None:
+        return False
+    lister = getattr(repository, "list_scoped_memories_for_belief", None)
+    if not callable(lister):
+        return False
+    try:
+        rows = lister(scope, memory_ids=candidate_ids) or []
+    except Exception:
+        return False
+    healthy = {
+        int(row["id"])
+        for row in rows
+        if isinstance(row, Mapping)
+        and row.get("id") is not None
+        and str(row.get("resolution_state") or "") == "resolved"
+        and not row.get("quarantine")
+    }
+    return len([mid for mid in candidate_ids if mid in healthy]) >= 2
+
+
+def _positive_unique_ids(values: Any) -> list[int]:
+    if isinstance(values, (str, bytes)) or not isinstance(values, Iterable):
+        return []
+    seen: set[int] = set()
+    result: list[int] = []
+    for value in values:
+        if isinstance(value, bool):
+            continue
+        try:
+            identifier = int(value)
+        except (TypeError, ValueError):
+            continue
+        if identifier > 0 and identifier not in seen:
+            seen.add(identifier)
+            result.append(identifier)
+    return result
+
+
+def first_memory_id_from_episode(repository: Any, scope: RuntimeScope, provenance: Any) -> int | None:
+    """经历证据路径的锚点：取第一条同 Scope 内健康记忆的 id。"""
+    payload = provenance if isinstance(provenance, Mapping) else {}
+    candidate_ids = _positive_unique_ids(payload.get("source_memory_ids"))
+    if not candidate_ids:
+        return None
+    lister = getattr(repository, "list_scoped_memories_for_belief", None)
+    if not callable(lister):
+        return None
+    try:
+        rows = lister(scope, memory_ids=candidate_ids) or []
+    except Exception:
+        return None
+    healthy = {
+        int(row["id"])
+        for row in rows
+        if isinstance(row, Mapping)
+        and row.get("id") is not None
+        and str(row.get("resolution_state") or "") == "resolved"
+        and not row.get("quarantine")
+    }
+    for memory_id in candidate_ids:
+        if memory_id in healthy:
+            return memory_id
+    return None
 
 
 def first_memory_id_from_facts(repository: Any, scope: RuntimeScope, fact_ids: list[int]) -> int | None:

@@ -1,15 +1,12 @@
 from services.impression_timeline import (
     affinity_shift_range,
     append_impression,
-    append_ledger_entry,
     clear_impression,
     current_impression_text,
     injection_lines,
-    ledger_entries,
     meaningful_event_anchor,
     normalize_timeline_half_life,
     propose_affinity_shift,
-    relationship_context,
     snapshot_from_relationship,
     timeline_decay_weight,
 )
@@ -98,29 +95,6 @@ def test_injection_lines_prefer_stored_event_then_history_anchor():
     assert any("愿意核对事实" in line for line in lines[1:])
 
 
-def test_relationship_context_reads_repository_snapshot():
-    class _Repo:
-        def get_state(self, scope, subject_principal_id=None, limit=25, offset=0):
-            return {
-                "relationship": {
-                    "affinity": 12,
-                    "values": {"trust": {"effective_value": 6.44}},
-                    "dimensions": {"fun": 2},
-                },
-                "relationship_history": {
-                    "items": [
-                        {"event_type": "message_seen", "reason": "看见一条群友消息"},
-                        {"event_type": "joke", "reason": "接探活梗", "dimension": "fun", "delta": 1.2},
-                    ]
-                },
-            }
-
-    snapshot, event = relationship_context(_Repo(), object())
-    assert snapshot["affinity"] == 12
-    assert snapshot["trust"] == 6.4
-    assert event["event_type"] == "joke"
-
-
 def test_snapshot_from_relationship_prefers_effective_values():
     snapshot = snapshot_from_relationship({
         "affinity": 8,
@@ -130,21 +104,8 @@ def test_snapshot_from_relationship_prefers_effective_values():
     assert snapshot == {"trust": 9.2, "depth": 4.0, "affinity": 8.0}
 
 
-def test_ledger_skips_passby_and_keeps_scored_rows():
-    first = append_ledger_entry({}, event_type="message_seen", dimension="familiarity", delta=0.05, reason="看见一条群友消息", at=1)
-    assert first.get("impression_ledger") in (None, [])
-    second = append_ledger_entry(first, event_type="bot_praised", dimension="trust", delta=3, reason="正面评价 bot", at=2, event_id=9)
-    third = append_ledger_entry(second, event_type="direct_reply", dimension="trust", delta=1.5, reason="回复 bot 消息", at=3, event_id=10)
-    rows = ledger_entries(third, limit=5)
-    assert [item["event_type"] for item in rows] == ["bot_praised", "direct_reply"]
-    lines = injection_lines(third)
-    assert not any(line.startswith("最近关系账本：") for line in lines)
-
-
 def test_unsettled_energy_and_threshold_transition():
     from services.impression_timeline import (
-        append_unsettled_trace,
-        clear_unsettled_traces,
         parse_impression_mark,
         should_trigger_affinity_transition,
         unsettled_energy,
@@ -155,21 +116,17 @@ def test_unsettled_energy_and_threshold_transition():
     assert body == "文史功底扎实"
     assert impact == 4.0
 
+    # 未结算能量由 person_unsettled_state 提供；这里直接构造等价 metadata 验证阈值。
     meta = {}
     assert not should_trigger_affinity_transition(meta)
-    meta = append_unsettled_trace(meta, "日常观察", impact=4)
-    meta = append_unsettled_trace(meta, "又聊了一轮", impact=4)
+    meta = {"unsettled_traces": [{"impact": 4}, {"impact": 4}]}
     assert unsettled_energy(meta) == 8.0
     assert not should_trigger_affinity_transition(meta)
-    meta = append_unsettled_trace(meta, "深夜长谈", impact=3)
+    meta = {"unsettled_traces": [{"impact": 4}, {"impact": 4}, {"impact": 3}]}
     assert unsettled_energy(meta) == 11.0
     assert should_trigger_affinity_transition(meta)
     assert should_trigger_affinity_transition({}, {"hostility": 12.0})
-
-    cleaned = clear_unsettled_traces(meta)
-    assert "unsettled_traces" not in cleaned
-    assert "unsettled_energy" not in cleaned
-    assert not should_trigger_affinity_transition(cleaned)
+    assert not should_trigger_affinity_transition({})
 
 
 def test_history_is_not_truncated_at_twenty():

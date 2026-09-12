@@ -6,9 +6,14 @@ from pathlib import Path
 
 
 def _load_fact_evidence():
-    source_path = Path(__file__).resolve().parents[1] / "webui" / "blueprints" / "knowledge.py"
+    """证据装配实现已从 knowledge.py 收敛到 webui/facts_evidence.py。
+
+    `/api/knowledge/facts` 与 `/api/facts` 共用同一份实现，因此这里改为从新位置抽取；
+    knowledge.py 仍保留同名薄封装以兼容既有调用。断言保持不变。
+    """
+    source_path = Path(__file__).resolve().parents[1] / "webui" / "facts_evidence.py"
     tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
-    wanted = {"_table_exists", "_columns", "_json_value", "_fact_evidence"}
+    wanted = {"columns", "row_dicts", "json_value", "fact_evidence"}
     body = [
         node
         for node in tree.body
@@ -17,7 +22,7 @@ def _load_fact_evidence():
     module = ast.Module(body=body, type_ignores=[])
     namespace: dict[str, object] = {"Any": object, "json": json}
     exec(compile(module, str(source_path), "exec"), namespace)
-    return namespace["_fact_evidence"]
+    return namespace["fact_evidence"]
 
 
 class FactEvidenceMetadataTest(unittest.TestCase):

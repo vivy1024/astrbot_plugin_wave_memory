@@ -376,11 +376,11 @@ class ChannelConfigTest(unittest.TestCase):
         api = Path("webui/frontend/src/api/channels.ts").read_text(encoding="utf-8")
         routes = Path("webui/frontend/src/app/routes.tsx").read_text(encoding="utf-8")
 
-        self.assertIn("Channel Config", page)
+        self.assertIn("通道配置", page)
         self.assertIn("validateChannelConfig", page)
         self.assertIn("applyChannelConfig", page)
         self.assertIn("resetChannelConfigDefaults", page)
-        self.assertIn("safety channel", page)
+        self.assertIn("安全通道", page)
         self.assertIn("disabled={safety}", table)
         self.assertIn("运行状态", table)
         self.assertIn("last_hit_count", table)

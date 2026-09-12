@@ -48,12 +48,30 @@ class _FakeConn:
 
 
 class _FakeKnowledge:
+    """已批准事实与 active 信念必须分开建模。
+
+    真实数据面里两者是两张表：`source_fact_ids` 只接受 scoped_facts 里
+    active/approved 的 id（services/belief_engine.approved_source_fact_ids），
+    scoped_beliefs 的 id 与它无关。此前的 fake 用同一批 id 冒充两者，把一个真实
+    bug 固化成了契约。
+    """
+
+    def __init__(self, approved_facts=None, active_beliefs=None):
+        self.approved_facts = approved_facts if approved_facts is not None else [
+            {"id": 3, "subject": "小明", "predicate": "备考", "object": "考研", "status": "active"},
+            {"id": 5, "subject": "小明", "predicate": "住在", "object": "上海", "status": "approved"},
+        ]
+        self.active_beliefs = active_beliefs if active_beliefs is not None else [
+            {"id": 8, "content": "他嘴硬但会帮忙"},
+            {"id": 9, "content": "他最近压力很大"},
+        ]
+
     def list_scoped_facts(self, scope, limit=8):
-        return [{"id": 3, "subject": "小明", "predicate": "备考", "object": "考研", "status": "active"}]
+        return list(self.approved_facts)
 
     def list_scoped_beliefs(self, scope, status=None, limit=4):
         if status == "active":
-            return [{"id": 8, "content": "他嘴硬但会帮忙"}, {"id": 9, "content": "他最近压力很大"}]
+            return list(self.active_beliefs)
         return [{"id": 10, "content": "待审判断", "status": "pending"}]
 
     def list_scoped_jargon(self, scope, status=None, limit=2):
@@ -76,13 +94,31 @@ def _db(**overrides):
 
 
 def test_reflection_trigger_aggregates_scoped_candidates():
-    service = ReflectionTriggerService(_db(), cooldown_seconds=0)
+    # max_candidates 放宽：本用例验证的是各类候选的聚合与 id 正确性，不是预算裁剪。
+    service = ReflectionTriggerService(_db(), cooldown_seconds=0, max_candidates=12)
     prompt = service.build_prompt(scope=group_scope(), message="小明还在考研吗", sender_id="u1")
     assert "关切 concern:1" in prompt
     assert "事实 fact:3" in prompt
-    assert "source_fact_ids=[8,9]" in prompt
+    # 下发的必须是 scoped_facts 里已批准事实的 id，而不是 scoped_beliefs 的 id。
+    assert "source_fact_ids=[3,5]" in prompt
+    assert "source_fact_ids=[8,9]" not in prompt
     assert "待审黑话 jargon:4" in prompt
     assert "episode 不等于 social anchor" in prompt
+
+
+def test_belief_base_requires_approved_facts_not_active_beliefs():
+    """只有 active 信念、没有已批准事实时，不应产出信念提审底座提示。
+
+    这正是此前把 list_scoped_beliefs 误当成事实来源时无法察觉的分支。
+    """
+    knowledge = _FakeKnowledge(
+        approved_facts=[{"id": 3, "subject": "小明", "predicate": "备考", "object": "考研", "status": "pending"}],
+        active_beliefs=[{"id": 8, "content": "他嘴硬但会帮忙"}, {"id": 9, "content": "他最近压力很大"}],
+    )
+    service = ReflectionTriggerService(_db(scoped_knowledge=knowledge), cooldown_seconds=0)
+    prompt = service.build_prompt(scope=group_scope(), message="小明还在考研吗", sender_id="u1")
+    assert "belief_base" not in prompt
+    assert "source_fact_ids" not in prompt
 
 
 def test_reflection_trigger_skips_private_or_contaminated():
@@ -104,7 +140,7 @@ def test_collect_reports_strategy_version_and_trigger_state():
     assert outcome.prompt
     assert outcome.duration_ms >= 0.0
     assert outcome.candidate_counts["concern"] == 1
-    assert outcome.candidate_counts["fact"] == 1
+    assert outcome.candidate_counts["fact"] == 2
 
 
 def test_collect_degrades_instead_of_hiding_dependency_failure():

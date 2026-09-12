@@ -102,15 +102,17 @@ class V430JargonWebuiAuditTest(unittest.TestCase):
 
     def test_frontend_exposes_audit_toggle_and_candidate_metadata_columns(self):
         page = Path("webui/frontend/src/pages/jargon/JargonPage.tsx").read_text(encoding="utf-8")
+        # 广域资产审计与同步预览已合并进广域黑话资产面板。
+        panel = Path("webui/frontend/src/pages/jargon/GlobalJargonPanel.tsx").read_text(encoding="utf-8")
         api = Path("webui/frontend/src/api/jargon.ts").read_text(encoding="utf-8")
 
         self.assertIn("source: string", api)
         self.assertIn("anchors: EvidenceRef[]", api)
         self.assertIn("ScopeSelect", page)
-        self.assertIn("广域资产审计", page)
+        self.assertIn("资产版本审计", panel)
         self.assertIn("EvidenceList", page)
         self.assertIn("ObjectDeepLink", page)
-        self.assertIn("catalog_sync_command_unavailable", page)
+        self.assertIn("catalog_sync_command_unavailable", panel)
 
 
 if __name__ == "__main__":

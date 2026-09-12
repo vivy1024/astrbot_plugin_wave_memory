@@ -64,6 +64,7 @@ export function AppRoutes() {
         <Route path="/injection" element={<RenamedPath to="/observatory" />} />
         <Route path="/maintain" element={<RenamedPath to="/maintenance" />} />
         <Route path="/knowledge/fewshot" element={<RenamedPath to="/knowledge/style-examples" />} />
+        <Route path="/knowledge/facts" element={<RenamedPath to="/facts" />} />
         <Route path="/login" element={<RenamedPath to={defaultRoute} />} />
       </Route>
       <Route path="*" element={<NotFoundPage />} />

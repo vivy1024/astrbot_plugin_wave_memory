@@ -1,43 +1,30 @@
-import ast
 import asyncio
-import copy
-import hashlib
-import math
-import time
-from pathlib import Path
 from types import SimpleNamespace
 
 from domain.scope import RuntimeScope, SessionRef
-from services.belief_gating import snapshot_from_relationship
-from services.identity_safety import is_identity_contamination
 from services.proactive_audit import read_proactive_relationship_context
 
 
 def load_context_reader():
-    source_path = Path(__file__).resolve().parents[1] / "main.py"
-    tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
-    plugin_class = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "WaveMemoryPlugin")
-    method = copy.deepcopy(next(
-        node for node in plugin_class.body
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_read_proactive_relationship_context"
-    ))
-    method.decorator_list = []
-    for argument in (*method.args.posonlyargs, *method.args.args, *method.args.kwonlyargs):
-        argument.annotation = None
-    module = ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[]))
-    namespace = {
-        "asyncio": asyncio,
-        "hashlib": hashlib,
-        "math": math,
-        "time": time,
-        "RuntimeScope": RuntimeScope,
-        "snapshot_from_relationship": snapshot_from_relationship,
-        "logger": SimpleNamespace(warning=lambda *args, **kwargs: None),
-        "is_identity_contamination": is_identity_contamination,
-        "read_proactive_relationship_context": read_proactive_relationship_context,
-    }
-    exec(compile(module, str(source_path), "exec"), namespace)
-    return namespace["_read_proactive_relationship_context"]
+    """适配层：直接调用正式实现（main.py 的转发包装已删除）。
+
+    这里保留 plugin 形参签名，让用例继续表达「插件在真实装配下如何读取」；
+    内部不再从 main.py 反编译方法，避免测试与实现位置耦合。
+    """
+    plugin_holder = {}
+
+    async def _reader(plugin, scope, event, *, now=None):
+        plugin_holder["plugin"] = plugin
+        return await read_proactive_relationship_context(
+            scope,
+            event,
+            coordinator=getattr(getattr(plugin, "write_gateway", None), "coordinator", None),
+            repository=getattr(getattr(plugin, "db", None), "soul_repository", None),
+            bot_ids=getattr(plugin, "_bot_qq_ids", ()),
+            now=now,
+        )
+
+    return _reader
 
 
 class FakeCoordinator:

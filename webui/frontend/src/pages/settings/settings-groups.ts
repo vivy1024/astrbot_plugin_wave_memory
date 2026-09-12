@@ -218,24 +218,8 @@ export const SECTION_GROUPS: Record<string, SettingsGroupMeta> = {
 /** 不渲染的 schema 键：纯说明文本，不是配置项。 */
 const HIDDEN_SECTIONS = new Set(['_system_status'])
 
-/**
- * 界面上隐藏的具体配置字段：
- * 这些字段在历史版本中存在，为避免旧 config.json 报未知字段而在 schema 中保留，
- * 但对应的后台任务已下线，渲染在前端会导致误导。
- */
-const HIDDEN_ITEMS = new Set([
-  'Lifecycle_Settings.enable_consolidation',
-  'Lifecycle_Settings.consolidation_interval_hours',
-  'Lifecycle_Settings.consolidation_topic_backfill',
-  'Tag_Settings.consolidation_skip_topics',
-])
-
 export function isHiddenSection(sectionKey: string): boolean {
   return HIDDEN_SECTIONS.has(sectionKey)
-}
-
-export function isHiddenItem(sectionKey: string, itemKey: string): boolean {
-  return HIDDEN_ITEMS.has(`${sectionKey}.${itemKey}`)
 }
 
 const FALLBACK_GROUP: SettingsGroupMeta = {

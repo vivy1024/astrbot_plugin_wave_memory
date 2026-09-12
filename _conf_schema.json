@@ -291,6 +291,13 @@
     "hint": "注入内容的篇幅与时间窗口",
     "type": "object",
     "items": {
+      "enable_holyman_persona": {
+        "description": "启用 holyman-skills 风格人格包（可选）",
+        "hint": "默认关闭。开启后把 holyman-skills 人格包作为风格参考注入，会改变说话方式；与既有 Bot 人格并存而非覆盖。仅作为默认值，通道页的开关覆盖优先。",
+        "type": "bool",
+        "default": false,
+        "restart_required": false
+      },
       "timeline_days": {
         "description": "历史时间窗（天，兼容保留）",
         "hint": "独立群事件 timeline 通道已移除；本字段仅为旧配置兼容保留，当前无通道读取。0 表示全历史。",
@@ -416,12 +423,6 @@
         "hint": "默认关闭。开启后可按指定授权列表额外召回少量其他群的记忆，只读、不会改动对方数据，也不会复制记忆。与「全量跨群共享」不同：这是精确到条目的授权，每次召回都留痕。",
         "type": "bool",
         "default": false
-      },
-      "cross_group_persona_merge": {
-        "description": "开启跨群用户画像合并",
-        "hint": "在不同群遇到的同一个人（根据QQ号主键），其好感度分值、交友大事记和性格标签自动打通聚合。推荐开启。",
-        "type": "bool",
-        "default": true
       }
     }
   },
@@ -430,12 +431,6 @@
     "hint": "Bot 的心情、关切、作息等内在状态",
     "type": "object",
     "items": {
-      "enable_persona_evolution": {
-        "description": "开启社交画像自然沉淀",
-        "hint": "根据互动次数和 facts 事实自动组装对每个人的人格侧写（如：喜欢打电动、常熬夜），并在聊天时自然使用这些认知。无需独立 LLM 提炼，对 CPU/显卡零负载。",
-        "type": "bool",
-        "default": true
-      },
       "enable_mood": {
         "description": "启用生理心境系统 (Bot Mood)",
         "hint": "根据消息密度与情感 tag 的输入速率，动态在 Energetic / Cheerful / Concerned 情绪轨道间滑动跃迁。",
@@ -517,24 +512,6 @@
         "description": "中期经历联想召回深度",
         "type": "int",
         "default": 3
-      },
-      "enable_consolidation": {
-        "description": "已废弃：长语篇整合已下线",
-        "hint": "保留此项以兼容旧版配置，当前版本不再执行后台盲抽。",
-        "type": "bool",
-        "default": false
-      },
-      "consolidation_interval_hours": {
-        "description": "已废弃：整合间隔",
-        "hint": "已随自动抽取下线废弃，保留以兼容旧配置。",
-        "type": "float",
-        "default": 4.0
-      },
-      "consolidation_topic_backfill": {
-        "description": "已废弃：摘要话题回写",
-        "hint": "已随自动抽取下线废弃，保留以兼容旧配置。",
-        "type": "bool",
-        "default": true
       }
     }
   },
@@ -609,12 +586,6 @@
         "hint": "逗号分隔。这些词即使大模型分析提炼出来，也会在入库前被彻底剔除。防止无意义杂词污染图谱。",
         "type": "string",
         "default": ""
-      },
-      "consolidation_skip_topics": {
-        "description": "已废弃：话题回写过滤词",
-        "hint": "已随自动抽取下线废弃，保留以兼容旧配置。",
-        "type": "string",
-        "default": "日常闲聊,日常灌水,闲聊,灌水,群聊,聊天,日常"
       },
       "graph_legend_enabled": {
         "description": "显示神经星云图例",

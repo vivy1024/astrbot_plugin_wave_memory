@@ -248,45 +248,6 @@ class PersonaBeliefReworkTest(unittest.TestCase):
         self.assertEqual(engine.get_injection(private_scope), "")
         self.assertEqual(len(db.calls), 1)
 
-    def test_layered_injection_parts_keep_self_persona_first(self):
-        from services.persona_composer import build_layered_injection_parts
-
-        parts = build_layered_injection_parts(
-            self_persona_text="<self_persona>人格</self_persona>",
-            belief_text="<beliefs>信念</beliefs>",
-            self_experience_text="<self_experiences>经历</self_experiences>",
-            persona_text="<persona>对话对象画像</persona>",
-            timeline_text="timeline",
-            facts_text="facts",
-            lore_text="lore",
-            memories_text="memories",
-            concern_summary="concern",
-            mood_text="mood",
-            mood_traj_text="mood_traj",
-            jargon_text="jargon",
-            fewshot_text="fewshot",
-        )
-
-        self.assertEqual(parts[:4], [
-            "<self_persona>人格</self_persona>",
-            "<beliefs>信念</beliefs>",
-            "<self_experiences>经历</self_experiences>",
-            "<persona>对话对象画像</persona>",
-        ])
-        self.assertLess(parts.index("timeline"), parts.index("facts"))
-        self.assertLess(parts.index("jargon"), parts.index("fewshot"))
-        self.assertLess(parts.index("fewshot"), parts.index("memories"))
-
-    def test_default_memory_sources_leave_bzz_experience_to_composer(self):
-        from services.persona_composer import default_recall_sources
-
-        sources = default_recall_sources()
-
-        self.assertNotIn("bzz_experience", sources)
-        self.assertNotIn("bzz_evolution", sources)
-        self.assertIn("core", sources)
-        self.assertIn("book_lore", sources)
-
     def test_metathinking_extreme_attack_uses_boundary_not_attack_back(self):
         from services.meta_thinking import MetaThinking
 

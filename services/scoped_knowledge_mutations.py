@@ -15,12 +15,20 @@ from typing import Any
 try:
     from ..domain.scope import RuntimeScope, scope_to_dict
     from ..engine.db.outbox_repo import OutboxRepository
+    from .facts_conflict import FactConflictClassifier
 except ImportError:  # pragma: no cover - focused tests import top-level packages
     from domain.scope import RuntimeScope, scope_to_dict
     from engine.db.outbox_repo import OutboxRepository
+    from services.facts_conflict import FactConflictClassifier
 
 
 _TERMINAL_STATUSES = frozenset({"deleted", "superseded"})
+
+# 人工审核允许的来源状态与目标状态。与 scoped_facts.status 既有词表保持一致：
+# 批准落 active（冲突时落 conflict，与 review_scoped_fact_history 同口径），拒绝落 rejected。
+_FACT_REVIEW_SOURCE_STATUSES = frozenset({"pending", "quarantined", "conflict"})
+_FACT_REVIEW_APPROVE_TARGET = "active"
+_FACT_REVIEW_REJECT_TARGET = "rejected"
 
 
 class ScopedKnowledgeMutationError(ValueError):
@@ -69,6 +77,19 @@ class ScopedKnowledgeMutationResult:
 
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _json_or_empty(value: Any) -> Mapping[str, Any]:
+    """scoped_facts.provenance 是 TEXT；解析失败时返回空映射而不是抛错。"""
+    if isinstance(value, Mapping):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+        return parsed if isinstance(parsed, Mapping) else {}
+    return {}
 
 
 def _digest(value: Any) -> str:
@@ -447,6 +468,137 @@ class ScopedKnowledgeMutationGateway:
             mutate=mutate,
             idempotency_key=idempotency_key,
         )
+
+    async def review_fact(
+        self,
+        *,
+        scope: RuntimeScope,
+        target: ScopedKnowledgeMutationTarget,
+        action: str,
+        reason: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> ScopedKnowledgeMutationResult:
+        """人工审核事实：pending/quarantined/conflict → active / conflict / rejected。
+
+        状态变更与审计行在同一事务内完成；批准前先用 FactConflictClassifier 判定与既有
+        事实的关系，判定为 conflicts 时落 conflict 而不是 active（与历史的
+        review_scoped_fact_history 同口径，不弱化冲突语义）。
+        """
+        if target.kind != "fact":
+            raise ValueError("fact target is required")
+        if action not in {"approve", "reject"}:
+            raise ValueError("unsupported fact review action")
+        locator = _positive_int(target.locator, "locator")
+        revision = _positive_int(target.revision, "revision")
+        review_reason = str(reason or "").strip()[:500]
+        request_shape = {
+            "scope": scope_to_dict(scope),
+            "target": {"kind": "fact", "locator": locator, "revision": revision},
+            "action": action,
+            "reason": review_reason,
+        }
+
+        resolution: dict[str, str] = {"event_type": "scoped_fact.rejected"}
+
+        def mutate(connection, now):
+            row = self._fact_row(connection, scope, locator)
+            self._require_current(row, revision)
+            from_status = str(row[5])
+            if from_status not in _FACT_REVIEW_SOURCE_STATUSES:
+                raise ValueError("invalid_fact_review_transition")
+            if action == "approve":
+                relation, conflict_with = self._classify_fact_conflict(connection, scope, locator)
+                to_status = "conflict" if relation == "conflicts" else _FACT_REVIEW_APPROVE_TARGET
+                resolution["event_type"] = (
+                    "scoped_fact.conflict" if to_status == "conflict" else "scoped_fact.approved"
+                )
+                if relation == "supersedes" and conflict_with is not None:
+                    connection.execute(
+                        """UPDATE scoped_facts SET status='superseded', revision=revision+1, updated_at=?
+                             WHERE id=? AND bot_id=? AND session_id=? AND visibility=?
+                               AND status NOT IN ('deleted','superseded')""",
+                        (now, int(conflict_with), *_scope_params(scope)),
+                    )
+            else:
+                relation, conflict_with = "", None
+                to_status = _FACT_REVIEW_REJECT_TARGET
+                resolution["event_type"] = "scoped_fact.rejected"
+            cursor = connection.execute(
+                """UPDATE scoped_facts SET status=?, revision=revision+1, updated_at=?
+                     WHERE id=? AND bot_id=? AND session_id=? AND visibility=? AND revision=?
+                       AND status NOT IN ('deleted','superseded')""",
+                (to_status, now, locator, *_scope_params(scope), revision),
+            )
+            if cursor.rowcount != 1:
+                raise ScopedKnowledgeRevisionConflict()
+            connection.execute(
+                """INSERT INTO scoped_fact_reviews(
+                       bot_id, session_id, visibility, fact_id, action, actor, reason,
+                       from_status, to_status, relation, conflict_with_fact_id,
+                       idempotency_key, reviewed_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(bot_id, session_id, visibility, idempotency_key) DO NOTHING""",
+                (
+                    *_scope_params(scope), locator, action, "webui.facts.review",
+                    review_reason, from_status, to_status, relation, conflict_with,
+                    str(idempotency_key or f"fact.review:{locator}:{revision}:{action}"),
+                    now,
+                ),
+            )
+            return {
+                "kind": "fact",
+                "locator": locator,
+                "revision": revision + 1,
+                "status": to_status,
+            }
+
+        event_type = (
+            "scoped_fact.rejected" if action == "reject"
+            else ("scoped_fact.conflict" if action == "approve" else "scoped_fact.approved")
+        )
+        return await self._commit(            scope=scope,
+            target=target,
+            command_type="scoped.fact.review.v1",
+            actor="webui.facts.review",
+            event_type=event_type,
+            request_shape=request_shape,
+            mutate=mutate,
+            idempotency_key=idempotency_key,
+        )
+
+    @staticmethod
+    def _classify_fact_conflict(
+        connection: Any,
+        scope: RuntimeScope,
+        locator: int,
+    ) -> tuple[str, int | None]:
+        """用与历史 scoped_fact_history 相同的分类器判定同主体+谓词内的关系。"""
+        row = connection.execute(
+            "SELECT subject, predicate, object, valid_from, valid_until, provenance FROM scoped_facts WHERE id=? AND bot_id=? AND session_id=? AND visibility=?",
+            (locator, *_scope_params(scope)),
+        ).fetchone()
+        if row is None:
+            raise ScopedKnowledgeNotFound()
+        provenance = _json_or_empty(row[5])
+        candidate = {
+            "subject": row[0], "predicate": row[1], "object": row[2],
+            "valid_from": row[3], "valid_until": row[4], "provenance": provenance,
+        }
+        others = [
+            {
+                "id": other[0], "subject": other[1], "predicate": other[2], "object": other[3],
+                "valid_from": other[4], "valid_until": other[5], "provenance": {},
+            }
+            for other in connection.execute(
+                """SELECT id, subject, predicate, object, valid_from, valid_until
+                     FROM scoped_facts
+                    WHERE bot_id=? AND session_id=? AND visibility=? AND subject=? AND predicate=?
+                      AND id!=? AND status NOT IN ('deleted','superseded','rejected')""",
+                (*_scope_params(scope), row[0], row[1], locator),
+            ).fetchall()
+        ]
+        decision = FactConflictClassifier().classify(candidate, others)
+        return str(decision.relation), decision.existing_id
 
     async def update_tag_relation(
         self,

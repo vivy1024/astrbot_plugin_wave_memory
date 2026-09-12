@@ -50,7 +50,7 @@ class RuntimeModeTest(unittest.TestCase):
     def test_main_uses_runtime_capability_gates_for_memory_only_services(self):
         source = Path("main.py").read_text(encoding="utf-8")
 
-        for capability in ["affinity", "persona", "mood", "dream", "consolidation", "book_lore", "jargon", "fewshot", "metathinking", "belief", "self_reflect"]:
+        for capability in ["affinity", "mood", "dream", "consolidation", "book_lore", "jargon", "fewshot", "metathinking", "belief", "self_reflect"]:
             self.assertIn(f'runtime_capability_enabled(self.runtime_mode, "{capability}"', source)
 
     def test_full_mode_preserves_existing_query_flags_and_repairs_advanced_defaults(self):

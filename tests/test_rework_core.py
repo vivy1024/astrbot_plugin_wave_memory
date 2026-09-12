@@ -770,75 +770,6 @@ class ReworkCoreTest(unittest.TestCase):
         self.assertNotIn('朋友圈', text)
         self.assertIn('仅供理解', text)
 
-    def test_bot_soul_registry_selects_by_qq_and_db_id(self):
-        from services.bot_soul import BotSoulRegistry, BotSoulRuntime
-
-        yushu = BotSoulRuntime(profile=type('P', (), {'qq_id': '2500447291', 'db_id': 'yushu', 'name': '羽书'})())
-        baizz = BotSoulRuntime(profile=type('P', (), {'qq_id': '1336495069', 'db_id': 'baizz', 'name': '白真真'})())
-        registry = BotSoulRegistry([yushu, baizz])
-        self.assertIs(registry.by_qq('2500447291'), yushu)
-        self.assertIs(registry.by_qq('1336495069'), baizz)
-        self.assertIs(registry.by_db_id('baizz'), baizz)
-        self.assertIsNone(registry.by_qq('missing'))
-        self.assertIsNone(registry.by_qq(''))
-
-    def test_persona_evolution_filters_identity_contaminated_facts_and_tags(self):
-        from services.persona_evolution import PersonaEvolution
-
-        conn, _ = self._connect()
-        self.addCleanup(conn.close)
-        conn.executescript("""
-            CREATE TABLE user_profiles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                group_id TEXT NOT NULL,
-                nickname TEXT,
-                affection INTEGER DEFAULT 0,
-                interaction_count INTEGER DEFAULT 0,
-                first_seen REAL,
-                last_seen REAL,
-                personality_tags TEXT,
-                notes TEXT,
-                metadata TEXT,
-                bot_id TEXT DEFAULT 'yushu',
-                UNIQUE(user_id, group_id, bot_id)
-            );
-            CREATE TABLE facts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                subject TEXT,
-                predicate TEXT,
-                object TEXT,
-                confidence REAL DEFAULT 0.8,
-                created_at REAL,
-                last_reinforced REAL,
-                fact_type TEXT DEFAULT 'FACTUAL'
-            );
-            CREATE TABLE person_registry (qq_id TEXT PRIMARY KEY, aliases TEXT);
-            CREATE TABLE memories (id INTEGER PRIMARY KEY, sender_id TEXT, content TEXT);
-            CREATE TABLE expression_patterns (id INTEGER PRIMARY KEY, group_id TEXT, situation TEXT, expression TEXT);
-            CREATE TABLE relationship_events (id INTEGER PRIMARY KEY, bot_id TEXT, user_id TEXT, group_id TEXT, dimension TEXT, delta REAL, reason TEXT, created_at REAL);
-        """)
-        conn.execute("""INSERT INTO user_profiles
-            (user_id, group_id, bot_id, nickname, affection, interaction_count, personality_tags, metadata)
-            VALUES ('u1','g1','yushu','玩符',10,2,'["深夜活跃", "还有带着爸爸", "消息简短"]','{}')""")
-        conn.execute("INSERT INTO facts (subject,predicate,object,confidence,fact_type) VALUES ('u1','给了','羽书灵魂，是最好的爸爸',0.8,'RELATIONAL')")
-        conn.execute("INSERT INTO facts (subject,predicate,object,confidence,fact_type) VALUES ('u1','喜欢','成语接龙',0.8,'FACTUAL')")
-        conn.commit()
-
-        db = type('DB', (), {
-            'conn': conn,
-            'get_facts_by_subject': lambda self, subject, limit=20: [
-                {"subject": r[1], "predicate": r[2], "object": r[3], "confidence": r[4], "fact_type": r[5]}
-                for r in conn.execute("SELECT id,subject,predicate,object,confidence,fact_type FROM facts WHERE subject=?", (subject,)).fetchall()
-            ],
-        })()
-        text = PersonaEvolution(db).get_persona_injection('u1', 'g1', bot_id='yushu')
-
-        self.assertIn("成语接龙", text)
-        self.assertIn("深夜活跃", text)
-        self.assertNotIn("爸爸", text)
-        self.assertNotIn("灵魂", text)
-
     def test_holyman_reference_matches_known_phrase_without_style_instruction(self):
         from services.jargon.holyman_reference import HolymanReference
 
@@ -862,40 +793,6 @@ class ReworkCoreTest(unittest.TestCase):
         self.assertFalse(result.get('matched'), result)
         self.assertTrue(result.get('context_hint'), result)
 
-    def test_holyman_sync_filters_skill_document_noise(self):
-        from services.jargon.sync import HolymanSyncService
-
-        svc = HolymanSyncService()
-        phrases = {}
-        readme = """
-# 背景
-## 架构
-## 安装使用
-### Claude Code（推荐）
-```bash
-git clone https://github.com/ykdeso/holyman-skills.git
-```
-## OpenClaw
-## License
-"""
-        skill = """
-# AI 互联网抽象人
-## Catchphrases
-- **解构一切**: 任何严肃话题都能被拆解成梗
-- **苏式转折**: 深情铺垫后突然 v我50
-- "你说得对，但是……"
-"""
-
-        svc._parse_markdown_phrases(readme, "README.md", phrases)
-        svc._parse_markdown_phrases(skill, "神人.skill/SKILL.md", phrases)
-
-        self.assertIn("解构一切", phrases)
-        self.assertIn("苏式转折", phrases)
-        self.assertIn("你说得对，但是……", phrases)
-        for noisy in ["背景", "架构", "安装使用", "Claude Code（推荐", "git clone https", "OpenClaw", "License"]:
-            self.assertNotIn(noisy, phrases)
-        self.assertFalse([word for word in phrases if "**" in word or word.startswith("|")], phrases)
-
     def test_holyman_sync_corpus_keeps_quotes_but_drops_generic_frequency_terms(self):
         from services.jargon.sync import HolymanSyncService
 
@@ -913,50 +810,6 @@ git clone https://github.com/ykdeso/holyman-skills.git
         self.assertIn("v我50", phrases)
         self.assertNotIn("今天", phrases)
         self.assertNotIn("吃饭", phrases)
-
-    def test_holyman_sync_outputs_category_metadata(self):
-        from services.jargon.sync import HolymanSyncService
-
-        svc = HolymanSyncService()
-        phrases = {}
-        svc._parse_markdown_phrases(
-            '- **游戏即信仰**: 游戏不是娱乐，是身份\n"原神"',
-            "神人.skill/_knowledge/gaming.md",
-            phrases,
-        )
-        svc._parse_markdown_phrases(
-            '- **复制粘贴模式**: 长文案轰炸',
-            "神人.skill/_persona/communication.md",
-            phrases,
-        )
-
-        self.assertIsInstance(phrases["游戏即信仰"], dict)
-        self.assertEqual(phrases["游戏即信仰"]["meaning"], "游戏不是娱乐，是身份")
-        self.assertEqual(phrases["游戏即信仰"]["category"], "gaming")
-        self.assertEqual(phrases["游戏即信仰"]["source"], "神人.skill/_knowledge/gaming.md")
-        self.assertIn(phrases["游戏即信仰"]["kind"], {"bold_term", "colon_term"})
-        self.assertEqual(phrases["复制粘贴模式"]["category"], "communication")
-
-    def test_holyman_sync_replaces_legacy_asset_when_parsed_result_is_healthy(self):
-        from services.jargon.sync import HolymanSyncService
-
-        svc = HolymanSyncService()
-        existing = {"旧版噪声词": "旧版短释义", "_version": "old", "_update_time": 1}
-        parsed = {
-            f"清噪词条{i}": {
-                "meaning": f"清噪释义{i}",
-                "category": "gaming",
-                "source": "神人.skill/_knowledge/gaming.md",
-                "kind": "bold_term",
-            }
-            for i in range(60)
-        }
-
-        merged = svc._merge_phrases_for_save(existing, parsed)
-
-        self.assertNotIn("旧版噪声词", merged)
-        self.assertIn("清噪词条1", merged)
-        self.assertEqual(len(merged), 60)
 
     def test_holyman_content_hash_ignores_version_metadata_and_counts_entries(self):
         from services.jargon.sync import HolymanSyncService

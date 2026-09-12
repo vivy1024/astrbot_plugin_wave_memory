@@ -111,13 +111,14 @@ class V430HolymanAuditVisibilityTest(unittest.TestCase):
         self.assertEqual(payload["quality_summary"]["error_count"], 0)
 
     def test_frontend_exposes_holyman_asset_audit_panel(self):
-        page = Path("webui/frontend/src/pages/jargon/JargonPage.tsx").read_text(encoding="utf-8")
+        # 广域资产审计已与「广域黑话」合并进同一个资产面板，因此断言随之指向该文件。
+        page = Path("webui/frontend/src/pages/jargon/GlobalJargonPanel.tsx").read_text(encoding="utf-8")
         api = Path("webui/frontend/src/api/jargon.ts").read_text(encoding="utf-8")
 
         self.assertIn("manifest?:", api)
         self.assertIn("manifest_summary?:", api)
         self.assertIn("quality_summary?:", api)
-        self.assertIn("资产审计", page)
+        self.assertIn("资产版本审计", page)
         self.assertIn("catalog", page)
         self.assertIn("local_version", page)
         self.assertIn("remote_version", page)

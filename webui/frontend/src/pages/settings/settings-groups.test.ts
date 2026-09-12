@@ -154,16 +154,16 @@ describe('配置文案不暴露实现术语', () => {
         if (!meta.type) noType.push(`${section}.${field}`)
       }
     }
-    expect(total).toBe(134)
+    expect(total).toBe(129)
     expect(noType).toEqual([])
   })
 
-  it('废弃的 consolidation 系列字段在界面上被隐藏，但在 schema 中保留', () => {
-    const page = read('src/pages/settings/SettingsPage.tsx')
-    expect(page).toContain('!isHiddenItem(group.key, item.key)')
+  it('废弃的 consolidation 系列字段已从 schema 删除，不靠前端隐藏', () => {
     const schema = JSON.parse(read('../../_conf_schema.json')) as Record<string, { items?: Record<string, unknown> }>
-    expect('enable_consolidation' in (schema.Lifecycle_Settings?.items ?? {})).toBe(true)
-    expect('consolidation_interval_hours' in (schema.Lifecycle_Settings?.items ?? {})).toBe(true)
+    for (const key of ['enable_consolidation', 'consolidation_interval_hours', 'consolidation_topic_backfill']) {
+      expect(key in (schema.Lifecycle_Settings?.items ?? {})).toBe(false)
+    }
+    expect('consolidation_skip_topics' in (schema.Tag_Settings?.items ?? {})).toBe(false)
   })
 })
 })
