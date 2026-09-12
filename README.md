@@ -829,14 +829,7 @@ Runtime_Settings.runtime_mode = memory_only
 | 标签索引容量 | [tag_index_capacity.py](services/tag_index_capacity.py) | `tag_index_max_vectors` |
 | 注入总预算 | `InjectionOrchestrator` | 超 2000ms 打慢注入告警 |
 
-VACUUM、HNSW 重建等运维动作见 [docs/](docs/) 下的操作手册。
-
-### 运维与治理文档
-
-`docs/` 收录 69 篇运维手册与规范，按主题分目录：
-
-| 目录 | 篇数 | 主题 |
-|------|------|------|
+------|------|------|
 | [ops/operator](docs/ops/operator/) | 2 | 操作员总览入口 |
 | [ops/production](docs/ops/production/) | 9 | 生产变更与发布 |
 | [ops/fanout](docs/ops/fanout/) | 14 | 多群 fanout 迁移与回滚 |
