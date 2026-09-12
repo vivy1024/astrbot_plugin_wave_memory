@@ -194,14 +194,14 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 ├─ safety（近期上下文去重 · 身份污染过滤）
 ├─ memory（五阶段语义召回）
 ├─ fts5（人名/专有名词精确命中）
-├─ timeline（相关时间线事件）
-├─ facts（三元组事实）
+├─ facts（三元组事实，本群与全群都可见）
 ├─ persona（自我人格 / 精选经历 / 当前发言者统计）
 ├─ belief（已审核信念）
 ├─ jargon（已确认黑话）
 ├─ fewshot（已批准健康风格样本）
 ├─ book_lore（世界观知识）
-├─ affinity（关系、印象时间线、人情账、已审事实）
+├─ affinity（全群累加的好感、印象时间线、人情账、已审事实）
+├─ holyman_persona（holyman-skills 风格人格包，默认关闭）
 └─ soul_state（当前群情绪 valence/arousal、关切、时间线）
 ```
 
@@ -245,7 +245,7 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 | 认知度 | bot 在本群看到过此人多少条消息（被动认知） |
 | 互动度 | bot 直接和此人对话过几次（主动互动） |
 | Facts 画像 | 注入已审核事实；提审必须带原话，反串黑话不得当认真事实 |
-| 跨群记忆 | `cross_group_enabled` 控制检索能否看到其他群；画像主键仍是 `(user_id, group_id, bot_id)`，不是自动把所有群合成一个人 |
+| 跨群记忆 | **好感度与事实已跨群合并**：同一人在各群积累的好感维度累加为一份态度（模拟真人认识你不分场合），事实也不再按群过滤，本群与全群都能看见。`cross_group_enabled` 现在只控制**记忆检索**能否看到其他群；`shared_memory_grants_enabled` 控制是否启用共享记忆只读授权 |
 | 别名 | `person_registry` 在好感 flush 时从本群发言名更新；不再由 Consolidation 后台盲抽绰号写 facts |
 | 多 Bot 支持 | 2+ Bot 共存，独立互动数据，`bot_id` 使用 `BotProfile.db_id` 隔离 |
 | 防骚扰 | 辱骂累计到阈值后冷却静默（翻倍，上限 1 小时） |
@@ -289,13 +289,16 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 | 页面 | 功能 |
 |------|------|
 | 总览 | 健康状态、待办、近期异常 |
-| 神经云图 | 3D 全模态全息记忆宇宙（融合记忆/事实/信念/人物/书设定等 11 层数据） |
+| 神经云图 | 3D 全模态全息记忆宇宙（融合记忆/事实/信念/人物/书设定等多层数据） |
 | 标签神经星云 | 2D 标签共现突触星图；内嵌 HUD 自由控制台（节点数/置信度/脉冲自由调节）与内置算法实验室（在图上直观观察脉冲与残差金字塔拓扑联想） |
-| 记忆 / 标签 / 导入 | 按群查看和编辑记忆、打标签、从来源预检导入 |
+| 算法实验室 | 高级检索算法对比与调参验证（EPA / 残差金字塔 / 脉冲共现 / 测地线重排） |
+| 记忆 / 标签 / 导入 | 按群查看和编辑记忆、打标签、从来源预检导入；支持单条与批量重新向量化 |
 | 维护任务 / 注入观测台 / 通道配置 | 后台任务、一次回复用了哪些通道、通道开关与预算 |
-| 信念 / 黑话与口癖 / 心智状态 | 审核模型自主提审的信念和黑话，查看心情轨迹、关切状态与经历时间线 |
+| 审查队列 | 模型自主提审的 memory / fact / belief / style / jargon 候选统一待审区；人工批准后才入库生效 |
+| 信念 / 黑话与口癖 / 心智状态 | 审核信念和黑话，查看心情轨迹、关切状态与经历时间线 |
 | 书设定 / 经历 / 风格样例 / 事实 / 人物 | 只读或审核知识对象；事实必须带原话，人物页支持全量群友印象时间线检索与好感校准 |
-| 索引诊断 / 生态兼容 / 系统配置 | 200万级海量数据秒级探针诊断（FTS/向量/Outbox/派生投影）；系统配置按 25 个功能分组折叠 |
+| 索引诊断 / 生态兼容 / 系统配置 | 海量数据秒级探针诊断（FTS/向量/Outbox/派生投影）；系统配置按功能分组折叠 |
+| 登录 | 管理台访问鉴权（`webui_password`） |
 
 **系统配置页**按功能分组折叠（记忆召回 / 心智与情绪 / 标签与分类…），常用组默认展开，搜索时自动展开命中分组。每个字段标注真实生效方式：热生效 / 保存即生效 / 重启生效；侧栏显示从 `metadata.yaml` 读取的插件版本。
 
@@ -368,106 +371,261 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 
 所有参数可在 AstrBot 6185 配置页调整，部分也可在 9876 WebUI 实时修改。
 
-### 基础配置
+### 基础配置（顶层字段）
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | embedding_provider_id | （必填） | Embedding 模型 Provider ID |
 | tag_llm_provider_id | （必填） | Tag/黑话/风格用 LLM |
 | embedding_dimension | 1024 | 向量维度 |
+| llm_fallback_provider_ids | （空） | LLM 降级 Provider 链 |
+| backup_max_count | 1 | 数据库备份保留份数 |
+| _system_status | （只读） | 仅供说明，无需修改 |
 
 ### 运行模式 (Runtime_Settings)
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| runtime_mode | full | `full` / `memory_only` / `compat_only` |
+| runtime_mode | full | 系统运行级别 |
 
 ### 记忆召回 (Query_Settings)
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| enable_auto_inject | true | 自动注入记忆到 prompt；`compat_only` 下默认忽略旧 true |
-| inject_top_k | 5 | 注入记忆条数 |
-| min_similarity | 0.35 | 最低相似度 |
-| enable_spike_routing | true | 脉冲传播（`memory_only`/`compat_only` 默认关闭） |
-| enable_residual_pyramid | true | 残差金字塔（`memory_only`/`compat_only` 默认关闭） |
-| enable_epa | true | EPA 嵌入投影分析（`memory_only`/`compat_only` 默认关闭） |
-| enable_geodesic_rerank | true | 测地线重排（`memory_only`/`compat_only` 默认关闭） |
+| enable_auto_inject | true | 开启自动记忆注入能力 |
+| inject_top_k | 5 | 单次最多注入几条记忆 |
+| min_similarity | 0.35 | 相似度关联召回门限 |
+| injection_format | `<memory from='{sender}' time…` | 记忆提示词注入模板 (Template) |
+| enable_spike_routing | true | 启用神经星云脉冲传播 (Spike Routing) |
+| enable_residual_pyramid | true | 启用残差多阶金字塔召回 (Residual Pyramid) |
+| enable_epa | true | 启用自省投影距离修正 (EPA) |
+| enable_geodesic_rerank | true | 启用非欧流形测地线重排 (Geodesic) |
+| enable_shotgun | false | 启用霰弹枪扫描模式 |
+
+### 注入与时间线 (Inject_Settings)
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| enable_holyman_persona | false | 启用 holyman-skills 风格人格包（可选） |
+| timeline_days | 0 | 历史时间窗（天，兼容保留） |
+| timeline_decay_half_life_days | 21 | 印象时间线指数权重半衰期（天） |
+| soul_timeline_max_items | 3 | Bot 经历日记时间线注入条数 |
+| orchestrator_active_enabled | true | 启用注入编排 |
+| orchestrator_shadow_enabled | false | 启用编排影子模式 |
+| skip_recent_minutes | 30 | 跳过最近多少分钟的消息 |
+| facts_max | 5 | 事实注入条数上限 |
 
 ### 注入通道 (Channel_Settings)
 
-| 字段 | 说明 |
-|------|------|
-| enabled | 是否启用通道；safety 不可关闭 |
-| priority | 注入排序优先级 |
-| top_k / max_items | 检索/输出条数 |
-| token_budget | 单通道预算；最终仍受全局预算裁剪 |
-| timeout_ms | 单通道超时；timeout 不阻塞其他通道 |
-| min_score | 通道最低分数阈值 |
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| layers | （空） | 注入通道优先级图层 |
 
-### Trace (Trace_Settings)
+### 跨群与共享 (Cross_Group_Settings)
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| retention_days | 14 | 注入 trace 保留天数 |
-| max_rows | 5000 | trace 最大条数，超出仅保留最新 |
-| max_preview_chars | 1200 | 请求、最终注入、通道明细的单字段预览长度 |
+| cross_group_enabled | true | 开启广域跨群记忆共享 |
+| shared_memory_grants_enabled | false | 启用共享记忆只读授权 |
 
-### 兼容模式 (Compatibility_Settings)
-
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| livingmemory_alias_tools_enabled | false | 注册 `recall_long_term_memory` / `memorize_long_term_memory` 别名 |
-| compat_only_auto_inject_enabled | false | `compat_only` 下显式允许 WaveMemory 原生自动注入 |
-
-### 社交认知 (Social_Settings)
+### 存储与容量 (Storage_Settings)
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| group_weight_current | 1.5 | 当前群记忆权重 |
-| group_weight_cross | 0.8 | 跨群记忆权重 |
-| abuse_trigger_count | 3 | 辱骂触发冷却次数 |
-| abuse_cooldown_base | 600 | 冷却起步秒数 |
-| abuse_cooldown_max | 3600 | 冷却上限秒数 |
-| aba_window_seconds | 30 | 连续对话窗口 |
+| max_memories | 100000 | 活跃记忆软上限（条） |
+| canonical_capacity_enabled | true | 启用记忆总量软上限 |
+| cold_chat_when_over_capacity | true | 超额时 chat 冷落库 |
+| facts_decay_rate | 0.005 | facts 时间衰减速率 |
+
+### 记忆索引 (Memory_Index_Settings)
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| hot_max_vectors | 40000 | 热记忆最大条数 |
+| enforce_scope_hot_quota | false | 启用单个群的热记忆配额 |
+| per_scope_max_vectors | 1000 | 单个群的热记忆上限 |
+| scoped_reserved_vectors | 10000 | 为正式群保留的热记忆量 |
+| chat_hot_days | 30 | 普通聊天热窗口（天） |
+| cold_candidate_limit | 128 | 单次冷召回候选上限 |
+| cold_recall_enabled | true | 启用标签驱动的冷记忆召回 |
+| tag_index_max_vectors | 40000 | 标签索引最大条数 |
+| generation_retention | 1 | 索引历史版本保留数量 |
+
+### 内存预算 (Memory_Budget_Settings)
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| memory_profile | unbounded | 内存预算档位 |
+| memory_budget_mb | 2400 | 常驻内存预算（MiB） |
+| baseline_reserved_mb | 700 | 非索引基线预留（MiB） |
+| rebuild_headroom | 0.35 | 重建峰值预留比例 |
+
+### 性能 (Performance_Settings)
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| embedding_batch_size | 16 | 向量化批处理大小 |
+| write_flush_interval | 1.0 | 数据库写入落盘缓冲间隔（秒） |
+
+### 记忆淘汰 (Eviction_Settings)
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| enabled | true | 启用记忆淘汰 |
+| noise_ttl_days | 7 | 噪声记忆保留天数 |
+| interval_hours | 6.0 | 淘汰作业检查间隔（小时） |
+
+### 消息过滤 (Message_Filter)
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| min_message_length | 4 | 记忆录入最小字符长度 |
+| max_message_length | 2000 | 记忆录入最大字符长度 |
+| ignore_bot_messages | false | 忽略机器人自身回复记忆 |
+| group_whitelist | （空） | 群记忆功能激活白名单 |
+| group_blacklist | （空） | 群记忆功能禁止黑名单 |
+
+### 标签提取与图谱 (Tag_Settings)
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| tag_extraction_enabled | true | 启用标签特征分析 |
+| max_tags_per_message | 10 | 单条消息最大标签数 |
+| tag_batch_size | 5 | 标签提炼实时队列批次大小 |
+| tag_backfill_batch_size | 50 | 后台标签补填任务处理大小 |
+| tag_blacklist | （空） | 全局标签屏蔽词 |
+| graph_legend_enabled | true | 显示神经星云图例 |
+| graph_legend_types | `topic,event,keyword,entity,f…` | 神经星云图例展示类型与顺序 |
+| graph_legend_show_count | true | 神经星云图例显示节点数量 |
+
+### 标签队列 (TagWorker_Settings)
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| worker_enabled | true | 启用后台标签队列 |
 
 ### 黑话系统 (Jargon_Settings)
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| enabled | true | 启用黑话系统 |
-| min_frequency | 5 | 最低频率阈值 |
-| max_inject | 3 | 单次最多注入数 |
-| global_threshold | 3 | 跨群全局化阈值 |
+| enabled | true | 启用黑话挖掘与注入 |
+| min_frequency | 5 | 黑话候选词频门限 |
+| min_messages | 10 | 黑话候选消息数门限 |
+| confidence_threshold | 0.5 | 推断置信度门限 |
+| max_inject | 3 | 单次回复最大注入黑话数 |
 
 ### 风格学习 (FewShot_Settings)
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| enabled | true | 启用风格学习 |
-| min_score | 0.7 | 最低风格评分 |
-| max_inject | 3 | 每次注入范例数 |
-| drift_threshold | 0.5 | 漂移告警阈值 |
+| enabled | true | 启用 FewShot 风格注入 |
+| max_inject | 3 | 单次回复最大注入样例数 |
 
 ### 人格与情绪 (Lifecycle_Settings)
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| enable_persona_evolution | true | 仍控制是否启用人格通道；正式注入只走 PersonaComposer，不再读 PersonaEvolution 全局画像 |
-| enable_mood | true | Bot 情绪 |
-| enable_dream | true | 做梦系统 |
-| dream_interval_hours | 6.0 | 做梦间隔 |
-| enable_consolidation | true | 可实例化整合服务；**v5 默认不启动 4h 自动循环** |
-| consolidation_interval_hours | 4.0 | 仅手工/排障时有意义 |
+| enable_mood | true | 启用生理心境系统 (Bot Mood) |
+| mood_duration_hours | 2.0 | 情绪状态自然半衰退天数 |
+| mood_msg_threshold | 30 | 情绪爆发活跃消息门限 |
+| positive_emotion_threshold | 0.6 | CHEERFUL 喜悦触发临界值 |
+| negative_emotion_threshold | 0.4 | CONCERNED 悲伤触发临界值 |
+| relationship_single_delta_cap | 5.0 | 单次互动关系变化极大值 |
+| relationship_daily_delta_cap | 15.0 | 每日好感度变化累计上限 |
+| relationship_hostility_delta_cap | 8.0 | 单次辱骂敌意增加上限 |
+| enable_dream | true | 启用深夜做梦引擎 (Dreaming) |
+| dream_interval_hours | 6.0 | 做梦引擎触发自省间隔 |
+| dream_recent_seeds | 3 | 近期种子记忆数 |
+| dream_recent_k | 5 | 近期记忆联想召回深度 |
+| dream_mid_seeds | 2 | 中期经历种子数 |
+| dream_mid_k | 3 | 中期经历联想召回深度 |
 
-### 多 Bot / MetaThinking
+### 社交与关系 (Social_Settings)
 
-| 配置组 | 说明 |
-|--------|------|
-| MetaThinking_Bot1 / Bot2 | bot QQ、名称、db_id、别名、主动插话、排除 source |
-| MetaThinking_Settings | 规则过滤、主动插话频率、静默时段、Provider fallback |
-| PersonaComposer | 无单独配置；自动使用 bot registry、BeliefEngine、经历检索、Few-Shot |
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| abuse_trigger_count | 3 | 防骚扰触发阈值 |
+| abuse_cooldown_base | 120 | 防骚扰冷却基础时长（秒） |
+| abuse_cooldown_max | 3600 | 防骚扰冷却最大时长（秒） |
+| aba_window_seconds | 30 | 连续对话判定时间窗（秒） |
+| group_weight_current | 1.0 | 当前群记忆匹配权重 |
+| group_weight_cross | 0.7 | 跨群记忆匹配权重 |
+| impact_cap | 5.0 | 单次交互印象冲击度上限 |
+| affinity_step_cap | 2.0 | 阶段性好感单次调整步长上限 |
+| affinity_hostility_step_cap | 3.0 | 阶段性敌意单次调整步长上限 |
 
+### 好感校准 (Affinity_Settings)
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| manual_adjustment_delta_cap | 20.0 | 管理员手动调整好感单次上限 |
+
+### 自省 (Study_Settings)
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| self_reflect_enabled | true | 启用自省纠错系统 |
+
+### 书设知识库 (BookLore_Settings)
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| book_lore_db_path | （空） | 书设只读数据库绝对或相对路径 |
+| lore_db_path | （空） | 书设别名数据库路径（兼容） |
+
+### Trace (Trace_Settings)
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| retention_days | 14 | Trace 历史数据保留天数 |
+| max_rows | 5000 | Trace 最大保留记录条数 |
+| max_preview_chars | 1200 | 单条消息最大预览字符数 |
+
+### 管理台 (WebUI_Settings)
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| webui_enabled | true | 启用管理控制台 |
+| webui_host | 127.0.0.1 | 监听网卡地址 |
+| webui_port | 9876 | 控制台访问端口 |
+| webui_password | （空） | 访问登录密码 |
+
+### 兼容模式 (Compatibility_Settings)
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| livingmemory_alias_tools_enabled | false | 启用 LivingMemory 别名工具映射 |
+| compat_only_auto_inject_enabled | false | 兼容模式下强行启用原生注入 |
+
+### MetaThinking (MetaThinking_Settings)
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| enabled | true | 启用 MetaThinking |
+| default_model | （空） | 默认模型 |
+| spam_threshold | 6 | 刷屏检测阈值 |
+| spam_window_seconds | 60 | 刷屏检测窗口（秒） |
+| silent_hours_start | 0 | 静默时段开始（小时） |
+| silent_hours_end | 6 | 静默时段结束（小时） |
+| interest_sample_size | 20 | 兴趣关键词数量 |
+
+### MetaThinking Bot 画像 (MetaThinking_Bot1 / MetaThinking_Bot2)
+
+> `MetaThinking_Bot2` 与 Bot1 字段完全同构，为第二个 Bot 单独配置。`db_id` 是数据库标识（用于 user_profiles / beliefs / concerns 等表），**不是 QQ 号**。
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| qq_id | 2500447291 | QQ 号 |
+| name | 羽书 | 显示名称 |
+| db_id | yushu | 数据库标识（用于 user_profiles/beliefs/concerns 等表，不是 QQ 号） |
+| aliases | 羽书,羽书bot,器灵 | 别名（逗号分隔，用于兴趣词匹配和纠正检测） |
+| exclude_sources | bzz_experience,bzz_pending | 排除的记忆来源（逗号分隔） |
+| interest_keywords | 没钱修什么仙,张羽,熊狼狗 | 自定义兴趣关键词（逗号分隔，触发主动对话） |
+| meta_prompt | （空） | 自定义 MetaThinking prompt（留空用默认模板） |
+| model | （空） | 模型（留空用全局默认） |
+| proactive_enabled | true | 启用主动对话 |
+| proactive_interval_seconds | 600 | 主动对话最小间隔（秒） |
+| proactive_max_per_hour | 3 | 每小时最多主动插话 |
 ### 与 SelfLearning / ChatPlus 共存
 
 | 目标 | WaveMemory 推荐配置 | 外部插件建议 |
@@ -475,14 +633,6 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | WaveMemory 独立注入 | `runtime_mode=full` | 关闭外部插件的重复记忆注入/长期记忆工具 |
 | WaveMemory 只做基础记忆 | `runtime_mode=memory_only` | 关闭外部插件的重复写入或重复注入能力 |
 | WaveMemory 做兼容后端 | `runtime_mode=compat_only` + `livingmemory_alias_tools_enabled=true` | 外部插件调用 `recall_long_term_memory` / `memorize_long_term_memory`；不要同时启用 WaveMemory 原生自动注入 |
-
-### 记忆淘汰 (Eviction_Settings)
-
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| enabled | true | 启用淘汰 |
-| noise_ttl_days | 7 | noise 保留天数 |
-| chat_stale_days | 30 | chat 闲置天数 |
 
 ---
 
@@ -527,7 +677,7 @@ Runtime_Settings.runtime_mode = memory_only
 
 - 保留：消息采集、writer、向量检索、基础 memory 注入、trace、搜索/记住工具、兼容 facade。
 - 默认关闭：persona、belief、jargon、few-shot、BookLore、affinity、mood、dream、consolidation、Study、SelfReflect 等高级能力。
-- 验证：注入观察台 trace 只应出现 memory/safety/可选 timeline/facts/fts5 等基础通道，不应出现 persona/belief/jargon/fewshot/book_lore。
+- 验证：注入观察台 trace 只应出现 memory/safety/facts/fts5 等基础通道，不应出现 persona/belief/jargon/fewshot/book_lore。
 
 ### Agent 反馈安全边界
 
@@ -563,7 +713,6 @@ Runtime_Settings.runtime_mode = memory_only
 | 服务 | 周期 | 功能 |
 |------|------|------|
 | TagWorker | 持续 | 新消息自动 Tag 提取（batch 100） |
-| ConsolidationService | 默认关闭自动循环 | 不再定时抽事实/信念；现场工具提审 |
 | DreamService | 6h | 记忆巩固（三层时间线涟漪浪潮） |
 | LifecycleService | 30min | 互动统计 + 记忆衰减 |
 | EvictionService | 6h | noise/chat 过期清理 |
@@ -591,7 +740,7 @@ Runtime_Settings.runtime_mode = memory_only
 | Trace Store | 自动 | 6185: Trace_Settings / 9876: 注入观察台 |
 | Agent 反馈 | full/memory_only | Agent 工具提交，管理台审核相关对象 |
 | LivingMemory-compatible facade | 自动 | 6185: Compatibility_Settings / 9876: 兼容模式 |
-| 记忆整合 | 服务可建；自动循环默认关 | 6185: enable_consolidation |
+| 共享记忆授权 | shared_memory_grants_enabled=true | 6185: Cross_Group_Settings |
 | PersonaComposer | full 模式 | 自动 |
 | 信念引擎 | 现场提审 + 管理台二审 | 须 ≥2 条已审事实 |
 | 经历片段 | v2.2 schema 已迁移且 full 模式 | 自动 |
@@ -608,6 +757,8 @@ Runtime_Settings.runtime_mode = memory_only
 
 ## 项目结构
 
+> 规模：**204 个非测试模块**（`services/` 66、`engine/` 22、`engine/db/` 17、`tools/` 23、`webui/blueprints/` 22、`domain/` 5）。
+
 ```
 ├── engine/                      # 检索引擎（纯算法，零 LLM）
 │   ├── query_engine.py          # 五阶段管线编排
@@ -618,10 +769,23 @@ Runtime_Settings.runtime_mode = memory_only
 │   ├── directed_cooccurrence.py # 有向共现矩阵
 │   ├── intrinsic_residual.py    # 内生残差
 │   ├── semantic_gain.py         # 语义增益
-│   └── vector_index.py          # HNSW 索引
+│   ├── vector_index.py          # HNSW 索引
+│   ├── recall_policy.py         # 召回策略统一层
+│   ├── memory_collapse.py       # 跨群同文折叠
+│   ├── shared_grant_recall.py   # 共享授权召回
+│   └── db/                      # 仓储层（memory / soul / knowledge / outbox / tag…）
+├── domain/                      # 领域契约（无 IO）
+│   ├── commands.py              # DomainCommand / EntityChange 写入契约
+│   ├── scope.py                 # RuntimeScope / CatalogScope 访问边界
+│   ├── relationship_policy.py   # 好感度公式与维度的唯一事实来源
+│   ├── evidence.py              # 证据引用
+│   └── quality.py               # 质量评分
 ├── services/                    # 灵魂系统 + 业务服务
+│   ├── system_convergence_runtime.py  # ProductionWriteGateway（唯一正式写入口）
+│   ├── message_writer.py        # 消息统一写入
+│   ├── outbox_dispatcher.py     # 事务性发件箱派发
 │   ├── persona_composer.py      # 自我人格/信念/经历/风格编排
-│   ├── persona_evolution.py     # 对话对象画像
+│   ├── impression_timeline.py   # 群友印象时间线与指数衰减
 │   ├── belief_engine.py         # 信念引擎
 │   ├── belief_emergence.py      # 信念涌现
 │   ├── experience_episodes.py   # 经历片段
@@ -629,15 +793,66 @@ Runtime_Settings.runtime_mode = memory_only
 │   ├── desire_engine.py         # 欲望引擎
 │   ├── mood_trajectory.py       # 情绪轨迹
 │   ├── subjective_time.py       # 主观时间
-│   ├── consolidation.py         # 记忆整合
+│   ├── memory_budget_policy.py  # 内存预算档位
+│   ├── storage_capacity_policy.py  # 存储容量策略
+│   ├── data_governance_jobs.py  # 数据治理作业
+│   ├── scope_recovery.py        # Scope 恢复
+│   ├── backup_lifecycle.py      # 备份生命周期
+│   ├── platform_context.py      # 平台上下文（群名解析）
 │   ├── dream.py                 # 做梦系统
 │   ├── self_reflect.py          # 自省系统
-│   ├── jargon/                  # 黑话 / 内置口癖资产
+│   ├── review/                  # 审查队列（review_candidates）
+│   ├── injection/               # 注入编排 + 12 通道
+│   ├── jargon/                  # 黑话 / holyman 广域资产
 │   └── few_shot/                # 健康风格学习
-├── tools/                       # Agent 工具（含印象/人情/黑话/事实/信念提审）
-├── webui/                       # Web 管理面板
+├── tools/                       # 23 个 Agent 工具
+├── webui/                       # Web 管理面板（22 蓝图 + React 前端）
 └── main.py                      # 插件入口
 ```
+
+### 写路径与数据一致性
+
+正式对象（记忆、关系、情绪、关切、经历、标签治理）**只有一个写入入口**：`services/system_convergence_runtime.py` 的 `ProductionWriteGateway`。业务服务不直接改这些表，而是提交 `DomainCommand`（[domain/commands.py](domain/commands.py)）。
+
+| 机制 | 作用 |
+|------|------|
+| `DomainCommand` + `operation_id` / `idempotency_key` | 同一操作重复提交不会写两次 |
+| 进程独占 `WriteCoordinator` | 写操作串行化，避免 SQLite 写锁互等 |
+| 事务性发件箱 `outbox` + `OutboxDispatcher` | 派生投影（标签、共现、向量）由已提交事件驱动，失败可重放 |
+| `store.write_transaction()` 只读快照 | 读取侧拿一致快照，不阻塞写入 |
+| 读写分离连接 | 注入查询永不等整合写锁 |
+| `writer_lease` | 防止同一库被两个进程同时写 |
+| `persona_prompt` 等旁路表 | 仅自有小表 store 可自管 schema 与提交 |
+
+架构守卫测试 [tests/test_write_path_guard.py](tests/test_write_path_guard.py) 锁定这条边界：受保护表禁止裸提交，遗留白名单只允许减少。
+
+### 容量与预算
+
+| 策略 | 模块 | 关键配置 |
+|------|------|----------|
+| 内存档位 | [memory_budget_policy.py](services/memory_budget_policy.py) | `memory_profile` / `memory_budget_mb` / `baseline_reserved_mb` |
+| 存储容量软上限 | [storage_capacity_policy.py](services/storage_capacity_policy.py) | `max_memories` / `canonical_capacity_enabled` |
+| 热冷索引分层 | [memory_index_policy.py](services/memory_index_policy.py) | `hot_max_vectors` / `cold_recall_enabled` / `chat_hot_days` |
+| 标签索引容量 | [tag_index_capacity.py](services/tag_index_capacity.py) | `tag_index_max_vectors` |
+| 注入总预算 | `InjectionOrchestrator` | 超 2000ms 打慢注入告警 |
+
+VACUUM、HNSW 重建等运维动作见 [docs/](docs/) 下的操作手册。
+
+### 运维与治理文档
+
+`docs/` 收录 69 篇运维手册与规范，按主题分目录：
+
+| 目录 | 篇数 | 主题 |
+|------|------|------|
+| [ops/operator](docs/ops/operator/) | 2 | 操作员总览入口 |
+| [ops/production](docs/ops/production/) | 9 | 生产变更与发布 |
+| [ops/fanout](docs/ops/fanout/) | 14 | 多群 fanout 迁移与回滚 |
+| [ops/governance](docs/ops/governance/) | 14 | 数据治理与验收 |
+| [ops/relationship](docs/ops/relationship/) | 19 | 关系/好感数据面与补数 |
+| [ops/phase2](docs/ops/phase2/) | 8 | Scope 恢复二期 |
+| [ops/smoke](docs/ops/smoke/) | 3 | 冒烟与只读巡检 |
+
+其余单篇文档覆盖检索就绪门、热 HNSW 重建、软删除清理、跨群同人去重、注入超时根因等。
 
 ---
 
