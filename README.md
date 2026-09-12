@@ -93,29 +93,13 @@ v5 起，事实 / 黑话 / 信念 / 风格不再靠后台定时盲抽，而是�
 | 已经有人格插件，需要一个可隔离的记忆后端 | 需要多机共享、云端托管的记忆服务 |
 | 能接受单独开一个中文管理台做排查 | 只想在 AstrBot 设置里勾一个开关 |
 
-### Recent Releases
+### 最新版本
 
 | 版本 | 日期 | 重点 |
 |------|------|------|
-| **v5.0.0** | 2026-09-09<br>（09-12 修订） | 现场提审取代后台盲抽 + Bot 亲笔日记；修复反思引导静默瘫痪 bug 并写明确切工具名；索引诊断性能暴提 23 倍防超时；标签星云内嵌自由无限制控制台 + 交互式类型透镜 + 算法实验室拓扑联想联动；真实 9 大标签类型（事件/人物/地点/时间）全链路色彩对齐；WebUI 全量中文脱敏与配置折叠分组<br>**09-12 修订**：好感度改为跨群累加（同一人各群积累合成一份态度，实测 0→33）、事实去群限制、修复 WebUI 记忆作业始终失败；清理死模块/死函数/废弃配置/零引用脚本净减约 4200 行；README 配置参考 6%→100% 并加防漂移测试 |
-| **v4.7.2** | 2026-08-29 | 中文管理台与心智自省：人物历史关系审计、表格/筛选重构、去掉后端黑话 |
-| **v4.7.1** | 2026-08-06 | 稳定性修复与好感度平滑：发送前拦截清洗印象标记防泄露、WriteCoordinator死锁与共现循环防御、关系衰减优化、向量索引恢复 Inline Resize |
-| **v4.7.0** | 2026-07-26 | 瘦身重构 + 3D 增强：清理学习中心空壳(−11K行)、CDN 本地化、力导向聚类、节点降噪、经历/时间锚点/Outbox 新页面 |
-| **v4.6.3** | 2026-07-21 | 开放 Scope 检索、跨群同文 soft-delete、热 HNSW 对齐读路径、person 跨群与观察门禁 |
-| **v4.6.2** | 2026-07-20 | 数据库治理 Phase 0：稳定标签 upsert、Schema 兼容迁移、2000ms 注入预算与 Scoped Runtime 诊断 |
-| **v4.6.0** | 2026-07-19 | Scoped Runtime、Tag 治理、Learning Center、关系/Soul、受限 HNSW 热冷召回与全历史 Timeline |
-| **v4.5.0** | 2026-07-06 | 前端优化 + 认知资源管理：BookLore/FewShot/Facts/People/Indexes 独立 API 与真实数据闭环 |
-| **v4.2.1** | 2026-07-05 | Holyman GitHub 更新握手：轻量检查缓存 · 强制刷新 · 预览确认同步 · lint 清零 |
-| **v4.2.0** | 2026-07-05 | React WebUI Holyman 黑话治理补全：筛选/批量审核 · 显式命中注入 · 神经云图与审计 UI 修复 |
-| **v4.1.0** | 2026-07-03 | 3D神经云图星空版：动力学引力 · 3D粒子流数据线 · 高分屏精准点击 · WebGL彻底销毁自愈 |
-| **v4.0.0** | 2026-07-03 | React WebUI首发：Vite + React + TS + Tailwind v4 + shadcn/ui 全量管理页面迁移 |
-| **v3.3.0** | 2026-07-03 | Holyman 分层黑话资产重建 · 精选运行时匹配过滤 |
-| **v3.2.0** | 2026-07-03 | 通道化注入编排器 · 注入 Trace 持久存储 · Agent 只读/受控反馈工具 |
-| **v3.1.0** | 2026-07-03 | 运行模式 · 通道配置热更新模型 · 学习对象审查登记表 |
-| **v3.0.1** | 2026-07-03 | 性能优化：优化 SQLite 缓存与 HNSWlib/EPA 内存消耗 |
-| **v3.0.0** | 2026-06-30 | PersonaComposer 分层人格 · 主动对话共用自我人格上下文 · few-shot 健康过滤 · 安全边界收口 |
-| **v2.3.4** | 2026-06-30 | Holyman 黑话知识库分层 · 候选批量审核 · 证据层 tabs · 屏蔽项回显 |
-| **v2.3.2** | 2026-06-27 | 注入指标时间序列 · SVG 折线图 · 模块消耗排行榜 · 自定义日期筛选 |
+| **v5.0.0** | 2026-09-09<br>（09-12 修订） | 现场提审取代后台盲抽 + Bot 亲笔日记；修复反思引导并明确工具调用；索引诊断性能提升 23 倍防超时；标签星云内嵌控制台 + 交互式类型透镜 + 算法实验室联动；WebUI 全量中文脱敏与配置分组折叠<br>**09-12 修订**：好感度跨群累加、事实去群限制、修复 WebUI 记忆作业；清理死模块/死函数/废弃配置/零引用脚本净减 4200 余行；README 配置参考 100% 覆盖并加自动化防漂移测试 |
+
+> 完整历史版本记录请查阅 [CHANGELOG.md](CHANGELOG.md) 或 [GitHub Releases](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)。
 
 ---
 
@@ -195,7 +179,7 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 ├─ memory（五阶段语义召回）
 ├─ fts5（人名/专有名词精确命中）
 ├─ facts（三元组事实，本群与全群都可见）
-├─ persona（自我人格 / 精选经历 / 当前发言者统计）
+├─ persona（自我人格 / 精选自我经历 / 已审信念）
 ├─ belief（已审核信念）
 ├─ jargon（已确认黑话）
 ├─ fewshot（已批准健康风格样本）
@@ -828,17 +812,6 @@ Runtime_Settings.runtime_mode = memory_only
 | 热冷索引分层 | [memory_index_policy.py](services/memory_index_policy.py) | `hot_max_vectors` / `cold_recall_enabled` / `chat_hot_days` |
 | 标签索引容量 | [tag_index_capacity.py](services/tag_index_capacity.py) | `tag_index_max_vectors` |
 | 注入总预算 | `InjectionOrchestrator` | 超 2000ms 打慢注入告警 |
-
-------|------|------|
-| [ops/operator](docs/ops/operator/) | 2 | 操作员总览入口 |
-| [ops/production](docs/ops/production/) | 9 | 生产变更与发布 |
-| [ops/fanout](docs/ops/fanout/) | 14 | 多群 fanout 迁移与回滚 |
-| [ops/governance](docs/ops/governance/) | 14 | 数据治理与验收 |
-| [ops/relationship](docs/ops/relationship/) | 19 | 关系/好感数据面与补数 |
-| [ops/phase2](docs/ops/phase2/) | 8 | Scope 恢复二期 |
-| [ops/smoke](docs/ops/smoke/) | 3 | 冒烟与只读巡检 |
-
-其余单篇文档覆盖检索就绪门、热 HNSW 重建、软删除清理、跨群同人去重、注入超时根因等。
 
 ---
 
