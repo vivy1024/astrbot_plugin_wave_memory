@@ -87,3 +87,43 @@ def test_import_failure_is_recorded_not_silent(monkeypatch):
 def test_blueprints_list_is_not_empty():
     """守住本次故障的核心症状：注册表为空 = 全站 404。"""
     assert get_blueprints(), "蓝图列表为空会导致所有 /api/* 返回 404"
+
+
+def test_no_duplicate_api_routes():
+    """同一 (URL, HTTP方法) 绝不得被不同端点争夺。
+
+    Flask/Quart 对重复规则按注册顺序取先到者，后注册的新实现会被静默遮蔽。
+    实测曾发生：knowledge.list_facts_compatibility（旧兼容别名）与
+    facts.list_facts（新实现，带审核能力）都注册 GET /api/facts，旧端点先注册
+    故生效，导致事实页显示「审核能力不可用：服务端未提供事实变更网关」。
+
+    注意：同一个端点注册 GET+POST（如 /api/beliefs/ 查列表又做创建）是合法的；
+    本断言守护的是**不同端点撞同方法同路径**的真遮蔽。
+    """
+    from collections import defaultdict
+    from webui.app import create_app
+
+    by_route = defaultdict(list)
+    for rule in create_app().url_map.iter_rules():
+        for method in rule.methods - {"HEAD", "OPTIONS"}:
+            by_route[(str(rule), method)].append(rule.endpoint)
+
+    conflicts = {
+        f"{method} {path}": endpoints
+        for (path, method), endpoints in by_route.items()
+        if len(set(endpoints)) > 1
+    }
+    assert not conflicts, ("同路径同方法的端点冲突（后者被遮蔽）：" + str(conflicts))
+
+
+def test_facts_endpoint_serves_review_capabilities():
+    """/api/facts 必须由带审核能力的新实现提供。"""
+    from webui.app import create_app
+
+    endpoints = [
+        rule.endpoint for rule in create_app().url_map.iter_rules()
+        if str(rule) == "/api/facts"
+    ]
+    assert endpoints == ["facts.list_facts"], (
+        f"/api/facts 被旧兼容别名遮蔽，实际端点: {endpoints}"
+    )

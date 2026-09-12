@@ -66,10 +66,8 @@ def create_app(
         app.register_blueprint(bp)
         logger.debug(f"[WaveMemory WebUI] registered blueprint: {bp.name}")
 
-    @app.route("/")
-    async def serve_index():
-        from quart import send_from_directory
-        return await send_from_directory(static_dir / "app", "index.html")
+    # 注意：根路径 "/" 由 pages 蓝图提供（pages.index），不要在这里重复注册 ——
+    # 重复规则会按注册顺序静默取先到者，令后来者失效且无任何日志。
 
     @app.route("/assets/<path:filename>")
     @app.route("/static/app/assets/<path:filename>")

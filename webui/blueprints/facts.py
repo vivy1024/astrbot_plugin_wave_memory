@@ -94,9 +94,11 @@ def _object_ref_registry():
         return None
 
 
-def _group_scope_from_query() -> RuntimeScope:
+def _group_scope_from_query(*, optional: bool = False) -> RuntimeScope | None:
     required = ("bot_id", "session_id", "visibility")
     if any(request.args.get(field) is None for field in required):
+        if optional:
+            return None
         raise ScopedKnowledgeScopeError("scope_required")
     bot_id, session_id, visibility = (request.args.get(field) for field in required)
     if visibility != "group":
@@ -186,7 +188,17 @@ async def list_facts():
     """列出当前 Scope 的正式事实，附证据、审核建议与可用的审核动作。"""
     try:
         limit, offset = _pagination_from_query()
-        scope = _group_scope_from_query()
+        scope = _group_scope_from_query(optional=True)
+        if scope is None:
+            # 无 Scope 时返回空集合；前端通过 botId/sessionId 提示「请选择」，
+            # 契约测试 R13 亦验证无参查询能安全返回合法分页结构。
+            payload = facts_page_response([], total=0, limit=limit, offset=offset)
+            payload["scope"] = None
+            payload["capabilities"] = {
+                **_capabilities("review", available=False, reason="scope_required"),
+                "review_hint": {"available": False, "reason_code": "scope_required"},
+            }
+            return jsonify(payload)
         container = get_container()
         cm = _connection()
         if cm is None:

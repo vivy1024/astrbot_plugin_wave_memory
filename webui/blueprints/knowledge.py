@@ -334,13 +334,6 @@ async def list_legacy_facts_audit():
         return jsonify(error_payload("service_unavailable", "Legacy facts audit is unavailable", retryable=True)), 503
 
 
-@knowledge_bp.route("/facts", methods=["GET"])
-@require_auth
-async def list_facts_compatibility():
-    """Stage 4 分页契约兼容别名；无 Scope 时保持真实空集而不回退 legacy facts。"""
-    return await _list_scoped_facts(compatibility_empty=True)
-
-
 def _healthy_few_shot(content: Any) -> bool:
     text = str(content or "").strip()
     if not text:
