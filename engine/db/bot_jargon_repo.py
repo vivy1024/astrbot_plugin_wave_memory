@@ -73,6 +73,34 @@ class BotJargonRepository:
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
 
+    def load_all_bot_jargon_overlay(self, bot_id: Any) -> list[dict[str, Any]]:
+        """全量读取该 Bot 的全部覆盖层与墓碑记录。
+
+        用于注入层与管理台合并内置资产。分批遍历确保不会因数量上限导致早期墓碑丢失、
+        进而导致被删除词意外复活。
+        """
+        bot_id = _require_bot_id(bot_id)
+        results: list[dict[str, Any]] = []
+        last_id = 0
+        batch_size = 500
+        while True:
+            rows = self.cm.execute_read(
+                """SELECT id, bot_id, word, meaning, status, is_jargon, confidence, source,
+                          origin_scope, reference_key, provenance, created_at, updated_at
+                     FROM bot_jargon
+                    WHERE bot_id = ? AND id > ?
+                    ORDER BY id ASC LIMIT ?""",
+                (bot_id, last_id, batch_size),
+            ).fetchall()
+            if not rows:
+                break
+            for row in rows:
+                results.append(self._row_to_dict(row))
+                last_id = int(row[0])
+            if len(rows) < batch_size:
+                break
+        return results
+
     def find_bot_jargon(self, bot_id: Any, *, word: str) -> dict[str, Any] | None:
         bot_id = _require_bot_id(bot_id)
         word = _exact_nonempty(word, "word")

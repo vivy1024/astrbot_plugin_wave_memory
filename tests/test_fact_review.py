@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from types import SimpleNamespace
 
@@ -65,6 +66,40 @@ def _fact(repo, *, subject="小明", predicate="住在", obj="上海", confidenc
         _scope(), subject=subject, predicate=predicate, object=obj,
         confidence=confidence, status=status,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action,has_conflict,status,event_type",
+    [("approve", False, "active", "scoped_fact.approved"),
+     ("approve", True, "conflict", "scoped_fact.conflict"),
+     ("reject", False, "rejected", "scoped_fact.rejected")],
+)
+async def test_review_receipt_matches_outbox_and_persisted_status(env, action, has_conflict, status, event_type):
+    _, connection, _, gateway, repo = env
+    if has_conflict:
+        _fact(repo, obj="上海", status="active")
+    fact_id = _fact(repo, obj="北京")
+    result = await gateway.review_fact(
+        scope=_scope(), target=ScopedKnowledgeMutationTarget("fact", fact_id, 1),
+        action=action, idempotency_key="receipt-review",
+    )
+    receipt = json.loads(connection.execute(
+        "SELECT result_json FROM write_operations WHERE operation_id=?", (result.operation_id,),
+    ).fetchone()[0])
+    effect = receipt["effects"][0]
+    assert effect["event_type"] == event_type
+    assert receipt["entities"][0]["change_type"] == event_type.rsplit(".", 1)[-1]
+    assert receipt["entities"][0]["status"] == status
+    assert connection.execute("SELECT status FROM scoped_facts WHERE id=?", (fact_id,)).fetchone() == (status,)
+    assert connection.execute(
+        "SELECT event_type FROM domain_outbox WHERE event_id=?", (effect["event_id"],),
+    ).fetchone() == (event_type,)
+    replay = await gateway.review_fact(
+        scope=_scope(), target=ScopedKnowledgeMutationTarget("fact", fact_id, 1),
+        action=action, idempotency_key="receipt-review",
+    )
+    assert replay == result
 
 
 @pytest.mark.asyncio
@@ -229,3 +264,34 @@ async def test_supersede_retires_existing_fact_in_same_transaction(env):
     assert connection.execute(
         "SELECT status FROM scoped_facts WHERE id=?", (existing,)
     ).fetchone() == ("superseded",)
+
+
+@pytest.mark.asyncio
+async def test_fact_object_ref_revision_matches_db_and_passes_validation(env):
+    from webui.facts_evidence import fact_object_ref, fact_revision
+    from webui.blueprints.facts import _require_object_ref
+    from webui.blueprints.facts import _find_scoped_fact
+    from webui.api_contract import ObjectRefRegistry
+    from quart import Quart
+
+    cm, connection, _, gateway, repo = env
+    fact_id = _fact(repo, predicate="住在", obj="杭州", status="pending")
+    scope = _scope()
+    row = _find_scoped_fact(cm, scope, fact_id)
+    assert row["revision"] == 1
+
+    app = Quart(__name__)
+    reg = ObjectRefRegistry()
+    app.extensions["wave_api_contract"] = {"object_refs": reg}
+    async with app.app_context():
+        ref_payload = fact_object_ref(row, scope, reg)
+        assert ref_payload is not None
+        assert ref_payload["version"] == 1
+        assert fact_revision(row) == 1
+
+        body = {
+            "object_ref": ref_payload,
+            "revision": row["revision"],
+        }
+        # 必须顺利通过，不抛出 object_ref_stale
+        _require_object_ref(body, locator=fact_id, scope=scope, item=row)

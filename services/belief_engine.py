@@ -435,4 +435,6 @@ class BeliefEngine:
         provenance = belief.get("provenance") if isinstance(belief.get("provenance"), dict) else {}
         if is_fact_backed(repository, scope, provenance):
             return True
+        if is_episode_backed(repository, scope, provenance):
+            return True
         return is_activation_eligible(provenance)

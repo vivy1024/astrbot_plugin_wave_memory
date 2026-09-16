@@ -17,11 +17,26 @@ except ImportError:  # pragma: no cover - direct tools imports in isolated tests
     from domain.scope import RuntimeScope
 
 _QQ_RE = re.compile(r"^\d{5,20}$")
+_BILI_RE = re.compile(r"^(?:bili:)?\d{1,20}$", re.IGNORECASE)
 
 
 def is_qq_id(value: str | None) -> bool:
     text = str(value or "").strip()
     return bool(_QQ_RE.fullmatch(text))
+
+
+def is_bili_id(value: str | None) -> bool:
+    text = str(value or "").strip()
+    return bool(_BILI_RE.fullmatch(text))
+
+
+def normalize_identity_id(value: str | None) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.lower().startswith("bili:"):
+        return f"bili:{text[5:].strip()}"
+    return text
 
 
 def _table_exists(conn: Any, name: str) -> bool:

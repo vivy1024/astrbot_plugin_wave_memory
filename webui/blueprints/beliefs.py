@@ -14,12 +14,12 @@ from ..middleware.auth import require_auth
 try:
     from ...domain.scope import RuntimeScope, ScopeCodec, ScopeValidationError, SessionRef
     from ...engine.db.scoped_knowledge_repo import ScopedKnowledgeScopeError
-    from ...services.belief_engine import is_fact_backed
+    from ...services.belief_engine import is_episode_backed, is_fact_backed
     from ...services.belief_lifecycle import BeliefLifecycleService
 except ImportError:  # pragma: no cover - plugin root may be imported directly
     from domain.scope import RuntimeScope, ScopeCodec, ScopeValidationError, SessionRef
     from engine.db.scoped_knowledge_repo import ScopedKnowledgeScopeError
-    from services.belief_engine import is_fact_backed
+    from services.belief_engine import is_episode_backed, is_fact_backed
     from services.belief_lifecycle import BeliefLifecycleService
 
 beliefs_bp = Blueprint("beliefs", __name__, url_prefix="/api/beliefs")
@@ -880,7 +880,7 @@ async def batch_transition_scoped_beliefs():
             if action == "approve":
                 if current.get("status") not in {"pending", "quarantined"}:
                     raise ScopedKnowledgeScopeError("invalid_belief_transition")
-                if not is_fact_backed(repo, scope, current.get("provenance")):
+                if not is_fact_backed(repo, scope, current.get("provenance")) and not is_episode_backed(repo, scope, current.get("provenance")):
                     raise ScopedKnowledgeScopeError("belief_facts_required")
             elif current.get("status") == "archived":
                 raise ScopedKnowledgeScopeError("invalid_belief_transition")

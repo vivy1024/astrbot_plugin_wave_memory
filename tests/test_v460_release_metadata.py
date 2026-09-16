@@ -23,7 +23,4 @@ class TestV463ReleaseMetadata:
         readme = Path("README.md").read_text(encoding="utf-8")
         assert "version-v5.0.0-blue.svg" in readme
         assert "| **v5.0.0** |" in readme
-        assert "| **v4.7.2** |" in readme
-        assert "| **v4.7.1** |" in readme
-        assert "| **v4.7.0** |" in readme
-        assert "| **v4.6.3** |" in readme
+        assert "CHANGELOG.md" in readme

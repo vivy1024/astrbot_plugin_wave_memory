@@ -421,18 +421,6 @@
   },
   {
     "id": "holyman-candidate-0036",
-    "word": "谁问你了",
-    "reason": "corpus_candidate",
-    "count": 4,
-    "source": "神言.txt",
-    "status": "pending_review",
-    "reject_reason": "",
-    "layer": "candidate",
-    "reference_only": true,
-    "runtime_match": false
-  },
-  {
-    "id": "holyman-candidate-0037",
     "word": "这便是原神给我的骄傲的资",
     "reason": "corpus_candidate",
     "count": 4,
@@ -444,7 +432,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0038",
+    "id": "holyman-candidate-0037",
     "word": "长大变成同性恋",
     "reason": "corpus_candidate",
     "count": 4,
@@ -456,7 +444,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0039",
+    "id": "holyman-candidate-0038",
     "word": "阿里嘎多",
     "reason": "corpus_candidate",
     "count": 4,
@@ -468,7 +456,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0040",
+    "id": "holyman-candidate-0039",
     "word": "一个有能力的人不付出行动",
     "reason": "corpus_candidate",
     "count": 3,
@@ -480,7 +468,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0041",
+    "id": "holyman-candidate-0040",
     "word": "一言以蔽之",
     "reason": "corpus_candidate",
     "count": 3,
@@ -492,7 +480,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0042",
+    "id": "holyman-candidate-0041",
     "word": "三天不玩",
     "reason": "corpus_candidate",
     "count": 3,
@@ -504,7 +492,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0043",
+    "id": "holyman-candidate-0042",
     "word": "不玩的话就是不爱国",
     "reason": "corpus_candidate",
     "count": 3,
@@ -516,7 +504,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0044",
+    "id": "holyman-candidate-0043",
     "word": "不起卡等各种自身因素",
     "reason": "corpus_candidate",
     "count": 3,
@@ -528,7 +516,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0045",
+    "id": "holyman-candidate-0044",
     "word": "两天不碰",
     "reason": "corpus_candidate",
     "count": 3,
@@ -540,7 +528,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0046",
+    "id": "holyman-candidate-0045",
     "word": "中有可能是对的",
     "reason": "corpus_candidate",
     "count": 3,
@@ -552,7 +540,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0047",
+    "id": "holyman-candidate-0046",
     "word": "为何非要揪着一点黑不放呢",
     "reason": "corpus_candidate",
     "count": 3,
@@ -564,7 +552,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0048",
+    "id": "holyman-candidate-0047",
     "word": "么可能容忍你这种挂人的行",
     "reason": "corpus_candidate",
     "count": 3,
@@ -576,7 +564,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0049",
+    "id": "holyman-candidate-0048",
     "word": "也不能说是完全不对",
     "reason": "corpus_candidate",
     "count": 3,
@@ -588,7 +576,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0050",
+    "id": "holyman-candidate-0049",
     "word": "也有可能不对",
     "reason": "corpus_candidate",
     "count": 3,
@@ -600,7 +588,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0051",
+    "id": "holyman-candidate-0050",
     "word": "二·次·元",
     "reason": "corpus_candidate",
     "count": 3,
@@ -612,7 +600,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0052",
+    "id": "holyman-candidate-0051",
     "word": "从某种角度来说",
     "reason": "corpus_candidate",
     "count": 3,
@@ -624,7 +612,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0053",
+    "id": "holyman-candidate-0052",
     "word": "他的人生都是失败的",
     "reason": "corpus_candidate",
     "count": 3,
@@ -636,7 +624,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0054",
+    "id": "holyman-candidate-0053",
     "word": "以及非比寻常的脑洞",
     "reason": "corpus_candidate",
     "count": 3,
@@ -648,7 +636,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0055",
+    "id": "holyman-candidate-0054",
     "word": "以说让其他厂商艳羡不已",
     "reason": "corpus_candidate",
     "count": 3,
@@ -660,7 +648,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0056",
+    "id": "holyman-candidate-0055",
     "word": "任何问题都可以提",
     "reason": "corpus_candidate",
     "count": 3,
@@ -672,7 +660,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0057",
+    "id": "holyman-candidate-0056",
     "word": "但凡放在别的游戏圈子里怎",
     "reason": "corpus_candidate",
     "count": 3,
@@ -684,7 +672,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0058",
+    "id": "holyman-candidate-0057",
     "word": "但是以发展的眼光看",
     "reason": "corpus_candidate",
     "count": 3,
@@ -696,7 +684,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0059",
+    "id": "holyman-candidate-0058",
     "word": "但是你说的不对",
     "reason": "corpus_candidate",
     "count": 3,
@@ -708,7 +696,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0060",
+    "id": "holyman-candidate-0059",
     "word": "但是你说的也不完全对",
     "reason": "corpus_candidate",
     "count": 3,
@@ -720,7 +708,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0061",
+    "id": "holyman-candidate-0060",
     "word": "但是都难成气候",
     "reason": "corpus_candidate",
     "count": 3,
@@ -732,7 +720,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0062",
+    "id": "holyman-candidate-0061",
     "word": "你们懂吧",
     "reason": "corpus_candidate",
     "count": 3,
@@ -744,7 +732,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0063",
+    "id": "holyman-candidate-0062",
     "word": "你们知道吗",
     "reason": "corpus_candidate",
     "count": 3,
@@ -756,7 +744,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0064",
+    "id": "holyman-candidate-0063",
     "word": "你们赢了",
     "reason": "corpus_candidate",
     "count": 3,
@@ -768,7 +756,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0065",
+    "id": "holyman-candidate-0064",
     "word": "你就非要挑出来挂最逆天的",
     "reason": "corpus_candidate",
     "count": 3,
@@ -780,7 +768,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0066",
+    "id": "holyman-candidate-0065",
     "word": "你换一个人喜欢",
     "reason": "corpus_candidate",
     "count": 3,
@@ -792,7 +780,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0067",
+    "id": "holyman-candidate-0066",
     "word": "你说得不对",
     "reason": "corpus_candidate",
     "count": 3,
@@ -804,7 +792,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0068",
+    "id": "holyman-candidate-0067",
     "word": "你说得对之处在运动的时空",
     "reason": "corpus_candidate",
     "count": 3,
@@ -816,7 +804,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0069",
+    "id": "holyman-candidate-0068",
     "word": "你说的不对之处以形而上的",
     "reason": "corpus_candidate",
     "count": 3,
@@ -828,7 +816,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0070",
+    "id": "holyman-candidate-0069",
     "word": "你说的不对之处以辩证的观",
     "reason": "corpus_candidate",
     "count": 3,
@@ -840,7 +828,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0071",
+    "id": "holyman-candidate-0070",
     "word": "你说的对之处在静止的世界",
     "reason": "corpus_candidate",
     "count": 3,
@@ -852,7 +840,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0072",
+    "id": "holyman-candidate-0071",
     "word": "你说的有一点对",
     "reason": "corpus_candidate",
     "count": 3,
@@ -864,7 +852,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0073",
+    "id": "holyman-candidate-0072",
     "word": "其实回头一想",
     "reason": "corpus_candidate",
     "count": 3,
@@ -876,7 +864,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0074",
+    "id": "holyman-candidate-0073",
     "word": "别被别有用心的人带节奏了",
     "reason": "corpus_candidate",
     "count": 3,
@@ -888,7 +876,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0075",
+    "id": "holyman-candidate-0074",
     "word": "到了一个令人发指的程度",
     "reason": "corpus_candidate",
     "count": 3,
@@ -900,7 +888,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0076",
+    "id": "holyman-candidate-0075",
     "word": "却与这种传统背道而驰",
     "reason": "corpus_candidate",
     "count": 3,
@@ -912,7 +900,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0077",
+    "id": "holyman-candidate-0076",
     "word": "原神",
     "reason": "corpus_candidate",
     "count": 3,
@@ -924,7 +912,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0078",
+    "id": "holyman-candidate-0077",
     "word": "反观腾讯的英雄联盟和王者",
     "reason": "corpus_candidate",
     "count": 3,
@@ -936,7 +924,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0079",
+    "id": "holyman-candidate-0078",
     "word": "古语有云",
     "reason": "corpus_candidate",
     "count": 3,
@@ -948,7 +936,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0080",
+    "id": "holyman-candidate-0079",
     "word": "只会造成伤害",
     "reason": "corpus_candidate",
     "count": 3,
@@ -960,7 +948,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0081",
+    "id": "holyman-candidate-0080",
     "word": "只能证明此人行为素质修养",
     "reason": "corpus_candidate",
     "count": 3,
@@ -972,7 +960,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0082",
+    "id": "holyman-candidate-0081",
     "word": "只能说离完全对之间还有一",
     "reason": "corpus_candidate",
     "count": 3,
@@ -984,7 +972,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0083",
+    "id": "holyman-candidate-0082",
     "word": "可是从另一个角度看",
     "reason": "corpus_candidate",
     "count": 3,
@@ -996,7 +984,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0084",
+    "id": "holyman-candidate-0083",
     "word": "可是以一个更严谨的态度去",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1008,7 +996,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0085",
+    "id": "holyman-candidate-0084",
     "word": "各自为营",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1020,7 +1008,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0086",
+    "id": "holyman-candidate-0085",
     "word": "哪你说的当然是对的",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1032,7 +1020,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0087",
+    "id": "holyman-candidate-0086",
     "word": "因为买不起高配的手机和抽",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1044,7 +1032,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0088",
+    "id": "holyman-candidate-0087",
     "word": "在广岛长崎搞原子弹纪念晚",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1056,7 +1044,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0089",
+    "id": "holyman-candidate-0088",
     "word": "在往后未来你说的有可能不",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1068,7 +1056,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0090",
+    "id": "holyman-candidate-0089",
     "word": "在此时此刻你说的有可能对",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1080,7 +1068,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0091",
+    "id": "holyman-candidate-0090",
     "word": "外而不懂爱国",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1092,7 +1080,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0092",
+    "id": "holyman-candidate-0091",
     "word": "大家加入这场无意义的狂欢",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1104,7 +1092,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0093",
+    "id": "holyman-candidate-0092",
     "word": "大开杀戒",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1116,7 +1104,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0094",
+    "id": "holyman-candidate-0093",
     "word": "太痛苦了",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1128,7 +1116,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0095",
+    "id": "holyman-candidate-0094",
     "word": "好想玩原神",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1140,7 +1128,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0096",
+    "id": "holyman-candidate-0095",
     "word": "如果它是一款国外游戏的话",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1152,7 +1140,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0097",
+    "id": "holyman-candidate-0096",
     "word": "如果忽略这点不对",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1164,7 +1152,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0098",
+    "id": "holyman-candidate-0097",
     "word": "如此良好的游戏发展生态可",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1176,7 +1164,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0099",
+    "id": "holyman-candidate-0098",
     "word": "审视你说的对不对",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1188,7 +1176,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0100",
+    "id": "holyman-candidate-0099",
     "word": "寂灭之时",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1200,7 +1188,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0101",
+    "id": "holyman-candidate-0100",
     "word": "对也有可能对",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1212,7 +1200,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0102",
+    "id": "holyman-candidate-0101",
     "word": "就是和你结婚",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1224,7 +1212,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0103",
+    "id": "holyman-candidate-0102",
     "word": "总而言之",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1236,7 +1224,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0104",
+    "id": "holyman-candidate-0103",
     "word": "意脑洞整活",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1248,7 +1236,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0105",
+    "id": "holyman-candidate-0104",
     "word": "懒得管也不想管你这个",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1260,7 +1248,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0106",
+    "id": "holyman-candidate-0105",
     "word": "我人生最后悔的事情",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1272,7 +1260,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0107",
+    "id": "holyman-candidate-0106",
     "word": "我当时忍不住大笑起来",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1284,7 +1272,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0108",
+    "id": "holyman-candidate-0107",
     "word": "我最后悔的事情",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1296,7 +1284,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0109",
+    "id": "holyman-candidate-0108",
     "word": "我来说句公道话",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1308,7 +1296,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0110",
+    "id": "holyman-candidate-0109",
     "word": "我求你了",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1320,7 +1308,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0111",
+    "id": "holyman-candidate-0110",
     "word": "我觉得这就是一种自信不是",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1332,7 +1320,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0112",
+    "id": "holyman-candidate-0111",
     "word": "或者说在日本鬼子皇宫里面",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1344,7 +1332,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0113",
+    "id": "holyman-candidate-0112",
     "word": "无论是游戏本身",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1356,7 +1344,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0114",
+    "id": "holyman-candidate-0113",
     "word": "无非就是鬼泣",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1368,7 +1356,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0115",
+    "id": "holyman-candidate-0114",
     "word": "是不被真正的上流社会认可",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1380,7 +1368,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0116",
+    "id": "holyman-candidate-0115",
     "word": "是灰暗的",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1392,7 +1380,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0117",
+    "id": "holyman-candidate-0116",
     "word": "智慧之殿堂",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1404,7 +1392,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0118",
+    "id": "holyman-candidate-0117",
     "word": "更没有COS成水晶和精粹",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1416,7 +1404,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0119",
+    "id": "holyman-candidate-0118",
     "word": "有两种可能性",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1428,7 +1416,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0120",
+    "id": "holyman-candidate-0119",
     "word": "来证明自己",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1440,7 +1428,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0121",
+    "id": "holyman-candidate-0120",
     "word": "每组3颗",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1452,7 +1440,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0122",
+    "id": "holyman-candidate-0121",
     "word": "漫展上是难能可贵的",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1464,7 +1452,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0123",
+    "id": "holyman-candidate-0122",
     "word": "漫展也有许多人物",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1476,7 +1464,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0124",
+    "id": "holyman-candidate-0123",
     "word": "点看有可能是对的",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1488,7 +1476,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0125",
+    "id": "holyman-candidate-0124",
     "word": "玩家自发线下宣传和构思创",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1500,7 +1488,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0126",
+    "id": "holyman-candidate-0125",
     "word": "理智一点",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1512,7 +1500,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0127",
+    "id": "holyman-candidate-0126",
     "word": "知其今后历来往事所以评议",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1524,7 +1512,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0128",
+    "id": "holyman-candidate-0127",
     "word": "站在一旁",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1536,7 +1524,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0129",
+    "id": "holyman-candidate-0128",
     "word": "第二种可能",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1548,7 +1536,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0130",
+    "id": "holyman-candidate-0129",
     "word": "素质品味修养真的很低",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1560,7 +1548,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0131",
+    "id": "holyman-candidate-0130",
     "word": "而如鄙人般的高端人士",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1572,7 +1560,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0132",
+    "id": "holyman-candidate-0131",
     "word": "能说他们只会一味的崇洋媚",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1584,7 +1572,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0133",
+    "id": "holyman-candidate-0132",
     "word": "脑袋爆炸",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1596,7 +1584,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0134",
+    "id": "holyman-candidate-0133",
     "word": "蚂蚁在爬",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1608,7 +1596,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0135",
+    "id": "holyman-candidate-0134",
     "word": "血源诅咒",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1620,7 +1608,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0136",
+    "id": "holyman-candidate-0135",
     "word": "要给他们迎头痛击",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1632,7 +1620,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0137",
+    "id": "holyman-candidate-0136",
     "word": "观其全貌后论之",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1644,7 +1632,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0138",
+    "id": "holyman-candidate-0137",
     "word": "观点来看有可能是错的",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1656,7 +1644,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0139",
+    "id": "holyman-candidate-0138",
     "word": "言而总之",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1668,7 +1656,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0140",
+    "id": "holyman-candidate-0139",
     "word": "请挂人的和跟风黑的积点口",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1680,7 +1668,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0141",
+    "id": "holyman-candidate-0140",
     "word": "还是大赢",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1692,7 +1680,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0142",
+    "id": "holyman-candidate-0141",
     "word": "还是玩家之间看一眼就知道",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1704,7 +1692,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0143",
+    "id": "holyman-candidate-0142",
     "word": "这几句话吗",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1716,7 +1704,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0144",
+    "id": "holyman-candidate-0143",
     "word": "这样不爱国的玩家",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1728,7 +1716,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0145",
+    "id": "holyman-candidate-0144",
     "word": "这种氛围在如今已经变质的",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1740,7 +1728,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0146",
+    "id": "holyman-candidate-0145",
     "word": "进入游戏",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1752,7 +1740,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0147",
+    "id": "holyman-candidate-0146",
     "word": "那一定会比现在还要火",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1764,7 +1752,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0148",
+    "id": "holyman-candidate-0147",
     "word": "那么你说的又不是对的了",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1776,7 +1764,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0149",
+    "id": "holyman-candidate-0148",
     "word": "那么这个人的思想境界便低",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1788,7 +1776,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0150",
+    "id": "holyman-candidate-0149",
     "word": "那些玩游戏不玩原神的人只",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1800,7 +1788,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0151",
+    "id": "holyman-candidate-0150",
     "word": "那玩什么呢",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1812,7 +1800,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0152",
+    "id": "holyman-candidate-0151",
     "word": "里有可能是不对的",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1824,7 +1812,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0153",
+    "id": "holyman-candidate-0152",
     "word": "钻钻钻钻钻钻钻钻钻",
     "reason": "corpus_candidate",
     "count": 3,
@@ -1836,7 +1824,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0154",
+    "id": "holyman-candidate-0153",
     "word": "bin哥",
     "reason": "corpus_candidate",
     "count": 2,
@@ -1848,7 +1836,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0155",
+    "id": "holyman-candidate-0154",
     "word": "一个不玩原神的人",
     "reason": "corpus_candidate",
     "count": 2,
@@ -1860,7 +1848,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0156",
+    "id": "holyman-candidate-0155",
     "word": "一定也是有",
     "reason": "corpus_candidate",
     "count": 2,
@@ -1872,7 +1860,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0157",
+    "id": "holyman-candidate-0156",
     "word": "一定是tx请的水军差不多",
     "reason": "corpus_candidate",
     "count": 2,
@@ -1884,7 +1872,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0158",
+    "id": "holyman-candidate-0157",
     "word": "一直紧绷着",
     "reason": "corpus_candidate",
     "count": 2,
@@ -1896,7 +1884,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0159",
+    "id": "holyman-candidate-0158",
     "word": "一种是没有能力玩原神",
     "reason": "corpus_candidate",
     "count": 2,
@@ -1908,7 +1896,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0160",
+    "id": "holyman-candidate-0159",
     "word": "一起玩原神",
     "reason": "corpus_candidate",
     "count": 2,
@@ -1920,7 +1908,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0161",
+    "id": "holyman-candidate-0160",
     "word": "一边又忍着",
     "reason": "corpus_candidate",
     "count": 2,
@@ -1932,7 +1920,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0162",
+    "id": "holyman-candidate-0161",
     "word": "万条评论",
     "reason": "corpus_candidate",
     "count": 2,
@@ -1944,7 +1932,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0163",
+    "id": "holyman-candidate-0162",
     "word": "万物不及妖刀",
     "reason": "corpus_candidate",
     "count": 2,
@@ -1956,7 +1944,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0164",
+    "id": "holyman-candidate-0163",
     "word": "上6点起床晚上11点睡觉",
     "reason": "corpus_candidate",
     "count": 2,
@@ -1968,7 +1956,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0165",
+    "id": "holyman-candidate-0164",
     "word": "上至尊自然妙有弥罗至真玉",
     "reason": "corpus_candidate",
     "count": 2,
@@ -1980,7 +1968,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0166",
+    "id": "holyman-candidate-0165",
     "word": "不会终结",
     "reason": "corpus_candidate",
     "count": 2,
@@ -1992,7 +1980,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0167",
+    "id": "holyman-candidate-0166",
     "word": "不如挨顿骂",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2004,7 +1992,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0168",
+    "id": "holyman-candidate-0167",
     "word": "不媚宅的",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2016,7 +2004,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0169",
+    "id": "holyman-candidate-0168",
     "word": "不存在误封的",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2028,7 +2016,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0170",
+    "id": "holyman-candidate-0169",
     "word": "不是他们所能轻易理解和诋",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2040,7 +2028,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0171",
+    "id": "holyman-candidate-0170",
     "word": "不知天高地厚",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2052,7 +2040,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0172",
+    "id": "holyman-candidate-0171",
     "word": "不知道拿了冠军为什么要走",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2064,7 +2052,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0173",
+    "id": "holyman-candidate-0172",
     "word": "不知道是不是有人在背后做",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2076,7 +2064,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0174",
+    "id": "holyman-candidate-0173",
     "word": "不能阻止真理的诞生",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2088,7 +2076,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0175",
+    "id": "holyman-candidate-0174",
     "word": "不能阻止追寻真理的我们",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2100,7 +2088,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0176",
+    "id": "holyman-candidate-0175",
     "word": "不要再复制粘贴了",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2112,7 +2100,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0177",
+    "id": "holyman-candidate-0176",
     "word": "不要在发了",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2124,7 +2112,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0178",
+    "id": "holyman-candidate-0177",
     "word": "世界便是原神",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2136,7 +2124,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0179",
+    "id": "holyman-candidate-0178",
     "word": "个月赚上万块的幸福生活",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2148,7 +2136,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0180",
+    "id": "holyman-candidate-0179",
     "word": "中角色的独特魅力",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2160,7 +2148,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0181",
+    "id": "holyman-candidate-0180",
     "word": "串联朋友分担电压",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2172,7 +2160,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0182",
+    "id": "holyman-candidate-0181",
     "word": "为什么会不幸福",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2184,7 +2172,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0183",
+    "id": "holyman-candidate-0182",
     "word": "为什么会难过",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2196,7 +2184,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0184",
+    "id": "holyman-candidate-0183",
     "word": "为什么要放弃原神这款旷世",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2208,7 +2196,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0185",
+    "id": "holyman-candidate-0184",
     "word": "为什么这个人不是我",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2220,7 +2208,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0186",
+    "id": "holyman-candidate-0185",
     "word": "主三界法王大悲大愿大圣大",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2232,7 +2220,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0187",
+    "id": "holyman-candidate-0186",
     "word": "之作而去玩其他答辩游戏",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2244,7 +2232,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0188",
+    "id": "holyman-candidate-0187",
     "word": "也就是原神玩家素质高",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2256,7 +2244,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0189",
+    "id": "holyman-candidate-0188",
     "word": "二次元の美好",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2268,7 +2256,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0190",
+    "id": "holyman-candidate-0189",
     "word": "二次元的你",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2280,7 +2268,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0191",
+    "id": "holyman-candidate-0190",
     "word": "人为什么会愤怒",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2292,7 +2280,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0192",
+    "id": "holyman-candidate-0191",
     "word": "人类史上最伟大的作品",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2304,7 +2292,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0193",
+    "id": "holyman-candidate-0192",
     "word": "亿郁症瞬间发作了",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2316,7 +2304,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0194",
+    "id": "holyman-candidate-0193",
     "word": "什么都愿意做",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2328,7 +2316,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0195",
+    "id": "holyman-candidate-0194",
     "word": "今年的恋爱运还是零分呢",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2340,7 +2328,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0196",
+    "id": "holyman-candidate-0195",
     "word": "从心头涌起的思想",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2352,7 +2340,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0197",
+    "id": "holyman-candidate-0196",
     "word": "他们一点小小的原神震撼",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2364,7 +2352,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0198",
+    "id": "holyman-candidate-0197",
     "word": "他们愣住了",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2376,7 +2364,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0199",
+    "id": "holyman-candidate-0198",
     "word": "他只能看到外表的辞藻堆砌",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2388,7 +2376,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0200",
+    "id": "holyman-candidate-0199",
     "word": "他整个人的层次就卡在这里",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2400,7 +2388,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0201",
+    "id": "holyman-candidate-0200",
     "word": "他理解不了这种内在的阳春",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2412,7 +2400,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0202",
+    "id": "holyman-candidate-0201",
     "word": "以诞生生产真理的原神",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2424,7 +2412,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0203",
+    "id": "holyman-candidate-0202",
     "word": "仿佛被看穿了",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2436,7 +2424,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0204",
+    "id": "holyman-candidate-0203",
     "word": "传承给新的世界",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2448,7 +2436,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0205",
+    "id": "holyman-candidate-0204",
     "word": "传承给新的生物",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2460,7 +2448,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0206",
+    "id": "holyman-candidate-0205",
     "word": "伸出的小手又迅速垂下去",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2472,7 +2460,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0207",
+    "id": "holyman-candidate-0206",
     "word": "似乎做好了将一切黑暗与恶",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2484,7 +2472,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0208",
+    "id": "holyman-candidate-0207",
     "word": "但伟大的原神",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2496,7 +2484,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0209",
+    "id": "holyman-candidate-0208",
     "word": "你什么都没做错",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2508,7 +2496,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0210",
+    "id": "holyman-candidate-0209",
     "word": "你们都只是污秽",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2520,7 +2508,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0211",
+    "id": "holyman-candidate-0210",
     "word": "你会发现",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2532,7 +2520,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0212",
+    "id": "holyman-candidate-0211",
     "word": "你只是喜欢错了人",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2544,7 +2532,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0213",
+    "id": "holyman-candidate-0212",
     "word": "你在透过我的眼睛看谁",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2556,7 +2544,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0214",
+    "id": "holyman-candidate-0213",
     "word": "你将扮演一位名为",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2568,7 +2556,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0215",
+    "id": "holyman-candidate-0214",
     "word": "你就醒悟了",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2580,7 +2568,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0216",
+    "id": "holyman-candidate-0215",
     "word": "你没有什么不好",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2592,7 +2580,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0217",
+    "id": "holyman-candidate-0216",
     "word": "你照照镜子看看自己和街上",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2604,7 +2592,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0218",
+    "id": "holyman-candidate-0217",
     "word": "你知道吗",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2616,7 +2604,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0219",
+    "id": "holyman-candidate-0218",
     "word": "你离我远一点",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2628,7 +2616,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0220",
+    "id": "holyman-candidate-0219",
     "word": "你终究不是雷姆啊",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2640,7 +2628,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0221",
+    "id": "holyman-candidate-0220",
     "word": "你越原越兴奋",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2652,7 +2640,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0222",
+    "id": "holyman-candidate-0221",
     "word": "修养不足",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2664,7 +2652,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0223",
+    "id": "holyman-candidate-0222",
     "word": "值得注意的是",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2676,7 +2664,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0224",
+    "id": "holyman-candidate-0223",
     "word": "停不下来思考",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2688,7 +2676,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0225",
+    "id": "holyman-candidate-0224",
     "word": "像是没了光的奥特曼",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2700,7 +2688,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0226",
+    "id": "holyman-candidate-0225",
     "word": "像是被抓住尾巴的赛亚人",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2712,7 +2700,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0227",
+    "id": "holyman-candidate-0226",
     "word": "兄弟的内衣是什么颜色",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2724,7 +2712,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0228",
+    "id": "holyman-candidate-0227",
     "word": "先帝怒曰",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2736,7 +2724,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0229",
+    "id": "holyman-candidate-0228",
     "word": "光明满赫奕雷霆法主威权斩",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2748,7 +2736,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0230",
+    "id": "holyman-candidate-0229",
     "word": "全女AI公司不是虚幻",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2760,7 +2748,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0231",
+    "id": "holyman-candidate-0230",
     "word": "全怪我那令人作呕的嫉妒和",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2772,7 +2760,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0232",
+    "id": "holyman-candidate-0231",
     "word": "关注塔菲喵",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2784,7 +2772,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0233",
+    "id": "holyman-candidate-0232",
     "word": "关注塔菲谢谢喵",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2796,7 +2784,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0234",
+    "id": "holyman-candidate-0233",
     "word": "其一应曰",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2808,7 +2796,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0235",
+    "id": "holyman-candidate-0234",
     "word": "其实就是宇宙冷漠",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2820,7 +2808,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0236",
+    "id": "holyman-candidate-0235",
     "word": "再也不尝试",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2832,7 +2820,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0237",
+    "id": "holyman-candidate-0236",
     "word": "再怎么说原神玩家三观是要",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2844,7 +2832,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0238",
+    "id": "holyman-candidate-0237",
     "word": "再浪费一分钟",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2856,7 +2844,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0239",
+    "id": "holyman-candidate-0238",
     "word": "冷·酷·の·人",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2868,7 +2856,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0240",
+    "id": "holyman-candidate-0239",
     "word": "分担电压",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2880,7 +2868,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0241",
+    "id": "holyman-candidate-0240",
     "word": "初音未来",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2892,7 +2880,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0242",
+    "id": "holyman-candidate-0241",
     "word": "别想逃开哦",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2904,7 +2892,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0243",
+    "id": "holyman-candidate-0242",
     "word": "别想逃开哦～",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2916,7 +2904,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0244",
+    "id": "holyman-candidate-0243",
     "word": "前进的我们悟出真理",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2928,7 +2916,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0245",
+    "id": "holyman-candidate-0244",
     "word": "加之您有超过3个月每月有",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2940,7 +2928,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0246",
+    "id": "holyman-candidate-0245",
     "word": "化救苦慈悲广度天尊金阙无",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2952,7 +2940,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0247",
+    "id": "holyman-candidate-0246",
     "word": "半夜都睡不着觉",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2964,7 +2952,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0248",
+    "id": "holyman-candidate-0247",
     "word": "卑微的自尊心",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2976,7 +2964,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0249",
+    "id": "holyman-candidate-0248",
     "word": "卓不可思议功德自在行神感",
     "reason": "corpus_candidate",
     "count": 2,
@@ -2988,7 +2976,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0250",
+    "id": "holyman-candidate-0249",
     "word": "即使没有手机",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3000,7 +2988,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0251",
+    "id": "holyman-candidate-0250",
     "word": "即便是这样的哇达西",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3012,7 +3000,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0252",
+    "id": "holyman-candidate-0251",
     "word": "却仿佛有着无形的力量",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3024,7 +3012,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0253",
+    "id": "holyman-candidate-0252",
     "word": "厌烦",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3036,7 +3024,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0254",
+    "id": "holyman-candidate-0253",
     "word": "原得不够多",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3048,7 +3036,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0255",
+    "id": "holyman-candidate-0254",
     "word": "原来你也玩原神的默契而非",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3060,7 +3048,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0256",
+    "id": "holyman-candidate-0255",
     "word": "原来原神是无限的",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3072,7 +3060,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0257",
+    "id": "holyman-candidate-0256",
     "word": "原来是我原的太少",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3084,7 +3072,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0258",
+    "id": "holyman-candidate-0257",
     "word": "原来还是自己原的太少",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3096,7 +3084,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0259",
+    "id": "holyman-candidate-0258",
     "word": "原的记忆在宇宙中流传",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3108,7 +3096,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0260",
+    "id": "holyman-candidate-0259",
     "word": "原着原着",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3120,7 +3108,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0261",
+    "id": "holyman-candidate-0260",
     "word": "原神便是无限",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3132,7 +3120,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0262",
+    "id": "holyman-candidate-0261",
     "word": "原神发散幸福",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3144,7 +3132,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0263",
+    "id": "holyman-candidate-0262",
     "word": "原神可惜就在于它是国产游",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3156,7 +3144,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0264",
+    "id": "holyman-candidate-0263",
     "word": "原神孕育出真理",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3168,7 +3156,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0265",
+    "id": "holyman-candidate-0264",
     "word": "原神带给你的不止有享受感",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3180,7 +3168,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0266",
+    "id": "holyman-candidate-0265",
     "word": "原神怎么你了",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3192,7 +3180,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0267",
+    "id": "holyman-candidate-0266",
     "word": "原神玩家你们要自信起来给",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3204,7 +3192,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0268",
+    "id": "holyman-candidate-0267",
     "word": "原神玩家每天都会发成千上",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3216,7 +3204,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0269",
+    "id": "holyman-candidate-0268",
     "word": "原神生产出真理",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3228,7 +3216,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0270",
+    "id": "holyman-candidate-0269",
     "word": "原神生产幸福",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3240,7 +3228,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0271",
+    "id": "holyman-candidate-0270",
     "word": "原神的成功和社区氛围都是",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3252,7 +3240,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0272",
+    "id": "holyman-candidate-0271",
     "word": "原神真的特别好玩",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3264,7 +3252,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0273",
+    "id": "holyman-candidate-0272",
     "word": "原神负责输出优质内容",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3276,7 +3264,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0274",
+    "id": "holyman-candidate-0273",
     "word": "原神面对3a大作是小赢",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3288,7 +3276,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0275",
+    "id": "holyman-candidate-0274",
     "word": "参不透其中深奥的精神内核",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3300,7 +3288,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0276",
+    "id": "holyman-candidate-0275",
     "word": "双手交叠在胸前",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3312,7 +3300,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0277",
+    "id": "holyman-candidate-0276",
     "word": "双手叉腰",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3324,7 +3312,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0278",
+    "id": "holyman-candidate-0277",
     "word": "反正闲着也是闲着",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3336,7 +3324,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0279",
+    "id": "holyman-candidate-0278",
     "word": "发情求爱的狗有啥区别",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3348,7 +3336,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0280",
+    "id": "holyman-candidate-0279",
     "word": "另一只回答它说",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3360,7 +3348,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0281",
+    "id": "holyman-candidate-0280",
     "word": "只有你说这种东西的时候",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3372,7 +3360,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0282",
+    "id": "holyman-candidate-0281",
     "word": "只能度过一个相对失败的人",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3384,7 +3372,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0283",
+    "id": "holyman-candidate-0282",
     "word": "可以包罗万象",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3396,7 +3384,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0284",
+    "id": "holyman-candidate-0283",
     "word": "可是眼泪一下子就掉下来了",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3408,7 +3396,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0285",
+    "id": "holyman-candidate-0284",
     "word": "吃饱了也是撑着",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3420,7 +3408,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0286",
+    "id": "holyman-candidate-0285",
     "word": "名垂千古圣号巍巍神威赫赫",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3432,7 +3420,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0287",
+    "id": "holyman-candidate-0286",
     "word": "后来我的舌头抖得越来越厉",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3444,7 +3432,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0288",
+    "id": "holyman-candidate-0287",
     "word": "吾辈不明白啊",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3456,7 +3444,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0289",
+    "id": "holyman-candidate-0288",
     "word": "吾辈了嘛",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3468,7 +3456,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0290",
+    "id": "holyman-candidate-0289",
     "word": "呢QuQ",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3480,7 +3468,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0291",
+    "id": "holyman-candidate-0290",
     "word": "周围顿时刮起一阵微风",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3492,7 +3480,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0292",
+    "id": "holyman-candidate-0291",
     "word": "和他们一起击败强敌",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3504,7 +3492,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0293",
+    "id": "holyman-candidate-0292",
     "word": "咱可就要",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3516,7 +3504,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0294",
+    "id": "holyman-candidate-0293",
     "word": "哈哈哈哈哈",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3528,7 +3516,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0295",
+    "id": "holyman-candidate-0294",
     "word": "啊啊啊啊",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3540,7 +3528,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0296",
+    "id": "holyman-candidate-0295",
     "word": "啊嘞啊嘞QAQ",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3552,7 +3540,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0297",
+    "id": "holyman-candidate-0296",
     "word": "啊我急了",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3564,7 +3552,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0298",
+    "id": "holyman-candidate-0297",
     "word": "嘲笑",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3576,7 +3564,7 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0299",
+    "id": "holyman-candidate-0298",
     "word": "回到家倒在床上蒙住被子就",
     "reason": "corpus_candidate",
     "count": 2,
@@ -3588,8 +3576,20 @@
     "runtime_match": false
   },
   {
-    "id": "holyman-candidate-0300",
+    "id": "holyman-candidate-0299",
     "word": "因为原神是国产之光",
+    "reason": "corpus_candidate",
+    "count": 2,
+    "source": "神言.txt",
+    "status": "pending_review",
+    "reject_reason": "",
+    "layer": "candidate",
+    "reference_only": true,
+    "runtime_match": false
+  },
+  {
+    "id": "holyman-candidate-0300",
+    "word": "圣德昭彰金容玉相万劫长存",
     "reason": "corpus_candidate",
     "count": 2,
     "source": "神言.txt",

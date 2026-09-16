@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   getPeople: vi.fn(),
   getRelationships: vi.fn(),
   getIndexDiagnostics: vi.fn(),
+  listFacts: vi.fn(),
   listJargons: vi.fn(),
   getCatalogAudit: vi.fn(),
   getJargonEvidence: vi.fn(),
@@ -35,7 +36,13 @@ vi.mock('@/api/knowledge', () => ({
   getBookLoreSummary: mocks.getBookLoreSummary,
   getBookLoreItems: mocks.getBookLoreItems,
   getApprovedFewShot: mocks.getApprovedFewShot,
-  getScopedFacts: mocks.getScopedFacts,
+  getScopedFacts: mocks.listFacts,
+}))
+vi.mock('@/api/facts', () => ({
+  listFacts: mocks.listFacts,
+  approveFact: vi.fn(),
+  rejectFact: vi.fn(),
+  batchReviewFacts: vi.fn(),
 }))
 vi.mock('@/api/people', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/people')>()
@@ -115,7 +122,7 @@ describe('知识、人物与诊断页面关键约束', () => {
 
     await waitFor(() => expect(mocks.listJargons).toHaveBeenCalledTimes(1))
     expect(mocks.getCatalogAudit).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('tab', { name: /内置广域资产/ }))
+    await user.click(screen.getByRole('tab', { name: /广域黑话/ }))
     await waitFor(() => expect(mocks.getCatalogAudit).toHaveBeenCalledTimes(1))
     await user.click(screen.getByRole('button', { name: '同步预览' }))
     await waitFor(() => expect(mocks.previewHolymanSync).toHaveBeenCalledWith(true))
@@ -199,7 +206,7 @@ describe('知识、人物与诊断页面关键约束', () => {
   })
 
   it('Facts 在桌面保留表格，窄屏改为包含完整关系和详情入口的卡片', async () => {
-    mocks.getScopedFacts.mockResolvedValue({
+    mocks.listFacts.mockResolvedValue({
       items: [{ id: 7, subject: '一段很长的主体名称', predicate: 'relates_to', object: '这是一段不能在移动端被截断的完整事实客体内容', confidence: 0.82, evidence_status: 'available', evidence: [], bot_id: 'bot-real', session_id: 'qq:group:42' }],
       page,
       scope: { bot_id: 'bot-real', session_id: 'qq:group:42', visibility: 'group' },
@@ -234,16 +241,16 @@ describe('知识、人物与诊断页面关键约束', () => {
 
   it('Facts 的筛选草稿在提交前不触发请求，提交时一次写入条件', async () => {
     const user = userEvent.setup()
-    mocks.getScopedFacts.mockResolvedValue({ items: [], page, scope: { bot_id: 'bot-real', session_id: 'qq:group:42', visibility: 'group' } })
+    mocks.listFacts.mockResolvedValue({ items: [], page, scope: { bot_id: 'bot-real', session_id: 'qq:group:42', visibility: 'group' } })
 
     render(<MemoryRouter initialEntries={['/facts?bot_id=bot-real&session_id=qq%3Agroup%3A42']}><FactsPage /></MemoryRouter>)
 
-    await waitFor(() => expect(mocks.getScopedFacts).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(mocks.listFacts).toHaveBeenCalledTimes(1))
     await user.selectOptions(screen.getByLabelText('事实状态'), 'pending')
-    expect(mocks.getScopedFacts).toHaveBeenCalledTimes(1)
+    expect(mocks.listFacts).toHaveBeenCalledTimes(1)
     await user.click(screen.getByRole('button', { name: '搜索' }))
-    await waitFor(() => expect(mocks.getScopedFacts).toHaveBeenCalledTimes(2))
-    expect(mocks.getScopedFacts).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'pending', offset: 0 }))
+    await waitFor(() => expect(mocks.listFacts).toHaveBeenCalledTimes(2))
+    expect(mocks.listFacts).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'pending', offset: 0 }))
   })
 
   it('People 对缺失 Affinity 明示不可用且不回填 50', async () => {

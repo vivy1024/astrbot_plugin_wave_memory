@@ -621,16 +621,17 @@ class HolymanJargonImportTest(unittest.TestCase):
         self.assertTrue(data["layers"]["corpus"]["reference_only"])
 
     def test_global_jargon_reference_runtime_layer_is_explicit_and_conservative(self):
-        from services.jargon.holyman_assets import content_entries
+        from services.jargon.holyman_assets import content_entries, CORE_CURATED_PHRASES
 
         phrases = json.loads(Path("assets/holyman/phrases.json").read_text(encoding="utf-8"))
         entries = content_entries(phrases)
         runtime_words = {word for word, value in entries.items() if isinstance(value, dict) and value.get("runtime_match") is True}
-        allowed_runtime = {"你说得对，但是", "不是哥们", "差不多得了", "动了XX的蛋糕", "别急", "那咋了", "又幻想了", "v我50", "疯狂星期四", "叠甲"}
+        core_runtime = {"你说得对，但是", "不是哥们", "差不多得了", "动了XX的蛋糕", "别急", "那咋了", "又幻想了", "v我50", "疯狂星期四", "叠甲"}
 
-        self.assertTrue(allowed_runtime.issubset(runtime_words))
-        self.assertTrue(runtime_words.issubset(allowed_runtime), runtime_words - allowed_runtime)
-        for word in allowed_runtime:
+        self.assertTrue(core_runtime.issubset(runtime_words))
+        # 全量黑词黑句必须等于 CORE_CURATED_PHRASES，杜绝无节制噪音混入
+        self.assertEqual(runtime_words, set(CORE_CURATED_PHRASES.keys()))
+        for word in runtime_words:
             self.assertEqual(entries[word].get("layer"), "catchphrase")
             self.assertIs(entries[word].get("reference_only"), True)
         self.assertFalse(entries.get("就很……你们懂吧？[捂脸]", {}).get("runtime_match"))

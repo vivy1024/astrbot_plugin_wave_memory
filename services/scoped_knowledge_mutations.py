@@ -222,6 +222,7 @@ class ScopedKnowledgeMutationGateway:
             locator = int(record["locator"])
             revision = int(record["revision"])
             status = str(record["status"])
+            actual_event_type = str(record.get("event_type") or event_type)
             event_id = uuid.uuid5(uuid.NAMESPACE_URL, f"wave-memory:{operation_id}:0").hex
             connection.execute(
                 """INSERT INTO domain_outbox(
@@ -234,7 +235,7 @@ class ScopedKnowledgeMutationGateway:
                     aggregate_kind,
                     str(locator),
                     revision,
-                    event_type,
+                    actual_event_type,
                     _canonical_json({
                         "scope": scope_to_dict(scope),
                         "locator": locator,
@@ -253,7 +254,7 @@ class ScopedKnowledgeMutationGateway:
                 "aggregate_kind": aggregate_kind,
                 "aggregate_id": str(locator),
                 "aggregate_version": revision,
-                "change_type": event_type.rsplit(".", 1)[-1],
+                "change_type": actual_event_type.rsplit(".", 1)[-1],
                 "status": status,
                 "previous_locator": record.get("previous_locator"),
             }
@@ -264,7 +265,7 @@ class ScopedKnowledgeMutationGateway:
                 "entities": [entity],
                 "effects": [{
                     "event_id": event_id,
-                    "event_type": event_type,
+                    "event_type": actual_event_type,
                     "aggregate_kind": aggregate_kind,
                     "aggregate_id": str(locator),
                     "aggregate_version": revision,
@@ -550,13 +551,15 @@ class ScopedKnowledgeMutationGateway:
                 "locator": locator,
                 "revision": revision + 1,
                 "status": to_status,
+                "event_type": resolution["event_type"],
             }
 
         event_type = (
             "scoped_fact.rejected" if action == "reject"
-            else ("scoped_fact.conflict" if action == "approve" else "scoped_fact.approved")
+            else "scoped_fact.approved"
         )
-        return await self._commit(            scope=scope,
+        return await self._commit(
+            scope=scope,
             target=target,
             command_type="scoped.fact.review.v1",
             actor="webui.facts.review",

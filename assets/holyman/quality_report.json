@@ -1,8 +1,8 @@
 {
   "status": "ready",
-  "phrases_count": 10,
-  "concepts_count": 44,
-  "examples_count": 50,
+  "phrases_count": 51,
+  "concepts_count": 66,
+  "examples_count": 77,
   "corpus_count": 362,
   "candidates_count": 300,
   "blocked_count": 7,
@@ -21,7 +21,9 @@
     "missing_core_terms": 0,
     "missing_layered_sources": 0,
     "persona_instruction_in_phrases": 0,
+    "template_summaries_in_concepts": 0,
+    "orphan_attributions_in_examples": 0,
     "raw_parsed_corpus_mismatch": 0
   },
-  "generated_at": 1783236271
+  "generated_at": 1789570507
 }

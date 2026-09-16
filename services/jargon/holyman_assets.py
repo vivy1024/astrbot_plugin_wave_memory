@@ -14,6 +14,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    from ..identity_safety import is_identity_contamination
+except ImportError:
+    from services.identity_safety import is_identity_contamination
+
 HOLYMAN_SOURCE = "holyman_skills"
 
 def make_runtime_catchphrase(meaning: str, *, category: str = "catchphrase", confidence: float = 0.92) -> dict[str, Any]:
@@ -36,11 +41,52 @@ CORE_CURATED_PHRASES: dict[str, dict[str, Any]] = {
     "不是哥们": make_runtime_catchphrase("面对离谱、荒谬或难以接受的内容时使用的吐槽起手式，语气偏惊讶和无语。", confidence=0.95),
     "差不多得了": make_runtime_catchphrase("用于制止过度复读、争论、玩梗或情绪输出，意思是提醒对方适可而止。", confidence=0.95),
     "疯狂星期四": make_runtime_catchphrase("肯德基星期四促销梗，常出现在长篇故事结尾并转向借钱或求 V 的荒诞文案。", category="copypasta", confidence=0.96),
-    "你说得对，但是": make_runtime_catchphrase("常见反串或复制粘贴起手式，表面认可对方，随后突然切入夸张传教或长文。", category="copypasta", confidence=0.9),
-    "动了XX的蛋糕": make_runtime_catchphrase("把失败或冲突荒诞地归因于触碰了某个群体利益，用于反串阴谋化解释。", category="abstract-rhetoric", confidence=0.86),
-    "别急": make_runtime_catchphrase("常用于让对方不要急于反应或破防，也可作为轻度调侃式安抚。", confidence=0.9),
-    "那咋了": make_runtime_catchphrase("用冷处理方式回应指责或质疑，表达不在乎、反问或摆烂态度。", confidence=0.9),
-    "又幻想了": make_runtime_catchphrase("用于调侃过度脑补、自我代入或不现实的想象。", confidence=0.9),
+    "你说得对，但是": make_runtime_catchphrase("常见反串或复制粘贴起手式，表面认可对方，随后突然切入夸张传教或长文。", category="copypasta", confidence=0.95),
+    "动了XX的蛋糕": make_runtime_catchphrase("把失败或冲突荒诞地归因于触碰了某个群体利益，用于反串阴谋化解释。", category="abstract-rhetoric", confidence=0.9),
+    "别急": make_runtime_catchphrase("常用于让对方不要急于反应或破防，也可作为轻度调侃式安抚。", confidence=0.95),
+    "那咋了": make_runtime_catchphrase("用冷处理方式回应指责或质疑，表达不在乎、反问或摆烂态度。", confidence=0.92),
+    "又幻想了": make_runtime_catchphrase("用于调侃过度脑补、自我代入或不现实的想象。", confidence=0.92),
+    "玩原神玩的": make_runtime_catchphrase("面对各种离谱问题或异常行为时，荒诞地直接归因于玩某款游戏，属于经典甩锅解构梗。", category="gaming", confidence=0.95),
+    "急了": make_runtime_catchphrase("网络对线中用于嘲讽对方情绪失控、失去理智的轻量还击词。", category="catchphrase", confidence=0.94),
+    "破防": make_runtime_catchphrase("指心理防线被彻底击溃，因触及痛处或真相而产生强烈的情绪波动。", category="internet-culture", confidence=0.95),
+    "红温": make_runtime_catchphrase("形容人在争论或游戏中因愤怒、着急而面红耳赤、血压上升的破防状态。", category="gaming", confidence=0.92),
+    "小丑": make_runtime_catchphrase("自嘲或嘲讽他人自以为重要、付出真心却沦为滑稽可笑的笑柄。", category="internet-culture", confidence=0.94),
+    "赢麻了": make_runtime_catchphrase("反串或自嘲式胜利狂欢，用于夸张地表达全方位获胜，现多带反讽意味。", category="abstract-rhetoric", confidence=0.93),
+    "大赢特赢": make_runtime_catchphrase("赢学讽刺表达，用极度膨胀和确信的口吻宣布胜利，多用于反串。", category="abstract-rhetoric", confidence=0.92),
+    "开战": make_runtime_catchphrase("社群吵架对线冲锋号，表达群内恢复热闹对喷的荒诞喜悦。", category="catchphrase", confidence=0.9),
+    "复读机": make_runtime_catchphrase("指群聊中无脑复制粘贴同一句话进行刷屏或跟风的人。", category="internet-culture", confidence=0.95),
+    "鼠鼠": make_runtime_catchphrase("当代年轻人的自嘲称谓，比喻自己生活在底层、胆小怯懦、卑微无助的处境。", category="internet-culture", confidence=0.94),
+    "哈基米": make_runtime_catchphrase("原指赛马娘角色台词，后被泛化指代可爱小猫或宠物，带有荒诞戏谑感。", category="internet-culture", confidence=0.9),
+    "神人": make_runtime_catchphrase("原指行为极其抽象、荒诞、出人意料的奇葩群体，兼具讽刺与调侃。", category="internet-culture", confidence=0.93),
+    "小团体": make_runtime_catchphrase("指大群内部私下建立的小圈子，常用来吐槽自己被排挤或无法融入话题。", category="internet-culture", confidence=0.92),
+    "发病": make_runtime_catchphrase("指在群聊或社交媒体上突然情绪失控、大段宣泄或写长篇情感小作文的行为。", category="internet-culture", confidence=0.93),
+    "地狱笑话": make_runtime_catchphrase("以他人苦难、灾难或敏感话题为笑料的黑色幽默，争议极大且高度冒犯。", category="abstract-rhetoric", confidence=0.9),
+    "上流": make_runtime_catchphrase("反讽自己或他人的虚伪做作，把低俗或日常琐事包装成高级阶层的荒谬举止。", category="abstract-rhetoric", confidence=0.9),
+    "逆天": make_runtime_catchphrase("形容言论、行为或事件极其离谱、违背常理，令人难以置信。", category="catchphrase", confidence=0.95),
+    "太对了哥": make_runtime_catchphrase("敷衍附和对方的经典应付话术，表面完全同意，实际表达懒得争论或看耍猴。", category="catchphrase", confidence=0.93),
+    "抽象": make_runtime_catchphrase("当代互联网亚文化总称，指脱离常规逻辑、荒诞、解构一切严肃性的行为风格。", category="internet-culture", confidence=0.96),
+    "带节奏": make_runtime_catchphrase("指蓄意挑起争议、引导群体舆论偏向、制造对立或引发互撕的行为。", category="internet-culture", confidence=0.94),
+    "塌房": make_runtime_catchphrase("指偶像、公众人物或人设因丑闻败露而形象彻底幻灭崩塌。", category="internet-culture", confidence=0.92),
+    "拷打": make_runtime_catchphrase("指在网络对线或争论中，针对对方言论漏洞进行无情且压倒性的质问与反驳。", category="internet-culture", confidence=0.93),
+    "对线": make_runtime_catchphrase("借用游戏术语，指两人或阵营在社交平台正面对吵、互相输出观点的过程。", category="gaming", confidence=0.94),
+    "典中典": make_runtime_catchphrase("经典中的经典，用于讽刺某种具有典型特征的离谱言论或刻板行为。", category="abstract-rhetoric", confidence=0.94),
+    "乐子人": make_runtime_catchphrase("不站队、不严肃参与争论，纯粹把网络冲突当成娱乐和笑料看戏的人。", category="internet-culture", confidence=0.95),
+    "入脑": make_runtime_catchphrase("形容某种思想、观点、旋律或人物深度占据大脑，达到狂热或魔怔状态。", category="gaming", confidence=0.91),
+    "结晶": make_runtime_catchphrase("粉圈用语，指经历多次洗礼后提纯出来的狂热、盲目且极具攻击性的极端粉丝。", category="internet-culture", confidence=0.92),
+    "厨力": make_runtime_catchphrase("二次元用语，指对某个角色或作品狂热喜爱的程度与投入的精力金钱。", category="gaming", confidence=0.92),
+    "缝合": make_runtime_catchphrase("指将原本毫无关联的多款游戏、梗或文化元素强行拼接杂糅在一起的手法。", category="abstract-rhetoric", confidence=0.93),
+    "下头": make_runtime_catchphrase("指原本兴致盎然或有好感，却因对方某句令人不适的话或行为瞬间扫兴反感。", category="internet-culture", confidence=0.93),
+    "一眼顶真": make_runtime_catchphrase("利用藏族小伙丁真的谐音，调侃一眼就能看出来的造假、反串或假新闻。", category="internet-culture", confidence=0.93),
+    "白日梦": make_runtime_catchphrase("指完全脱离现实、不切实际的自我幻想或过度脑补。", category="catchphrase", confidence=0.91),
+    "爆金币": make_runtime_catchphrase("源于暗黑破坏神掉落金币，网络黑话中常指从长辈、父母或对方身上榨取财物。", category="internet-culture", confidence=0.91),
+    "精神胜利": make_runtime_catchphrase("源于鲁迅阿Q正传，指在现实受挫时通过自我麻痹或口头便宜获得心理平衡。", category="abstract-rhetoric", confidence=0.92),
+    "典急孝": make_runtime_catchphrase("对线三部曲缩写：经典、破防急了、孝子维护，用于给对方流水线扣帽子。", category="abstract-rhetoric", confidence=0.93),
+    "谁问你了": make_runtime_catchphrase("极其霸道且不讲理的话语打断方式，用反问剥夺对方说话的合法性。", category="catchphrase", confidence=0.92),
+    "给他们一点小小的": make_runtime_catchphrase("套用宏大叙事句式，狂妄宣布要用自己的某种特色给对方以震撼。", category="copypasta", confidence=0.91),
+    "抛开事实不谈": make_runtime_catchphrase("讽刺无视客观真相、强行从道德制高点或情绪角度诡辩的荒谬论调。", category="abstract-rhetoric", confidence=0.94),
+    "笑死，根本": make_runtime_catchphrase("用夸张的句式表达自己毫无感觉、毫不受影响，实则在嘴硬掩饰。", category="catchphrase", confidence=0.92),
+    "感觉不如": make_runtime_catchphrase("任何事物都能强行对比并得出贬低结论的万能踩一捧一起手式。", category="gaming", confidence=0.93),
+    "你最好真的是在说": make_runtime_catchphrase("当对方言论具有强烈的双关、隐喻或涉嫌违规时使用的假装怀疑式调侃。", category="catchphrase", confidence=0.92),
 }
 
 DEFAULT_BLOCKED: dict[str, str] = {
@@ -245,30 +291,65 @@ def parse_curated_phrases(fetched: dict[str, str], existing_phrases: dict[str, A
 def parse_concepts(fetched: dict[str, str]) -> list[dict[str, Any]]:
     """抽取只读文化概念。
 
-    Holyman 各类文档的标题层级并不统一：SKILL/_persona 用 `### `，而
-    `_knowledge/*.md` 用 `## `。只认 `### ` 会让知识文档整段解析为 0 条
-    （manifest 仍记 ok），因此这里同时接受 `## ` 与 `### `。
+    从 raw markdown 中抽取章节概念与文化知识，收集真实的段落与列表正文作为摘要。
+    严格排除 pure-meta 来源（如 _meta/sources.md），且绝不为空内容填充假模板摘要。
     """
     concepts: list[dict[str, Any]] = []
     for source, text in (fetched or {}).items():
-        if source == "README.md" or source.startswith("神人.skill/_quotes/") or source == "神言.txt":
+        if (
+            source == "README.md"
+            or source.startswith("神人.skill/_quotes/")
+            or source.startswith("神人.skill/_meta/")
+            or source == "神言.txt"
+        ):
             continue
         lines = (text or "").splitlines()
-        for idx, raw in enumerate(lines):
+        total_lines = len(lines)
+        idx = 0
+        while idx < total_lines:
+            raw = lines[idx]
             line = raw.strip()
             marker = _heading_marker(line)
             if marker is None:
+                idx += 1
                 continue
             title = clean_word(line[marker:])
+            heading_level = marker - 1  # ##=2, ###=3
             if not title or title in NOISE_WORDS:
+                idx += 1
                 continue
-            summary_parts = []
-            for follow in lines[idx + 1: idx + 5]:
-                follow = follow.strip().lstrip("-*").strip()
-                if not follow or follow.startswith("#"):
+            # 收集该章节正文，直到遇到下一个任何级别的标题，或 frontmatter/分隔符
+            summary_lines: list[str] = []
+            idx += 1
+            while idx < total_lines:
+                next_raw = lines[idx]
+                next_line = next_raw.strip()
+                if _heading_marker(next_line) is not None:
                     break
-                summary_parts.append(follow)
-            summary = clean_meaning(" ".join(summary_parts) or f"Holyman-skills 中关于“{title}”的文化概念。")
+                if next_line == "---":
+                    idx += 1
+                    break
+                clean_content = next_line.lstrip("-* ").strip()
+                if clean_content and not clean_content.startswith("#") and not clean_content.startswith("```"):
+                    summary_lines.append(clean_content)
+                idx += 1
+                if len(summary_lines) >= 8:
+                    while idx < total_lines:
+                        chk = lines[idx].strip()
+                        if _heading_marker(chk) is not None:
+                            break
+                        idx += 1
+                    break
+
+            if not summary_lines:
+                # 若正文为空，不生成假摘要概念
+                continue
+
+            summary_text = " ".join(summary_lines)
+            summary = clean_meaning(summary_text)
+            if not summary:
+                continue
+
             concepts.append({
                 "id": f"{source}.{len(concepts) + 1}",
                 "title": title,
@@ -285,10 +366,7 @@ def parse_concepts(fetched: dict[str, str]) -> list[dict[str, Any]]:
 
 
 def _heading_marker(line: str) -> int | None:
-    """返回标题标记长度（`## `=3、`### `=4、`#### `=5），非标题返回 None。
-
-    `# ` 一级标题是文档名/大章节，不作为概念标题；过深层级同理不取。
-    """
+    """返回标题标记长度（`## `=3、`### `=4、`#### `=5），非标题返回 None。"""
     if not line.startswith("#"):
         return None
     hashes = len(line) - len(line.lstrip("#"))
@@ -300,48 +378,207 @@ def _heading_marker(line: str) -> int | None:
 
 
 def parse_examples(fetched: dict[str, str], phrases: dict[str, Any]) -> list[dict[str, Any]]:
-    """抽取只读语录/声音样本。
+    """抽取只读语录/声音样本与对话示例。
 
-    语录在各类文档里的载体并不统一：`iconic.md` 用 `> ` 引用，`communication.md`
-    用 `- ` 列表，而 `internal.md` 把语录包在 ``` 代码围栏里。只认前两种会让
-    `internal.md` 74 行只抽出 1 条，因此这里补上代码围栏内的引用识别。
+    准确识别：
+    1. `iconic.md` 中的 `数字. > "正文"`，并将紧随其后的 `> — 出处说明` 绑定为 attribution；
+    2. 对话围栏中的 Char 回复提取为 dialogue 示例，排除 User 问话；
+    3. 排除纯导语（筛选标准）与 `//` 注释；
+    4. 对成对最外层引号进行精准剥除，保留内部引用。
     """
     examples: list[dict[str, Any]] = []
     terms = list(content_entries(phrases).keys())
+
     for source, text in (fetched or {}).items():
         if not (source.startswith("神人.skill/_quotes/") or source.endswith("communication.md")):
             continue
         category = CATEGORY_BY_SOURCE.get(source, "unknown")
+        lines = (text or "").splitlines()
+        total_lines = len(lines)
+        idx = 0
         in_fence = False
-        for raw in (text or "").splitlines():
-            line = raw.strip()
+        headings: list[tuple[int, str]] = []
+        sample_block = False
+        dialogue_role = ""
+
+        while idx < total_lines:
+            line = lines[idx].strip()
+
+            if not in_fence:
+                heading = re.match(r"^(#{1,6})\s+(.+)$", line)
+                if heading:
+                    level = len(heading.group(1))
+                    headings = [(n, title) for n, title in headings if n < level]
+                    headings.append((level, heading.group(2)))
+                    sample_block = False
+                    idx += 1
+                    continue
+                if line.startswith("**Real Sentence Samples**"):
+                    sample_block = True
+                    idx += 1
+                    continue
+                if line == "---" or line.startswith("**"):
+                    sample_block = False
+
+            section_type = ""
+            for level, title in headings:
+                if level == 1:
+                    continue
+                if "Signature Patterns" in title or "标志性句式模板" in title:
+                    section_type = "template"
+                elif "Example Exchanges" in title or "双向对话示例" in title:
+                    section_type = "dialogue"
+            # 无标题的独立语录片段兼容旧导入；完整文档的 H1 导语不属于语录章节。
+            quote_section = source.startswith("神人.skill/_quotes/") and (
+                not headings or any(n >= 2 for n, _ in headings)
+            )
+
             if line.startswith("```"):
                 in_fence = not in_fence
+                dialogue_role = ""
+                idx += 1
                 continue
-            if line.startswith(">"):
-                line = line.lstrip(">").strip()
-            elif in_fence:
-                # 代码围栏内是纯语录：去掉包裹引号即可，不做长度门槛。
-                line = line.strip().strip('"“”\'')
-            elif line.startswith(("- ", "* ")) and len(line) > 20:
-                line = line[2:].strip()
-            else:
+
+            # 围栏只是格式；句式、真实样本与对话由章节上下文决定。
+            if in_fence:
+                if line.startswith("//"):
+                    idx += 1
+                    continue
+                if section_type == "dialogue":
+                    if line.startswith(("User:", "User：")):
+                        dialogue_role = "User"
+                        idx += 1
+                        continue
+                    if line.startswith(("Char:", "Char：")):
+                        dialogue_role = "Char"
+                        line = line[5:].strip()
+                    if dialogue_role != "Char":
+                        idx += 1
+                        continue
+                    content = _strip_outer_quotes(line)
+                    example_type = "dialogue"
+                    attribution = "Example Exchanges (Char)"
+                elif section_type == "template" or sample_block or quote_section:
+                    content = _strip_outer_quotes(line)
+                    example_type = section_type or "voice_sample"
+                    attribution = ""
+                else:
+                    idx += 1
+                    continue
+                if content and not is_identity_contamination(content):
+                    linked = [t for t in terms if t and t in content][:5]
+                    examples.append({
+                        "text": content,
+                        "attribution": attribution,
+                        "example_type": example_type,
+                        "linked_terms": linked,
+                        "category": category,
+                        "source": source,
+                        "safe_for_prompt": example_type != "template" and len(content) <= 180,
+                        "layer": "quotes_knowledge",
+                        "reference_only": True,
+                        "runtime_match": False,
+                    })
+                idx += 1
                 continue
-            line = line.strip()
-            if not line:
+
+            # 跳过注释与导语
+            if line.startswith("//") or "筛选标准：" in line or "展示在不同场景下如何用" in line:
+                idx += 1
                 continue
-            linked = [term for term in terms if term and term in line][:5]
-            examples.append({
-                "text": line,
-                "linked_terms": linked,
-                "category": category,
-                "source": source,
-                "safe_for_prompt": len(line) <= 80,
-                "layer": "quotes_knowledge",
-                "reference_only": True,
-                "runtime_match": False,
-            })
+
+            # 匹配形如 "1. > \"正文\"" 或 "1. > 正文" 的标志性编号语录
+            numbered_quote_match = re.match(r"^\d+\.\s*>\s*(.+)$", line)
+            if numbered_quote_match and quote_section and not section_type:
+                quote_raw = numbered_quote_match.group(1).strip()
+                # 去除最外层的一对成对引号（保留内部嵌套）
+                quote_text = _strip_outer_quotes(quote_raw)
+                attribution = ""
+                # 预读下一行检查是否有 `> —` 出处标注
+                if idx + 1 < total_lines:
+                    next_line = lines[idx + 1].strip()
+                    attr_match = re.match(r"^>\s*—\s*(.+)$", next_line)
+                    if attr_match:
+                        attribution = attr_match.group(1).strip()
+                        idx += 1  # 消费掉出处行，避免作为独立语录被重复提取
+
+                if quote_text and not is_identity_contamination(quote_text):
+                    linked = [t for t in terms if t and t in quote_text][:5]
+                    examples.append({
+                        "text": quote_text,
+                        "attribution": attribution,
+                        "example_type": "voice_sample",
+                        "linked_terms": linked,
+                        "category": category,
+                        "source": source,
+                        "safe_for_prompt": len(quote_text) <= 150,
+                        "layer": "quotes_knowledge",
+                        "reference_only": True,
+                        "runtime_match": False,
+                    })
+                idx += 1
+                continue
+
+            # 匹配独立出处说明（若还有孤立的 `> —`，不单独当成语录）
+            if re.match(r"^>\s*—", line):
+                idx += 1
+                continue
+
+            # 普通引用行 `> 正文`
+            if line.startswith(">") and quote_section and not section_type:
+                quote_text = _strip_outer_quotes(line.lstrip(">").strip())
+                if quote_text and len(quote_text) > 10 and not is_identity_contamination(quote_text):
+                    linked = [t for t in terms if t and t in quote_text][:5]
+                    examples.append({
+                        "text": quote_text,
+                        "attribution": "",
+                        "example_type": "voice_sample",
+                        "linked_terms": linked,
+                        "category": category,
+                        "source": source,
+                        "safe_for_prompt": len(quote_text) <= 120,
+                        "layer": "quotes_knowledge",
+                        "reference_only": True,
+                        "runtime_match": False,
+                    })
+                idx += 1
+                continue
+
+            # communication 里的列表句式
+            if section_type == "template" and line.startswith(("- ", "* ")) and len(line) > 25:
+                content = _strip_outer_quotes(line[2:].strip())
+                # 排除纯语言规范性列表项
+                if not content.startswith("**") and not is_identity_contamination(content):
+                    linked = [t for t in terms if t and t in content][:5]
+                    examples.append({
+                        "text": content,
+                        "attribution": "",
+                        "example_type": "template",
+                        "linked_terms": linked,
+                        "category": category,
+                        "source": source,
+                        "safe_for_prompt": False,
+                        "layer": "quotes_knowledge",
+                        "reference_only": True,
+                        "runtime_match": False,
+                    })
+                idx += 1
+                continue
+
+            idx += 1
+
     return examples[:400]
+
+
+def _strip_outer_quotes(text: str) -> str:
+    """仅去除最外层成对的一对包裹引号，保留内部嵌套的引号。"""
+    t = text.strip()
+    if len(t) >= 2:
+        if (t.startswith('"') and t.endswith('"')) or (t.startswith('“') and t.endswith('”')):
+            return t[1:-1].strip()
+        if t.startswith("'") and t.endswith("'"):
+            return t[1:-1].strip()
+    return t
 
 
 def parse_corpus(corpus_data: str) -> list[dict[str, Any]]:
@@ -456,6 +693,11 @@ def quality_report(assets: dict[str, Any]) -> dict[str, Any]:
     parsed_corpus_count = len(assets.get("corpus") or [])
     raw_parsed_mismatch = source_corpus_items_count is not None and source_corpus_items_count != parsed_corpus_count
     declared_source_mismatch = declared_corpus_count is not None and source_corpus_items_count is not None and declared_corpus_count != source_corpus_items_count
+    concepts_list = assets.get("concepts") or []
+    examples_list = assets.get("examples") or []
+    template_summaries = sum(1 for c in concepts_list if "文化概念" in str(c.get("summary") or ""))
+    orphan_attributions = sum(1 for e in examples_list if str(e.get("text") or "").strip().startswith(("—", "- —")))
+
     errors = {
         "corpus_frequency_in_phrases": 0,
         "generic_meaning_in_phrases": 0,
@@ -466,6 +708,8 @@ def quality_report(assets: dict[str, Any]) -> dict[str, Any]:
         "missing_core_terms": 0,
         "missing_layered_sources": 0,
         "persona_instruction_in_phrases": 0,
+        "template_summaries_in_concepts": template_summaries,
+        "orphan_attributions_in_examples": orphan_attributions,
         "raw_parsed_corpus_mismatch": 1 if raw_parsed_mismatch else 0,
     }
     for word, value in phrases.items():

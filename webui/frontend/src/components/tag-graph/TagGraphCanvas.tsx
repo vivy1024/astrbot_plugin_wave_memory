@@ -25,7 +25,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/utils'
 
 function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(false)
+  const [reduced, setReduced] = useState(() => Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches))
   useEffect(() => {
     const query = window.matchMedia?.('(prefers-reduced-motion: reduce)')
     const update = () => setReduced(Boolean(query?.matches))
@@ -418,7 +418,11 @@ export function TagGraphCanvas({
       backgroundMid: '#060d17',
       backgroundOuter: '#03070d',
       grid: 'rgba(56, 189, 248, 0.04)',
-      edgeBase: 'rgba(125, 211, 252, 0.18)',
+      edgeCooccurrence: 'rgba(125, 211, 252, 0.18)',
+      edgeRelations: 'rgba(167, 139, 250, 0.28)',
+      hitGlow: 'rgba(56, 189, 248, 0.6)',
+      transparent: 'rgba(0,0,0,0)',
+      selectedText: '#ffffff',
       edgePath: '#f43f5e',
       ring: '#38bdf8',
       pulse: '#38bdf8',
@@ -428,7 +432,7 @@ export function TagGraphCanvas({
       if (!isRunning) return
       if (isSimulating && !reducedMotion) stepPhysics()
 
-      pulsePhaseRef.current = (pulsePhaseRef.current + 0.016) % 1.0
+      if (!reducedMotion) pulsePhaseRef.current = (pulsePhaseRef.current + 0.016) % 1.0
       const dpr = window.devicePixelRatio || 1
       const rect = canvas.getBoundingClientRect()
       if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
@@ -473,7 +477,7 @@ export function TagGraphCanvas({
         const isDimmed = selectedSimNode && !isConnectedToSelected && !isPath
 
         ctx.lineWidth = isPath ? 3.0 : isConnectedToSelected ? 2.0 : Math.max(0.6, edge.weight * 2.2)
-        ctx.strokeStyle = isPath ? palette.edgePath : isConnectedToSelected ? '#38bdf8' : palette.edgeBase
+        ctx.strokeStyle = isPath ? palette.edgePath : isConnectedToSelected ? palette.ring : edge.layer === 'relations' ? palette.edgeRelations : palette.edgeCooccurrence
         ctx.globalAlpha = isDimmed ? 0.05 : isPath ? 1.0 : isConnectedToSelected ? 0.85 : Math.max(0.12, edge.weight * 0.6)
 
         ctx.beginPath()
@@ -507,8 +511,8 @@ export function TagGraphCanvas({
 
         const glowRadius = node.radius * (isSelected || isLabHit ? 2.6 : isHovered ? 2.0 : 1.5)
         const radGrad = ctx.createRadialGradient(node.x, node.y, node.radius * 0.3, node.x, node.y, glowRadius)
-        radGrad.addColorStop(0, isLabHit ? 'rgba(56, 189, 248, 0.6)' : p.glow)
-        radGrad.addColorStop(1, 'rgba(0,0,0,0)')
+        radGrad.addColorStop(0, isLabHit ? palette.hitGlow : p.glow)
+        radGrad.addColorStop(1, palette.transparent)
         ctx.globalAlpha = isDimmed ? 0.05 : isSelected || isLabHit ? 0.95 : 0.5
         ctx.fillStyle = radGrad
         ctx.beginPath()
@@ -516,14 +520,14 @@ export function TagGraphCanvas({
         ctx.fill()
 
         ctx.globalAlpha = nodeAlpha
-        ctx.fillStyle = isLabHit ? '#38bdf8' : p.core
+        ctx.fillStyle = isLabHit ? palette.ring : p.core
         ctx.beginPath()
         ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2)
         ctx.fill()
 
         if (isSelected || isHovered || isLabHit) {
           ctx.globalAlpha = 1
-          ctx.strokeStyle = isLabHit ? '#38bdf8' : palette.ring
+          ctx.strokeStyle = palette.ring
           ctx.lineWidth = isSelected || isLabHit ? 2.5 : 1.5
           ctx.beginPath()
           ctx.arc(node.x, node.y, node.radius + 3.5, 0, Math.PI * 2)
@@ -533,7 +537,7 @@ export function TagGraphCanvas({
         const showText = isSelected || isHovered || isNeighbor || isLabHit || (!selectedSimNode && (node.degree >= 3 || scale > 1.45))
         if (showText) {
           ctx.globalAlpha = isDimmed ? 0.3 : 0.95
-          ctx.fillStyle = isSelected || isLabHit ? '#ffffff' : p.text
+          ctx.fillStyle = isSelected || isLabHit ? palette.selectedText : p.text
           ctx.font = `${isSelected || isLabHit ? 'bold ' : ''}${Math.max(10, Math.min(14, 11 / Math.sqrt(scale)))}px sans-serif`
           ctx.textAlign = 'center'
           ctx.textBaseline = 'top'
@@ -675,6 +679,7 @@ export function TagGraphCanvas({
             </button>
           ))}
         <p className="text-xs text-muted-foreground">移动端已降级为列表视图。</p>
+        {reducedMotion ? <p role="status" className="text-xs text-muted-foreground">已遵循减少动态效果偏好</p> : null}
       </div>
     )
   }
@@ -721,6 +726,7 @@ export function TagGraphCanvas({
           <span className="font-mono text-sky-300">{nodes.length} 节点</span>
           <span className="font-mono text-slate-400">{edges.length} 突触</span>
         </div>
+        {reducedMotion ? <Badge role="status" variant="secondary">已遵循减少动态效果偏好</Badge> : null}
       </div>
 
       {/* 画布内嵌悬浮配置面板 (参考神经云图 #kg-config，全屏模式下依然触手可及！) */}

@@ -10,20 +10,11 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .holyman_assets import DEFAULT_BLOCKED, content_entries
+from .holyman_assets import CORE_CURATED_PHRASES, DEFAULT_BLOCKED, content_entries
 
 
 _DEFAULT_PHRASES = {
-    "v我50": {"meaning": "常见抽象文案结尾：用突然要钱制造荒诞转折。", "layer": "catchphrase", "runtime_match": True},
-    "你说得对，但是": {"meaning": "常见反串起手式：表面承认，随后切入夸张传教或长文。", "layer": "catchphrase", "runtime_match": True},
-    "差不多得了": {"meaning": "互联网语境中制止复读、玩梗或过度争论的短句。", "layer": "catchphrase", "runtime_match": True},
-    "不是哥们": {"meaning": "对荒谬内容的吐槽起手式。", "layer": "catchphrase", "runtime_match": True},
-    "又幻想了": {"meaning": "对自我代入、恋爱脑、过度脑补的调侃。", "layer": "catchphrase", "runtime_match": True},
-    "叠甲": {"meaning": "提前声明立场或免责，以避免被攻击。", "layer": "catchphrase", "runtime_match": True},
-    "疯狂星期四": {"meaning": "常见复制粘贴/要钱文案触发词。", "layer": "catchphrase", "runtime_match": True},
-    "别急": {"meaning": "让对方不要急于反应或破防。", "layer": "catchphrase", "runtime_match": True},
-    "那咋了": {"meaning": "用冷处理方式回应质疑，表达不在乎或摆烂态度。", "layer": "catchphrase", "runtime_match": True},
-    "动了XX的蛋糕": {"meaning": "反串式阴谋化归因模板。", "layer": "catchphrase", "runtime_match": True},
+    word: dict(payload) for word, payload in CORE_CURATED_PHRASES.items()
 }
 
 
@@ -148,7 +139,7 @@ class HolymanReference:
             return False
         if re.fullmatch(r"[A-Za-z0-9 /_().~↑↓<>=*:-]+", phrase) and phrase not in self._ENGLISH_ALLOWLIST:
             return False
-        if re.fullmatch(r"[\u4e00-\u9fff]{2,3}", phrase) and phrase not in {"急了", "典", "绷", "鼠鼠", "叠甲", "丁真", "原神", "黄油", "神人", "抽象", "狗粉丝", "孙笑川", "别急", "那咋了"}:
+        if re.fullmatch(r"[\u4e00-\u9fff]{2,3}", phrase) and phrase not in _DEFAULT_PHRASES and phrase not in {"急了", "典", "绷", "鼠鼠", "叠甲", "丁真", "原神", "黄油", "神人", "抽象", "狗粉丝", "孙笑川", "别急", "那咋了"}:
             return False
         if len(phrase) > 30:
             return False

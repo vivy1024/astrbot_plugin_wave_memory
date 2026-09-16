@@ -237,6 +237,16 @@ class JargonInjector:
         self._cache[key], self._cache_ts[key] = result, now
         return result
 
+    def invalidate_bot_cache(self, bot_id: str | None = None) -> None:
+        """使指定 Bot（或全部 Bot）的覆盖层缓存失效，确保写操作立即可见。"""
+        if bot_id:
+            bid = str(bot_id).strip()
+            self._bot_state_cache.pop(bid, None)
+            self._bot_state_ts.pop(bid, None)
+        else:
+            self._bot_state_cache.clear()
+            self._bot_state_ts.clear()
+
     def _get_bot_jargon_state(self, bot_id: str) -> tuple[Dict[str, dict], set[str]]:
         """返回该 Bot 的广域覆盖层：(按规范化词形索引的行, 已删除词集合)。
 
@@ -252,7 +262,9 @@ class JargonInjector:
         rows_by_word: Dict[str, dict] = {}
         tombstoned: set[str] = set()
         try:
-            for row in self._bot_repo.list_bot_jargon(bot_id, limit=500):
+            loader = getattr(self._bot_repo, "load_all_bot_jargon_overlay", None)
+            rows = loader(bot_id) if callable(loader) else self._bot_repo.list_bot_jargon(bot_id, limit=5000)
+            for row in rows:
                 word = normalize_jargon_word(row.get("word"))
                 if not word:
                     continue

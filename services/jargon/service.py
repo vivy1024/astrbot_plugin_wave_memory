@@ -350,6 +350,11 @@ class JargonService:
             raise ValueError("bot_jargon_repository_unavailable")
         return repo
 
+    def _invalidate_injector_cache(self, bot_id: str) -> None:
+        injector = getattr(self, "_injector", None)
+        if injector is not None and hasattr(injector, "invalidate_bot_cache"):
+            injector.invalidate_bot_cache(bot_id)
+
     def promote_to_global(self, runtime_scope: RuntimeScope, jargon_id: int) -> dict[str, Any]:
         """把本群一条已生效黑话提升为该 Bot 的广域黑话。
 
@@ -386,6 +391,7 @@ class JargonService:
             origin_scope=scope.session.id if scope.session else None,
             provenance={"promoted_from_scope": scope.session.id if scope.session else None, "promoted_by": "webui"},
         )
+        self._invalidate_injector_cache(scope.bot_id)
         return {"word": word, "status": "active", "source": "promoted", "bot_id": scope.bot_id}
 
     def list_global_jargon(self, bot_id: str, *, status: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
@@ -395,7 +401,7 @@ class JargonService:
         落 ``bot_jargon``。返回顺序与注入优先级一致：Bot 级覆盖层在前，内置资产在后。
         """
         repo = self._bot_jargon_repo()
-        rows = repo.list_bot_jargon(bot_id, limit=max(1, min(int(limit) or 1, 500)))
+        rows = repo.load_all_bot_jargon_overlay(bot_id)
         overrides: dict[str, dict[str, Any]] = {}
         tombstoned: set[str] = set()
         for row in rows:
@@ -465,13 +471,14 @@ class JargonService:
         *,
         word: str,
         meaning: str,
-        status: str = "active",
+        status: str | None = None,
         confidence: float = 0.0,
     ) -> dict[str, Any]:
         """WebUI 手工新增/编辑广域黑话。
 
         以 ``source='manual'`` 覆盖写入，顺带解掉删除墓碑（``manual_deleted``）——否则
         用户重新添加同一个词时会看到它依然不生效。
+        若未显式指定 status，已有条目保留原有 status，避免编辑释义时不小心激活已停用词条。
         """
         word = normalize_jargon_word(word)
         if not word:
@@ -481,11 +488,22 @@ class JargonService:
             raise ValueError("jargon_meaning_required")
         if self._is_globally_blocked(word):
             raise ValueError("jargon_globally_blocked")
-        self._bot_jargon_repo().upsert_bot_jargon(
-            bot_id, word=word, meaning=meaning, status=status,
+        repo = self._bot_jargon_repo()
+        target_status = status
+        if target_status is None:
+            existing = repo.find_bot_jargon(bot_id, word=word)
+            if existing is not None and existing.get("source") != "manual_deleted":
+                target_status = str(existing.get("status") or "active")
+            else:
+                target_status = "active"
+        if target_status not in {"active", "inactive"}:
+            raise ValueError("invalid_jargon_status")
+        repo.upsert_bot_jargon(
+            bot_id, word=word, meaning=meaning, status=target_status,
             source="manual", confidence=confidence, provenance={"edited_by": "webui"},
         )
-        return {"word": word, "status": status, "source": "manual", "bot_id": bot_id}
+        self._invalidate_injector_cache(bot_id)
+        return {"word": word, "status": target_status, "source": "manual", "bot_id": bot_id}
 
     def set_global_jargon_status(self, bot_id: str, *, word: str, status: str) -> dict[str, Any]:
         """启用/停用一条广域黑话。
@@ -499,7 +517,9 @@ class JargonService:
         repo = self._bot_jargon_repo()
         current = repo.find_bot_jargon(bot_id, word=normalized)
         if current is not None and current.get("source") != "manual_deleted":
-            return repo.set_bot_jargon_status(bot_id, word=normalized, status=status)
+            result = repo.set_bot_jargon_status(bot_id, word=normalized, status=status)
+            self._invalidate_injector_cache(bot_id)
+            return result
         if normalized not in self._builtin_meanings():
             raise LookupError("scoped_object_not_found")
         if normalized in self._builtin_meanings() and current is None:
@@ -507,8 +527,11 @@ class JargonService:
                 bot_id, word=normalized, meaning="", status=status, source="manual",
                 provenance={"overlay": "builtin_toggle"},
             )
+            self._invalidate_injector_cache(bot_id)
             return {"id": None, "word": normalized, "status": status, "bot_id": bot_id, "is_builtin": True}
-        return repo.set_bot_jargon_status(bot_id, word=normalized, status=status)
+        result = repo.set_bot_jargon_status(bot_id, word=normalized, status=status)
+        self._invalidate_injector_cache(bot_id)
+        return result
 
     def delete_global_jargon(self, bot_id: str, *, word: str) -> dict[str, Any]:
         """移除一条广域黑话。
@@ -522,14 +545,18 @@ class JargonService:
         repo = self._bot_jargon_repo()
         current = repo.find_bot_jargon(bot_id, word=normalized)
         if current is not None:
-            return repo.delete_bot_jargon(bot_id, word=normalized)
+            result = repo.delete_bot_jargon(bot_id, word=normalized)
+            self._invalidate_injector_cache(bot_id)
+            return result
         if normalized not in self._builtin_meanings():
             raise LookupError("scoped_object_not_found")
         repo.upsert_bot_jargon(
             bot_id, word=normalized, meaning="", status="inactive", source="manual",
             provenance={"overlay": "builtin_delete"},
         )
-        return repo.delete_bot_jargon(bot_id, word=normalized)
+        result = repo.delete_bot_jargon(bot_id, word=normalized)
+        self._invalidate_injector_cache(bot_id)
+        return result
 
     def _builtin_meanings(self) -> dict[str, str]:
         result: dict[str, str] = {}

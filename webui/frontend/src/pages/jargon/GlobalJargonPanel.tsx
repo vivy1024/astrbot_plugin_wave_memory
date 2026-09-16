@@ -74,6 +74,7 @@ interface DraftState {
   word: string
   meaning: string
   isNew: boolean
+  status?: 'active' | 'inactive'
 }
 
 function textOf(item: CatalogAssetRecord, keys: string[], fallback = '—'): string {
@@ -236,7 +237,8 @@ export function GlobalJargonPanel({ botId }: { botId: string }) {
     if (!draft) return
     setBusyWord(draft.word)
     try {
-      await upsertGlobalJargon(botId, { word: draft.word.trim(), meaning: draft.meaning.trim(), status: 'active' })
+      const targetStatus = draft.isNew ? 'active' : (draft.status ?? 'active')
+      await upsertGlobalJargon(botId, { word: draft.word.trim(), meaning: draft.meaning.trim(), status: targetStatus })
       toast.success(draft.isNew ? '已新增广域黑话' : '已更新广域黑话')
       setDraft(null)
       await load()
@@ -313,7 +315,7 @@ export function GlobalJargonPanel({ botId }: { botId: string }) {
             </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" disabled={!botId} onClick={() => setDraft({ word: '', meaning: '', isNew: true })}>
+            <Button type="button" size="sm" disabled={!botId} onClick={() => setDraft({ word: '', meaning: '', isNew: true, status: 'active' })}>
               <PlusIcon data-icon="inline-start" />新增广域黑话
             </Button>
             <Button type="button" size="icon-sm" variant="outline" disabled={!botId || status === 'loading'} onClick={() => { void load(); void loadCatalog() }} aria-label="刷新广域黑话">
@@ -395,7 +397,7 @@ export function GlobalJargonPanel({ botId }: { botId: string }) {
                 <TableCell><Badge variant={item.status === 'active' ? 'secondary' : 'outline'}>{item.status === 'active' ? '已启用' : '已停用'}</Badge></TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
-                    <Button type="button" variant="ghost" size="icon-sm" aria-label={`编辑广域黑话 ${item.word}`} disabled={busyWord === item.word} onClick={() => setDraft({ word: item.word, meaning: item.meaning, isNew: false })}>
+                    <Button type="button" variant="ghost" size="icon-sm" aria-label={`编辑广域黑话 ${item.word}`} disabled={busyWord === item.word} onClick={() => setDraft({ word: item.word, meaning: item.meaning, isNew: false, status: item.status })}>
                       <PencilIcon />
                     </Button>
                     <Button type="button" variant="ghost" size="icon-sm" aria-label={`${item.status === 'active' ? '停用' : '启用'}广域黑话 ${item.word}`} disabled={busyWord === item.word} onClick={() => void toggleStatus(item)}>
@@ -418,7 +420,7 @@ export function GlobalJargonPanel({ botId }: { botId: string }) {
               </div>
               <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">{item.meaning || '尚未填写释义'}</p>
               <div className="flex flex-wrap justify-end gap-2">
-                <Button type="button" variant="outline" size="sm" disabled={busyWord === item.word} onClick={() => setDraft({ word: item.word, meaning: item.meaning, isNew: false })}>编辑</Button>
+                <Button type="button" variant="outline" size="sm" disabled={busyWord === item.word} onClick={() => setDraft({ word: item.word, meaning: item.meaning, isNew: false, status: item.status })}>编辑</Button>
                 <Button type="button" variant="outline" size="sm" disabled={busyWord === item.word} onClick={() => void toggleStatus(item)}>{item.status === 'active' ? '停用' : '启用'}</Button>
                 <Button type="button" variant="outline" size="sm" disabled={busyWord === item.word} onClick={() => setRemoveTarget(item)}>移除</Button>
               </div>
@@ -566,9 +568,17 @@ export function GlobalJargonPanel({ botId }: { botId: string }) {
           <DialogDescription>只读取远端并在内存中比较；正式同步仍禁用，不会写入资产。</DialogDescription>
         </DialogHeader>
         {previewLoading ? <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2Icon className="animate-spin" />正在读取远端并生成差异</div>
-          : preview ? <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-lg border p-3 text-sm"><p className="text-muted-foreground">本地版本</p><p className="font-mono">{preview.local_version || '未知'}</p></div>
-            <div className="rounded-lg border p-3 text-sm"><p className="text-muted-foreground">远端版本</p><p className="font-mono">{preview.remote_version || '未知'}</p></div>
+          : preview ? <div className="flex flex-col gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-lg border p-3 text-sm"><p className="text-muted-foreground">本地版本</p><p className="font-mono">{preview.local_version || '未知'}</p></div>
+              <div className="rounded-lg border p-3 text-sm"><p className="text-muted-foreground">远端版本</p><p className="font-mono">{preview.remote_version || '未知'}</p></div>
+            </div>
+            {preview.samples?.added_phrases?.length ? <div className="rounded-lg border p-3 text-sm">
+              <p className="font-medium text-muted-foreground">新增词条示例</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {preview.samples.added_phrases.map((phrase) => <Badge key={phrase} variant="secondary">{phrase}</Badge>)}
+              </div>
+            </div> : null}
           </div> : <Alert variant="destructive"><AlertTitle>同步预览不可用</AlertTitle><AlertDescription>服务端没有返回可展示的差异。</AlertDescription></Alert>}
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => setPreviewOpen(false)}>关闭</Button>

@@ -1,5 +1,5 @@
 import { MemoryRouter } from 'react-router-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -87,14 +87,42 @@ describe('TagGraphPage', () => {
     expect(await screen.findByLabelText('标签关系图移动端列表')).toBeVisible()
     expect(view.container.querySelector('[data-tag-graph-mode="list"]')).toBeInTheDocument()
     expect(view.container.querySelector('[data-tag-graph-mode="svg"]')).not.toBeInTheDocument()
-    expect(api.getTagGraph).toHaveBeenCalledWith(graph.scope, expect.objectContaining({ maxNodes: 200 }))
+    expect(view.container.querySelector('canvas')).not.toBeInTheDocument()
+    expect(api.getTagGraph).toHaveBeenCalledWith(graph.scope, expect.objectContaining({
+      maxNodes: 150, layers: ['cooccurrence', 'relations'], includePulse: false, signal: expect.any(AbortSignal),
+    }))
+    await userEvent.setup().click(screen.getByRole('button', { name: /Alpha/ }))
+    expect(await screen.findByText('Alpha desc')).toBeVisible()
   })
 
-  it('prefers-reduced-motion 下不创建脉冲动画元素', async () => {
-    reducedMotion = true
-    Object.defineProperty(window, 'matchMedia', { configurable: true, value: vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })) })
+  it.each([false, true])('Canvas 按减少动态效果偏好绘制脉冲：%s', async (reduced) => {
+    reducedMotion = reduced
+    const context = {
+      save: vi.fn(), restore: vi.fn(), scale: vi.fn(), clearRect: vi.fn(),
+      translate: vi.fn(), fillRect: vi.fn(), beginPath: vi.fn(),
+      moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(), fill: vi.fn(),
+      arc: vi.fn(), fillText: vi.fn(), createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+    }
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D)
+    const frames = vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1)
+    const cancel = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
     const view = render(<MemoryRouter initialEntries={['/tags/graph?bot_id=bot-a&session_id=qq%3Agroup%3Ag1&pulse=1']}><TagGraphPage /></MemoryRouter>)
-    expect(await screen.findByText('已遵循减少动态效果偏好')).toBeVisible()
-    expect(view.container.querySelector('animate')).not.toBeInTheDocument()
+    try {
+      expect(await screen.findByLabelText('Tag 关系图画布')).toBeVisible()
+      if (reduced) expect(screen.getByText('已遵循减少动态效果偏好')).toBeVisible()
+      else expect(screen.queryByText('已遵循减少动态效果偏好')).not.toBeInTheDocument()
+      expect(view.container.querySelector('animate')).not.toBeInTheDocument()
+      const frame = frames.mock.calls.at(-1)?.[0]
+      expect(frame).toBeDefined()
+      act(() => frame!(0))
+      // 每个节点画光晕和核心；只有普通模式额外绘制边上的移动脉冲。
+      expect(context.arc).toHaveBeenCalledTimes(nodes.length * 2 + (reduced ? 0 : edges.length))
+      expect(context.lineTo).toHaveBeenCalledTimes(edges.length)
+    } finally {
+      view.unmount()
+      getContext.mockRestore()
+      frames.mockRestore()
+      cancel.mockRestore()
+    }
   })
 })

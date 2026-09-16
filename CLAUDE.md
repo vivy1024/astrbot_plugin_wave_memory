@@ -78,7 +78,7 @@ UNIQUE(user_id, group_id, bot_id)
 
 | 日期 | 事件 | 教训 |
 |------|------|------|
-| 05-29 | GitHub 回退覆盖 | 必须 push |
+| 05-29 | GitHub 回退覆盖 | 获明确授权后 push，并核对远端结果 |
 | 06-14 | release notes 遗漏 | git log 检查 |
 | 06-15 | enable_auto_inject=False | 配置升级兼容 |
 | 06-15 | lifecycle.start() 未调用 | 构造后必须 start |

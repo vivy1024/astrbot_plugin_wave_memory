@@ -159,6 +159,87 @@ def test_injection_sections_use_independent_budgets(repo):
     assert signals["has_global_irony"] is True
 
 
+def test_tombstone_does_not_resurrect_with_over_500_overlay_items(repo):
+    """J1: 即使 Bot 级自定义词条超过 500 条，早期被删除并留有墓碑的内置词条绝不复活。"""
+    bot_repo, scoped_repo, manager = repo
+    scope = _group_scope()
+
+    class _Holyman:
+        def runtime_matchable_entries(self):
+            return {"叠甲": {"meaning": "免责声明", "confidence": 0.9}}
+
+    db = type("DB", (), {
+        "scoped_knowledge": scoped_repo,
+        "bot_jargon": bot_repo,
+        "is_jargon_blocked": staticmethod(lambda word: False),
+    })()
+
+    # 先删除叠甲（留墓碑）
+    bot_repo.upsert_bot_jargon("bot-alpha", word="叠甲", meaning="临时解释")
+    bot_repo.delete_bot_jargon("bot-alpha", word="叠甲")
+    assert bot_repo.find_bot_jargon("bot-alpha", word="叠甲")["source"] == "manual_deleted"
+
+    # 插入 600 条其它覆盖词条
+    for i in range(600):
+        bot_repo.upsert_bot_jargon("bot-alpha", word=f"自定义词{i}", meaning="词条解释")
+
+    injector = JargonInjector(db, max_inject=1, holyman_reference=_Holyman(), global_limit=2)
+    output = injector.get_injection("大家一起来叠甲", scope)
+    # 叠甲被删除了，绝不可注入！
+    assert "叠甲" not in output
+
+
+def test_global_catalog_preserves_all_overlays_before_merging_and_filtering(repo):
+    from services.jargon.service import JargonService
+
+    bot_repo, scoped_repo, _ = repo
+    service = JargonService(type("DB", (), {"scoped_knowledge": scoped_repo, "bot_jargon": bot_repo})())
+    service._holyman = type("Holyman", (), {"runtime_matchable_entries": lambda self: {
+        "叠甲": {"meaning": "内置解释"},
+        "停用词": {"meaning": "内置解释"},
+        "改义词": {"meaning": "内置解释"},
+    }})()
+    bot_repo.upsert_bot_jargon("bot-alpha", word="叠甲", meaning="旧解释")
+    bot_repo.delete_bot_jargon("bot-alpha", word="叠甲")
+    bot_repo.upsert_bot_jargon("bot-alpha", word="停用词", meaning="停用解释", status="inactive")
+    bot_repo.upsert_bot_jargon("bot-alpha", word="改义词", meaning="自定义解释")
+    for i in range(600):
+        bot_repo.upsert_bot_jargon("bot-alpha", word=f"新增词{i}", meaning="解释")
+    bot_repo.upsert_bot_jargon("bot-beta", word="其它Bot词", meaning="不可见")
+
+    items = {item["word"]: item for item in service.list_global_jargon("bot-alpha")}
+    assert "叠甲" not in items
+    assert "其它Bot词" not in items
+    assert items["停用词"]["status"] == "inactive"
+    assert items["改义词"]["meaning"] == "自定义解释"
+    assert len(items) == 602
+    inactive = service.list_global_jargon("bot-alpha", status="inactive")
+    assert [item["word"] for item in inactive] == ["停用词"]
+    active = service.list_global_jargon("bot-alpha", status="active")
+    assert "停用词" not in {item["word"] for item in active}
+    assert "叠甲" not in {item["word"] for item in active}
+
+
+def test_upsert_global_jargon_without_status_preserves_existing_status(repo):
+    """J2: 编辑已停用的词条释义时，若未显式传 status，保留 inactive，不得静默激活。"""
+    _, scoped_repo, manager = repo
+    from services.jargon.service import JargonService
+    bot_repo = BotJargonRepository(manager)
+    service = JargonService(type("DB", (), {"scoped_knowledge": scoped_repo, "bot_jargon": bot_repo})())
+
+    # 新建并停用
+    service.upsert_global_jargon("bot-alpha", word="测试词", meaning="初始含义", status="inactive")
+    row = bot_repo.find_bot_jargon("bot-alpha", word="测试词")
+    assert row["status"] == "inactive"
+
+    # 编辑释义，不传 status
+    service.upsert_global_jargon("bot-alpha", word="测试词", meaning="修改后的新含义", status=None)
+    row_after = bot_repo.find_bot_jargon("bot-alpha", word="测试词")
+    assert row_after["meaning"] == "修改后的新含义"
+    assert row_after["status"] == "inactive"
+
+
+
 def test_disabling_builtin_phrase_removes_it_from_injection(repo):
     """修复的开关：内置口癖默认启用，WebUI 停用后必须真的不再注入。"""
     bot_repo, scoped_repo, manager = repo

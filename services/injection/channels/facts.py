@@ -190,6 +190,24 @@ class FactsChannel:
             result.latency_ms = self._latency_ms(started)
             return result
 
+    @staticmethod
+    def _is_fact_eligible(row: Mapping[str, Any]) -> bool:
+        """统一事实准入过滤：排查 status、review_status 与 relation。
+
+        适用于 primary 查询与 one-hop 联想，确保已拒绝、未审核、冲突或已归档事实
+        不会通过任何一条召回路径进入注入。
+        """
+        status = str(row.get("status") or "").strip().lower()
+        if status in {"pending", "rejected", "quarantined", "conflict", "deleted", "superseded"}:
+            return False
+        review_status = str(row.get("review_status") or "").strip().lower()
+        if review_status in {"pending", "rejected", "quarantined", "conflict"}:
+            return False
+        relation = str(row.get("relation") or "").strip().lower()
+        if relation in {"conflicts"}:
+            return False
+        return True
+
     def _query_primary(
         self,
         rows: Iterable[Mapping[str, Any]],
@@ -201,9 +219,7 @@ class FactsChannel:
         facts = [
             _row_to_fact(row, now=now, decay_rate=self.facts_decay_rate)
             for row in rows
-            if (row.get("status") in (None, "active", "reviewed", "approved")
-            and row.get("review_status") not in ("pending", "rejected")
-            and row.get("relation") not in ("conflicts",)
+            if (self._is_fact_eligible(row)
             and any(
                 keyword in str(row.get("subject") or "").casefold()
                 or keyword in str(row.get("object") or "").casefold()
@@ -243,6 +259,7 @@ class FactsChannel:
             _row_to_fact(row, now=now, decay_rate=self.facts_decay_rate)
             for row in rows
             if row.get("id") not in hit_rowids
+            and self._is_fact_eligible(row)
             and (str(row.get("subject") or "") in entities or str(row.get("object") or "") in entities)
         ]
         extras.sort(key=lambda fact: fact.get("effective_confidence", 0.0), reverse=True)
@@ -310,41 +327,44 @@ class FactsChannel:
     def _legacy_fact_rows(self, ctx: Any, scope: Any, *, limit: int) -> list[dict[str, Any]]:
         """Read-only fallback to the existing facts table. Does not copy rows.
 
-        事实不分群：同一个人在哪个群被记录的事实都成立，按群过滤会让 bot 换个群就
-        忘掉已知信息（如某人在 A 群被记下的身份，在 B 群变成空白）。这里只按人物与
-        关键词匹配，不限制 group_id。
+        事实不分群，但必须严格分 Bot：同一个人在同 Bot 哪个群被记录的事实都成立；
+        但跨 Bot 绝对隔离，不能把 Bot B 记录的私密事实注入给 Bot A。
+        通过 source_memory_id 联查 memories.bot_id 确立可信所有权，不限制 group_id。
         """
-        if limit <= 0:
+        if limit <= 0 or scope is None or not getattr(scope, "bot_id", None):
             return []
         conn = getattr(self.db, "conn", None)
         if conn is None or not hasattr(conn, "execute"):
             return []
+        bot_id = str(scope.bot_id).strip()
         sender_id = str(getattr(ctx, "sender_id", "") or "").strip()
         sender_name = str(getattr(ctx, "sender_name", "") or "").strip()
         keywords = _keywords(str(getattr(ctx, "message", "") or ""), limit=6)
         now = float(getattr(ctx, "now", 0.0) or time.time())
         clauses = [
-            "COALESCE(fact_type, '') != 'QUARANTINED_ROLEPLAY'",
-            "(valid_until IS NULL OR valid_until > ?)",
+            "m.bot_id = ?",
+            "COALESCE(f.fact_type, '') != 'QUARANTINED_ROLEPLAY'",
+            "(f.valid_until IS NULL OR f.valid_until > ?)",
         ]
-        params: list[Any] = [now]
+        params: list[Any] = [bot_id, now]
         match_clauses: list[str] = []
         if sender_id:
-            match_clauses.append("subject = ?")
+            match_clauses.append("f.subject = ?")
             params.append(sender_id)
         if sender_name:
-            match_clauses.append("subject = ?")
+            match_clauses.append("f.subject = ?")
             params.append(sender_name)
         for token in keywords:
             like = f"%{token}%"
-            match_clauses.append("(subject LIKE ? OR object LIKE ?)")
+            match_clauses.append("(f.subject LIKE ? OR f.object LIKE ?)")
             params.extend((like, like))
         if match_clauses:
             clauses.append(f"({' OR '.join(match_clauses)})")
-        sql = f"""SELECT id, subject, predicate, object, confidence, created_at, last_reinforced, fact_type
-                    FROM facts
+        sql = f"""SELECT f.id, f.subject, f.predicate, f.object, f.confidence, f.created_at, f.last_reinforced, f.fact_type
+                    FROM facts f
+                    JOIN memories m ON f.source_memory_id = m.id
                    WHERE {' AND '.join(clauses)}
-                   ORDER BY confidence DESC, id DESC
+                   ORDER BY f.confidence DESC, f.id DESC
                    LIMIT ?"""
         params.append(limit)
         try:
@@ -364,7 +384,7 @@ class FactsChannel:
                 "status": "active",
                 "review_status": "approved",
                 "relation": "compatible",
-                "provenance": {"source_table": "facts", "legacy": True},
+                "provenance": {"source_table": "facts", "legacy": True, "bot_id": bot_id},
             })
         return rows
 

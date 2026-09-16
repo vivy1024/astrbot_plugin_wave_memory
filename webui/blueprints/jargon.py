@@ -54,19 +54,20 @@ _TECHNICAL_NOISE_WORDS = (
 
 
 def _resolve_holyman_assets_dir() -> Path:
-
     """Resolve Holyman assets from runtime volume, dev checkout, or module-relative fallback."""
+    module_assets = Path(os.path.abspath(__file__)).resolve().parent.parent.parent / "assets" / "holyman"
+    if module_assets.exists() and (module_assets / "phrases.json").exists():
+        return module_assets
+
     for target_path in [
         "/AstrBot/data/plugins/astrbot_plugin_wave_memory/assets/holyman",
         os.path.join(os.getcwd(), "data/plugins/astrbot_plugin_wave_memory/assets/holyman"),
         os.path.join(os.getcwd(), "astrbot_plugin_wave_memory/assets/holyman"),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../assets/holyman"),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../assets/holyman"),
     ]:
         candidate = Path(target_path)
         if candidate.exists() and (candidate / "phrases.json").exists():
             return candidate
-    return Path(os.path.dirname(os.path.abspath(__file__))) / ".." / ".." / "assets" / "holyman"
+    return module_assets
 
 
 def _load_holyman_asset_json(name: str, default, assets_dir: Path | None = None):

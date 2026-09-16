@@ -149,8 +149,12 @@ def fact_object_ref(item: dict[str, Any], scope: Any, registry: Any) -> dict[str
 
 
 def fact_revision(item: dict[str, Any]) -> int:
-    """与 beliefs 的 ObjectRef 规则保持一致：revision 由时间戳推导。"""
-    return max(1, int(float(item.get("updated_at") or item.get("created_at") or 1) * 1000))
+    """事实对象使用 scoped_facts 数据库行自身的单调递增 revision 进行 CAS 版本校验。"""
+    try:
+        rev = int(item.get("revision", 1))
+        return max(1, rev)
+    except (TypeError, ValueError):
+        return 1
 
 
 def facts_page_response(items: list[dict[str, Any]], *, total: int, limit: int, offset: int) -> Any:

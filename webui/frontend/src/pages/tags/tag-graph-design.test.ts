@@ -29,7 +29,14 @@ describe('标签图谱观测台配色', () => {
   it('节点与连线取色走调色函数与 palette，不在绘制循环里内联 hex', () => {
     const canvas = read(CANVAS)
     expect(canvas).toContain('paletteFor(node.raw.type)')
-    expect(canvas).toContain('paletteFor(hoveredNode.type)')
+    // 悬停已合并进统一节点绘制循环，不再单独绘制 hoveredNode。
+    expect(canvas).toContain('node.raw.ref === hoveredNode?.ref')
+    expect(canvas).toContain('isHovered ? 2.0 : 1.5')
+    expect(canvas).toContain('radGrad.addColorStop(0, isLabHit ? palette.hitGlow : p.glow)')
+    expect(canvas).toContain('ctx.fillStyle = isLabHit ? palette.ring : p.core')
+    expect(canvas).toContain('ctx.fillStyle = isSelected || isLabHit ? palette.selectedText : p.text')
+    const drawing = canvas.slice(canvas.indexOf('const render = () =>'), canvas.indexOf('// 鼠标交互'))
+    expect(drawing).not.toMatch(/#[0-9a-f]{3,8}\b/i)
     expect(canvas).toContain('palette.edgeRelations')
     expect(canvas).toContain('palette.edgeCooccurrence')
     // 深空渐变背景三档色阶

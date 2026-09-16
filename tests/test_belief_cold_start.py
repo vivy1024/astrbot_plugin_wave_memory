@@ -139,3 +139,39 @@ def test_first_memory_id_from_episode_prefers_healthy(repo):
 
     assert first_memory_id_from_episode(scoped_repo, scope, _provenance(memory_ids=(quarantined, healthy))) == healthy
     assert first_memory_id_from_episode(scoped_repo, scope, _provenance(memory_ids=(quarantined,))) is None
+
+
+def test_approved_episode_belief_is_injectable_in_belief_engine(repo):
+    """经历支撑的冷启动信念在批准为 active 后，必须被 BeliefEngine._injectable 准入并正常注入。"""
+    from services.belief_engine import BeliefEngine
+    from types import SimpleNamespace
+
+    scoped_repo, manager = repo
+    scope = _scope()
+    m1 = _memory(manager, scope, content="今天一起吃了疯狂星期四")
+    m2 = _memory(manager, scope, content="大家都很开心")
+
+    belief_id = scoped_repo.upsert_scoped_belief(
+        scope,
+        belief_key="episode-v1:cold-start-inject",
+        content="群友喜欢在星期四聚餐",
+        belief_type="world_view",
+        strength=0.8,
+        status="pending",
+        provenance={"producer": "belief_emergence", "episode_id": 1, "source_memory_ids": [m1, m2]},
+    )
+    # 批准
+    BeliefLifecycleService(scoped_repo).transition(scope, belief_id, "approve")
+    active_belief = scoped_repo.get_scoped_belief(scope, belief_id)
+    assert active_belief["status"] == "active"
+
+    db = SimpleNamespace(
+        scoped_knowledge=scoped_repo,
+        conn=manager.conn,
+        list_scoped_beliefs=scoped_repo.list_scoped_beliefs,
+    )
+    engine = BeliefEngine(db, None, bot_id="bot-alpha")
+    assert engine._injectable(active_belief, scope, scoped_repo) is True
+    injection = engine.get_injection(scope, keywords=["星期四"])
+    assert "群友喜欢在星期四聚餐" in injection
+

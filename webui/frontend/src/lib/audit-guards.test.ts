@@ -106,8 +106,12 @@ describe('全站审计回归锁：错误信息不被固定说明顶掉', () => {
     // catch 不能再吞掉错误
     expect(page).not.toContain('} catch {\n      if (request !== blocklistRequest.current) return')
     expect(page).toContain('setBlocklistError(reason)')
-    expect(page).toContain('setCatalogError(reason)')
     expect(page).toContain('error={blocklistError}')
-    expect(page).toContain('error={catalogError}')
+    // 目录已迁入广域黑话面板，仍必须保留真实错误并提供重试。
+    expect(page).toContain('<GlobalJargonPanel botId={botId} />')
+    const catalog = read('src/pages/jargon/GlobalJargonPanel.tsx')
+    expect(catalog).toContain('setCatalogError(reason)')
+    expect(catalog).toContain("humanizeApiError(catalogError, '内置资产读取失败')")
+    expect(catalog).toContain('onClick={() => void loadCatalog()}>重试</Button>')
   })
 })
