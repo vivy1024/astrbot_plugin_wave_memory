@@ -47,6 +47,7 @@ _OPTIONAL = (
     ("channel_config", "channel_config_bp"),
     ("agent_feedback", "agent_feedback_bp"),
     ("compatibility", "compatibility_bp"),
+    ("runtime", "runtime_bp"),
 )
 
 _NAMES = [n for _, n in _CORE] + [n for _, n in _OPTIONAL]
