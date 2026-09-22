@@ -457,10 +457,17 @@ async def list_experiences():
         where = ["1=1"]
         params: list[Any] = []
 
+        scope = _requested_runtime_scope()
         bot_id = str(request.args.get("bot_id") or "").strip()
         group_id = str(request.args.get("group_id") or "").strip()
-        if not bot_id or not group_id:
+
+        # 优先使用经严格验证的 canonical RuntimeScope
+        if scope is not None:
+            bot_id = scope.bot_id
+            group_id = scope.session.conversation_id
+        elif not bot_id or not group_id:
             return jsonify(page_response([], total=0, limit=limit, offset=offset))
+
         if "bot_id" in columns:
             where.append("bot_id=?")
             params.append(bot_id)
@@ -470,15 +477,15 @@ async def list_experiences():
 
         search = str(request.args.get("search") or "").strip()
         if search:
+            escaped_search = search.replace("/", "//").replace("%", "/%").replace("_", "/_")
             searchable = [
                 c for c in (
-                    "trigger_text", "bot_inner_thought", "bot_action",
-                    "bot_reply", "user_reaction", "outcome", "episode_type",
+                    "trigger_text", "bot_reply", "outcome", "bot_inner_thought", "episode_type",
                 ) if c in columns
             ]
             if searchable:
-                where.append("(" + " OR ".join(f'"{c}" LIKE ?' for c in searchable) + ")")
-                params.extend([f"%{search}%"] * len(searchable))
+                where.append("(" + " OR ".join(f'"{c}" LIKE ? ESCAPE "/"' for c in searchable) + ")")
+                params.extend([f"%{escaped_search}%"] * len(searchable))
 
         episode_type = str(request.args.get("episode_type") or "").strip()
         if episode_type and "episode_type" in columns:
@@ -500,7 +507,10 @@ async def list_experiences():
             f"SELECT * FROM experience_episodes{where_sql} ORDER BY {order} LIMIT ? OFFSET ?",
             (*params, limit, offset),
         ))
-        return jsonify(page_response(items, total=total, limit=limit, offset=offset))
+        res = page_response(items, total=total, limit=limit, offset=offset)
+        if scope is not None:
+            res["scope"] = scope.to_dict()
+        return jsonify(res)
     except (TypeError, ValueError):
         return jsonify(error_payload("invalid_pagination", "Invalid pagination parameters")), 400
     except Exception as exc:

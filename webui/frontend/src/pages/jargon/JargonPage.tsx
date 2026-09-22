@@ -1,15 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { ArchiveIcon, BookOpenIcon, CheckIcon, Edit2Icon, EyeIcon, Globe2Icon, Loader2Icon, MessageSquareQuoteIcon, ShieldCheckIcon, XIcon, LockIcon } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { fetchJson } from '@/api/client'
-import { humanizeApiError, humanizeReason } from '@/lib/reason-label'
+import { humanizeApiError } from '@/lib/reason-label'
 import { archiveJargon, batchReviewJargons, getJargonEvidence, listJargonBlocklist, listJargons, promoteJargonToGlobal, removeJargonBlocklistItem, reviewJargon, updateJargonMeaning, type JargonBlocklistItem, type JargonEvidencePayload, type JargonItem, type JargonResponse, type JargonScopeSelection } from '@/api/jargon'
 import { getScopeOptions, groupSessionOptions, scopeOptionsFor } from '@/api/options'
 import {
   BatchActionBar,
+  ChatContextEvidenceDialog,
   EvidenceList,
+  HeroHeader,
   ObjectDeepLink,
   PaginationControls,
   QueryState,
@@ -25,7 +27,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
@@ -37,6 +38,13 @@ const STATUS_LABELS: Record<JargonItem['status'], string> = {
   pending: '待审核',
   confirmed: '已确认',
   rejected: '已拒绝',
+}
+
+const SOURCE_LABELS: Record<string, string> = {
+  bot_marked_moment: '高光时刻',
+  wave_memory: '本群习得',
+  holyman_skills: '内置资产',
+  user_global_reject: '手动拉黑',
 }
 
 const EVIDENCE_TYPE_LABELS: Record<string, string> = {
@@ -86,12 +94,6 @@ function formatTime(seconds: unknown): string {
   return Number.isFinite(value) && value > 0 ? new Date(value * 1000).toLocaleString('zh-CN') : '时间未记录'
 }
 
-
-
-function AuditMetric({ label, value, description }: { label: string; value: ReactNode; description?: string }) {
-  return <div className="rounded-lg border bg-background/80 p-3"><p className="text-xs text-muted-foreground">{label}</p><div className="mt-1 text-lg font-semibold">{value}</div>{description ? <p className="mt-1 text-xs text-muted-foreground">{description}</p> : null}</div>
-}
-
 function EvidenceCards({ item }: { item: JargonItem }) {
   if (!item.anchors.length) return <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">没有可解析的锚点证据，因此不能安全通过审核。</div>
   return <div className="grid gap-3 sm:grid-cols-2">{item.anchors.slice(0, 4).map((anchor) => <div key={`${anchor.type}:${anchor.id}`} className="rounded-lg border bg-card p-3"><div className="flex items-center justify-between gap-2"><span className="font-medium">{EVIDENCE_TYPE_LABELS[anchor.type] ?? '上下文证据'}</span><Badge variant={anchor.availability === 'available' ? 'secondary' : 'outline'}>{anchor.availability === 'available' ? '可用' : '待核验'}</Badge></div><p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{anchor.summary || '已保留可追溯引用，可在技术详情中核对完整来源。'}</p></div>)}</div>
@@ -102,7 +104,7 @@ function JargonDetails({ item, reviewAvailable, busy, onReview }: { item: Jargon
     <section className="flex flex-col gap-3"><div className="flex flex-wrap items-center gap-2"><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge><Badge variant="outline">出现 {item.frequency} 次</Badge><Badge variant="outline">置信度 {confidenceText(item.confidence)}</Badge></div><div><h3 className="text-xl font-semibold">{item.word}</h3><p className="mt-2 text-base leading-7 text-muted-foreground">{item.meaning || '尚未形成可展示的释义。'}</p></div></section>
     <section className="flex flex-col gap-3"><div className="flex items-center justify-between"><h3 className="font-medium">证据卡</h3><span className="text-sm text-muted-foreground">{item.anchors.length} 条</span></div><EvidenceCards item={item} /></section>
     <Alert><ShieldCheckIcon /><AlertTitle>审核边界</AlertTitle><AlertDescription>通过要求本群可解析证据；拒绝会把规范化词形写入所有群共享的全局拉黑列表，阻止后续理解、入库与注入。</AlertDescription></Alert>
-    <div className="flex flex-wrap gap-2 border-t pt-4"><Button disabled={busy || !reviewAvailable || item.status !== 'pending' || item.anchors.length === 0} onClick={() => onReview('approve')}><CheckIcon data-icon="inline-start" />通过审核</Button><Button variant="outline" disabled={busy || !reviewAvailable || item.status !== 'pending'} onClick={() => onReview('reject')}><XIcon data-icon="inline-start" />拒绝并全局拉黑</Button></div>
+    <div className="flex flex-wrap gap-2 border-t pt-4"><Button disabled={busy || !reviewAvailable || item.status !== 'pending'} onClick={() => onReview('approve')}><CheckIcon data-icon="inline-start" />通过审核</Button><Button variant="outline" disabled={busy || !reviewAvailable || item.status !== 'pending'} onClick={() => onReview('reject')}><XIcon data-icon="inline-start" />拒绝并全局拉黑</Button></div>
     <details className="rounded-lg border bg-muted/20 p-3"><summary className="cursor-pointer font-medium">技术字段与完整证据引用</summary><div className="mt-4 flex flex-col gap-4"><dl className="grid gap-3 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">修订版本</dt><dd className="font-mono">{item.revision}</dd></div><div><dt className="text-muted-foreground">审核状态</dt><dd className="break-all font-mono">{item.review_status}</dd></div><div><dt className="text-muted-foreground">来源</dt><dd className="break-all font-mono">{item.source}</dd></div><div><dt className="text-muted-foreground">规则版本</dt><dd className="break-all font-mono">{item.rule_version ?? '未记录'}</dd></div><div className="sm:col-span-2"><dt className="text-muted-foreground">当前群</dt><dd className="break-all font-mono">{item.bot_id} · {item.session_id}</dd></div></dl><EvidenceList evidence={item.anchors} emptyDescription="该条目没有可解析证据锚点，无法安全通过。" />{item.object_ref ? <ObjectDeepLink to="/jargon" objectRef={item.object_ref}>复制可复现跳转链接</ObjectDeepLink> : null}<details className="rounded-md border bg-background p-3"><summary className="cursor-pointer text-sm">查看晋升记录 JSON</summary><pre className="mt-3 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(item.promotion ?? {}, null, 2)}</pre></details></div></details>
   </div>
 }
@@ -148,40 +150,53 @@ function JargonEvidenceDialog({ item, scope, onClose }: { item: JargonItem | nul
   const beforeCount = payload?.messages.filter((message) => message.role === 'before').length ?? 0
   const afterCount = payload?.messages.filter((message) => message.role === 'after').length ?? 0
 
-  return <Dialog open={Boolean(item)} onOpenChange={(open) => { if (!open) onClose() }}>
-    <DialogContent className="flex h-[min(80vh,760px)] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
-      <DialogHeader className="border-b p-4 pr-12">
-        <DialogTitle>黑话证据{item ? ` · ${item.word}` : ''}</DialogTitle>
-        <DialogDescription>只还原当前 Bot 和群里这条黑话锚点的前后聊天，不会用裸编号或旧群号跨群查找。</DialogDescription>
-      </DialogHeader>
-      <div className="flex flex-wrap items-end gap-3 border-b bg-muted/30 p-3">
-        <Field className="w-24 gap-1">
-          <FieldLabel htmlFor="jargon-evidence-before">前文条数</FieldLabel>
-          <Input id="jargon-evidence-before" type="number" min="0" max="50" value={before} onChange={(event) => setBefore(Number(event.target.value) || 0)} />
-        </Field>
-        <Field className="w-24 gap-1">
-          <FieldLabel htmlFor="jargon-evidence-after">后文条数</FieldLabel>
-          <Input id="jargon-evidence-after" type="number" min="0" max="50" value={after} onChange={(event) => setAfter(Number(event.target.value) || 0)} />
-        </Field>
-        <Button type="button" size="sm" disabled={loading || !item} onClick={() => void loadEvidence(before, after)}>
-          {loading ? <Loader2Icon data-icon="inline-start" className="animate-spin" /> : <MessageSquareQuoteIcon data-icon="inline-start" />}
-          刷新证据
-        </Button>
-        {payload ? <div className="ml-auto flex flex-wrap gap-2"><Badge variant={payload.used_fallback ? 'outline' : 'secondary'}>{payload.used_fallback ? '保存的回退上下文' : '同作用域动态上下文'}</Badge><Badge variant="outline">前 {beforeCount} / 后 {afterCount}</Badge><Badge variant="outline">锚点 {payload.anchor?.id ?? '无'}</Badge></div> : null}
-      </div>
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-3 p-4">
-          {loading ? <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2Icon className="animate-spin" />正在读取同作用域证据上下文</div> : null}
-          {!loading && error ? <Alert variant="destructive"><AlertTitle>证据读取失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
-          {!loading && payload?.messages.length ? payload.messages.map((message) => <article key={`${message.role}:${message.id}`} data-evidence-role={message.role} className={message.role === 'anchor' ? 'rounded-lg border border-primary/30 bg-primary/5 p-3' : 'rounded-lg border bg-card p-3'}><div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span>{message.sender_name || message.sender_id || '发送者未记录'}</span><span>{formatTime(message.timestamp)}</span></div><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6">{message.content}</p>{message.role === 'anchor' ? <Badge className="mt-2" variant="secondary">黑话提取锚点</Badge> : null}</article>) : null}
-          {!loading && payload && !payload.messages.length && payload.fallback_contexts.length ? <div className="flex flex-col gap-3"><Alert><ShieldCheckIcon /><AlertTitle>动态锚点不可用，展示该黑话保存的回退上下文</AlertTitle><AlertDescription>这些内容来自这条黑话保存的内容本身，不会根据不完整的会话标识猜测其他群。</AlertDescription></Alert>{payload.fallback_contexts.map((context, index) => <article key={`${index}:${context}`} className="rounded-lg border bg-card p-3 text-sm leading-6 whitespace-pre-wrap break-words">{context}</article>)}</div> : null}
-          {!loading && payload && !payload.messages.length && !payload.fallback_contexts.length ? <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">该黑话没有可安全还原的上下文证据。</div> : null}
+  return (
+    <ChatContextEvidenceDialog
+      open={Boolean(item)}
+      onClose={onClose}
+      title={`黑话证据${item ? ` · ${item.word}` : ''}`}
+      description="只还原当前 Bot 和群里这条黑话锚点的前后聊天，不会用裸编号或旧群号跨群查找。"
+      before={before}
+      after={after}
+      onBeforeChange={setBefore}
+      onAfterChange={setAfter}
+      onRefresh={() => void loadEvidence(before, after)}
+      loading={loading}
+      error={error}
+      messages={payload?.messages ?? []}
+      anchorBadgeLabel="黑话提取锚点"
+      emptyDescription="该黑话没有可安全还原的上下文证据。"
+      statusBadges={
+        payload ? (
+          <>
+            <Badge variant={payload.used_fallback ? 'outline' : 'secondary'}>
+              {payload.used_fallback ? '保存的回退上下文' : '同作用域动态上下文'}
+            </Badge>
+            <Badge variant="outline">前 {beforeCount} / 后 {afterCount}</Badge>
+            <Badge variant="outline">锚点 {payload.anchor?.id ?? '无'}</Badge>
+          </>
+        ) : null
+      }
+    >
+      {!loading && payload && !payload.messages.length && payload.fallback_contexts.length ? (
+        <div className="flex flex-col gap-3">
+          <Alert>
+            <ShieldCheckIcon />
+            <AlertTitle>动态锚点不可用，展示该黑话保存的回退上下文</AlertTitle>
+            <AlertDescription>
+              这些内容来自这条黑话保存的内容本身，不会根据不完整的会话标识猜测其他群。
+            </AlertDescription>
+          </Alert>
+          {payload.fallback_contexts.map((context, index) => (
+            <article key={`${index}:${context}`} className="rounded-lg border bg-card p-3 text-sm leading-6 whitespace-pre-wrap break-words">
+              {context}
+            </article>
+          ))}
         </div>
-      </ScrollArea>
-    </DialogContent>
-  </Dialog>
+      ) : null}
+    </ChatContextEvidenceDialog>
+  )
 }
-
 
 export function JargonPage() {
   const pagination = usePaginationSearchParams()
@@ -300,8 +315,10 @@ export function JargonPage() {
       if (!result.ok || result.operation.status !== 'succeeded') throw new Error('服务端未确认审核命令成功')
       toast.success(action === 'approve' ? '候选已通过证据审核' : '候选已拒绝并全局拉黑')
       await Promise.all([load(), loadBlocklist()])
-    } catch (reason) { toast.error(humanizeApiError(reason, '审核失败')) }
-    finally { setMutating(null) }
+    } catch (reason) {
+      toast.error(humanizeApiError(reason, '审核失败'))
+      void load()
+    } finally { setMutating(null) }
   }
 
   async function reviewSelected(action: 'approve' | 'reject') {
@@ -315,6 +332,7 @@ export function JargonPage() {
       await Promise.all([load(), loadBlocklist()])
     } catch (reason) {
       toast.error(humanizeApiError(reason, '批量审核失败'))
+      void load()
     } finally {
       setBatchMutating(false)
     }
@@ -434,7 +452,30 @@ export function JargonPage() {
   const archiveAvailable = payload?.capabilities.archive?.available === true
 
   return <div data-slot="jargon-page" className="flex flex-col gap-6">
-    <Card className="overflow-hidden border-primary/10 bg-gradient-to-br from-primary/5 via-card to-card"><CardHeader className="gap-4 sm:flex-row sm:items-start sm:justify-between"><div className="flex gap-3"><div className="rounded-xl bg-primary/10 p-3 text-primary"><MessageSquareQuoteIcon className="size-6" /></div><div><CardTitle className="text-xl">群聊黑话与广域资产</CardTitle><CardDescription className="mt-1 max-w-3xl">本群已确认黑话、待审核候选与内置广域参考资产严格分层；昵称、普通词和技术噪声不进入默认候选。</CardDescription></div></div><div className="flex items-center gap-2">{reviewAvailable ? <Badge variant="outline" className="border-emerald-500/25 bg-emerald-500/5 text-emerald-600"><ShieldCheckIcon className="size-3.5 mr-1" />证据审核中</Badge> : <Badge variant="outline" className="border-amber-500/25 bg-amber-500/5 text-amber-600"><LockIcon className="size-3.5 mr-1" />只读模式</Badge>}</div></CardHeader><CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><AuditMetric label="匹配总数" value={totalText} /><AuditMetric label="本页已确认" value={confirmedCount} /><AuditMetric label="本页待审核" value={pendingCount} /><AuditMetric label="本页证据锚点" value={anchorCount} /></CardContent></Card>
+    <HeroHeader
+      icon={<MessageSquareQuoteIcon className="size-6" />}
+      title="群聊黑话与广域资产"
+      description="本群已确认黑话、待审核候选与内置广域参考资产严格分层；昵称、普通词和技术噪声不进入默认候选。"
+      badge={
+        reviewAvailable ? (
+          <Badge variant="outline" className="border-emerald-500/25 bg-emerald-500/5 text-emerald-600">
+            <ShieldCheckIcon className="size-3.5 mr-1" />
+            证据审核中
+          </Badge>
+        ) : (
+          <Badge variant="outline" className="border-amber-500/25 bg-amber-500/5 text-amber-600">
+            <LockIcon className="size-3.5 mr-1" />
+            只读模式
+          </Badge>
+        )
+      }
+      metrics={[
+        { label: '匹配总数', value: totalText },
+        { label: '本页已确认', value: confirmedCount },
+        { label: '本页待审核', value: pendingCount },
+        { label: '本页证据锚点', value: anchorCount },
+      ]}
+    />
 
     {deepLinkStatus ? <Alert data-slot="jargon-deep-link-state" variant={deepLinkStatus === 'ready' || deepLinkStatus === 'loading' ? 'default' : 'destructive'}><AlertTitle>{deepLinkStatus === 'loading' ? '正在校验跳转链接' : deepLinkStatus === 'ready' ? '已定位这条黑话' : '无法打开这条黑话'}</AlertTitle><AlertDescription>{deepLinkStatus === 'ready' && deepLinkedItem ? <span><strong>{deepLinkedItem.word}</strong>：{deepLinkedItem.meaning || '尚未形成释义'}</span> : deepLinkStatus === 'loading' ? '正在验证当前群和版本是否还对得上。' : DEEP_LINK_LABELS[deepLinkStatus as Exclude<ObjectRefState, 'ready'>]}</AlertDescription></Alert> : null}
 
@@ -512,7 +553,7 @@ export function JargonPage() {
               <Button
                 type="button"
                 size="sm"
-                disabled={batchMutating || selectedItems.some((item) => item.anchors.length === 0 || !item.object_ref)}
+                disabled={batchMutating || selectedItems.some((item) => !item.object_ref)}
                 onClick={() => void reviewSelected('approve')}
               >
                 <CheckIcon data-icon="inline-start" />
@@ -541,20 +582,19 @@ export function JargonPage() {
             </BatchActionBar>
 <QueryState status={queryStatus} error={error} onRetry={() => void load()} title={!botId || !sessionId ? '请选择真实 Bot 与会话' : undefined} description={!botId || !sessionId ? '作用域未选择时不会查询，也不会补入默认 Bot。' : undefined}>
 <ResponsiveTable label="群聊黑话清单" table={<Table className="w-full table-fixed">
-<TableHeader><TableRow><TableHead className="w-8"><input aria-label="选择当前页全部黑话" type="checkbox" checked={allPageSelected} onChange={(event) => setSelectedIds(event.target.checked ? pageItems.map((item) => item.id) : [])} /></TableHead><TableHead className="w-28">词条</TableHead><TableHead className="w-auto">释义</TableHead><TableHead className="w-16">频次</TableHead><TableHead className="w-20">来源</TableHead><TableHead className="w-20">状态</TableHead><TableHead className="w-16">证据</TableHead><TableHead className="w-52 text-right">操作</TableHead></TableRow></TableHeader>
-<TableBody>{pageItems.map((item) => <TableRow key={item.id} className={selectedIds.includes(item.id) ? 'bg-primary/5' : undefined}><TableCell><input aria-label={`选择黑话 ${item.word}`} type="checkbox" checked={selectedIds.includes(item.id)} onChange={(event) => toggleSelected(item.id, event.target.checked)} /></TableCell><TableCell className="font-semibold truncate">{item.word}</TableCell><TableCell className="whitespace-normal break-words"><p className="line-clamp-2 text-sm text-muted-foreground">{item.meaning || '尚未形成可展示的释义'}</p></TableCell><TableCell className="tabular-nums">{item.frequency}</TableCell><TableCell><Badge variant="secondary" className="font-mono text-[10px]">{item.source || 'wave_memory'}</Badge></TableCell><TableCell><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></TableCell><TableCell>{item.anchors.length ? `${item.anchors.length} 条` : '无锚点'}</TableCell><TableCell className="text-right"><div className="flex justify-end gap-1"><Button type="button" variant="outline" size="sm" disabled={!item.object_ref} title={item.object_ref ? '还原同作用域聊天证据' : '缺少服务端签发的 ObjectRef'} onClick={() => setEvidenceItem(item)}><MessageSquareQuoteIcon data-icon="inline-start" />证据</Button>{item.status === 'pending' ? <><Button type="button" size="icon-sm" aria-label={`确认黑话 ${item.word}`} disabled={mutating === item.id || !reviewAvailable || item.anchors.length === 0} title="确认黑话" onClick={() => void review(item, 'approve')}><CheckIcon /></Button><Button type="button" variant="outline" size="icon-sm" aria-label={`拒绝并全局拉黑黑话 ${item.word}`} disabled={mutating === item.id || !reviewAvailable} title="拒绝并全局拉黑" onClick={() => void review(item, 'reject')}><XIcon /></Button></> : null}<Button type="button" variant="ghost" size="icon-sm" aria-label={`编辑黑话 ${item.word}`} disabled={!editAvailable || !item.object_ref} title={editAvailable ? '编辑释义；保存后回到待审核' : payload?.capabilities.edit?.reason_code ?? '编辑不可用'} onClick={() => openMeaningEditor(item)}><Edit2Icon /></Button><ResponsiveDetail title={item.word} description="黑话释义、证据引用与审核操作" className="sm:max-w-4xl" trigger={<Button type="button" variant="ghost" size="icon-sm" aria-label={`查看黑话 ${item.word} 详情`} title="查看详情"><EyeIcon /></Button>}><JargonDetails item={item} reviewAvailable={reviewAvailable} busy={mutating === item.id} onReview={(action) => void review(item, action)} /></ResponsiveDetail>{item.status === 'confirmed' ? <Button type="button" variant="ghost" size="icon-sm" aria-label={`把黑话 ${item.word} 提升为广域`} title={item.object_ref ? '提升为该 Bot 的广域黑话，所有群可用' : '缺少服务端签发的 ObjectRef'} disabled={mutating === item.id || !item.object_ref} onClick={() => void promote(item)}><Globe2Icon /></Button> : null}<Button type="button" variant="ghost" size="icon-sm" aria-label={`归档黑话 ${item.word}`} disabled={!archiveAvailable || !item.object_ref} title={archiveAvailable ? '归档并移出正式注入集合' : payload?.capabilities.archive?.reason_code ?? '归档不可用'} onClick={() => setArchiveItem(item)}><ArchiveIcon /></Button></div></TableCell></TableRow>)}</TableBody>
-</Table>} cards={pageItems.map((item) => <article key={item.id} className={`flex flex-col gap-3 rounded-lg border bg-card p-4 ${selectedIds.includes(item.id) ? 'border-primary/50 bg-primary/5' : ''}`}><div className="flex items-start justify-between gap-2"><label className="flex min-w-0 items-start gap-2"><input aria-label={`选择黑话 ${item.word}`} type="checkbox" checked={selectedIds.includes(item.id)} onChange={(event) => toggleSelected(item.id, event.target.checked)} /><span><span className="block font-semibold">{item.word}</span><span className="mt-1 block whitespace-pre-wrap break-words text-sm text-muted-foreground">{item.meaning || '尚未形成可展示的释义'}</span></span></label><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></div><div className="flex flex-wrap gap-2 text-xs text-muted-foreground"><span>频次 {item.frequency}</span><span>来源 {item.source || 'wave_memory'}</span><span>证据 {item.anchors.length} 条</span></div><div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" size="sm" disabled={!item.object_ref} onClick={() => setEvidenceItem(item)}><MessageSquareQuoteIcon data-icon="inline-start" />证据</Button><Button type="button" variant="outline" size="sm" disabled={!editAvailable || !item.object_ref} onClick={() => openMeaningEditor(item)}><Edit2Icon data-icon="inline-start" />编辑</Button>{item.status === 'confirmed' ? <Button type="button" variant="outline" size="sm" disabled={mutating === item.id || !item.object_ref} onClick={() => void promote(item)}>提升为广域</Button> : null}<ResponsiveDetail title={item.word} description="黑话释义、证据引用与审核操作" className="sm:max-w-4xl" trigger={<Button type="button" variant="outline" size="sm">详情</Button>}><JargonDetails item={item} reviewAvailable={reviewAvailable} busy={mutating === item.id} onReview={(action) => void review(item, action)} /></ResponsiveDetail></div></article>)} />
-</QueryState>{payload && !payload.capabilities.review?.available ? <Alert>
-<AlertTitle>审核能力当前不可用</AlertTitle>
-<AlertDescription>服务端拒绝原因：{humanizeReason(payload.capabilities.review?.reason_code, '未提供')}</AlertDescription>
-</Alert> : null}{payload ? <PaginationControls page={payload.page} onOffsetChange={pagination.setOffset} onLimitChange={pagination.setLimit} /> : null}</CardContent>
-</Card>
+<TableHeader><TableRow><TableHead className="w-8"><input aria-label="选择当前页全部黑话" type="checkbox" checked={allPageSelected} onChange={(event) => setSelectedIds(event.target.checked ? pageItems.map((item) => item.id) : [])} /></TableHead><TableHead className="w-28">词条</TableHead><TableHead className="w-auto">释义</TableHead><TableHead className="w-16">频次</TableHead><TableHead className="w-28">来源</TableHead><TableHead className="w-24">状态</TableHead><TableHead className="w-16">证据</TableHead><TableHead className="w-52 text-right">操作</TableHead></TableRow></TableHeader>
+<TableBody>{pageItems.map((item) => <TableRow key={item.id} className={selectedIds.includes(item.id) ? 'bg-primary/5' : undefined}><TableCell><input aria-label={`选择黑话 ${item.word}`} type="checkbox" checked={selectedIds.includes(item.id)} onChange={(event) => toggleSelected(item.id, event.target.checked)} /></TableCell><TableCell className="font-semibold truncate">{item.word}</TableCell><TableCell className="whitespace-normal break-words"><p className="line-clamp-2 text-sm text-muted-foreground">{item.meaning || '尚未形成可展示的释义'}</p></TableCell><TableCell className="tabular-nums">{item.frequency}</TableCell><TableCell className="whitespace-nowrap"><Badge variant="secondary" className="font-mono text-[10px]" title={item.source || 'wave_memory'}>{SOURCE_LABELS[item.source] || item.source || '本群习得'}</Badge></TableCell><TableCell className="whitespace-nowrap"><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></TableCell><TableCell>{item.anchors.length ? `${item.anchors.length} 条` : '无锚点'}</TableCell><TableCell className="text-right"><div className="flex justify-end gap-1"><Button type="button" variant="outline" size="sm" disabled={!item.object_ref} title={item.object_ref ? '还原同作用域聊天证据' : '缺少服务端签发的 ObjectRef'} onClick={() => setEvidenceItem(item)}><MessageSquareQuoteIcon data-icon="inline-start" />证据</Button>{item.status === 'pending' ? <><Button type="button" size="icon-sm" aria-label={`确认黑话 ${item.word}`} disabled={mutating === item.id || !reviewAvailable || !item.object_ref} title="确认黑话" onClick={() => void review(item, 'approve')}><CheckIcon /></Button><Button type="button" variant="outline" size="icon-sm" aria-label={`拒绝并全局拉黑黑话 ${item.word}`} disabled={mutating === item.id || !reviewAvailable} title="拒绝并全局拉黑" onClick={() => void review(item, 'reject')}><XIcon /></Button></> : null}<Button type="button" variant="ghost" size="icon-sm" aria-label={`编辑黑话 ${item.word}`} disabled={!editAvailable || !item.object_ref} title={editAvailable ? '编辑释义；保存后回到待审核' : payload?.capabilities.edit?.reason_code ?? '编辑不可用'} onClick={() => openMeaningEditor(item)}><Edit2Icon data-icon="inline-start" /></Button><ResponsiveDetail title={item.word} description="黑话释义、证据引用与审核操作" className="sm:max-w-4xl" trigger={<Button type="button" variant="ghost" size="icon-sm" aria-label={`查看黑话 ${item.word} 详情`}><EyeIcon /></Button>}><JargonDetails item={item} reviewAvailable={reviewAvailable} busy={mutating === item.id} onReview={(action) => void review(item, action)} /></ResponsiveDetail><Button type="button" variant="ghost" size="icon-sm" aria-label={`归档黑话 ${item.word}`} disabled={mutating === item.id || !archiveAvailable || !item.object_ref} title={archiveAvailable ? '归档黑话，移出正式注入' : payload?.capabilities.archive?.reason_code ?? '归档不可用'} onClick={() => setArchiveItem(item)}><ArchiveIcon data-icon="inline-start" /></Button></div></TableCell></TableRow>)}</TableBody>
+</Table>} cards={pageItems.map((item) => <article key={item.id} className={`flex flex-col gap-3 rounded-lg border bg-card p-4 ${selectedIds.includes(item.id) ? 'border-primary/50 bg-primary/5' : ''}`}><div className="flex items-start justify-between gap-2"><label className="flex min-w-0 items-start gap-2"><input aria-label={`选择黑话 ${item.word}`} type="checkbox" checked={selectedIds.includes(item.id)} onChange={(event) => toggleSelected(item.id, event.target.checked)} /><span><span className="block font-semibold">{item.word}</span><span className="mt-1 block whitespace-pre-wrap break-words text-sm text-muted-foreground">{item.meaning || '尚未形成可展示的释义'}</span></span></label><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></div><div className="flex flex-wrap gap-2 text-xs text-muted-foreground"><span>频次 {item.frequency}</span><span>来源 {SOURCE_LABELS[item.source] || item.source || '本群习得'}</span><span>证据 {item.anchors.length} 条</span></div><div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" size="sm" disabled={!item.object_ref} onClick={() => setEvidenceItem(item)}><MessageSquareQuoteIcon data-icon="inline-start" />证据</Button><Button type="button" variant="outline" size="sm" disabled={!editAvailable || !item.object_ref} onClick={() => openMeaningEditor(item)}><Edit2Icon data-icon="inline-start" />编辑</Button>{item.status === 'confirmed' ? <Button type="button" variant="outline" size="sm" disabled={mutating === item.id || !item.object_ref} onClick={() => void promote(item)}>提升为广域</Button> : null}<ResponsiveDetail title={item.word} description="黑话释义、证据引用与审核操作" className="sm:max-w-4xl" trigger={<Button type="button" variant="outline" size="sm">详情</Button>}><JargonDetails item={item} reviewAvailable={reviewAvailable} busy={mutating === item.id} onReview={(action) => void review(item, action)} /></ResponsiveDetail></div></article>)} />
+</QueryState>
+          {payload ? <PaginationControls page={payload.page} onOffsetChange={pagination.setOffset} onLimitChange={pagination.setLimit} /> : null}
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader><CardTitle className="text-base">全局黑话拉黑列表</CardTitle><CardDescription>所有群共享，展示规范化词形、来源、原因与时间；只有用户审核产生的手动项可在此解除。</CardDescription></CardHeader>
           <CardContent>
             <QueryState status={blocklistStatus} title="全局拉黑列表暂不可用" error={blocklistError} description="拉黑检查仍在服务端 fail-closed；此处仅为审计与解除入口。" onRetry={() => void loadBlocklist()}>
-              {blocklist.length ? <ResponsiveTable label="全局黑话拉黑列表" table={<Table><TableHeader><TableRow><TableHead>规范化词形</TableHead><TableHead>原因</TableHead><TableHead>来源</TableHead><TableHead>记录时间</TableHead><TableHead className="w-24 text-right">操作</TableHead></TableRow></TableHeader><TableBody>{blocklist.map((item) => <TableRow key={item.id}><TableCell className="font-semibold">{item.word}</TableCell><TableCell className="text-sm text-muted-foreground">{item.reason}</TableCell><TableCell><Badge variant="outline" className="font-mono text-[10px]">{item.source}</Badge></TableCell><TableCell className="text-sm text-muted-foreground">{item.created_at ? formatTime(item.created_at) : '未记录'}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" disabled={item.source !== 'user_global_reject' || removingBlocklistId === item.id} title={item.source === 'user_global_reject' ? '解除手动全局拉黑' : 'Holyman 同步项不可手动删除'} onClick={() => void removeFromGlobalBlocklist(item)}>{removingBlocklistId === item.id ? <Loader2Icon data-icon="inline-start" className="animate-spin" /> : <XIcon data-icon="inline-start" />}解除</Button></TableCell></TableRow>)}</TableBody></Table>} cards={blocklist.map((item) => <article key={item.id} className="flex flex-col gap-3 rounded-lg border bg-card p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{item.word}</p><p className="mt-1 text-sm text-muted-foreground">{item.reason}</p></div><Badge variant="outline" className="font-mono text-[10px]">{item.source}</Badge></div><div className="flex items-center justify-between gap-2 text-xs text-muted-foreground"><span>{item.created_at ? formatTime(item.created_at) : '未记录时间'}</span><Button type="button" size="sm" variant="outline" disabled={item.source !== 'user_global_reject' || removingBlocklistId === item.id} onClick={() => void removeFromGlobalBlocklist(item)}>解除全局拉黑</Button></div></article>)} /> : <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">当前没有全局拉黑词形。</div>}
+              {blocklist.length ? <ResponsiveTable label="全局黑话拉黑列表" table={<Table><TableHeader><TableRow><TableHead>规范化词形</TableHead><TableHead>原因</TableHead><TableHead>来源</TableHead><TableHead>记录时间</TableHead><TableHead className="w-24 text-right">操作</TableHead></TableRow></TableHeader><TableBody>{blocklist.map((item) => <TableRow key={item.id}><TableCell className="font-semibold">{item.word}</TableCell><TableCell className="text-sm text-muted-foreground">{item.reason}</TableCell><TableCell><Badge variant="outline" className="font-mono text-[10px]">{item.source}</Badge></TableCell><TableCell className="text-sm text-muted-foreground">{item.created_at ? formatTime(item.created_at) : '未记录'}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" disabled={item.source !== 'user_global_reject' || removingBlocklistId === item.id} title={item.source === 'user_global_reject' ? '解除手动全局拉黑' : 'Holyman 同步项不可手动删除'} onClick={() => void removeFromGlobalBlocklist(item)}>{removingBlocklistId === item.id ? <Loader2Icon data-icon="inline-start" className="animate-spin" /> : <XIcon data-icon="inline-start" />}解除</Button></TableCell></TableRow>)}</TableBody></Table>} cards={blocklist.map((item) => <article key={item.id} className="flex flex-col gap-3 rounded-lg border bg-card p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{item.word}</p><p className="mt-1 text-sm text-muted-foreground">{item.reason}</p></div><Badge variant="outline" className="font-mono text-[10px]">{item.source}</Badge></div><div className="flex items-center justify-between gap-2 text-xs text-muted-foreground"><span>{item.created_at ? formatTime(item.created_at) : '未记录时间'}</span><Button type="button" size="sm" variant="outline" disabled={item.source !== 'user_global_reject' || removingBlocklistId === item.id} onClick={() => void removeFromGlobalBlocklist(item)}>解除全局拉黑</Button></div></article>)} /> : <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">当前没有全局拉黑的黑话。</div>}
             </QueryState>
           </CardContent>
         </Card>

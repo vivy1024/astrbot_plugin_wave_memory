@@ -163,15 +163,16 @@ class ReflectionTriggerService:
         # 只写“各自工具”无法诱导它调用正确的那一个。
         footer = (
             "可选动作（按需调用，可零个或多个）："
-            "提审事实 wave_memory_propose_fact（必须带 source_quote）；"
+            "提审事实 wave_memory_propose_fact（必须带 source_quote 支撑原话）；"
             "提审信念 wave_memory_propose_belief（需绑定至少两条已批准事实）；"
-            "群文化/梗 wave_memory_mark_cultural_moment；"
+            "群文化/梗 wave_memory_mark_cultural_moment（context_note 须完整说明出处原话与语境）；"
             "社交锚点 wave_memory_note_social_anchor；"
-            "群友观感 wave_memory_record_social_impression；"
-            "好感 wave_memory_affinity_update；"
+            "群友观感 wave_memory_record_social_impression（必须带群友真实原话 source_quote，无原话不记）；"
+            "好感 wave_memory_affinity_update（必须带群友触发好感变动的真实原话 source_quote）；"
             "关切 wave_memory_note_concern；"
-            "群经历 wave_memory_note_episode。"
-            "episode 不等于 social anchor。"
+            "群经历 wave_memory_note_episode（trigger_text 必须描述具体事件与触发原话；注意：episode 不等于 social anchor，群经历属于公共事件而非个人私信交往）；"
+            "群聊亲笔日记 wave_memory_record_diary_episode（当聊到深度话题、关键事件或产生强烈自省时，亲笔记录今日生活日记与心智历程，入选 Bot 经历时间线主干）。"
+            "所有提审与变动均要求实事求是、铁证如山，后台会自动溯源并绑定真实对话证据。"
         )
         lines = [header]
         used = len(header)

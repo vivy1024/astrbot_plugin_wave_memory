@@ -98,13 +98,95 @@ def scope_error_message(action: str, reason_code: str) -> str:
     return f"{detail}，已拒绝{action}（{reason_code}）"
 
 
+def require_read_runtime_scope(context: Any, command_type: str) -> tuple[RuntimeScope | None, str | None]:
+    """提取只读检索类工具的 group/private Scope。"""
+    return require_memory_runtime_scope(context, command_type)
+
+
+def resolve_source_memory_id(
+    db: Any,
+    scope: RuntimeScope,
+    *,
+    quote: str | None = None,
+    explicit_id: Any = None,
+    sender_id: str | None = None,
+) -> int | None:
+    """自动溯源当前 RuntimeScope 范围内的有效记忆 ID。
+
+    优先级：
+    1. 显式指定的合法正整数 explicit_id（经由同 Scope 校验）；
+    2. 若提供原话 quote（>=2字符），在当前 Scope 的健康 memories 中反查包含该原话的最新记录；
+    3. 若指定了 sender_id，在当前 Scope 中查找该 sender_id 最新一条健康记忆；
+    4. 兜底回退：当前 Scope 内最新一条未隔离的健康消息记忆（即当轮触发对话）。
+    """
+    conn = getattr(db, "conn", None) or getattr(db, "_conn", None) or db
+    if conn is None or scope is None or scope.session is None:
+        return None
+
+    # 1. 显式 ID 优先采用
+    if explicit_id not in (None, ""):
+        try:
+            eid = int(explicit_id)
+            if eid > 0:
+                return eid
+        except Exception:
+            pass
+
+    # 2. 按原话反查
+    clean_quote = str(quote or "").strip()
+    if len(clean_quote) >= 2:
+        try:
+            safe_quote = clean_quote.replace("/", "//").replace("%", "/%").replace("_", "/_")
+            row = conn.execute(
+                "SELECT id FROM memories WHERE bot_id=? AND session_id=? AND visibility=? "
+                "AND content LIKE ? ESCAPE '/' AND resolution_state='resolved' AND COALESCE(quarantine,0)=0 "
+                "ORDER BY timestamp DESC LIMIT 1",
+                (scope.bot_id, scope.session.id, scope.visibility, f"%{safe_quote}%"),
+            ).fetchone()
+            if row:
+                return int(row[0])
+        except Exception:
+            pass
+
+    # 3. 按发言人反查最新消息
+    if sender_id:
+        try:
+            row = conn.execute(
+                "SELECT id FROM memories WHERE bot_id=? AND session_id=? AND visibility=? "
+                "AND (sender_id=? OR sender_name=?) AND resolution_state='resolved' AND COALESCE(quarantine,0)=0 "
+                "ORDER BY timestamp DESC LIMIT 1",
+                (scope.bot_id, scope.session.id, scope.visibility, str(sender_id), str(sender_id)),
+            ).fetchone()
+            if row:
+                return int(row[0])
+        except Exception:
+            pass
+
+    # 4. 兜底：当前 Scope 最新一条有效消息记录
+    try:
+        row = conn.execute(
+            "SELECT id FROM memories WHERE bot_id=? AND session_id=? AND visibility=? "
+            "AND resolution_state='resolved' AND COALESCE(quarantine,0)=0 "
+            "ORDER BY timestamp DESC LIMIT 1",
+            (scope.bot_id, scope.session.id, scope.visibility),
+        ).fetchone()
+        if row:
+            return int(row[0])
+    except Exception:
+        pass
+
+    return None
+
+
 __all__ = [
     "extract_event_runtime_scope",
     "extract_group_runtime_scope",
     "extract_memory_runtime_scope",
     "require_memory_runtime_scope",
+    "require_read_runtime_scope",
     "require_catalog_scope",
     "require_group_runtime_scope",
+    "resolve_source_memory_id",
     "scope_envelope",
     "scope_error_message",
 ]

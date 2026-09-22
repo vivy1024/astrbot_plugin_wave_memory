@@ -16,9 +16,9 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 
 try:
-    from .scope_boundary import require_group_runtime_scope, scope_error_message
+    from .scope_boundary import require_read_runtime_scope, scope_error_message
 except ImportError:  # pragma: no cover - direct tools imports in isolated tests
-    from tools.scope_boundary import require_group_runtime_scope, scope_error_message
+    from tools.scope_boundary import require_read_runtime_scope, scope_error_message
 
 
 @dataclass
@@ -82,7 +82,7 @@ class WaveMemoryFactsTool(FunctionTool[AstrAgentContext]):
         if not query:
             return "请提供搜索关键词"
 
-        scope, error_code = require_group_runtime_scope(ctx, "fact.read")
+        scope, error_code = require_read_runtime_scope(ctx, "fact.read")
         if error_code:
             return scope_error_message("事实查询", error_code)
         assert scope is not None

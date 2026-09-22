@@ -136,6 +136,43 @@ export function batchReviewFacts(
   })
 }
 
+export interface FactEvidenceMessage {
+  id: number
+  group_id?: string
+  sender_id?: string
+  sender_name?: string
+  content: string
+  timestamp: number
+  role: 'before' | 'anchor' | 'after'
+}
+
+export interface FactEvidencePayload {
+  ok: boolean
+  fact: {
+    id: number
+    subject: string
+    predicate: string
+    object: string
+    source_quote?: string
+    revision: number
+  }
+  anchor: FactEvidenceMessage | null
+  messages: FactEvidenceMessage[]
+  source_quote?: string
+  used_fallback: boolean
+}
+
+export function getFactEvidence(fact: ScopedFactItem, scope: FactSelection, before = 15, after = 15): Promise<FactEvidencePayload> {
+  const params = new URLSearchParams({
+    bot_id: scope.bot_id,
+    session_id: scope.session_id,
+    visibility: scope.visibility,
+    before: String(before),
+    after: String(after),
+  })
+  return fetchJson<FactEvidencePayload>(`/api/facts/${fact.id}/evidence?${params.toString()}`)
+}
+
 export function listFactReviews(scope: FactSelection, factId?: number, limit = 50): Promise<{ items: FactReviewRecord[] }> {
   const params = new URLSearchParams({
     bot_id: scope.bot_id,

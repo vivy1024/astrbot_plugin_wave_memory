@@ -295,3 +295,36 @@ async def test_fact_object_ref_revision_matches_db_and_passes_validation(env):
         }
         # 必须顺利通过，不抛出 object_ref_stale
         _require_object_ref(body, locator=fact_id, scope=scope, item=row)
+
+
+def test_scoped_fact_evidence_restores_chat_context_bubble(env):
+    from webui.blueprints.facts import _scoped_fact_evidence, _find_scoped_fact
+
+    cm, connection, _, _, repo = env
+    scope = _scope()
+    connection.executescript("""
+        CREATE TABLE IF NOT EXISTS memories (
+            id INTEGER PRIMARY KEY, group_id TEXT, bot_id TEXT, session_id TEXT, visibility TEXT,
+            sender_id TEXT, sender_name TEXT, content TEXT, timestamp REAL,
+            resolution_state TEXT DEFAULT 'resolved', quarantine INTEGER DEFAULT 0, memory_type TEXT DEFAULT 'message'
+        );
+        INSERT INTO memories VALUES (10, 'g1', 'bot-alpha', 'qq:group:g1', 'group', 'u1', '小明', '前文：今天天气不错', 100.0, 'resolved', 0, 'message');
+        INSERT INTO memories VALUES (11, 'g1', 'bot-alpha', 'qq:group:g1', 'group', 'u1', '小明', '锚点：其实我现在住在杭州余杭区', 105.0, 'resolved', 0, 'message');
+        INSERT INTO memories VALUES (12, 'g1', 'bot-alpha', 'qq:group:g1', 'group', 'u2', '群友', '后文：余杭挺好的啊', 110.0, 'resolved', 0, 'message');
+    """)
+    fact_id = repo.upsert_scoped_fact(
+        scope, subject="小明", predicate="住在", object="杭州余杭区",
+        source_memory_id=11, provenance={"source_quote": "其实我现在住在杭州余杭区"},
+    )
+    item = _find_scoped_fact(cm, scope, fact_id)
+    payload = _scoped_fact_evidence(cm, scope, item, before=5, after=5)
+
+    assert payload["ok"] is True
+    assert payload["used_fallback"] is False
+    assert payload["anchor"]["id"] == 11
+    assert payload["anchor"]["role"] == "anchor"
+    assert "其实我现在住在杭州余杭区" in payload["anchor"]["content"]
+    assert payload["source_quote"] == "其实我现在住在杭州余杭区"
+    assert len(payload["messages"]) == 3
+    assert payload["messages"][0]["role"] == "before"
+    assert payload["messages"][2]["role"] == "after"

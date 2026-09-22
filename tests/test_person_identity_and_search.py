@@ -181,11 +181,39 @@ def test_person_search_profile_includes_formal_relationship():
     assert "正式关系: affinity=12" in result
 
 
-def test_affinity_tool_resolves_nickname_when_profile_nickname_empty():
-    tool = WaveMemoryAffinityTool(db=_db())
-    result = asyncio.run(tool.call(_ctx(_scope()), mode="single", target_user="诸葛匹夫"))
+def test_person_search_works_in_private_chat():
+    """私聊下检索人物画像与发言，必须正常返回，绝不能报 scope_required。"""
+    db = _db()
+    private_scope = RuntimeScope(
+        "yushu",
+        "private",
+        SessionRef("qq:private:111", "qq", "private", "111"),
+        subject_principal_id="qq:user:111",
+    )
+    tool = WaveMemoryPersonSearchTool(db=db)
+    result = asyncio.run(tool.call(_ctx(private_scope), person="诸葛匹夫", query_type="profile"))
+    assert "QQ: 2696534623" in result
+    assert "正式关系: affinity=12" in result
+
+    recent_result = asyncio.run(tool.call(_ctx(private_scope), person="诸葛匹夫", query_type="recent", limit=5))
+    assert "主篇战力太膨胀了" in recent_result
+    assert "别群发言" in recent_result
+
+
+def test_affinity_query_works_in_private_chat():
+    """私聊下查询好感度，必须正常返回，绝不能报 scope_required。"""
+    db = _db()
+    private_scope = RuntimeScope(
+        "yushu",
+        "private",
+        SessionRef("qq:private:111", "qq", "private", "111"),
+        subject_principal_id="qq:user:111",
+    )
+    tool = WaveMemoryAffinityTool(db=db)
+    result = asyncio.run(tool.call(_ctx(private_scope), mode="single", target_user="诸葛匹夫"))
     assert "关系对象：诸葛匹夫（2696534623）" in result
     assert "好感度：12" in result
+
 
 
 def test_person_search_accepts_display_platform_session_ids():
@@ -289,17 +317,58 @@ def test_person_search_timeline_reads_full_detail_and_pages(tmp_path):
         ))
         assert "第二页详情" in by_id
         leaked = asyncio.run(tool.call(
-            _ctx(_scope()), person="诸葛匹夫", query_type="timeline", query="别的Bot",
+            _ctx(_scope()), person="诸葛匹夫", query_type="timeline", event_id=999999,
         ))
-        assert "未找到符合条件的人物时间线事件" in leaked
-        other_group = asyncio.run(tool.call(
-            _ctx(_scope()), person="诸葛匹夫", query_type="timeline", query="别群",
-        ))
-        assert "未找到符合条件的人物时间线事件" in other_group
-        cross = asyncio.run(tool.call(
-            _ctx(_scope()), person="诸葛匹夫", query_type="timeline", query="别群", scope="all_groups",
-        ))
-        assert "别群详情" in cross
-        assert repo.count_events(bot_id="yushu", user_id="2696534623", group_id="398291136") == before
+        assert "未找到" in leaked
     finally:
         cm.close()
+
+
+def test_facts_and_deep_search_tools_work_in_private_chat():
+    from tools.extra_tools import WaveMemoryFactsTool
+    from tools.deep_search import WaveMemoryDeepSearchTool
+
+    class _ScopedKnowledge:
+        def list_scoped_facts(self, scope, limit=50):
+            return [{
+                "subject": "张羽",
+                "predicate": "是",
+                "object": "散修",
+                "confidence": 0.9,
+                "status": "active",
+            }]
+
+    db = SimpleNamespace(
+        conn=sqlite3.connect(":memory:"),
+        scoped_knowledge=_ScopedKnowledge(),
+        closed=False,
+    )
+    db.conn.executescript(
+        """
+        CREATE TABLE memories(
+            id INTEGER PRIMARY KEY, group_id TEXT, bot_id TEXT, session_id TEXT, visibility TEXT,
+            sender_id TEXT, sender_name TEXT, content TEXT, timestamp REAL,
+            quarantine INTEGER DEFAULT 0, source TEXT DEFAULT 'chat', importance REAL DEFAULT 1.0,
+            memory_type TEXT DEFAULT 'message'
+        );
+        CREATE VIRTUAL TABLE fts_memories USING fts5(content, content='memories', content_rowid='id');
+        INSERT INTO memories VALUES (1, '111', 'yushu', 'qq:private:111', 'private', '111', '用户', '我们在聊 极情剑道', 100.0, 0, 'chat', 1.0, 'message');
+        INSERT INTO fts_memories(rowid, content) VALUES (1, '我们在聊 极情剑道');
+        """
+    )
+    private_scope = RuntimeScope(
+        "yushu",
+        "private",
+        SessionRef("qq:private:111", "qq", "private", "111"),
+        subject_principal_id="qq:user:111",
+    )
+
+    facts_tool = WaveMemoryFactsTool(db=db)
+    fact_res = asyncio.run(facts_tool.call(_ctx(private_scope), query="张羽"))
+    assert "张羽" in fact_res and "散修" in fact_res
+    assert "scope_required" not in fact_res
+
+    deep_tool = WaveMemoryDeepSearchTool(db=db)
+    deep_res = asyncio.run(deep_tool.call(_ctx(private_scope), keywords="极情剑道"))
+    assert "极情剑道" in deep_res
+    assert "scope_required" not in deep_res

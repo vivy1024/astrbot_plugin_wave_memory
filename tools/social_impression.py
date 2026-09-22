@@ -23,31 +23,39 @@ except Exception:  # pragma: no cover
 try:
     from ..domain.scope import RuntimeScope
     from ..services.impression_timeline import (
+        UNSETTLED_ENERGY_FULL,
         affinity_shift_range,
         clear_unsettled_state,
+        consume_dimensional_energy,
         event_type_for_shift,
         load_unsettled_state,
+        parse_dimensional_energy,
         persist_timeline_event,
         propose_affinity_shift,
+        record_dimensional_unsettled_energy,
         strip_timeline_json,
         synthesize_milestone_phrase,
     )
     from .person_identity import display_name_for_user, resolve_user_id
-    from .scope_boundary import require_group_runtime_scope, scope_error_message
+    from .scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
 except ImportError:  # pragma: no cover
     from domain.scope import RuntimeScope
     from services.impression_timeline import (
+        UNSETTLED_ENERGY_FULL,
         affinity_shift_range,
         clear_unsettled_state,
+        consume_dimensional_energy,
         event_type_for_shift,
         load_unsettled_state,
+        parse_dimensional_energy,
         persist_timeline_event,
         propose_affinity_shift,
+        record_dimensional_unsettled_energy,
         strip_timeline_json,
         synthesize_milestone_phrase,
     )
     from tools.person_identity import display_name_for_user, resolve_user_id
-    from tools.scope_boundary import require_group_runtime_scope, scope_error_message
+    from tools.scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
 
 
 @dataclass
@@ -56,36 +64,52 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
 
     name: str = "wave_memory_record_social_impression"
     description: str = (
-        "当你对当前对话群友的看法产生实质改变、或双方互动值得留下一笔印象时调用。"
-        "好感变动必须落在系统给出的本轮范围内，不能一次大跳。"
-        "必须提供 target_user, impression, shift_reason；无变动时 affinity_delta 填 0。"
+        "综合记录对特定群友的阶段性主观印象，并根据真实互动同步更新好感度/关系维度。"
+        "当你对群友的看法改变、或者双方对话产生信任/幽默/深度长谈/冒犯情绪变动时调用。"
+        "常规微调 trust，接梗幽默用 fun，深度长谈用 depth，被严重冒犯用 hostility。"
     )
     parameters: dict = field(default_factory=lambda: {
         "type": "object",
         "properties": {
             "target_user": {
                 "type": "string",
-                "description": "当前交互对象的 QQ 号、名字或别名",
+                "description": "当前交互对象的 QQ 号、群名片或常用别名",
+            },
+            "reason": {
+                "type": "string",
+                "description": "导致看法或关系产生变动的核心原因/互动事件（必填）",
             },
             "impression": {
                 "type": "string",
-                "description": "基于当前语境与立场，你对该用户的真实主观印象（1-2句话，有依据）",
-            },
-            "shift_reason": {
-                "type": "string",
-                "description": "导致你产生这层看法或关系变化的核心原因",
-            },
-            "affinity_delta": {
-                "type": "number",
-                "description": "本轮好感增量，必须落在注入给出的范围内；无变动填 0",
+                "description": "可选。基于当前互动的真实主观定性/看法（如：较真的技术伙伴、爱开玩笑的熟人；不填则自动基于 reason 生成）",
             },
             "dimension": {
                 "type": "string",
                 "enum": ["trust", "fun", "depth", "hostility", "familiarity"],
-                "description": "变动落在哪一维；默认 trust。敌意升高才用 hostility",
+                "description": "好感变动落在哪一维；常规增减用 trust，幽默接梗用 fun，深度探讨用 depth，严重冒犯用 hostility。默认 trust",
+            },
+            "delta": {
+                "type": "number",
+                "description": "本轮好感增量，受步长约束（平时在 [-2.0, 2.0] 范围内；若未决能量蓄满跃迁可放宽至 [-5.0, 5.0]），无变动填 0",
+            },
+            "source_quote": {
+                "type": "string",
+                "description": "引起看法或好感变动的群友真实聊天原话，不填则自动回溯最近发言",
+            },
+            "shift_reason": {
+                "type": "string",
+                "description": "兼容字段，等同于 reason",
+            },
+            "affinity_delta": {
+                "type": "number",
+                "description": "兼容字段，等同于 delta",
+            },
+            "source_memory_id": {
+                "type": "integer",
+                "description": "可选。显式指定当轮对话记忆 ID",
             },
         },
-        "required": ["target_user", "impression", "shift_reason"],
+        "required": ["target_user"],
     })
 
     db: Any = field(default=None, repr=False)
@@ -107,10 +131,38 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
         assert runtime_scope is not None
 
         target = str(kwargs.get("target_user") or "").strip()
+        shift_reason = str(kwargs.get("reason") or kwargs.get("shift_reason") or "").strip()
         impression = str(kwargs.get("impression") or "").strip()
-        shift_reason = str(kwargs.get("shift_reason") or "").strip()
+        if not impression and shift_reason:
+            impression = f"阶段互动定性：{shift_reason}"
+        source_quote = str(kwargs.get("source_quote") or "").strip()
+        raw_mid = kwargs.get("source_memory_id")
+        user_id = resolve_user_id(self.db, target, runtime_scope)
+        if not user_id:
+            return f"没有在当前群找到目标用户「{target}」，无法记录印象"
+
+        # 若未提供 source_quote，自动回溯该群友最近一条记忆原话
+        if not source_quote:
+            mid_cand = resolve_source_memory_id(self.db, runtime_scope, sender_id=user_id)
+            if mid_cand:
+                conn = getattr(self.db, "conn", None) or getattr(self.db, "_conn", None)
+                if conn:
+                    try:
+                        row = conn.execute("SELECT content FROM memories WHERE id=?", (mid_cand,)).fetchone()
+                        if row and row[0]:
+                            source_quote = str(row[0]).strip()[:100]
+                    except Exception:
+                        pass
+
+        source_memory_id = resolve_source_memory_id(
+            self.db,
+            runtime_scope,
+            quote=source_quote,
+            explicit_id=raw_mid,
+            sender_id=user_id,
+        )
         dimension = str(kwargs.get("dimension") or "trust").strip().lower() or "trust"
-        raw_delta = kwargs.get("affinity_delta")
+        raw_delta = kwargs.get("delta") if kwargs.get("delta") is not None else kwargs.get("affinity_delta")
         if raw_delta in {None, ""}:
             # 兼容旧测试/旧调用：shift_level 映射成范围内的小步，不再允许 breakthrough 大跳。
             shift_level = str(kwargs.get("shift_level") or "").strip().lower()
@@ -125,12 +177,8 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
                 dimension = "hostility"
             raw_delta = legacy.get(shift_level, 0.0)
 
-        if not target or not impression or not shift_reason:
-            return "target_user、impression 与 shift_reason 均为必填项"
-
-        user_id = resolve_user_id(self.db, target, runtime_scope)
-        if not user_id:
-            return f"没有在当前群找到目标用户「{target}」，无法记录印象"
+        if not target or (not impression and not shift_reason):
+            return "target_user 以及 reason (或 impression) 均为必填项"
 
         target_scope = RuntimeScope(
             bot_id=runtime_scope.bot_id,
@@ -148,17 +196,28 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
         formal_type = "direct_reply"
 
         group_id = runtime_scope.session.conversation_id
+        # 跨群主体性与当前群兼容读取未决能量
         unsettled = load_unsettled_state(
             self.db,
             bot_id=runtime_scope.bot_id,
             user_id=user_id,
             group_id=group_id,
         )
-        energy = float(unsettled.get("energy") or 0.0)
+        if float(unsettled.get("energy") or 0.0) <= 0:
+            unsettled = load_unsettled_state(
+                self.db,
+                bot_id=runtime_scope.bot_id,
+                user_id=user_id,
+                group_id="",
+            )
+        energy_val = float(unsettled.get("energy") or 0.0)
+        dim_energy = parse_dimensional_energy(unsettled.get("traces"))
+        dim_val = max(dim_energy.get(dimension, 0.0), energy_val if energy_val >= UNSETTLED_ENERGY_FULL else 0.0)
+        is_leap = dim_val >= UNSETTLED_ENERGY_FULL
 
-        verdict = propose_affinity_shift({}, dimension=dimension, requested_delta=raw_delta, energy=energy)
+        verdict = propose_affinity_shift({}, dimension=dimension, requested_delta=raw_delta, energy=dim_val, is_leap=is_leap)
         if not verdict["ok"]:
-            bounds = affinity_shift_range({}, dimension=dimension, energy=energy)
+            bounds = affinity_shift_range({}, dimension=dimension, energy=dim_val, is_leap=is_leap)
             if verdict.get("error") == "affinity_delta_out_of_range":
                 return (
                     f"好感变动被拒绝：{verdict.get('requested')} 超出本轮范围 "
@@ -187,6 +246,9 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
             except Exception as e:
                 return f"关系事件记录失败: {e}"
 
+        # detail 优先附带群友原话证据，杜绝无据悬空
+        event_detail = f"{impression}\n原话证据：“{source_quote}”" if source_quote else impression
+
         try:
             if event_id > 0 and before_aff != after_aff:
                 phrase = synthesize_milestone_phrase(
@@ -196,6 +258,7 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
                     after_affinity=after_aff,
                     dimension=verdict["dimension"],
                     delta=applied_delta,
+                    is_leap=is_leap,
                 )
                 persist_timeline_event(
                     self.db,
@@ -204,17 +267,20 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
                     group_id=group_id,
                     kind="affinity",
                     summary=phrase,
-                    detail=impression,
+                    detail=event_detail,
                     occurred_at=now,
                     provenance={
                         "actor": "social_verdict",
                         "event_type": formal_type,
                         "reason": shift_reason,
+                        "source_quote": source_quote,
+                        "source_memory_id": source_memory_id,
                         "dimension": verdict["dimension"],
                         "delta": applied_delta,
                         "before_affinity": before_aff,
                         "after_affinity": after_aff,
                         "event_id": event_id,
+                        "is_leap": is_leap,
                     },
                 )
             else:
@@ -225,22 +291,45 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
                     group_id=group_id,
                     kind="impression",
                     summary=impression,
-                    detail=impression,
+                    detail=event_detail,
                     occurred_at=now,
                     provenance={
                         "actor": "social_verdict",
                         "reason": shift_reason,
+                        "source_quote": source_quote,
+                        "source_memory_id": source_memory_id,
                         "dimension": verdict["dimension"],
                         "delta": requested,
                     },
                 )
 
-            clear_unsettled_state(
-                self.db,
-                bot_id=runtime_scope.bot_id,
-                user_id=user_id,
-                group_id=group_id,
-            )
+            # 能量结算与定向流转：
+            # 若触发了跃迁或达到结算线，清空该维度与本群的未决能量；
+            # 若未发生跃迁，则将本轮评估产生的微观冲击持续累加至该维度的能量池中。
+            if is_leap or energy_val >= UNSETTLED_ENERGY_FULL:
+                consume_dimensional_energy(
+                    self.db,
+                    bot_id=runtime_scope.bot_id,
+                    user_id=user_id,
+                    dimension=dimension,
+                )
+                clear_unsettled_state(
+                    self.db,
+                    bot_id=runtime_scope.bot_id,
+                    user_id=user_id,
+                    group_id=group_id,
+                )
+            else:
+                record_dimensional_unsettled_energy(
+                    self.db,
+                    bot_id=runtime_scope.bot_id,
+                    user_id=user_id,
+                    group_id=group_id,
+                    dimension=dimension,
+                    text=impression,
+                    impact=1.5,
+                    now=now,
+                )
             row = None
             try:
                 row = self.db.conn.execute(

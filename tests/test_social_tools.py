@@ -134,6 +134,46 @@ def test_record_social_impression_tool_updates_impression_and_affinity(tmp_path)
         manager.close()
 
 
+def test_record_social_impression_preserves_source_quote_evidence(tmp_path):
+    """验证提供 source_quote 时，原话证据完整持久化到 detail 与 provenance 中。"""
+    db, rel_events, _, repo, manager = _setup_test_db(tmp_path)
+    try:
+        scope = _scope()
+        repo.upsert_relationship(scope, subject_principal_id="qq:user:u1", affinity=10, dimensions={"trust": 10})
+        tool = WaveMemoryRecordSocialImpressionTool(
+            db=db,
+            relationship_events=rel_events,
+            bot_db_ids={"bot-alpha": "bot-alpha"},
+        )
+        ctx = _context_wrapper(scope)
+
+        result = asyncio.run(tool.call(
+            ctx,
+            target_user="u1",
+            impression="现场抓包严查提审规范的严格管理员",
+            shift_reason="当面严厉纠偏原话证据漏洞",
+            source_quote="你全部的好感度变更都没有带聊天证据，气死我了",
+            source_memory_id=999888,
+            affinity_delta=1.0,
+            dimension="trust",
+        ))
+        assert "已记录对「u1」的印象" in result
+
+        events = db.person_timeline.list_events(bot_id="bot-alpha", user_id="u1")
+        assert len(events) >= 1
+        latest = events[0]
+        # detail 必须包含原话引用
+        assert "原话证据：“你全部的好感度变更都没有带聊天证据，气死我了”" in latest["detail"]
+        prov = latest.get("provenance")
+        prov_dict = json.loads(prov) if isinstance(prov, str) else dict(prov or {})
+        # provenance 中有结构化的 source_quote 与 source_memory_id
+        assert prov_dict.get("source_quote") == "你全部的好感度变更都没有带聊天证据，气死我了"
+        assert prov_dict.get("source_memory_id") == 999888
+    finally:
+        manager.close()
+
+
+
 def test_record_social_impression_clears_unsettled_traces(tmp_path):
     db, rel_events, _, repo, manager = _setup_test_db(tmp_path)
     try:
@@ -207,6 +247,39 @@ def test_note_social_anchor_tool_records_anchor_and_concern(tmp_path):
         assert submitted["concern_type"] == "social_anchor"
         assert "毕业设计" in submitted["topic"]
         assert submitted["scope"].session.id == scope.session.id
+    finally:
+        manager.close()
+
+
+def test_record_social_impression_supports_unified_affinity_arguments(tmp_path):
+    """验证统一的社交交互入参：支持 reason、delta、自动补全 impression 以及自动回溯原话。"""
+    db, rel_events, _, repo, manager = _setup_test_db(tmp_path)
+    try:
+        scope = _scope()
+        repo.upsert_relationship(scope, subject_principal_id="qq:user:u1", affinity=10, dimensions={"trust": 10})
+        tool = WaveMemoryRecordSocialImpressionTool(
+            db=db,
+            relationship_events=rel_events,
+            bot_db_ids={"bot-alpha": "bot-alpha"},
+        )
+        ctx = _context_wrapper(scope)
+
+        # 仅传入 target_user, reason, delta，不传 impression 与 source_quote
+        result = asyncio.run(tool.call(
+            ctx,
+            target_user="u1",
+            reason="深夜交流缺氧排气技巧，群友解答很耐心",
+            delta=1.0,
+            dimension="depth",
+        ))
+
+        assert "已记录对「u1」的印象" in result
+        assert "好感度变动" in result
+
+        events = db.person_timeline.list_events(bot_id="bot-alpha", user_id="u1")
+        assert events
+        latest = events[0]
+        assert "缺氧排气技巧" in str(latest.get("summary") or "") or "缺氧排气技巧" in str(latest.get("detail") or "")
     finally:
         manager.close()
 

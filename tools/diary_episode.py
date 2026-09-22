@@ -26,10 +26,10 @@ except Exception:  # pragma: no cover
     class AstrAgentContext: pass
 
 try:
-    from .scope_boundary import require_group_runtime_scope, scope_error_message
+    from .scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
     from ..services.identity_safety import is_identity_contamination
 except ImportError:
-    from tools.scope_boundary import require_group_runtime_scope, scope_error_message
+    from tools.scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
     from services.identity_safety import is_identity_contamination
 
 
@@ -91,6 +91,25 @@ class WaveMemoryRecordDiaryEpisodeTool(FunctionTool[AstrAgentContext]):
         if conn is None:
             return "数据库连接不可用"
 
+        # 防刷冷却：同群同 Bot 在 6 小时内避免生成多篇碎片化日记
+        group_id = scope.session.conversation_id
+        recent_row = conn.execute(
+            """SELECT id, created_at, trigger_text FROM experience_episodes
+               WHERE bot_id=? AND group_id=? AND episode_type='daily_diary'
+               ORDER BY created_at DESC LIMIT 1""",
+            (scope.bot_id, group_id),
+        ).fetchone()
+        if recent_row and (now - float(recent_row[1])) < 6 * 3600:
+            diff_hours = round((now - float(recent_row[1])) / 3600.0, 1)
+            return (
+                f"今日群聊经历日记已存在（距今 {diff_hours} 小时，篇目 #{recent_row[0]}「{recent_row[2]}」）。"
+                "为保持生命历程的凝聚度与深度，无需频繁重复撰写日记；具体事实或好感变化请使用对应专门工具。"
+            )
+
+        # 自动溯源当轮真实群聊记忆作为日记证据锚点
+        auto_mid = resolve_source_memory_id(self.db, scope, quote=episode_summary)
+        source_mids_json = json.dumps([auto_mid] if auto_mid else [], ensure_ascii=False)
+
         coordinator = getattr(self.write_gateway, "coordinator", None) or getattr(self.db, "coordinator", None)
 
         def persist_all(connection: Any) -> int:
@@ -100,7 +119,7 @@ class WaveMemoryRecordDiaryEpisodeTool(FunctionTool[AstrAgentContext]):
                     bot_id, group_id, user_id, episode_type, trigger_text,
                     bot_inner_thought, bot_action, bot_reply, user_reaction,
                     outcome, source_memory_ids, emotional_weight, created_at
-                ) VALUES (?, ?, ?, 'daily_diary', ?, ?, 'wrote_daily_diary', ?, 'self_reflection', 'crystallized', '[]', ?, ?)
+                ) VALUES (?, ?, ?, 'daily_diary', ?, ?, 'wrote_daily_diary', ?, 'self_reflection', 'crystallized', ?, ?, ?)
             """
             cur = connection.execute(
                 sql_episode,
@@ -111,6 +130,7 @@ class WaveMemoryRecordDiaryEpisodeTool(FunctionTool[AstrAgentContext]):
                     diary_title,
                     episode_summary,
                     diary_content,
+                    source_mids_json,
                     weight,
                     now,
                 ),
@@ -125,7 +145,11 @@ class WaveMemoryRecordDiaryEpisodeTool(FunctionTool[AstrAgentContext]):
                     revision, evidence, created_at
                 ) VALUES (?, ?, 'group', ?, ?, 'episode', ?, ?, 1, ?, ?)
             """
-            evidence_json = json.dumps({"episode_id": episode_id, "title": diary_title}, ensure_ascii=False)
+            evidence_json = json.dumps({
+                "episode_id": episode_id,
+                "title": diary_title,
+                "source_memory_id": auto_mid,
+            }, ensure_ascii=False)
             connection.execute(
                 sql_timeline,
                 (

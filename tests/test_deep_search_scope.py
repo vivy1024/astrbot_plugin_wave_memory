@@ -129,6 +129,17 @@ class DeepSearchScopeTest(unittest.TestCase):
         result = asyncio.run(tool.call(_context(None), keywords="咖啡"))
         self.assertIn("已拒绝", result)
 
+    def test_unified_memory_search_tool_with_context_window(self):
+        from tools.memory_search import WaveMemorySearchTool
+
+        tool = WaveMemorySearchTool(db=self.db, query_engine=None)
+        result = asyncio.run(tool.call(_context(self._scope()), query="咖啡", include_context=True))
+
+        self.assertIn("对话切片", result)
+        self.assertIn("咖啡", result)
+        self.assertIn("同一会话上下文", result)
+
+
 
 class _ScopedFactsRepository:
     def __init__(self, rows):

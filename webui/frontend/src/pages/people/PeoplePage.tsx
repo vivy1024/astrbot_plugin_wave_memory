@@ -249,6 +249,11 @@ function ImpressionTimelinePanel({ query, userId }: { query: { bot_id: string; s
           {items.map((entry, index) => (
             <li key={`${entry.id}-${index}`} className="rounded-md bg-background/60 px-2.5 py-2">
               <p className="whitespace-pre-wrap break-words text-sm">{entry.summary || entry.detail || '未命名事件'}</p>
+              {entry.source_quote ? (
+                <div className="mt-1.5 rounded bg-muted/40 px-2 py-1 text-xs text-muted-foreground border-l-2 border-primary/60">
+                  <span className="font-semibold text-foreground/80">原话证据：</span>“{entry.source_quote}”
+                </div>
+              ) : null}
               <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                 <Badge variant="outline" className="font-mono text-[10px]">{timelineKindLabel(entry.kind)}</Badge>
                 <span>{formatImpressionTime(entry.occurred_at) || '未记录时间'}</span>

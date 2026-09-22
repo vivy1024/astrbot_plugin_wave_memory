@@ -1,5 +1,49 @@
 # Changelog
 
+## v5.0.0 正式版 (2026-09-22 最终成熟版)
+
+**架构收敛与认知沉淀全闭环**：在 09-12 跨群好感度合并的基础上，完成了工具箱历史堆叠彻底收敛、5 维未决能量蓄水池与定向跃迁闭环、四级自动原话溯源引擎、群分析日记无缝桥接、以及外置认知 Runtime v1 服务的全量发布！
+
+### 核心亮点
+
+1. **LLM 工具体系大收敛（从 21 个精简至 13 个，净省 1500+ Token Schema）**：
+   - **社交动力学单出口**：将 `affinity_update` 与 `social_impression` 深度合流为单一全能的 `wave_memory_record_social_impression`，全面支持 `reason`/`delta` 等直观别名入参，支持自动主观定性推导与原话自动回溯；
+   - **统一自然搜索入口**：升级 `wave_memory_search` 为统一工具，融合向量相似度、FTS5 精准词项兜底以及**带严格 Scope 隔离的对话切片窗口（include_context: true）**，彻底下线重复的 `deep_search`；
+   - **下线 4 个自愈僵尸工具**：默认关闭日常闲聊中零调用的 `agent_feedback_tools`（`explain_injection`, `feedback_memory`, `suggest_config`, `submit_review_candidate`），释放上千 Token 宝贵预算，消除大模型选择瘫痪；
+   - **书设工具收敛**：默认仅向模型暴露单一的 `wave_memory_book_lore_search` 语义检索入口。
+
+2. **多维未决能量与定向跃迁动力学**：
+   - 告别单人群聊好感度孤岛：在 `person_unsettled_state` 中建立跨群 `(bot_id, user_id, "")` 5 维能量蓄水池；
+   - 平时受严密步长限制（[-2.0, 2.0]），**蓄满 10.0 时触发定向跃迁（上限放宽至 [-5.0, 5.0]）**；
+   - 自动合成带 `【关系跃迁】` 标签的因果里程碑短语，定向清空已跃迁维度的能量池，保留其余维度。
+
+3. **四级自动记忆溯源引擎（反查原话证据）**：
+   - 彻底修复大模型猜不出整数 `source_memory_id` 导致事实/经历无据悬空的顽疾；
+   - 引入四级安全溯源算法：`显式正整数 ID -> 原话模糊查询反查 (LIKE ESCAPE '/') -> 发言人最新有效记忆 -> 当前 Scope 兜底有效记忆`，确保提审“字字有据、铁证如山”。
+
+4. **群分析成果与生活日记无缝桥接（零额外开销）**：
+   - 新增 `DailyDiaryBridge`：自动读取 `astrbot_plugin_qq_group_daily_analysis` 产出的 `traces.db` 汇总数据；
+   - 复用其对 3200 条消息总结产出的 `SummaryTopic`、`GoldenQuote` 与 `QualityReview`，转化为羽书第一人称生活日记并入选 Bot 经历时间线主干；
+   - 避免羽书在聊天会话中重复抓取海量上下文，实现零额外开销的认知自愈闭环。
+
+5. **外置认知 Runtime v1 RESTful 服务**：
+   - 新增 `/api/runtime/v1/` 蓝图，支持 Cortico 等独立宿主安全调用 WaveMemory 的记忆、图谱与认知能力；
+   - 支持 Bearer Token 认证、跨平台 UID 归一化与专属作用域隔离。
+
+6. **安全与架构加固**：
+   - 修复 `memory_search` 上下文切片窗口缺少 Scope 隔离导致跨群消息穿透的严重安全隐患；
+   - 修复 FTS5 搜索未消毒转义特殊字符导致语法崩溃的异常；
+   - 修复 `affinity_update` 中历史遗留的 `delta NameError`；
+   - 架构守卫测试（`test_write_path_guard.py`）严格约束直写行为与事务一致性。
+
+### 自动化测试与验证
+
+- Python 核心与全量套件：**1183 passed / 0 failed / 4 skipped** 全绿（21.02s 跑完）；
+- 前端测试套件：**179 passed / 0 failed** Vitest 单元测试全绿；
+- 真实 Docker 容器热更新验证通过，系统服务健康接口持续返回 healthy，11.2 万条记忆稳定在线。
+
+---
+
 ## v5.0.0 (2026-09-09，含 2026-09-12 修订)
 
 **认知沉淀重大范式转向**：告别旧版本后台定时脚本无节制盲抽的模式，全面转为**「大模型对话现场自主感知提审 + Bot 亲笔日记 + 管理台人工把关审核」**。收敛双时间线体系，彻底清扫历史施工临时表与假资产；索引诊断性能暴提 23 倍；标签神经星云内嵌全息 HUD 自由控制台与算法实验室实时联动。这是不兼容的主版本跃迁：旧 pending 事实/信念/黑话碎屑不再当作可用积攒，按全新自主契约重新沉淀。

@@ -23,11 +23,11 @@ except Exception:  # pragma: no cover
 try:
     from ..domain.scope import RuntimeScope
     from .person_identity import display_name_for_user, resolve_user_id
-    from .scope_boundary import require_group_runtime_scope, scope_error_message
+    from .scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
 except ImportError:  # pragma: no cover
     from domain.scope import RuntimeScope
     from tools.person_identity import display_name_for_user, resolve_user_id
-    from tools.scope_boundary import require_group_runtime_scope, scope_error_message
+    from tools.scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
 
 try:
     from astrbot.api import logger
@@ -138,6 +138,14 @@ class WaveMemoryNoteSocialAnchorTool(FunctionTool[AstrAgentContext]):
                         f"[WaveMemory] social anchor concern failed: {concern_error}"
                     )
 
+        # 自动溯源当轮真实群聊记忆
+        anchor_mid = resolve_source_memory_id(
+            self.db,
+            runtime_scope,
+            quote=summary,
+            sender_id=user_id,
+        )
+
         # 2. 写入 scoped_soul_timeline 作为社交人情锚点
         repo = self.repository or getattr(self.db, "soul_repository", None)
         if repo is not None and hasattr(repo, "add_timeline_event"):
@@ -153,6 +161,7 @@ class WaveMemoryNoteSocialAnchorTool(FunctionTool[AstrAgentContext]):
                         "anchor_type": anchor_type,
                         "summary": summary,
                         "is_active_concern": is_active_concern,
+                        "source_memory_id": anchor_mid,
                     }],
                 )
             except Exception:

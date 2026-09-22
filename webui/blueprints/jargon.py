@@ -374,6 +374,27 @@ def _formal_jargon(item: dict, scope: RuntimeScope, *, evidence_available: bool 
     result = dict(item)
     provenance = result.get("provenance") if isinstance(result.get("provenance"), dict) else {}
     source_memory_id = result.get("source_memory_id")
+    anchors = []
+    if evidence_available:
+        anchors.append({
+            "type": "memory",
+            "id": str(source_memory_id),
+            "source_scope": _scope_label(scope),
+            "availability": "available",
+            "summary": "同一 Bot/会话内的正式 Jargon 锚点",
+            "object_ref": None,
+        })
+    elif provenance.get("context_note") or _fallback_contexts(result):
+        note = str(provenance.get("context_note") or (_fallback_contexts(result)[0] if _fallback_contexts(result) else "")).strip()
+        if note:
+            anchors.append({
+                "type": "context_note",
+                "id": f"context:{result.get('id')}",
+                "source_scope": _scope_label(scope),
+                "availability": "available",
+                "summary": note[:120],
+                "object_ref": None,
+            })
     result.update({
         "bot_id": scope.bot_id,
         "session_id": scope.session.id if scope.session else None,
@@ -383,14 +404,7 @@ def _formal_jargon(item: dict, scope: RuntimeScope, *, evidence_available: bool 
         "review_status": result.get("status") or "pending",
         "promotion": provenance.get("promotion"),
         "revision": _item_revision(result),
-        "anchors": ([{
-            "type": "memory",
-            "id": str(source_memory_id),
-            "source_scope": _scope_label(scope),
-            "availability": "available",
-            "summary": "同一 Bot/会话内的正式 Jargon 锚点",
-            "object_ref": None,
-        }] if evidence_available else []),
+        "anchors": anchors,
         "object_ref": _item_object_ref("jargon", result, scope),
     })
     return result
@@ -400,17 +414,20 @@ def _fallback_contexts(item: dict) -> list[str]:
     """读取 scoped 黑话自带的回退上下文，不从 legacy group_id 猜测来源。"""
     raw = item.get("source_context")
     if isinstance(raw, list):
-        contexts = raw
+        contexts = list(raw)
     elif isinstance(raw, str) and raw.strip():
         parsed = _safe_json_list(raw)
         contexts = parsed if parsed else [raw.strip()]
     else:
-        contexts = item.get("contexts") if isinstance(item.get("contexts"), list) else []
+        contexts = list(item.get("contexts")) if isinstance(item.get("contexts"), list) else []
+    prov = item.get("provenance")
+    if isinstance(prov, dict) and prov.get("context_note"):
+        contexts.append(str(prov["context_note"]))
     normalized = []
     for value in contexts:
         text = value.get("content") if isinstance(value, dict) else value
         text = str(text or "").strip()
-        if text:
+        if text and text not in normalized:
             normalized.append(text)
     return normalized
 

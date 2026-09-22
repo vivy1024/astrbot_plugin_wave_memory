@@ -1,0 +1,1 @@
+import{Rn as e}from"./chart-Cwyz75CR.js";function t(t){var n=e(t),r=3,i=2;if(n!=null){var{r:a,strokeWidth:o}=n,s=Number(a),c=Number(o);return(Number.isNaN(s)||s<0)&&(s=r),(Number.isNaN(c)||c<0)&&(c=i),{r:s,strokeWidth:c}}return{r,strokeWidth:i}}export{t};

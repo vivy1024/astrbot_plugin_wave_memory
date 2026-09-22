@@ -30,10 +30,10 @@ except Exception:  # pragma: no cover
 
 try:
     from ..services.identity_safety import is_identity_contamination
-    from .scope_boundary import require_group_runtime_scope, scope_error_message
+    from .scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
 except ImportError:  # pragma: no cover
     from services.identity_safety import is_identity_contamination
-    from tools.scope_boundary import require_group_runtime_scope, scope_error_message
+    from tools.scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
 
 # 模型可以做的动作。expire/archive 属于系统整理与人工裁决，不开放给现场工具。
 _MODEL_ACTIONS = ("note", "progress", "resolve", "reopen")
@@ -110,7 +110,10 @@ class WaveMemoryNoteConcernTool(FunctionTool[AstrAgentContext]):
             return "灵魂关切写入未就绪：缺少正式写入网关"
 
         intensity = kwargs.get("intensity") if action == "note" else None
+        auto_mid = resolve_source_memory_id(self.db, scope, quote=topic or note)
         evidence = [{"kind": "concern_tool", "action": action}]
+        if auto_mid:
+            evidence.append({"kind": "memory", "id": auto_mid})
         if topic:
             evidence.append({"kind": "concern_topic", "topic": topic[:80]})
         try:

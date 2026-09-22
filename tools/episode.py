@@ -15,11 +15,11 @@ except Exception:
     class AstrAgentContext: pass
 try:
     from ..services.experience_episodes import ExperienceEpisodeService
-    from .scope_boundary import require_group_runtime_scope, scope_error_message
+    from .scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
     from ..services.identity_safety import is_identity_contamination
 except ImportError:
     from services.experience_episodes import ExperienceEpisodeService
-    from tools.scope_boundary import require_group_runtime_scope, scope_error_message
+    from tools.scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
     from services.identity_safety import is_identity_contamination
 
 @dataclass
@@ -71,6 +71,12 @@ class WaveMemoryNoteEpisodeTool(FunctionTool[AstrAgentContext]):
             if not row:
                 return f"证据 memory:{mid} 不属于当前 Scope"
             valid.append(mid)
+
+        # 自动溯源兜底：若模型未填入证据 ID，自动根据触发描述反查或关联本群最新消息
+        if not valid:
+            auto_mid = resolve_source_memory_id(self.db, scope, quote=values["trigger_text"])
+            if auto_mid:
+                valid.append(auto_mid)
         try:
             weight = max(0.0, min(10.0, float(kwargs.get("emotional_weight", 0) or 0)))
             if gateway is None or not callable(getattr(gateway, "record_episode", None)):

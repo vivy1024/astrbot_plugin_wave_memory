@@ -147,7 +147,7 @@ def _append_memory_handler(connection, command: DomainCommand, now: float) -> Mu
         "metadata": provenance,
     }
     quarantined = bool(payload.get("quarantine", False))
-    memory_type = "archived" if quarantined else "message"
+    memory_type = "archived" if quarantined else ("noise" if source == "noise" else "message")
     summary = "quarantined: transient roleplay/identity confusion" if quarantined else None
     cursor = connection.execute(
         """INSERT INTO memories (
@@ -299,7 +299,7 @@ def _apply_tag_extraction_handler(connection, command: DomainCommand, now: float
     row = connection.execute(
         """SELECT version FROM memories
              WHERE id=? AND bot_id=? AND session_id=? AND visibility=?
-               AND resolution_state='resolved' AND COALESCE(quarantine, 0)=0""",
+               AND COALESCE(resolution_state, 'resolved')='resolved' AND COALESCE(quarantine, 0)=0""",
         (memory_id, *_scope_tuple(scope)),
     ).fetchone()
     if row is None:

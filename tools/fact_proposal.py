@@ -22,11 +22,11 @@ except Exception:  # pragma: no cover
 try:
     from ..domain.scope import RuntimeScope
     from ..services.identity_safety import is_identity_contamination
-    from .scope_boundary import require_group_runtime_scope, scope_error_message
+    from .scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
 except ImportError:  # pragma: no cover
     from domain.scope import RuntimeScope
     from services.identity_safety import is_identity_contamination
-    from tools.scope_boundary import require_group_runtime_scope, scope_error_message
+    from tools.scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
 
 
 _IRONY_MARKERS = ("irony", "sarcasm", "ironic", "反串", "阴阳")
@@ -193,14 +193,12 @@ class WaveMemoryProposeFactTool(FunctionTool[AstrAgentContext]):
                 "如需记录梗本身，请改用 wave_memory_mark_cultural_moment。"
             )
 
-        source_memory_id = None
-        if raw_memory_id not in {None, ""}:
-            try:
-                source_memory_id = int(raw_memory_id)
-            except (TypeError, ValueError):
-                return "source_memory_id 必须是正整数"
-            if source_memory_id <= 0:
-                return "source_memory_id 必须是正整数"
+        source_memory_id = resolve_source_memory_id(
+            self.db,
+            runtime_scope,
+            quote=source_quote,
+            explicit_id=raw_memory_id,
+        )
 
         needs_jargon_review = any(
             hit.get("word") and not str(hit.get("meaning") or "").strip()

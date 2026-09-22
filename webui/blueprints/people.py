@@ -1003,6 +1003,7 @@ def _serialize_timeline_event(item: Mapping[str, Any]) -> dict[str, Any]:
     event = provenance.get("event") if isinstance(provenance.get("event"), Mapping) else {}
     ledger = provenance.get("ledger") if isinstance(provenance.get("ledger"), Mapping) else {}
     kind = str(item.get("kind") or "").strip()
+    source_quote = str(provenance.get("source_quote") or "").strip()
     return {
         "id": item.get("id"),
         "user_id": str(item.get("user_id") or ""),
@@ -1011,6 +1012,7 @@ def _serialize_timeline_event(item: Mapping[str, Any]) -> dict[str, Any]:
         "kind": kind,
         "summary": str(item.get("summary") or "").strip(),
         "detail": str(item.get("detail") or "").strip(),
+        "source_quote": source_quote or None,
         "subject": str(item.get("subject") or "").strip(),
         "predicate": str(item.get("predicate") or "").strip(),
         "object": str(item.get("object") or "").strip(),

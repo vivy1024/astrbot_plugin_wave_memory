@@ -43,6 +43,7 @@ WRITE_ENTRY_ALLOWLIST = {
     "memory_mutations.py",  # 遗留：批量治理路径，待收敛到 DomainCommand
     "scoped_knowledge_mutations.py",  # 遗留：L1 知识治理，待收敛到 DomainCommand
     "experience_episodes.py",  # 遗留：仅在 coordinator.transaction_blocking 事务内写，无裸 commit
+    "daily_diary_bridge.py",  # 群分析桥接同步：将外部分析 traces 导入为群聊日记经历
     "tag_auditor.py",  # 遗留：直接 DELETE memory_tags，待收敛
     "tag_worker.py",  # 遗留：直接 UPDATE memories，待收敛
 }

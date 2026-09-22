@@ -302,31 +302,29 @@ cd webui/frontend && npm run build
 
 | 工具 | 功能 | 权限 |
 |------|------|------|
-| wave_memory_search | 五阶段语义搜索 | allowed |
-| wave_memory_deep_search | FTS5 全文关键词搜索 | allowed |
-| wave_memory_person_search | 人物记忆/画像/社交关系 | full/memory_only |
-| wave_memory_affinity | 关系/互动查询 | full |
-| wave_memory_facts | 事实知识三元组 | allowed |
-| wave_memory_tag_graph | 标签共现图谱探索 | allowed |
-| wave_memory_remember | 主动存储重要信息 | allowed，走统一 writer 去重 |
-| wave_memory_explain_injection | 读取 trace，解释通道命中/过滤/预算/耗时 | read-only |
-| wave_memory_feedback_memory | 对 trace 中命中的 memory 记录 useful/useless/misleading/duplicate | 低风险 useful 可软提升 |
-| wave_memory_suggest_config | 基于 trace 证据提交配置建议 | pending_review，不自动应用 |
-| wave_memory_record_social_impression | 记录主观印象并在动态范围内裁决好感 | full，群 Scope |
-| wave_memory_note_social_anchor | 人情借还 / 承诺 / 越界备忘，可挂未了往来 | full，群 Scope |
-| wave_memory_mark_cultural_moment | 提审本群黑话或高光回复（style 进审查队列） | full，群 Scope |
-| wave_memory_note_concern | 管理 Bot 内部关切状态 | full，群 Scope |
-| wave_memory_note_episode | 记录群经历片段 | full，群 Scope |
-| wave_memory_record_diary_episode | Bot 亲笔日记，钉入经历时间线 | full，群 Scope |
-| wave_memory_browse_recent_chat | 浏览群聊近期流水（配合 Cron 主动回顾） | full，群 Scope |
-| wave_memory_affinity_update | 按上限调整好感维度 | full，群 Scope |
-| wave_memory_propose_fact | 提审客观事实，必填原话 | full，群 Scope |
-| wave_memory_propose_belief | 提审稳定判断，须 ≥2 条已审事实 | full，群 Scope |
-| wave_memory_submit_review_candidate | 提交 memory/fact/belief/style/jargon 候选 | pending_review，不自动提升 |
-| book_lore_search | 书设知识库语义搜索 | full |
-| book_lore_graph | 书设实体关系图谱 | full |
-| recall_long_term_memory | LivingMemory 风格搜索别名 | 可选，默认关闭 |
-| memorize_long_term_memory | LivingMemory 风格写入别名 | 可选，默认关闭 |
+### 🔧 精简高效的 LLM 工具矩阵 (Function Calling)
+
+v5.0.0 彻底收敛了历史堆叠的工具集，常驻工具数量减半，释放上千 Token Schema 空间，消除大模型选择瘫痪：
+
+| 工具名称 | 功能说明与定位 | 作用域与权限 |
+|----------|---------------|-------------|
+| **`wave_memory_search`** | **统一记忆搜索**：融合向量相似度、FTS5 精准词项兜底与**前后对话切片窗口展开**（支持严格 Scope 隔离） | allowed |
+| **`wave_memory_person_search`** | **人物全景出口**：回溯交往全貌、好感档案、人际关系与跨群因果时间线唯一法定出口 | full/memory_only |
+| **`wave_memory_record_social_impression`** | **社交动力学单出口**：统一记录阶段性主观定性并变迁好感五维、累加未决能量、触发定向跃迁并自动溯源原话 | full，群 Scope |
+| **`wave_memory_note_social_anchor`** | **人际纽带备忘**：记录重要人情借还、双向承诺与底线越界备忘，可挂入未了关切 | full，群 Scope |
+| **`wave_memory_note_concern`** | **灵魂关切管理**：记录并推进 Bot 挂在心上的未决事件（群友生病/考试/约定等） | full，群 Scope |
+| **`wave_memory_mark_cultural_moment`** | **文化时刻标记**：现场提审本群特色黑话梗（jargon）或高光风骨回复（style），进入审核工作台 | full，群 Scope |
+| **`wave_memory_propose_fact`** | **客观事实提审**：发现群友新事实，自动反查当轮真实消息 ID 并绑定 `source_quote` 证据入库 | full，群 Scope |
+| **`wave_memory_propose_belief`** | **稳定信念提审**：基于至少 2 条已审核事实提纯稳定认知判断，杜绝无根虚妄感悟 | full，群 Scope |
+| **`wave_memory_note_episode`** | **群经历大事件**：记录解决群体问题或关系转折的重大经历片段，自动锚定记忆 | full，群 Scope |
+| **`wave_memory_record_diary_episode`** | **Bot 亲笔日记**：记录今日生活随笔与心智历程，带 6 小时冷却并钉入经历时间线主干 | full，群 Scope |
+| **`wave_memory_facts`** | **事实库直查**：直接查验某人某事的确定性已知客观属性（三元组） | allowed |
+| **`wave_memory_affinity`** | **好感快速查询**：只读快速查看当前群友五维好感分值与关系等级 | full |
+| **`wave_memory_remember`** | **即时记忆存储**：对话中遇到明确叮嘱时，以最高优先级即时落盘记忆 | allowed |
+| **`wave_memory_book_lore_search`** | **书设百科检索**：专属世界观/游戏设定语义近邻检索 | full |
+| `wave_memory_affinity_update` | *兼容别名*：保留标准接口，底层已与 `record_social_impression` 逻辑统一 | full |
+| `wave_memory_deep_search` | *兼容别名*：FTS5 检索能力已完整合流至 `wave_memory_search`，不再单独常驻挂载 | allowed |
+| `wave_memory_explain_injection` 等 | *自愈调试类*：默认移出日常闲聊常驻列表，按需在开发与审查模式下开启 | debug/review |
 
 ---
 

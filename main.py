@@ -1432,11 +1432,10 @@ class WaveMemoryPlugin(Star):
             llm_tools.extend([
                 WaveMemorySearchTool(query_engine=self.query_engine, db=self.db),
                 WaveMemoryRememberTool(writer=self.writer),
-                WaveMemoryDeepSearchTool(db=self.db),
                 WaveMemoryFactsTool(db=self.db),
                 WaveMemoryPersonSearchTool(db=self.db),
             ])
-        if runtime_capability_enabled(self.runtime_mode, "agent_feedback_tools", True):
+        if runtime_capability_enabled(self.runtime_mode, "agent_feedback_tools", False):
             llm_tools.extend([
                 WaveMemoryExplainInjectionTool(db=self.db),
                 WaveMemoryFeedbackMemoryTool(db=self.db),
@@ -1447,11 +1446,6 @@ class WaveMemoryPlugin(Star):
             _bot_db_ids_map = {profile.qq_id: profile.db_id for profile in self._bot_registry.values()}
             llm_tools.extend([
                 WaveMemoryAffinityTool(db=self.db),
-                WaveMemoryAffinityUpdateTool(
-                    db=self.db,
-                    relationship_events=self.relationship_service,
-                    bot_db_ids=_bot_db_ids_map,
-                ),
                 WaveMemoryRecordSocialImpressionTool(
                     db=self.db,
                     relationship_events=self.relationship_service,
@@ -1481,10 +1475,9 @@ class WaveMemoryPlugin(Star):
                 ),
             ])
         if runtime_capability_enabled(self.runtime_mode, "book_lore_tools", True):
-            # 书设工具直读 Catalog（book_lore.db + HNSW），不经 Learning projection。
+            # 书设工具直读 Catalog（book_lore.db + HNSW），优先挂载统一检索入口
             try:
                 from .tools.book_lore_query import WaveMemoryBookLoreQueryTool
-                from .tools.book_lore_search import BookLoreGraphTool, BookLoreSearchTool
 
                 llm_tools.append(
                     WaveMemoryBookLoreQueryTool(
@@ -1494,20 +1487,8 @@ class WaveMemoryPlugin(Star):
                         catalog_scope=self.book_lore_catalog_scope,
                     )
                 )
-                llm_tools.append(
-                    BookLoreSearchTool(
-                        book_lore_index=self.book_lore_index,
-                        embedding_service=self.embedding_service,
-                        lore_db_path=self.lore_db_path,
-                        catalog_scope=self.book_lore_catalog_scope,
-                    )
-                )
-                llm_tools.append(
-                    BookLoreGraphTool(
-                        lore_db_path=self.lore_db_path,
-                        catalog_scope=self.book_lore_catalog_scope,
-                    )
-                )
+            except Exception as exc:
+                logger.info("[WaveMemory] book_lore search tool unavailable: %s", exc)
             except Exception as exc:
                 logger.info("[WaveMemory] book_lore search tool unavailable: %s", exc)
 

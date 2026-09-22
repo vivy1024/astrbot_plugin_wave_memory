@@ -30,6 +30,7 @@ import { getScopeOptions, groupSessionOptions, scopeOptionsFor } from '@/api/opt
 import {
   BatchActionBar,
   EvidenceList,
+  HeroHeader,
   ObjectDeepLink,
   PaginationControls,
   QueryState,
@@ -369,7 +370,18 @@ export function BeliefsPage() {
   const selectedCanArchive = selectedItems.length > 0 && selectedItems.every((item) => item.actions.archive.available && item.object_ref)
 
   return <div data-slot="beliefs-page" className="flex flex-col gap-6">
-    <Card className="overflow-hidden border-primary/10 bg-gradient-to-br from-primary/5 via-card to-card"><CardHeader className="gap-4 sm:flex-row sm:items-start sm:justify-between"><div className="flex gap-3"><div className="rounded-xl bg-primary/10 p-3 text-primary"><BrainCircuitIcon className="size-6" /></div><div><CardTitle className="text-xl">信念审核与证据链</CardTitle><CardDescription className="mt-1 max-w-3xl">审核、批量改状态和多阶证据追溯都只作用于当前 Bot 和群，并核对版本。</CardDescription></div></div><Badge variant="outline" className="w-fit"><ShieldCheckIcon className="size-3.5" />受控生命周期</Badge></CardHeader><CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><div className="rounded-lg border bg-background/80 p-3"><p className="text-xs text-muted-foreground">匹配总数</p><p className="mt-1 text-2xl font-semibold tabular-nums">{totalText}</p></div><div className="rounded-lg border bg-background/80 p-3"><p className="text-xs text-muted-foreground">本页已生效</p><p className="mt-1 text-2xl font-semibold tabular-nums">{activeCount}</p></div><div className="rounded-lg border bg-background/80 p-3"><p className="text-xs text-muted-foreground">本页待审核</p><p className="mt-1 text-2xl font-semibold tabular-nums">{pendingCount}</p></div><div className="rounded-lg border bg-background/80 p-3"><p className="text-xs text-muted-foreground">本页证据引用</p><p className="mt-1 text-2xl font-semibold tabular-nums text-primary">{evidenceCount}</p></div></CardContent></Card>
+    <HeroHeader
+      icon={<BrainCircuitIcon className="size-6" />}
+      title="信念审核与证据链"
+      description="审核、批量改状态和多阶证据追溯都只作用于当前 Bot 和群，并核对版本。"
+      badge={<Badge variant="outline" className="w-fit"><ShieldCheckIcon className="size-3.5" />受控生命周期</Badge>}
+      metrics={[
+        { label: '匹配总数', value: totalText },
+        { label: '本页已生效', value: activeCount },
+        { label: '本页待审核', value: pendingCount },
+        { label: '本页证据引用', value: evidenceCount, tone: 'text-primary' },
+      ]}
+    />
 
     {deepLinkStatus ? <Alert data-slot="belief-deep-link-state" variant={deepLinkStatus === 'ready' || deepLinkStatus === 'loading' ? 'default' : 'destructive'}><AlertTitle>{deepLinkStatus === 'loading' ? '正在校验跳转链接' : deepLinkStatus === 'ready' ? '已定位这条信念' : '无法打开这条信念'}</AlertTitle><AlertDescription>{deepLinkStatus === 'ready' && deepLinkedItem ? <span><strong>{TYPE_LABELS[deepLinkedItem.type]}</strong>：{deepLinkedItem.content}</span> : deepLinkStatus === 'loading' ? '正在验证当前群和版本是否还对得上。' : DEEP_LINK_LABELS[deepLinkStatus as Exclude<ObjectRefState, 'ready'>]}</AlertDescription></Alert> : null}
 

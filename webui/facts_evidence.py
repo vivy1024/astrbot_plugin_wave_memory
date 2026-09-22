@@ -81,11 +81,16 @@ def fact_evidence(conn: Any, items: list[dict[str, Any]], scope: tuple[str, str,
     for item in items:
         if "provenance" in item:
             item["provenance"] = json_value(item.get("provenance"), {})
+        prov = item.get("provenance") if isinstance(item.get("provenance"), dict) else {}
+        quote = str(item.get("source_quote") or prov.get("source_quote") or "").strip()
+        prov_evidence = str(prov.get("evidence") or "").strip()
+
         source_id = item.get("source_memory_id")
         try:
             source_id = int(source_id) if str(source_id or "").strip().isdigit() else None
         except (TypeError, ValueError):
             source_id = None
+
         if source_id is not None and source_id in healthy_meta:
             meta = healthy_meta[source_id]
             item["evidence"] = [{
@@ -99,7 +104,21 @@ def fact_evidence(conn: Any, items: list[dict[str, Any]], scope: tuple[str, str,
                 "availability": "available",
                 "content_hash": meta.get("content_hash"),
                 "captured_at": meta.get("captured_at"),
-                "summary": meta.get("summary"),
+                "summary": meta.get("summary") or quote or prov_evidence or None,
+            }]
+        elif quote or prov_evidence:
+            item["evidence"] = [{
+                "type": "quote",
+                "id": f"quote:{item.get('id')}",
+                "source_scope": {
+                    "bot_id": scope[0],
+                    "session_id": scope[1],
+                    "visibility": scope[2],
+                },
+                "availability": "available",
+                "content_hash": None,
+                "captured_at": item.get("created_at"),
+                "summary": quote or prov_evidence,
             }]
         else:
             item["evidence"] = []

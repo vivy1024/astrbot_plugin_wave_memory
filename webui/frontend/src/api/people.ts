@@ -204,6 +204,7 @@ export interface PersonTimelineEventItem {
   kind: 'impression' | 'affinity' | 'person_fact' | string
   summary: string
   detail: string
+  source_quote?: string | null
   subject: string
   predicate: string
   object: string

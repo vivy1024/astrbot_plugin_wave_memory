@@ -23,11 +23,11 @@ except Exception:  # pragma: no cover
 try:
     from ..domain.scope import RuntimeScope
     from ..services.review.candidate_store import ReviewCandidateStore
-    from .scope_boundary import require_group_runtime_scope, scope_error_message
+    from .scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
 except ImportError:  # pragma: no cover
     from domain.scope import RuntimeScope
     from services.review.candidate_store import ReviewCandidateStore
-    from tools.scope_boundary import require_group_runtime_scope, scope_error_message
+    from tools.scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
 
 
 def _event_message_id(ctx: Any) -> str:
@@ -97,6 +97,11 @@ class WaveMemoryMarkCulturalMomentTool(FunctionTool[AstrAgentContext]):
         if moment_type == "potential_jargon":
             repo = getattr(self.db, "scoped_knowledge", None)
             if repo is not None and hasattr(repo, "upsert_scoped_jargon"):
+                source_memory_id = resolve_source_memory_id(
+                    self.db,
+                    runtime_scope,
+                    quote=target_phrase,
+                )
                 try:
                     repo.upsert_scoped_jargon(
                         runtime_scope,
@@ -105,6 +110,7 @@ class WaveMemoryMarkCulturalMomentTool(FunctionTool[AstrAgentContext]):
                         status="pending",
                         is_jargon=True,
                         confidence=0.85,
+                        source_memory_id=source_memory_id,
                         provenance={
                             "source": "bot_marked_moment",
                             "context_note": context_note,

@@ -122,6 +122,8 @@ class TagWorker:
             active.append("COALESCE(m.quarantine, 0)=0")
         if "source" in columns:
             active.append("COALESCE(m.source, '') != 'noise'")
+        if "memory_type" in columns:
+            active.append("COALESCE(m.memory_type, 'message') != 'noise'")
         if "provenance" in columns and not self.include_recovered_backfill:
             active.append("COALESCE(m.provenance, '') NOT LIKE '%classified_legacy_recovery%'")
         status_filter = "1=1"
@@ -146,7 +148,7 @@ class TagWorker:
                 "AND smt.bot_id=m.bot_id AND smt.session_id=m.session_id AND smt.visibility=m.visibility)"
             )
         formal_memory_type = (
-            "COALESCE(m.memory_type, 'message') NOT IN ('archived', 'evicted', 'deleted')"
+            "COALESCE(m.memory_type, 'message') NOT IN ('archived', 'evicted', 'deleted', 'noise')"
             if "memory_type" in columns else "1=1"
         )
         legacy_memory_type = (
@@ -274,6 +276,8 @@ class TagWorker:
 
         if "source" in columns:
             clauses.append("COALESCE(source, '') != 'noise'")
+        if "memory_type" in columns:
+            clauses.append("COALESCE(memory_type, 'message') != 'noise'")
         if "provenance" in columns and not self.include_recovered_backfill:
             clauses.append("COALESCE(provenance, '') NOT LIKE '%classified_legacy_recovery%'")
         return conn.execute(
@@ -420,6 +424,17 @@ class TagWorker:
                     logger.warning(
                         f"[WaveMemory] TagWorker skipped stale scoped memory {item.memory_id}: {error}"
                     )
+                    try:
+                        self._record_status(
+                            item.memory_id,
+                            "skipped",
+                            time.time(),
+                            error=f"ValueError: {error}",
+                            bump_attempts=False,
+                        )
+                        self.db.conn.commit()
+                    except Exception:
+                        pass
                     continue
                 try:
                     self.db.conn.rollback()

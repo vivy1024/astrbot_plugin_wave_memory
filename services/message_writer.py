@@ -147,6 +147,24 @@ class MemoryDedupPolicy:
             return 1.0
 
 
+_SYSTEM_ERROR_MARKERS = (
+    "llm 响应错误",
+    "all chat models failed",
+    "apiconnectionerror",
+    "ratelimiterror",
+    "apistatuserror",
+    "apitimeouterror",
+    "images 请求失败",
+)
+
+
+def is_system_error_message(text: str) -> bool:
+    if not text:
+        return False
+    lowered = text.strip().lower()
+    return any(marker in lowered for marker in _SYSTEM_ERROR_MARKERS)
+
+
 def classify_source(
     message: str,
     sender_id: str,
@@ -158,6 +176,9 @@ def classify_source(
 
     Returns: "core" / "chat" / "noise"
     """
+    # 0. 系统/模型报错文本一律视为噪音，绝不进入核心记忆或送去提标
+    if is_system_error_message(message):
+        return "noise"
     # 1. bot 自己发的 → core
     if sender_id == "bot":
         return "core"

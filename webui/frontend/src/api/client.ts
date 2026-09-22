@@ -81,18 +81,28 @@ async function parseResponse(response: Response): Promise<unknown> {
   }
 }
 
+function extractErrorDetail(payload: unknown, fallback: string): string {
+  if (typeof payload === 'string' && payload.trim()) return payload.trim()
+  if (typeof payload === 'object' && payload !== null) {
+    const p = payload as Record<string, unknown>
+    if (typeof p.detail === 'string' && p.detail.trim()) return p.detail.trim()
+    if (typeof p.message === 'string' && p.message.trim()) return p.message.trim()
+    if (typeof p.reason_code === 'string' && p.reason_code.trim()) return p.reason_code.trim()
+    if (typeof p.code === 'string' && p.code.trim()) return p.code.trim()
+    if (typeof p.error === 'string' && p.error.trim()) return p.error.trim()
+    if (typeof p.error === 'object' && p.error !== null) {
+      const err = p.error as Record<string, unknown>
+      if (typeof err.message === 'string' && err.message.trim()) return err.message.trim()
+      if (typeof err.reason_code === 'string' && err.reason_code.trim()) return err.reason_code.trim()
+      if (typeof err.code === 'string' && err.code.trim()) return err.code.trim()
+    }
+  }
+  return fallback
+}
+
 function createApiError(response: Response, payload: unknown): ApiError {
-  const detail =
-    typeof payload === 'object' && payload !== null && 'detail' in payload
-      ? String((payload as { detail?: unknown }).detail)
-      : typeof payload === 'object' && payload !== null && 'error' in payload
-        ? typeof (payload as { error?: unknown }).error === 'object' && (payload as { error?: unknown }).error !== null && 'message' in ((payload as { error?: unknown }).error as object)
-          ? String(((payload as { error: { message?: unknown } }).error).message)
-          : String((payload as { error?: unknown }).error)
-        : typeof payload === 'object' && payload !== null && 'message' in payload
-          ? String((payload as { message?: unknown }).message)
-          : response.statusText
-  const error = new Error(detail || `HTTP ${response.status}`) as ApiError
+  const detail = extractErrorDetail(payload, response.statusText || `HTTP ${response.status}`)
+  const error = new Error(detail) as ApiError
   error.status = response.status
   error.detail = detail
   error.payload = payload

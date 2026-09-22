@@ -21,12 +21,12 @@ try:
     from ..domain.scope import RuntimeScope
     from ..engine.db.connection import ConnectionManager
     from .person_identity import display_name_for_user, resolve_user_id
-    from .scope_boundary import require_group_runtime_scope, scope_error_message
+    from .scope_boundary import require_read_runtime_scope, scope_error_message
 except ImportError:  # pragma: no cover - direct tools imports in isolated tests
     from domain.scope import RuntimeScope
     from engine.db.connection import ConnectionManager
     from tools.person_identity import display_name_for_user, resolve_user_id
-    from tools.scope_boundary import require_group_runtime_scope, scope_error_message
+    from tools.scope_boundary import require_read_runtime_scope, scope_error_message
 
 
 def _as_bool(value: Any, default: bool = False) -> bool:
@@ -134,12 +134,14 @@ class WaveMemoryPersonSearchTool(FunctionTool[AstrAgentContext]):
         if not person:
             return "请提供要查找的人物名称或 QQ 号"
 
-        # Validate the group-only boundary before touching any data source.  This
-        # keeps direct/malformed calls fail-closed even when the DB is unavailable.
-        scope, error_code = require_group_runtime_scope(context, "memory.message.read")
+        scope, error_code = require_read_runtime_scope(context, "person.search")
         if error_code:
             return scope_error_message("人物检索", error_code)
         assert scope is not None
+
+        # 私聊下默认跨群搜索全域人物记录
+        if scope.visibility == "private":
+            search_scope = "all_groups"
 
         if not self.db:
             return "记忆数据库未初始化"
@@ -172,7 +174,7 @@ class WaveMemoryPersonSearchTool(FunctionTool[AstrAgentContext]):
         try:
             qq_id = resolve_user_id(self.db, person, scope)
             if not qq_id:
-                return f"没有在当前 Bot/群作用域找到人物「{person}」"
+                return f"未找到人物「{person}」的相关记录"
 
             display_name = display_name_for_user(self.db, qq_id, scope)
             cross = search_scope == "all_groups"
@@ -379,11 +381,12 @@ class WaveMemoryPersonSearchTool(FunctionTool[AstrAgentContext]):
         soul = getattr(self.db, "soul_repository", None)
         if soul is not None:
             try:
+                platform_id = scope.session.platform_id if scope.session else "qq"
                 target_scope = RuntimeScope(
                     bot_id=scope.bot_id,
-                    visibility="group",
+                    visibility=scope.visibility,
                     session=scope.session,
-                    subject_principal_id=f"{scope.session.platform_id}:user:{qq_id}",
+                    subject_principal_id=f"{platform_id}:user:{qq_id}",
                 )
                 state = soul.get_state(target_scope, limit=5, offset=0)
                 relationship = (

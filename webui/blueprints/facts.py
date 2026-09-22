@@ -365,6 +365,121 @@ async def batch_review_facts():
         return _scope_error("scoped_knowledge_mutation_gateway_unavailable", 503)
 
 
+def _scoped_fact_evidence(cm: Any, scope: RuntimeScope, fact: dict, *, before: int = 15, after: int = 15) -> dict:
+    """提取事实的前后聊天上下文与原话证据。"""
+    import json
+    source_memory_id = fact.get("source_memory_id")
+    prov = fact.get("provenance")
+    if isinstance(prov, str):
+        try:
+            prov = json.loads(prov)
+        except Exception:
+            prov = {}
+    elif not isinstance(prov, dict):
+        prov = {}
+    source_quote = str(fact.get("source_quote") or prov.get("source_quote") or "").strip()
+
+    base_payload = {
+        "ok": True,
+        "fact": {
+            "id": fact.get("id"),
+            "subject": fact.get("subject"),
+            "predicate": fact.get("predicate"),
+            "object": fact.get("object"),
+            "source_quote": source_quote,
+            "revision": fact.get("revision", 1),
+        },
+        "scope": ScopeCodec.to_dict(scope),
+        "anchor": None,
+        "messages": [],
+        "source_quote": source_quote,
+        "used_fallback": True,
+    }
+    if not source_memory_id or cm is None or scope.session is None:
+        return base_payload
+
+    try:
+        conn = getattr(cm, "conn", cm)
+        columns_set = {str(row[1]) for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
+        required = {"id", "content", "timestamp", "bot_id", "session_id", "visibility"}
+        if not required <= columns_set:
+            return base_payload
+
+        group_col = "group_id" if "group_id" in columns_set else "session_id"
+        sender_col = "sender_name" if "sender_name" in columns_set else ("sender_id" if "sender_id" in columns_set else "NULL")
+        select_cols = f"id, {group_col}, sender_id, {sender_col}, content, timestamp"
+        scope_where = "bot_id=? AND session_id=? AND visibility=?"
+        scope_params = (scope.bot_id, scope.session.id, scope.visibility)
+
+        anchor = conn.execute(
+            f"SELECT {select_cols} FROM memories WHERE id=? AND {scope_where} LIMIT 1",
+            (int(source_memory_id), *scope_params),
+        ).fetchone()
+        if not anchor:
+            return base_payload
+
+        anchor_ts = float(anchor[5])
+        message_filter = " AND memory_type='message'" if "memory_type" in columns_set else ""
+        before_rows = conn.execute(
+            f"SELECT {select_cols} FROM memories WHERE {scope_where} AND timestamp < ?{message_filter} "
+            "ORDER BY timestamp DESC LIMIT ?",
+            (*scope_params, anchor_ts, before),
+        ).fetchall()
+        after_rows = conn.execute(
+            f"SELECT {select_cols} FROM memories WHERE {scope_where} AND timestamp > ?{message_filter} "
+            "ORDER BY timestamp ASC LIMIT ?",
+            (*scope_params, anchor_ts, after),
+        ).fetchall()
+
+        def row_to_msg(r, role: str) -> dict:
+            return {
+                "id": r[0],
+                "group_id": r[1],
+                "sender_id": r[2],
+                "sender_name": r[3] or r[2] or "未知发送者",
+                "content": r[4] or "",
+                "timestamp": r[5],
+                "role": role,
+            }
+
+        anchor_msg = row_to_msg(anchor, "anchor")
+        return {
+            **base_payload,
+            "anchor": anchor_msg,
+            "messages": [
+                *[row_to_msg(r, "before") for r in reversed(before_rows)],
+                anchor_msg,
+                *[row_to_msg(r, "after") for r in after_rows],
+            ],
+            "used_fallback": False,
+        }
+    except Exception:
+        return base_payload
+
+
+@facts_bp.route("/<int:fact_id>/evidence", methods=["GET"])
+@require_auth
+async def get_scoped_fact_evidence(fact_id: int):
+    """按当前 RuntimeScope 还原该事实关联记忆的聊天上下文气泡。"""
+    try:
+        scope = _group_scope_from_query()
+        cm = _connection()
+        if cm is None:
+            return jsonify(error_payload("service_unavailable", "Knowledge store is unavailable", retryable=True)), 503
+        item = _find_scoped_fact(cm, scope, fact_id)
+        before = max(0, min(50, int(request.args.get("before", 15))))
+        after = max(0, min(50, int(request.args.get("after", 15))))
+        return jsonify(_scoped_fact_evidence(cm, scope, item, before=before, after=after))
+    except ScopedKnowledgeNotFound:
+        return _scope_error("scoped_object_not_found", 404)
+    except (ScopedKnowledgeScopeError, ScopeValidationError) as exc:
+        return _scope_failure(exc)
+    except (TypeError, ValueError):
+        return _scope_error("invalid_pagination", 400)
+    except Exception as exc:
+        return jsonify(error_payload("service_unavailable", f"Evidence extraction failed: {exc}", retryable=True)), 503
+
+
 @facts_bp.route("/reviews", methods=["GET"])
 @require_auth
 async def list_reviews():

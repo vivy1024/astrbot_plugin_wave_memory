@@ -13,12 +13,14 @@ from astrbot.core.astr_agent_context import AstrAgentContext
 
 try:  # 兼容插件包导入和仓库测试直接导入
     from ..domain.scope import RuntimeScope
+    from ..services.impression_timeline import record_dimensional_unsettled_energy
     from .person_identity import display_name_for_user, resolve_user_id
-    from .scope_boundary import require_group_runtime_scope, scope_error_message
+    from .scope_boundary import require_group_runtime_scope, require_read_runtime_scope, resolve_source_memory_id, scope_error_message
 except ImportError:  # pragma: no cover - 由仓库测试直接导入 tools 使用
     from domain.scope import RuntimeScope
+    from services.impression_timeline import record_dimensional_unsettled_energy
     from tools.person_identity import display_name_for_user, resolve_user_id
-    from tools.scope_boundary import require_group_runtime_scope, scope_error_message
+    from tools.scope_boundary import require_group_runtime_scope, require_read_runtime_scope, resolve_source_memory_id, scope_error_message
 
 
 @dataclass
@@ -49,6 +51,7 @@ class WaveMemoryAffinityUpdateTool(FunctionTool[AstrAgentContext]):
                 "description": "关系事件类型",
             },
             "reason": {"type": "string", "description": "为什么这件事改变了关系，必须具体"},
+            "source_quote": {"type": "string", "description": "引起好感变动的具体原话内容，避免无据调整"},
         },
         "required": ["target_user", "dimension", "delta", "event_type", "reason"],
     })
@@ -75,15 +78,30 @@ class WaveMemoryAffinityUpdateTool(FunctionTool[AstrAgentContext]):
         dimension = kwargs.get("dimension") or ""
         event_type = kwargs.get("event_type") or ""
         reason = (kwargs.get("reason") or "").strip()
+        source_quote = (kwargs.get("source_quote") or "").strip()
         try:
-            delta = float(kwargs.get("delta", 0))
-        except Exception:
-            return "delta 必须是数字"
-
+            delta = float(kwargs.get("delta") if kwargs.get("delta") is not None else kwargs.get("affinity_delta") or 0.0)
+        except (TypeError, ValueError):
+            delta = 0.0
         user_id = self._resolve_user(target, runtime_scope)
         if not user_id:
             return f"没有在当前 Bot/群作用域找到目标用户「{target}」，无法更新好感度"
         target_scope = self._target_scope(runtime_scope, user_id)
+
+        # 自动溯源原话证据：优先使用显式 source_quote，未提供则自动从该群友当前群最新发言提取
+        if not source_quote:
+            mid = resolve_source_memory_id(self.db, runtime_scope, sender_id=user_id)
+            if mid:
+                conn = getattr(self.db, "conn", None) or getattr(self.db, "_conn", None)
+                if conn:
+                    row = conn.execute("SELECT content FROM memories WHERE id=?", (mid,)).fetchone()
+                    if row and row[0]:
+                        source_quote = str(row[0]).strip()[:100]
+
+        if source_quote and "原话" not in reason:
+            full_reason = f"{reason}（原话：“{source_quote}”）"
+        else:
+            full_reason = reason
 
         try:
             result = self.relationship_events.record_event(
@@ -91,10 +109,21 @@ class WaveMemoryAffinityUpdateTool(FunctionTool[AstrAgentContext]):
                 event_type=event_type,
                 dimension=dimension,
                 delta=delta,
-                reason=reason,
+                reason=full_reason,
             )
         except Exception as e:
             return f"关系事件记录失败：{e}"
+
+        # 累加该维度的跨群未决能量
+        record_dimensional_unsettled_energy(
+            self.db,
+            bot_id=runtime_scope.bot_id,
+            user_id=user_id,
+            group_id=runtime_scope.session.conversation_id,
+            dimension=dimension,
+            text=reason,
+            impact=abs(delta),
+        )
 
         display = self._display_name(user_id, runtime_scope) or target or user_id
         return (
@@ -113,21 +142,20 @@ class WaveMemoryAffinityUpdateTool(FunctionTool[AstrAgentContext]):
 
     @classmethod
     def _target_scope(cls, scope: RuntimeScope, user_id: str) -> RuntimeScope:
-        if scope.visibility != "group" or scope.session is None:
-            raise ValueError("relationship target requires a group RuntimeScope")
         user_id = str(user_id or "").strip()
         if not user_id:
             raise ValueError("relationship target user_id is required")
+        platform_id = scope.session.platform_id if scope.session else "qq"
         return RuntimeScope(
             bot_id=scope.bot_id,
-            visibility="group",
+            visibility=scope.visibility,
             session=scope.session,
-            subject_principal_id=f"{scope.session.platform_id}:user:{user_id}",
+            subject_principal_id=f"{platform_id}:user:{user_id}",
         )
 
     def _resolve_user(self, target: str, scope: RuntimeScope) -> str:
         """Resolve only within the active Bot + canonical group session."""
-        return resolve_user_id(self.db, target, scope)
+        return resolve_user_id(self.db, target, scope, current_group_only=True)
 
     def _display_name(self, user_id: str, scope: RuntimeScope) -> str:
         return display_name_for_user(self.db, user_id, scope)
@@ -163,7 +191,7 @@ class WaveMemoryAffinityTool(FunctionTool[AstrAgentContext]):
     async def call(self, ctx: ContextWrapper[AstrAgentContext], **kwargs) -> str:
         if not self.db or not getattr(self.db, "soul_repository", None):
             return "正式关系系统未初始化"
-        runtime_scope, error_code = require_group_runtime_scope(ctx, "affinity.read")
+        runtime_scope, error_code = require_read_runtime_scope(ctx, "affinity.read")
         if error_code:
             return scope_error_message("关系查询", error_code)
         assert runtime_scope is not None
@@ -180,7 +208,7 @@ class WaveMemoryAffinityTool(FunctionTool[AstrAgentContext]):
         target = str(kwargs.get("target_user") or kwargs.get("user_id") or "").strip()
         user_id = self._resolve_user(target, runtime_scope) if target else self._current_user(runtime_scope)
         if not user_id:
-            return f"没有在当前 Bot/群作用域找到目标用户「{target}」"
+            return f"未找到目标用户「{target}」"
         target_scope = WaveMemoryAffinityUpdateTool._target_scope(runtime_scope, user_id)
         try:
             state = self.db.soul_repository.get_state(target_scope, limit=25, offset=0)

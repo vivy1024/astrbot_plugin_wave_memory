@@ -23,11 +23,11 @@ except Exception:  # pragma: no cover
 try:
     from ..services.belief_engine import approved_source_fact_ids, first_memory_id_from_facts
     from ..services.identity_safety import is_identity_contamination
-    from .scope_boundary import require_group_runtime_scope, scope_error_message
+    from .scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
 except ImportError:  # pragma: no cover
     from services.belief_engine import approved_source_fact_ids, first_memory_id_from_facts
     from services.identity_safety import is_identity_contamination
-    from tools.scope_boundary import require_group_runtime_scope, scope_error_message
+    from tools.scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
 
 
 def _parse_fact_ids(value: Any) -> list[int]:
@@ -129,6 +129,8 @@ class WaveMemoryProposeBeliefTool(FunctionTool[AstrAgentContext]):
             return "信念提审被拒绝：source_fact_ids 必须是当前群内至少两条已批准事实，请先完成事实一审"
 
         memory_id = first_memory_id_from_facts(repo, runtime_scope, approved_ids)
+        if not memory_id:
+            memory_id = resolve_source_memory_id(self.db, runtime_scope, quote=content)
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
         belief_key = f"{belief_type}:{content_hash}"
         try:

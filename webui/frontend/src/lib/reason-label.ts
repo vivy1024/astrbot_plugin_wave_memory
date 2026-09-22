@@ -12,6 +12,7 @@ const REASON_LABELS: Record<string, string> = {
   subject_missing: '缺少目标对象，暂时无法操作',
   server_signed_object_refs_required: '需要先由服务端签发对象引用后再操作',
   object_ref_batch_required: '请逐条选择对象后再操作',
+  object_ref_stale: '数据版本已失效或已变更，正在自动刷新，请重试',
   alias_session_readonly: '这是同一群的旧平台残留，只能查看不能修改',
   legacy_mutation_disabled: '旧数据面已停用，不能在这里修改',
   legacy_caller_not_allowed: '旧调用路径已停用',

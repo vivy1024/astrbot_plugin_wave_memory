@@ -55,70 +55,81 @@ def _scope_subject_user_id(scope: RuntimeScope) -> str:
     return principal[len(prefix):] if principal.startswith(prefix) else ""
 
 
-def _user_present_in_scope(conn: Any, scope: RuntimeScope, user_id: str) -> bool:
-    """Accept a QQ only when it already appears in the current Bot/group Scope."""
-    assert scope.session is not None
-    group_id = scope.session.conversation_id
+def _user_present_in_scope(conn: Any, scope: RuntimeScope, user_id: str, *, current_group_only: bool = False) -> bool:
+    """Check if a QQ appears in the scope."""
+    if not scope.bot_id:
+        return True
     bot_id = scope.bot_id
-    session_id = scope.session.id
+    if scope.session and scope.visibility == "group":
+        group_id = scope.session.conversation_id
+        if _table_exists(conn, "user_profiles"):
+            row = conn.execute(
+                """SELECT 1 FROM user_profiles
+                   WHERE user_id=? AND group_id=? AND bot_id=? LIMIT 1""",
+                (user_id, group_id, bot_id),
+            ).fetchone()
+            if row:
+                return True
+        if _table_exists(conn, "memories"):
+            row = conn.execute(
+                """SELECT 1 FROM memories
+                   WHERE sender_id=? AND bot_id=? AND group_id=? LIMIT 1""",
+                (user_id, bot_id, group_id),
+            ).fetchone()
+            if row:
+                return True
+    if current_group_only and scope.session and scope.visibility == "group":
+        return False
 
+    # 回退到当前 Bot 全局检查
     if _table_exists(conn, "user_profiles"):
         row = conn.execute(
-            """SELECT 1 FROM user_profiles
-               WHERE user_id=? AND group_id=? AND bot_id=? LIMIT 1""",
-            (user_id, group_id, bot_id),
+            """SELECT 1 FROM user_profiles WHERE user_id=? AND bot_id=? LIMIT 1""",
+            (user_id, bot_id),
         ).fetchone()
         if row:
             return True
-
     if _table_exists(conn, "memories"):
         row = conn.execute(
-            """SELECT 1 FROM memories
-               WHERE sender_id=?
-                 AND bot_id=?
-                 AND group_id=?
-                 AND (
-                        session_id=?
-                     OR session_id LIKE ?
-                     OR COALESCE(session_id, '') = ''
-                 )
-               LIMIT 1""",
-            (user_id, bot_id, group_id, session_id, f"%:group:{group_id}"),
+            """SELECT 1 FROM memories WHERE sender_id=? AND bot_id=? LIMIT 1""",
+            (user_id, bot_id),
         ).fetchone()
         if row:
             return True
-    return False
+    return True
 
 
-def resolve_user_id(db: Any, target: str | None, scope: RuntimeScope) -> str:
-    """Resolve nickname/QQ to a current-Scope user_id (QQ).
+def resolve_user_id(db: Any, target: str | None, scope: RuntimeScope, *, current_group_only: bool = False) -> str:
+    """Resolve nickname/QQ to a user_id (QQ).
 
     Order:
     1. current speaker
-    2. direct QQ already present in this Bot/group
-    3. person_registry display_name / aliases, verified in this Scope
-    4. current-group memories.sender_name → sender_id
-    5. user_profiles.nickname inside this Bot/group
+    2. direct QQ number (validated against group when current_group_only=True)
+    3. current-group person_registry / memories / profiles
+    4. fallback to Bot-wide person_registry / memories / profiles (for private chats or cross-group mentions)
     """
     text = str(target or "").strip()
-    if not text or scope.session is None or db is None:
+    if not text or db is None:
         return ""
     conn = getattr(db, "conn", None)
     if conn is None:
-        return ""
+        return text if is_qq_id(text) else ""
 
-    current = _scope_subject_user_id(scope)
-    if text == current:
+    current = _scope_subject_user_id(scope) if scope.session else ""
+    if text == current and current:
         return current
 
-    group_id = scope.session.conversation_id
-    bot_id = scope.bot_id
-    session_id = scope.session.id
-
-    if is_qq_id(text) and _user_present_in_scope(conn, scope, text):
+    # Direct QQ numbers can be resolved directly on read/search paths
+    if is_qq_id(text):
+        if current_group_only and not _user_present_in_scope(conn, scope, text, current_group_only=True):
+            return ""
         return text
 
-    # person_registry authoritative names, but only if that QQ appears in this group.
+    group_id = scope.session.conversation_id if scope.session and scope.visibility == "group" else ""
+    bot_id = scope.bot_id
+    session_id = scope.session.id if scope.session else ""
+
+    # 1. person_registry authoritative names (first in current group, then Bot-wide)
     if _table_exists(conn, "person_registry"):
         rows = conn.execute(
             """SELECT qq_id, display_name, aliases, COALESCE(message_count, 0)
@@ -133,7 +144,9 @@ def resolve_user_id(db: Any, target: str | None, scope: RuntimeScope) -> str:
         needle = text.casefold()
         for qq_id, display_name, aliases_json, message_count in rows:
             user_id = str(qq_id or "").strip()
-            if not user_id or not _user_present_in_scope(conn, scope, user_id):
+            if not user_id:
+                continue
+            if current_group_only and not _user_present_in_scope(conn, scope, user_id, current_group_only=True):
                 continue
             display = str(display_name or "")
             score = 0
@@ -174,6 +187,8 @@ def resolve_user_id(db: Any, target: str | None, scope: RuntimeScope) -> str:
             user_id = str(qq_id or "").strip()
             if not user_id or not aliases_json:
                 continue
+            if current_group_only and not _user_present_in_scope(conn, scope, user_id, current_group_only=True):
+                continue
             try:
                 aliases = json.loads(aliases_json)
             except Exception:
@@ -193,81 +208,79 @@ def resolve_user_id(db: Any, target: str | None, scope: RuntimeScope) -> str:
                 if len(alias_text) >= 2 and (needle in alias_text.casefold() or alias_text.casefold() in needle):
                     matched = True
                     score = max(score, 180)
-            if matched and _user_present_in_scope(conn, scope, user_id):
+            if matched:
                 alias_hits.append((score * 1_000_000 + int(message_count or 0), user_id))
         if alias_hits:
             alias_hits.sort(reverse=True)
             return alias_hits[0][1]
 
-    # Current-group chat names are the strongest live signal when profiles are empty.
+    # 2. Memories sender_name (first current group, then Bot-wide)
     if _table_exists(conn, "memories"):
-        row = conn.execute(
-            """SELECT sender_id, COUNT(*) AS cnt
-                 FROM memories
-                WHERE bot_id=?
-                  AND group_id=?
-                  AND (
-                        session_id=?
-                     OR session_id LIKE ?
-                     OR COALESCE(session_id, '') = ''
-                  )
-                  AND sender_name = ?
-                  AND COALESCE(sender_id, '') != ''
-                GROUP BY sender_id
-                ORDER BY cnt DESC
-                LIMIT 1""",
-            (bot_id, group_id, session_id, f"%:group:{group_id}", text),
-        ).fetchone()
-        if row and row[0]:
-            return str(row[0])
+        if group_id:
+            row = conn.execute(
+                """SELECT sender_id, COUNT(*) AS cnt
+                     FROM memories
+                    WHERE bot_id=? AND group_id=? AND sender_name = ?
+                      AND COALESCE(sender_id, '') != ''
+                    GROUP BY sender_id ORDER BY cnt DESC LIMIT 1""",
+                (bot_id, group_id, text),
+            ).fetchone()
+            if row and row[0]:
+                return str(row[0])
 
-        row = conn.execute(
-            """SELECT sender_id, COUNT(*) AS cnt
-                 FROM memories
-                WHERE bot_id=?
-                  AND group_id=?
-                  AND (
-                        session_id=?
-                     OR session_id LIKE ?
-                     OR COALESCE(session_id, '') = ''
-                  )
-                  AND sender_name LIKE ?
-                  AND COALESCE(sender_id, '') != ''
-                GROUP BY sender_id
-                ORDER BY cnt DESC
-                LIMIT 1""",
-            (bot_id, group_id, session_id, f"%:group:{group_id}", f"%{text}%"),
-        ).fetchone()
-        if row and row[0]:
-            return str(row[0])
+        if not current_group_only:
+            row = conn.execute(
+                """SELECT sender_id, COUNT(*) AS cnt
+                     FROM memories
+                    WHERE bot_id=? AND sender_name = ?
+                      AND COALESCE(sender_id, '') != ''
+                    GROUP BY sender_id ORDER BY cnt DESC LIMIT 1""",
+                (bot_id, text),
+            ).fetchone()
+            if row and row[0]:
+                return str(row[0])
 
+            row = conn.execute(
+                """SELECT sender_id, COUNT(*) AS cnt
+                     FROM memories
+                    WHERE bot_id=? AND sender_name LIKE ?
+                      AND COALESCE(sender_id, '') != ''
+                    GROUP BY sender_id ORDER BY cnt DESC LIMIT 1""",
+                (bot_id, f"%{text}%"),
+            ).fetchone()
+            if row and row[0]:
+                return str(row[0])
+
+    # 3. user_profiles (first current group, then Bot-wide)
     if _table_exists(conn, "user_profiles"):
-        row = conn.execute(
-            """SELECT user_id FROM user_profiles
-               WHERE group_id=? AND bot_id=? AND user_id=?
-               LIMIT 1""",
-            (group_id, bot_id, text),
-        ).fetchone()
-        if row and row[0]:
-            return str(row[0])
+        if group_id:
+            row = conn.execute(
+                """SELECT user_id FROM user_profiles
+                   WHERE group_id=? AND bot_id=? AND nickname = ?
+                   ORDER BY COALESCE(last_seen, 0) DESC LIMIT 1""",
+                (group_id, bot_id, text),
+            ).fetchone()
+            if row and row[0]:
+                return str(row[0])
 
-        row = conn.execute(
-            """SELECT user_id FROM user_profiles
-               WHERE group_id=? AND bot_id=? AND nickname = ?
-               ORDER BY COALESCE(last_seen, 0) DESC LIMIT 1""",
-            (group_id, bot_id, text),
-        ).fetchone()
-        if row and row[0]:
-            return str(row[0])
+        if not current_group_only:
+            row = conn.execute(
+                """SELECT user_id FROM user_profiles
+                   WHERE bot_id=? AND nickname = ?
+                   ORDER BY COALESCE(last_seen, 0) DESC LIMIT 1""",
+                (bot_id, text),
+            ).fetchone()
+            if row and row[0]:
+                return str(row[0])
 
-        row = conn.execute(
-            """SELECT user_id FROM user_profiles
-               WHERE group_id=? AND bot_id=? AND nickname LIKE ?
-               ORDER BY COALESCE(last_seen, 0) DESC LIMIT 1""",
-            (group_id, bot_id, f"%{text}%"),
-        ).fetchone()
-        if row and row[0]:
-            return str(row[0])
+            row = conn.execute(
+                """SELECT user_id FROM user_profiles
+                   WHERE bot_id=? AND nickname LIKE ?
+                   ORDER BY COALESCE(last_seen, 0) DESC LIMIT 1""",
+                (bot_id, f"%{text}%"),
+            ).fetchone()
+            if row and row[0]:
+                return str(row[0])
 
     return ""
 

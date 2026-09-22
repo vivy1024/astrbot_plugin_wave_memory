@@ -19,21 +19,21 @@ except ImportError:  # 兼容插件顶级加载
 
 try:
     from .scope_boundary import (
-        extract_group_runtime_scope,
-        require_group_runtime_scope,
+        extract_memory_runtime_scope,
+        require_read_runtime_scope,
         scope_error_message,
     )
 except ImportError:  # 兼容插件顶级加载
     from tools.scope_boundary import (
-        extract_group_runtime_scope,
-        require_group_runtime_scope,
+        extract_memory_runtime_scope,
+        require_read_runtime_scope,
         scope_error_message,
     )
 
 
 def _extract_group_scope(ctx: ContextWrapper):
     """兼容旧私有导入；实际边界统一由 scope_boundary 实现。"""
-    return extract_group_runtime_scope(ctx)
+    return extract_memory_runtime_scope(ctx)
 
 
 @dataclass
@@ -81,7 +81,7 @@ class WaveMemoryDeepSearchTool(FunctionTool[AstrAgentContext]):
 
         if not self.db:
             return "记忆数据库未初始化。"
-        scope, error_code = require_group_runtime_scope(ctx, "memory.message.read")
+        scope, error_code = require_read_runtime_scope(ctx, "memory.message.read")
         if error_code:
             return scope_error_message("深度搜索", error_code)
         assert scope is not None
@@ -94,18 +94,27 @@ class WaveMemoryDeepSearchTool(FunctionTool[AstrAgentContext]):
                 return "记忆数据库连接异常。"
 
         try:
-            # Read path is group-scoped, not bot+session exact. Historical rows
-            # use display-name sessions (e.g. 羽书:group:…) while runtime emits
-            # platform sessions (qq:group:…). Matching session_id would 0-hit.
-            group_id = scope.session.conversation_id
-            active = """
+            # Read path is group-scoped or private session scoped.
+            if scope.visibility == "private":
+                scope_clause = """
+                    AND (
+                        COALESCE(m.session_id, '') = ?
+                        OR COALESCE(m.group_id, '') = ?
+                        OR COALESCE(m.sender_id, '') = ?
+                    )
+                """
+                scope_params = (scope.session.id, scope.session.conversation_id, scope.session.conversation_id)
+            else:
+                scope_clause = "AND COALESCE(m.group_id, '') = ?"
+                scope_params = (scope.session.conversation_id,)
+
+            active = f"""
                 COALESCE(m.quarantine, 0) = 0
                 AND COALESCE(m.memory_type, 'message') NOT IN
                     ('archived', 'evicted', 'deleted', 'noise')
                 AND COALESCE(m.source, '') != 'noise'
-                AND COALESCE(m.group_id, '') = ?
+                {scope_clause}
             """
-            scope_params = (group_id,)
             fts_query = " AND ".join(keywords.split())
             hits = self.db.conn.execute(f"""
                 SELECT m.id, rank
@@ -134,12 +143,12 @@ class WaveMemoryDeepSearchTool(FunctionTool[AstrAgentContext]):
             # 上下文窗口扩展
             fragments = []
             seen_ids = set()
-            window_active = """
+            window_active = f"""
                 COALESCE(quarantine, 0) = 0
                 AND COALESCE(memory_type, 'message') NOT IN
                     ('archived', 'evicted', 'deleted', 'noise')
                 AND COALESCE(source, '') != 'noise'
-                AND COALESCE(group_id, '') = ?
+                {scope_clause}
             """
 
             for hit in hits[:max_results]:
@@ -147,15 +156,15 @@ class WaveMemoryDeepSearchTool(FunctionTool[AstrAgentContext]):
                 if memory_id in seen_ids:
                     continue
 
-                # Expand window inside the same group only (not bot/session exact).
+                # Expand window inside the same session/group
                 window = self.db.conn.execute(f"""
-                    SELECT id, sender_name, content, timestamp
-                    FROM memories
+                    SELECT m.id, m.sender_name, m.content, m.timestamp
+                    FROM memories AS m
                     WHERE {window_active}
-                      AND id BETWEEN ? AND ?
-                    ORDER BY id ASC
+                      AND m.id BETWEEN ? AND ?
+                    ORDER BY m.id ASC
                 """, (
-                    group_id,
+                    *scope_params,
                     memory_id - window_size,
                     memory_id + window_size,
                 )).fetchall()
