@@ -26,10 +26,12 @@ except Exception:  # pragma: no cover
     class AstrAgentContext: pass
 
 try:
-    from .scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
+    from .scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
+    from ..domain.scope import scene_key
     from ..services.identity_safety import is_identity_contamination
 except ImportError:
-    from tools.scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
+    from tools.scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
+    from domain.scope import scene_key
     from services.identity_safety import is_identity_contamination
 
 
@@ -68,7 +70,7 @@ class WaveMemoryRecordDiaryEpisodeTool(FunctionTool[AstrAgentContext]):
     write_gateway: Any = field(default=None, repr=False)
 
     async def call(self, ctx: ContextWrapper[AstrAgentContext], **kwargs) -> str:
-        scope, error = require_group_runtime_scope(ctx, "diary.record")
+        scope, error = require_memory_runtime_scope(ctx, "diary.record")
         if error:
             return scope_error_message("经历日记记录", error)
         if self.db is None or scope is None or scope.session is None:
@@ -91,8 +93,8 @@ class WaveMemoryRecordDiaryEpisodeTool(FunctionTool[AstrAgentContext]):
         if conn is None:
             return "数据库连接不可用"
 
-        # 防刷冷却：同群同 Bot 在 6 小时内避免生成多篇碎片化日记
-        group_id = scope.session.conversation_id
+        # 防刷冷却：同场合同 Bot 在 6 小时内避免生成多篇碎片化日记（私聊为 private:<会话ID>）
+        group_id = scene_key(scope)
         recent_row = conn.execute(
             """SELECT id, created_at, trigger_text FROM experience_episodes
                WHERE bot_id=? AND group_id=? AND episode_type='daily_diary'
@@ -125,7 +127,7 @@ class WaveMemoryRecordDiaryEpisodeTool(FunctionTool[AstrAgentContext]):
                 sql_episode,
                 (
                     scope.bot_id,
-                    scope.session.conversation_id,
+                    group_id,
                     (scope.subject_principal_id or "").rsplit(":", 1)[-1] or None,
                     diary_title,
                     episode_summary,
@@ -143,7 +145,7 @@ class WaveMemoryRecordDiaryEpisodeTool(FunctionTool[AstrAgentContext]):
                     bot_id, session_id, visibility, subject_principal_id,
                     event_summary, event_type, emotional_weight, occurred_at,
                     revision, evidence, created_at
-                ) VALUES (?, ?, 'group', ?, ?, 'episode', ?, ?, 1, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, 'episode', ?, ?, 1, ?, ?)
             """
             evidence_json = json.dumps({
                 "episode_id": episode_id,
@@ -155,6 +157,7 @@ class WaveMemoryRecordDiaryEpisodeTool(FunctionTool[AstrAgentContext]):
                 (
                     scope.bot_id,
                     scope.session.id,
+                    scope.visibility,
                     scope.subject_principal_id,
                     f"【日记】{diary_title}：{episode_summary}",
                     weight,

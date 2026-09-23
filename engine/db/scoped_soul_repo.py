@@ -42,6 +42,7 @@ except ImportError:  # pragma: no cover
     from domain.scope import RuntimeScope
 
 from .connection import ConnectionManager
+from .person_identity_repo import linked_principals_via
 try:
     from ...services.soul_context import resolve_soul_context
 except ImportError:  # pragma: no cover - top-level repository imports
@@ -72,9 +73,25 @@ class ScopedSoulScopeError(ValueError):
 def _require_scope(scope: RuntimeScope | None) -> RuntimeScope:
     if not isinstance(scope, RuntimeScope):
         raise ScopedSoulScopeError("scope_required")
-    if scope.visibility != "group" or scope.session is None or scope.session.kind != "group":
+    if (
+        scope.visibility not in {"group", "private"}
+        or scope.session is None
+        or scope.session.kind != scope.visibility
+    ):
         raise ScopedSoulScopeError("soul_scope_visibility_unsupported")
     return scope
+
+
+def _self_visible_clause(scope: RuntimeScope) -> tuple[str, tuple[str, ...]]:
+    """Bot 自身状态（心情/关切/时间线）属于 Bot 本人，跨场合连续。
+
+    群里发生的内容处处可见；私聊里发生的具体内容只在同一私聊中可见。
+    """
+    assert scope.session is not None
+    return (
+        "bot_id=? AND (visibility='group' OR (visibility=? AND session_id=?))",
+        (scope.bot_id, scope.visibility, scope.session.id),
+    )
 
 
 def _scope_params(scope: RuntimeScope) -> tuple[str, str, str]:
@@ -784,17 +801,26 @@ class ScopedSoulRepository:
         因此这里把各群维度相加再推导综合值，模拟真人的整体态度（认识你在所有场合
         都算数，恩情与过节同时记得）。存储仍按 (bot_id, session_id, ...) 保留每群的
         原始增量，本方法是读取侧的统一口径，不写回、不改主键。
+        群聊与私聊的关系数值一起汇总：态度是对这个人的整体感受，不暴露任何具体内容。
         """
-        scope = _require_scope(scope)
+        if (
+            not isinstance(scope, RuntimeScope)
+            or scope.visibility not in {"group", "private"}
+            or scope.session is None
+        ):
+            raise ScopedSoulScopeError("soul_scope_visibility_unsupported")
         subject = _exact_string(subject_principal_id, "subject_principal_id")
         if self.cm is None:
             return {"available": False, "group_count": 0, "updated_at": None, "total_events": 0}
+        # 同一个人在不同平台的账号（管理员确认的关联）共享同一份态度。
+        subjects = linked_principals_via(self.cm, scope.bot_id, subject)
+        subject_marks = ",".join("?" for _ in subjects)
         rows = self.cm.execute_read(
-            """SELECT session_id, affinity, state, dimensions, updated_at
+            f"""SELECT session_id, affinity, state, dimensions, updated_at
                  FROM scoped_soul_relationships
-                WHERE bot_id=? AND visibility=? AND subject_principal_id=?
+                WHERE bot_id=? AND visibility IN ('group', 'private') AND subject_principal_id IN ({subject_marks})
                 ORDER BY updated_at DESC""",
-            (scope.bot_id, scope.visibility, subject),
+            (scope.bot_id, *subjects),
         ).fetchall()
         if not rows:
             return {"available": False, "group_count": 0, "updated_at": None, "total_events": 0}
@@ -840,9 +866,9 @@ class ScopedSoulRepository:
         merged_affinity = compute_affinity(total_dimensions) if total_dimensions else 0
 
         total_events = int(self.cm.execute_read(
-            """SELECT COUNT(*) FROM scoped_soul_relationship_events
-                WHERE bot_id=? AND visibility=? AND subject_principal_id=?""",
-            (scope.bot_id, scope.visibility, subject),
+            f"""SELECT COUNT(*) FROM scoped_soul_relationship_events
+                WHERE bot_id=? AND visibility IN ('group', 'private') AND subject_principal_id IN ({subject_marks})""",
+            (scope.bot_id, *subjects),
         ).fetchone()[0])
         return {
             "available": True,
@@ -854,6 +880,7 @@ class ScopedSoulRepository:
             "merged_dimensions": total_dimensions,
             "updated_at": max((row[4] or 0) for row in rows),
             "total_events": total_events,
+            "linked_principals": subjects,
         }
 
     def list_relationship_history(
@@ -1210,38 +1237,46 @@ class ScopedSoulRepository:
             concern_time_params.append(float(to_ts))
             timeline_time += " AND occurred_at<=?"
             timeline_time_params.append(float(to_ts))
+        # 心情只有一个：取 Bot 在任何场合最近一次观测到的心情；来自其他私聊时不带原因与证据。
         mood_row = self.cm.execute_read(
-            """SELECT valence, arousal, cause, policy_version, revision, evidence, observed_at
-               FROM scoped_soul_mood WHERE bot_id=? AND session_id=? AND visibility=?""",
-            params,
+            """SELECT valence, arousal, cause, policy_version, revision, evidence, observed_at,
+                      session_id, visibility
+               FROM scoped_soul_mood WHERE bot_id=?
+               ORDER BY observed_at DESC LIMIT 1""",
+            (scope.bot_id,),
         ).fetchone()
         if mood_row:
+            mood_is_visible = mood_row[8] == "group" or (
+                mood_row[8] == scope.visibility and mood_row[7] == scope.session.id
+            )
             mood = {
                 "value": mood_row[0],
                 "state": "known",
                 "components": {"valence": mood_row[0], "arousal": mood_row[1]},
-                "cause": mood_row[2],
+                "cause": mood_row[2] if mood_is_visible else "",
                 "policy_version": mood_row[3],
                 "revision": mood_row[4],
-                "evidence": json.loads(mood_row[5]),
+                "evidence": json.loads(mood_row[5]) if mood_is_visible else [],
                 "observed_at": mood_row[6],
+                "session_id": mood_row[7],
             }
         else:
             mood = {"value": None, "state": "unknown", "components": None,
                     "policy_version": None, "revision": None, "evidence": []}
 
+        self_where, self_params = _self_visible_clause(scope)
         concern_total = int(self.cm.execute_read(
-            f"SELECT COUNT(*) FROM scoped_soul_concerns WHERE bot_id=? AND session_id=? AND visibility=?{concern_time}",
-            (*params, *concern_time_params),
+            f"SELECT COUNT(*) FROM scoped_soul_concerns WHERE {self_where}{concern_time}",
+            (*self_params, *concern_time_params),
         ).fetchone()[0])
         concern_rows = self.cm.execute_read(
             f"""SELECT id, topic, intensity, origin_memory_id, origin_episode_id, concern_type,
                       status, urgency, last_progress_at, expected_resolution_at, resolution_note,
-                      created_at, last_triggered, revision, evidence
+                      created_at, last_triggered, revision, evidence, session_id
                FROM scoped_soul_concerns
-               WHERE bot_id=? AND session_id=? AND visibility=?{concern_time}
+               WHERE {self_where}{concern_time}
                ORDER BY intensity DESC, last_triggered DESC, id DESC LIMIT ? OFFSET ?""",
-            (*params, *concern_time_params, limit, offset),
+            (*self_params, *concern_time_params, limit, offset),
         ).fetchall()
         concerns = [{
             "id": row[0], "topic": row[1], "intensity": row[2],
@@ -1250,25 +1285,25 @@ class ScopedSoulRepository:
             "urgency": row[7] or 0, "last_progress_at": row[8],
             "expected_resolution_at": row[9], "resolution_note": row[10] or "",
             "created_at": row[11], "last_triggered": row[12],
-            "revision": row[13], "evidence": json.loads(row[14]),
+            "revision": row[13], "evidence": json.loads(row[14]), "session_id": row[15],
         } for row in concern_rows]
 
         timeline_total = int(self.cm.execute_read(
-            f"SELECT COUNT(*) FROM scoped_soul_timeline WHERE bot_id=? AND session_id=? AND visibility=?{timeline_subject}{timeline_time}",
-            (*params, *timeline_subject_params, *timeline_time_params),
+            f"SELECT COUNT(*) FROM scoped_soul_timeline WHERE {self_where}{timeline_subject}{timeline_time}",
+            (*self_params, *timeline_subject_params, *timeline_time_params),
         ).fetchone()[0])
         timeline_rows = self.cm.execute_read(
             f"""SELECT id, subject_principal_id, event_summary, event_type, emotional_weight,
-                      occurred_at, revision, evidence
+                      occurred_at, revision, evidence, session_id
                FROM scoped_soul_timeline
-               WHERE bot_id=? AND session_id=? AND visibility=?{timeline_subject}{timeline_time}
+               WHERE {self_where}{timeline_subject}{timeline_time}
                ORDER BY occurred_at DESC, id DESC LIMIT ? OFFSET ?""",
-            (*params, *timeline_subject_params, *timeline_time_params, limit, offset),
+            (*self_params, *timeline_subject_params, *timeline_time_params, limit, offset),
         ).fetchall()
         timeline = [{
             "id": row[0], "subject_principal_id": row[1], "event_summary": row[2],
             "event_type": row[3], "emotional_weight": row[4], "timestamp": row[5],
-            "revision": row[6], "evidence": json.loads(row[7]),
+            "revision": row[6], "evidence": json.loads(row[7]), "session_id": row[8],
         } for row in timeline_rows]
 
         relationship = {"affinity": None, "state": "unknown", "revision": None,

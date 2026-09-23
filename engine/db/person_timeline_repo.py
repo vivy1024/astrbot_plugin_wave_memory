@@ -95,16 +95,29 @@ class PersonTimelineRepo:
         event_id: int | None = None,
         query: str = "",
         kind: str = "",
+        viewer_scene: str | None = None,
+        user_ids: list[str] | None = None,
     ) -> tuple[list[str], list[Any]]:
         clauses = ["bot_id=?"]
         params: list[Any] = [str(bot_id or "")]
+        if viewer_scene is not None:
+            # 群里记下的印象处处可见；私聊里记下的只在同一私聊（private:<会话ID>）可见。
+            clauses.append("(COALESCE(group_id, '') NOT LIKE 'private:%' OR group_id=?)")
+            params.append(str(viewer_scene))
         if event_id is not None:
             clauses.append("id=?")
             params.append(int(event_id))
         user = str(user_id or "").strip()
-        if user:
+        linked = [str(item).strip() for item in (user_ids or []) if str(item or "").strip()]
+        if user and user not in linked:
+            linked.insert(0, user)
+        if len(linked) > 1:
+            # 同一个人在不同平台的账号（管理员确认的关联）共享印象时间线。
+            clauses.append(f"user_id IN ({','.join('?' for _ in linked)})")
+            params.extend(linked)
+        elif linked:
             clauses.append("user_id=?")
-            params.append(user)
+            params.append(linked[0])
         group = str(group_id or "").strip() if group_id is not None else ""
         if group:
             clauses.append("group_id=?")
@@ -162,6 +175,8 @@ class PersonTimelineRepo:
         offset: int = 0,
         strict: bool = False,
         connection=None,
+        viewer_scene: str | None = None,
+        user_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         clauses, params = self._event_filters(
             bot_id=bot_id,
@@ -170,6 +185,8 @@ class PersonTimelineRepo:
             event_id=event_id,
             query=query,
             kind=kind,
+            viewer_scene=viewer_scene,
+            user_ids=user_ids,
         )
         # limit=None 表示全量读取（印象时间线注入不做条数截断）。
         tail = ""

@@ -103,11 +103,11 @@ class FTS5ChannelScopeTest(unittest.TestCase):
         )
 
         self.assertEqual(result.status, "hit")
-        # g1: formal, other bot, unresolved, fully unscoped — all searchable.
-        self.assertEqual({item["id"] for item in result.items}, {1, 2, 5, 7})
+        # g1: formal, unresolved, fully unscoped — searchable; 同群另一 Bot 亲历的行不属于当前 Bot。
+        self.assertEqual({item["id"] for item in result.items}, {1, 5, 7})
         self.assertIn("豆子", result.text)
         self.assertIn("当前群 legacy", result.text)
-        self.assertIn("另一 Bot", result.text)
+        self.assertNotIn("另一 Bot", result.text)
         self.assertNotIn("跨会话", result.text)
         self.assertNotIn("跨群 legacy", result.text)
         self.assertNotIn("已隔离", result.text)
@@ -119,16 +119,16 @@ class FTS5ChannelScopeTest(unittest.TestCase):
         rows = FTS5Channel(db=self.db, cross_group_enabled=False)._scoped_like_search(
             words=["咖啡"], limit=20, scope=self._scope()
         )
-        self.assertEqual({row[0] for row in rows}, {1, 2, 5, 7})
+        self.assertEqual({row[0] for row in rows}, {1, 5, 7})
 
-    def test_cross_group_default_includes_other_bots_and_groups_but_not_unsafe_rows(self):
+    def test_cross_group_default_includes_other_groups_but_not_other_bots_or_unsafe_rows(self):
         from services.injection.channels.fts5 import FTS5Channel
 
         result = asyncio.run(FTS5Channel(db=self.db).build(self._ctx(self._scope())))
 
         self.assertEqual(result.status, "hit")
-        # Active rows across groups, including partial/unresolved; not quarantine/noise.
-        self.assertEqual({item["id"] for item in result.items}, {1, 2, 3, 5, 6, 7, 8})
+        # Active rows across groups, including partial/unresolved; not quarantine/noise/other bots.
+        self.assertEqual({item["id"] for item in result.items}, {1, 3, 5, 6, 7, 8})
         self.assertIn("[群 g1]", result.text)
         self.assertIn("[群 g2]", result.text)
         self.assertIn("当前群 legacy", result.text)
@@ -153,7 +153,7 @@ class FTS5ChannelScopeTest(unittest.TestCase):
         self.assertEqual(result.status, "hit")
         ids = {item["id"] for item in result.items}
         self.assertIn(1, ids)
-        self.assertIn(2, ids)  # same group, other bot — still searchable
+        self.assertNotIn(2, ids)  # same group, other bot — 不是当前 Bot 的记忆
         self.assertIn(3, ids)  # granted foreign
         self.assertNotIn(8, ids)  # cross-group legacy not via grant list
         granted = next(item for item in result.items if item["id"] == 3)
@@ -174,8 +174,8 @@ class FTS5ChannelScopeTest(unittest.TestCase):
                 shared_memory_grants_enabled=False,
             ).build(self._ctx(self._scope()))
         )
-        # Same-group open read (not bot/session exact).
-        self.assertEqual({item["id"] for item in result.items}, {1, 2, 5, 7})
+        # Same-group open read (not session exact), still limited to the current Bot.
+        self.assertEqual({item["id"] for item in result.items}, {1, 5, 7})
 
     def test_cross_group_like_fallback_reuses_the_predicate(self):
         from services.injection.channels.fts5 import FTS5Channel
@@ -183,7 +183,7 @@ class FTS5ChannelScopeTest(unittest.TestCase):
         rows = FTS5Channel(db=self.db)._scoped_like_search(
             words=["咖啡"], limit=20, scope=self._scope()
         )
-        self.assertEqual({row[0] for row in rows}, {1, 2, 3, 5, 6, 7, 8})
+        self.assertEqual({row[0] for row in rows}, {1, 3, 5, 6, 7, 8})
 
     def test_private_exact_predicate_excludes_other_bot_and_legacy(self):
         from services.injection.channels.fts5 import FTS5Channel
@@ -206,6 +206,28 @@ class FTS5ChannelScopeTest(unittest.TestCase):
             words=["咖啡"], limit=20, scope=self._private_scope()
         )
         self.assertEqual({row[0] for row in like_rows}, {10})
+
+    def test_private_subject_recalls_own_group_messages_only_when_cross_group_on(self):
+        from domain.scope import RuntimeScope, SessionRef
+        from services.injection.channels.fts5 import FTS5Channel
+
+        scope = RuntimeScope(
+            "yushu", "private", SessionRef("qq:private:u", "qq", "private", "u"),
+            subject_principal_id="qq:user:u",
+        )
+        self.db.add(13, "咖啡 别人在群里说的")
+        self.db.conn.execute("UPDATE memories SET sender_id='v' WHERE id=13")
+        self.db.conn.commit()
+
+        shared = FTS5Channel(db=self.db, cross_group_enabled=True)._scoped_like_search(
+            words=["咖啡"], limit=20, scope=scope
+        )
+        # 本私聊 + 当事人本人在 yushu 所在群的已解析发言；不含别人发言、其他 Bot、未解析与缺 session 的行。
+        self.assertEqual({row[0] for row in shared}, {1, 3, 10})
+        isolated = FTS5Channel(db=self.db, cross_group_enabled=False)._scoped_like_search(
+            words=["咖啡"], limit=20, scope=scope
+        )
+        self.assertEqual({row[0] for row in isolated}, {10})
 
     def test_missing_scope_is_empty_not_a_legacy_group_query(self):
         from services.injection.channels.fts5 import FTS5Channel

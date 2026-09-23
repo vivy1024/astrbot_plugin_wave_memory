@@ -67,7 +67,8 @@ class PersonaComposer:
         supplied bot/group values to recover a scope.  It accepts only the
         RuntimeScope parsed at ingress.
         """
-        if not isinstance(scope, RuntimeScope) or scope.visibility != "group" or scope.session is None:
+        # 人格属于 Bot 本人：群聊与私聊都构建。
+        if not isinstance(scope, RuntimeScope) or scope.visibility not in {"group", "private"} or scope.session is None:
             return self._empty_payload(source="scope_required")
         bot_id = scope.bot_id
         group_id = scope.session.conversation_id
@@ -166,7 +167,7 @@ class PersonaComposer:
     ) -> tuple[str, dict[str, Any]]:
         if not self.belief_engine:
             return "", {"source": "none", "belief_ids": []}
-        if not isinstance(scope, RuntimeScope) or scope.visibility != "group" or scope.session is None:
+        if not isinstance(scope, RuntimeScope) or scope.visibility not in {"group", "private"} or scope.session is None:
             return "", {"source": "scope_rejected", "belief_ids": []}
         try:
             if hasattr(self.belief_engine, "bot_id"):

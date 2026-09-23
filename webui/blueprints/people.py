@@ -996,6 +996,85 @@ async def clear_impression():
         return jsonify(error_payload(str(exc), str(exc))), 422
 
 
+def _identity_repo():
+    db = getattr(get_container(), "db", None)
+    return getattr(db, "person_identity", None) if db is not None else None
+
+
+def _identity_bot_id() -> str:
+    scope = _request_scope()
+    return str(getattr(scope, "bot_id", "") or "").strip()
+
+
+@people_bp.route("/people/identity-links", methods=["GET"])
+@require_auth
+async def list_identity_links():
+    """当前 Bot 认定的跨平台同一人（同一个人在 QQ、B 站等平台的账号）。"""
+    bot_id = _identity_bot_id()
+    if not bot_id:
+        return jsonify(error_payload("scope_required", "A resolved Bot scope is required")), 400
+    repo = _identity_repo()
+    if repo is None:
+        return jsonify(error_payload("service_unavailable", "Identity store is unavailable", retryable=True)), 503
+    return jsonify({"bot_id": bot_id, "items": repo.list_people(bot_id)})
+
+
+@people_bp.route("/people/identity-links", methods=["POST"])
+@require_auth
+async def link_identities():
+    """管理员确认：这些账号是同一个人。关联后对 ta 的态度与印象时间线合并。"""
+    bot_id = _identity_bot_id()
+    if not bot_id:
+        return jsonify(error_payload("scope_required", "A resolved Bot scope is required")), 400
+    repo = _identity_repo()
+    if repo is None:
+        return jsonify(error_payload("service_unavailable", "Identity store is unavailable", retryable=True)), 503
+    body = await request.get_json(silent=True) or {}
+    principals = body.get("principals")
+    if not isinstance(principals, list):
+        return jsonify(error_payload("principals_required", "principals must be a list")), 422
+    try:
+        person_key = repo.link(bot_id, [str(item) for item in principals], note=str(body.get("note") or ""), created_by="webui")
+    except ValueError as exc:
+        return jsonify(error_payload(getattr(exc, "code", "invalid_identity_link"), str(exc))), 422
+    person = next((item for item in repo.list_people(bot_id) if item["person_key"] == person_key), None)
+    return jsonify(mutation_response(
+        operation_kind="people.identity.link",
+        operation_id=f"{bot_id}:{person_key}",
+        status="succeeded",
+        revision=len((person or {}).get("principals") or []),
+        item=person,
+        include_item=True,
+    ))
+
+
+@people_bp.route("/people/identity-links/unlink", methods=["POST"])
+@require_auth
+async def unlink_identity():
+    bot_id = _identity_bot_id()
+    if not bot_id:
+        return jsonify(error_payload("scope_required", "A resolved Bot scope is required")), 400
+    repo = _identity_repo()
+    if repo is None:
+        return jsonify(error_payload("service_unavailable", "Identity store is unavailable", retryable=True)), 503
+    body = await request.get_json(silent=True) or {}
+    principal = str(body.get("principal") or "")
+    try:
+        removed = repo.unlink(bot_id, principal)
+    except ValueError as exc:
+        return jsonify(error_payload(getattr(exc, "code", "invalid_identity_link"), str(exc))), 422
+    if not removed:
+        return jsonify(error_payload("identity_link_not_found", "principal is not linked")), 404
+    return jsonify(mutation_response(
+        operation_kind="people.identity.unlink",
+        operation_id=f"{bot_id}:{principal}",
+        status="succeeded",
+        revision=0,
+        item={"principal": principal},
+        include_item=True,
+    ))
+
+
 _TIMELINE_KINDS = frozenset({"impression", "affinity", "person_fact"})
 _QUOTE_IN_TEXT_RE = re.compile(r"原话(?:证据)?[:：]\s*[“\"'「](.*?)[”\"'」]")
 # 时间窗口反查：事件发生前 300 秒至后 15 秒内该群友的最后一条发言

@@ -7,6 +7,7 @@ import math
 import sqlite3
 
 from ..connection import ConnectionManager
+from .scoped_soul_private_visibility import apply_scoped_soul_private_visibility
 
 
 _SCHEMA = """
@@ -205,6 +206,8 @@ def _apply(connection: sqlite3.Connection) -> None:
             "bot_id, session_id, visibility, event_type)"
         )
     _initialize_formal_values(connection)
+    # Soul 表同时接受群聊与私聊行（羽书在私聊里同样形成关系与状态）。
+    apply_scoped_soul_private_visibility(connection)
 
 
 def ensure_scoped_relationship_calibration_schema(cm: ConnectionManager) -> None:

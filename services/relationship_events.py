@@ -16,7 +16,7 @@ try:  # 兼容插件包导入和仓库测试直接导入
         VALID_EVENT_TYPES,
         is_noisy_relationship_event,
     )
-    from ..domain.scope import RuntimeScope, ScopeValidationError
+    from ..domain.scope import RuntimeScope, ScopeValidationError, scene_key
 except ImportError:  # pragma: no cover - 由仓库测试直接导入 services 使用
     from domain.relationship_policy import (
         DIMENSION_RANGES,
@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover - 由仓库测试直接导入 services �
         VALID_EVENT_TYPES,
         is_noisy_relationship_event,
     )
-    from domain.scope import RuntimeScope, ScopeValidationError
+    from domain.scope import RuntimeScope, ScopeValidationError, scene_key
 
 
 # 保留旧模块的公开常量名称，同时把正式写入、旧数据审计和工具统一到
@@ -50,10 +50,10 @@ def _project_group_subject_scope(scope: RuntimeScope) -> tuple[str, str, str]:
     """
     if not isinstance(scope, RuntimeScope):
         raise ScopeValidationError("scope_required", "relationship event requires RuntimeScope")
-    if scope.visibility != "group" or scope.session is None:
+    if scope.visibility not in {"group", "private"} or scope.session is None:
         raise ScopeValidationError(
             "scope_visibility_not_allowed",
-            "relationship events currently require a group RuntimeScope",
+            "relationship events require a group or private RuntimeScope",
         )
     principal = scope.subject_principal_id or ""
     prefix = f"{scope.session.platform_id}:user:"
@@ -62,7 +62,7 @@ def _project_group_subject_scope(scope: RuntimeScope) -> tuple[str, str, str]:
             "scope_subject_required",
             "relationship event target must be a scoped platform user",
         )
-    return scope.bot_id, scope.session.conversation_id, principal[len(prefix):]
+    return scope.bot_id, scene_key(scope), principal[len(prefix):]
 
 
 @dataclass

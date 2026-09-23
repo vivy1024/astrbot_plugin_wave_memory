@@ -120,9 +120,48 @@ class FactsChannel:
 
     name = "facts"
 
+    # 已知实体名缓存：{bot_id: (加载时间, 实体名列表)}
+    _ENTITY_TTL_SECONDS = 120.0
+
     def __init__(self, *, db: Any, facts_decay_rate: float = 0.005):
         self.db = db
         self.facts_decay_rate = facts_decay_rate
+        self._entity_cache: dict[str, tuple[float, list[str]]] = {}
+
+    def _known_entities(self, bot_id: str) -> list[str]:
+        """当前 Bot 事实里出现过的实体名（新到旧）。分词会把少见人名切碎，这里按原样子串匹配。"""
+        cached = self._entity_cache.get(bot_id)
+        now = time.monotonic()
+        if cached and now - cached[0] < self._ENTITY_TTL_SECONDS:
+            return cached[1]
+        names: list[str] = []
+        repo = getattr(self.db, "scoped_knowledge", None)
+        lister = getattr(repo, "list_bot_fact_subjects", None)
+        if callable(lister):
+            try:
+                names.extend(lister(bot_id) or [])
+            except Exception:
+                pass
+        conn = getattr(self.db, "conn", None)
+        if conn is not None and hasattr(conn, "execute"):
+            try:
+                rows = conn.execute(
+                    """SELECT DISTINCT f.subject FROM facts f JOIN memories m ON f.source_memory_id = m.id
+                        WHERE m.bot_id = ? LIMIT 5000""",
+                    (bot_id,),
+                ).fetchall()
+                names.extend(str(row[0]) for row in rows if row and row[0])
+            except Exception:
+                pass
+        unique = list(dict.fromkeys(name.strip() for name in names if len(name.strip()) >= 2))
+        self._entity_cache[bot_id] = (now, unique)
+        return unique
+
+    def _message_keywords(self, ctx: Any, scope: Any) -> list[str]:
+        """消息里按原样认出的已知实体名优先，其余为分词关键词。"""
+        message = str(getattr(ctx, "message", "") or "")
+        entities = [name for name in self._known_entities(str(scope.bot_id)) if name in message][:8]
+        return list(dict.fromkeys([*entities, *_keywords(message)]))
 
     async def build(self, ctx: Any) -> InjectionResult:
         started = time.perf_counter()
@@ -149,18 +188,30 @@ class FactsChannel:
         repo = getattr(self.db, "scoped_knowledge", None)
 
         try:
-            keywords = _keywords(str(getattr(ctx, "message", "") or ""))
+            keywords = self._message_keywords(ctx, scope)
             if not keywords:
                 return InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="no fact keywords")
             fetch_limit = max(max_items * 12, 100)
             rows: list[Mapping[str, Any]] = []
             if repo is not None:
+                # 当前场合（群或私聊）自己的事实；私聊事实只在该私聊出现。
                 try:
                     rows = list(repo.list_scoped_facts(scope, limit=fetch_limit) or [])
                 except Exception:
                     rows = []
+                # 事实不分群：同一 Bot 在其他群得知的事实同样成立，私聊里也认得；按关键词在库内过滤。
+                lister = getattr(repo, "list_bot_scoped_facts", None)
+                if callable(lister):
+                    try:
+                        seen_ids = {row.get("id") for row in rows}
+                        for row in lister(scope, keywords=keywords, limit=fetch_limit) or []:
+                            if row.get("id") not in seen_ids:
+                                seen_ids.add(row.get("id"))
+                                rows.append(row)
+                    except Exception:
+                        pass
             if len(rows) < fetch_limit:
-                rows.extend(self._legacy_fact_rows(ctx, scope, limit=fetch_limit - len(rows)))
+                rows.extend(self._legacy_fact_rows(ctx, scope, limit=fetch_limit - len(rows), keywords=keywords))
             now = float(getattr(ctx, "now", 0.0) or time.time())
             facts, filtered = self._query_primary(rows, keywords=keywords, now=now)
             facts, budget_filtered = self._select_with_budget(facts, max_items=max_items, token_budget=token_budget)
@@ -324,12 +375,15 @@ class FactsChannel:
         payload["filter_channel"] = fact.get("filter_channel", "facts")
         return payload
 
-    def _legacy_fact_rows(self, ctx: Any, scope: Any, *, limit: int) -> list[dict[str, Any]]:
+    def _legacy_fact_rows(
+        self, ctx: Any, scope: Any, *, limit: int, keywords: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """Read-only fallback to the existing facts table. Does not copy rows.
 
         事实不分群，但必须严格分 Bot：同一个人在同 Bot 哪个群被记录的事实都成立；
         但跨 Bot 绝对隔离，不能把 Bot B 记录的私密事实注入给 Bot A。
         通过 source_memory_id 联查 memories.bot_id 确立可信所有权，不限制 group_id。
+        私聊里得知的事实只在同一私聊中使用，绝不注入群聊。
         """
         if limit <= 0 or scope is None or not getattr(scope, "bot_id", None):
             return []
@@ -339,14 +393,25 @@ class FactsChannel:
         bot_id = str(scope.bot_id).strip()
         sender_id = str(getattr(ctx, "sender_id", "") or "").strip()
         sender_name = str(getattr(ctx, "sender_name", "") or "").strip()
-        keywords = _keywords(str(getattr(ctx, "message", "") or ""), limit=6)
+        if keywords is None:
+            keywords = _keywords(str(getattr(ctx, "message", "") or ""), limit=6)
+        keywords = list(keywords)[:10]
         now = float(getattr(ctx, "now", 0.0) or time.time())
+        public_source = "(COALESCE(m.visibility, '') != 'private' AND COALESCE(m.group_id, '') NOT LIKE 'private:%')"
+        session = getattr(scope, "session", None)
+        if getattr(scope, "visibility", "") == "private" and session is not None:
+            source_clause = f"({public_source} OR (m.visibility = 'private' AND m.session_id = ?))"
+            source_params: list[Any] = [session.id]
+        else:
+            source_clause = public_source
+            source_params = []
         clauses = [
             "m.bot_id = ?",
+            source_clause,
             "COALESCE(f.fact_type, '') != 'QUARANTINED_ROLEPLAY'",
             "(f.valid_until IS NULL OR f.valid_until > ?)",
         ]
-        params: list[Any] = [bot_id, now]
+        params: list[Any] = [bot_id, *source_params, now]
         match_clauses: list[str] = []
         if sender_id:
             match_clauses.append("f.subject = ?")

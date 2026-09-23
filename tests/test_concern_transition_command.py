@@ -264,17 +264,46 @@ def test_concerns_are_scope_isolated(tmp_path):
     _run(tmp_path, body)
 
 
-def test_private_scope_is_rejected_for_group_concerns(tmp_path):
+def _private(user: str = "u1") -> RuntimeScope:
+    return RuntimeScope(
+        bot_id="bot-a",
+        visibility="private",
+        session=SessionRef(f"qq:private:{user}", "qq", "private", user),
+        subject_principal_id=f"qq:user:{user}",
+    )
+
+
+def test_concerns_belong_to_the_bot_with_private_content_kept_private(tmp_path):
+    """关切属于 Bot 本人：群里惦记的事私聊里也能推进；私聊里的挂念不外流到群或其他私聊。"""
+
     async def body(gateway):
-        private = RuntimeScope(
-            bot_id="bot-a",
-            visibility="private",
-            session=SessionRef("qq:private:u1", "qq", "private", "u1"),
-            subject_principal_id="qq:user:u1",
+        group_created = await gateway.transition_concern(
+            scope=_scope(), action="note", topic="考研结果还没公布", idempotency_hint="g-1"
         )
-        with pytest.raises(ValueError):
+        private_created = await gateway.transition_concern(
+            scope=_private(), action="note", topic="他说最近睡不好", idempotency_hint="p-1"
+        )
+        assert private_created["action"] == "created"
+
+        # 在私聊里再次提起群里的关切：强化同一条，而不是在私聊里另建一条。
+        reinforced = await gateway.transition_concern(
+            scope=_private(), action="note", topic="考研结果还没公布", idempotency_hint="p-2"
+        )
+        assert reinforced["action"] == "reinforced"
+        assert reinforced["concern_id"] == group_created["concern_id"]
+
+        # 群里与其他私聊都看不到这条私聊关切，按 topic 会新建各自的一条。
+        in_group = await gateway.transition_concern(
+            scope=_scope(group="g2"), action="note", topic="他说最近睡不好", idempotency_hint="g-2"
+        )
+        assert in_group["action"] == "created"
+        assert in_group["concern_id"] != private_created["concern_id"]
+        with pytest.raises(CommandRejectedError):
             await gateway.transition_concern(
-                scope=private, action="note", topic="不应写入", idempotency_hint="t1"
+                scope=_private("u2"), action="resolve", concern_id=private_created["concern_id"],
+                idempotency_hint="p-3",
             )
+        rows = await _concerns(gateway)
+        assert len(rows) == 3
 
     _run(tmp_path, body)

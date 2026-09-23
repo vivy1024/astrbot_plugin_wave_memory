@@ -21,7 +21,7 @@ except Exception:  # pragma: no cover
     class AstrAgentContext: pass
 
 try:
-    from ..domain.scope import RuntimeScope
+    from ..domain.scope import RuntimeScope, scene_key, subject_local_id
     from ..services.impression_timeline import (
         UNSETTLED_ENERGY_FULL,
         affinity_shift_range,
@@ -37,9 +37,9 @@ try:
         synthesize_milestone_phrase,
     )
     from .person_identity import display_name_for_user, resolve_user_id
-    from .scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
+    from .scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
 except ImportError:  # pragma: no cover
-    from domain.scope import RuntimeScope
+    from domain.scope import RuntimeScope, scene_key, subject_local_id
     from services.impression_timeline import (
         UNSETTLED_ENERGY_FULL,
         affinity_shift_range,
@@ -55,7 +55,7 @@ except ImportError:  # pragma: no cover
         synthesize_milestone_phrase,
     )
     from tools.person_identity import display_name_for_user, resolve_user_id
-    from tools.scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
+    from tools.scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
 
 
 @dataclass
@@ -125,7 +125,7 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
             except Exception:
                 return "数据库连接已断开"
 
-        runtime_scope, error_code = require_group_runtime_scope(ctx, "social_impression.record")
+        runtime_scope, error_code = require_memory_runtime_scope(ctx, "social_impression.record")
         if error_code:
             return scope_error_message("印象记录", error_code)
         assert runtime_scope is not None
@@ -140,6 +140,10 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
         user_id = resolve_user_id(self.db, target, runtime_scope)
         if not user_id:
             return f"没有在当前群找到目标用户「{target}」，无法记录印象"
+        is_private = runtime_scope.visibility == "private"
+        if is_private and user_id != subject_local_id(runtime_scope):
+            # 私聊里听到的关于第三人的话无法当面核实，只记录对当前私聊对象本人的印象。
+            return "私聊里只能记录对当前私聊对象本人的印象"
 
         # 若未提供 source_quote，自动回溯该群友最近一条记忆原话
         if not source_quote:
@@ -182,7 +186,7 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
 
         target_scope = RuntimeScope(
             bot_id=runtime_scope.bot_id,
-            visibility="group",
+            visibility=runtime_scope.visibility,
             session=runtime_scope.session,
             subject_principal_id=f"{runtime_scope.session.platform_id}:user:{user_id}",
         )
@@ -195,7 +199,8 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
         after_aff = 0
         formal_type = "direct_reply"
 
-        group_id = runtime_scope.session.conversation_id
+        # 按场合存储的键：私聊为 private:<会话ID>，其具体内容只在该私聊可见。
+        group_id = scene_key(runtime_scope)
         # 跨群主体性与当前群兼容读取未决能量
         unsettled = load_unsettled_state(
             self.db,

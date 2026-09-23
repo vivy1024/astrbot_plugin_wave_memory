@@ -415,7 +415,8 @@ COMMAND_SCOPE_MATRIX: Mapping[str, ScopeRequirement] = MappingProxyType({
     "jargon.global.manage": ScopeRequirement(("runtime",), ("bot_private",)),
     "consolidation.run": ScopeRequirement(("runtime",), ("group",)),
     "fact.read": ScopeRequirement(("runtime",), ("group", "private")),
-    "fact.write": ScopeRequirement(("runtime",), ("group",)),
+    # 私聊里得知的事实按原会话保存，只在该私聊可见。
+    "fact.write": ScopeRequirement(("runtime",), ("group", "private")),
     # Agent tools must declare their boundaries explicitly; unknown commands fail closed.
     "affinity.read": ScopeRequirement(("runtime",), ("group", "private")),
     "tag.graph.read": ScopeRequirement(("runtime",), ("group", "private")),
@@ -427,20 +428,23 @@ COMMAND_SCOPE_MATRIX: Mapping[str, ScopeRequirement] = MappingProxyType({
     "config.suggest": ScopeRequirement(("runtime",), ("group",)),
     "catalog.read": ScopeRequirement(("catalog",)),
     "belief.extract": ScopeRequirement(("runtime",), ("group",)),
-    "belief.inject": ScopeRequirement(("runtime",), ("group",)),
-    "persona.inject": ScopeRequirement(("runtime",), ("group",)),
-    # 可选风格人格包：与 persona.inject 同为群会话内的注入，默认关闭由通道配置决定。
-    "holyman_persona.inject": ScopeRequirement(("runtime",), ("group",)),
+    # 人格与信念属于 Bot 本人，群聊与私聊都注入。
+    "belief.inject": ScopeRequirement(("runtime",), ("group", "private")),
+    "persona.inject": ScopeRequirement(("runtime",), ("group", "private")),
+    # 可选风格人格包：与 persona.inject 同为会话内的注入，默认关闭由通道配置决定。
+    "holyman_persona.inject": ScopeRequirement(("runtime",), ("group", "private")),
     "affinity.update": ScopeRequirement(("runtime",), ("group",), subject_required=True),
-    "social_impression.record": ScopeRequirement(("runtime",), ("group",), subject_required=True),
-    "social_anchor.note": ScopeRequirement(("runtime",), ("group",), subject_required=True),
+    # 私聊里同样会形成对当前私聊对象的印象与好感；具体内容只在该私聊可见。
+    "social_impression.record": ScopeRequirement(("runtime",), ("group", "private"), subject_required=True),
+    "social_anchor.note": ScopeRequirement(("runtime",), ("group", "private"), subject_required=True),
     "cultural_moment.mark": ScopeRequirement(("runtime",), ("group",)),
-    "fact_proposal.propose": ScopeRequirement(("runtime",), ("group",)),
+    "fact_proposal.propose": ScopeRequirement(("runtime",), ("group", "private")),
     "belief_proposal.propose": ScopeRequirement(("runtime",), ("group",)),
-    "episode.note": ScopeRequirement(("runtime",), ("group",)),
-    "diary.record": ScopeRequirement(("runtime",), ("group",)),
-    "concern.note": ScopeRequirement(("runtime",), ("group",)),
-    "relationship.record": ScopeRequirement(("runtime",), ("group",), subject_required=True),
+    # 私聊经历、日记与关切属于 Bot 本人，按场合保存，私聊内容只在该私聊可见。
+    "episode.note": ScopeRequirement(("runtime",), ("group", "private")),
+    "diary.record": ScopeRequirement(("runtime",), ("group", "private")),
+    "concern.note": ScopeRequirement(("runtime",), ("group", "private")),
+    "relationship.record": ScopeRequirement(("runtime",), ("group", "private"), subject_required=True),
     "self_reflect.candidate": ScopeRequirement(("runtime",), ("group",)),
     "livingmemory.compat.write": ScopeRequirement(("runtime",), ("group",), subject_required=True),
 
@@ -535,6 +539,38 @@ class ScopeValidator:
         if payload.get("target") != asdict(runtime):
             return ScopeValidationResult(False, "derivation_target_mismatch", _DERIVATION_POLICY_VERSION)
         return ScopeValidationResult(True, policy_version=_DERIVATION_POLICY_VERSION)
+
+
+def subject_local_id(scope: RuntimeScope) -> str:
+    """返回 subject principal 在当前平台下的本地用户 ID；不属于当前平台时返回空串。"""
+    if not isinstance(scope, RuntimeScope) or scope.session is None:
+        return ""
+    principal = str(scope.subject_principal_id or "")
+    prefix = f"{scope.session.platform_id}:user:"
+    if not principal.startswith(prefix):
+        return ""
+    return principal[len(prefix):]
+
+
+PRIVATE_SCENE_PREFIX = "private:"
+
+
+def scene_key(scope: RuntimeScope) -> str:
+    """按场合存储时使用的 legacy group_id 键：群为群号，私聊为 ``private:<会话ID>``。
+
+    私聊会话 ID（对方账号）与群号同属数字空间，直接混用会撞号，所以私聊一律加前缀。
+    """
+    if not isinstance(scope, RuntimeScope) or scope.session is None:
+        return ""
+    if scope.visibility == "private":
+        return f"{PRIVATE_SCENE_PREFIX}{scope.session.conversation_id}"
+    return scope.session.conversation_id
+
+
+def is_visible_scene(stored_scene: Any, viewer_scene: str) -> bool:
+    """群里的内容处处可见；私聊里的内容只在同一私聊中可见。"""
+    stored = str(stored_scene or "")
+    return not stored.startswith(PRIVATE_SCENE_PREFIX) or stored == viewer_scene
 
 
 def scope_to_dict(scope: ScopeRef) -> dict[str, Any]:
@@ -651,5 +687,9 @@ __all__ = [
     "UnresolvedScopeRef",
     "scope_from_dict",
     "scope_from_value",
+    "subject_local_id",
+    "scene_key",
+    "is_visible_scene",
+    "PRIVATE_SCENE_PREFIX",
 ]
 

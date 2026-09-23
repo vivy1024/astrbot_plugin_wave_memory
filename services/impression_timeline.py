@@ -252,7 +252,10 @@ def load_timeline_events(
     offset: int = 0,
     connection=None,
     strict: bool = False,
+    viewer_scene: str | None = None,
+    user_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
+    """``viewer_scene`` 为当前场合键时，只返回该场合可见的事件（其他私聊的内容不外流）。"""
     repo = getattr(db, "person_timeline", None)
     if repo is None or not hasattr(repo, "list_events"):
         if strict:
@@ -268,6 +271,8 @@ def load_timeline_events(
         offset=offset,
         connection=connection,
         **({"strict": True} if strict else {}),
+        **({"viewer_scene": viewer_scene} if viewer_scene is not None else {}),
+        **({"user_ids": list(user_ids)} if user_ids else {}),
     )
 
 
@@ -1019,7 +1024,10 @@ def load_timeline_cue(
     message: str,
     limit: int = 20,
 ) -> dict[str, Any] | None:
-    """规则门热路径：读该人最近时间线，匹配本轮消息。失败则视为未命中。"""
+    """规则门热路径：读该人最近时间线，匹配本轮消息。失败则视为未命中。
+
+    对一个人的印象不分群：读该人在当前场合可见的全部时间线（其他私聊的内容除外）。
+    """
     bot_id = str(bot_id or "").strip()
     user_id = str(user_id or "").strip()
     group_id = str(group_id or "").strip()
@@ -1027,7 +1035,7 @@ def load_timeline_cue(
         return None
     try:
         events = load_timeline_events(
-            db, bot_id=bot_id, user_id=user_id, group_id=group_id, limit=limit
+            db, bot_id=bot_id, user_id=user_id, limit=limit, viewer_scene=group_id,
         )
     except Exception:
         return None

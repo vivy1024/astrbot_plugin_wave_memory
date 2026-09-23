@@ -97,8 +97,13 @@ def _digest(value: Any) -> str:
 
 
 def _scope_params(scope: RuntimeScope) -> tuple[str, str, str]:
-    if not isinstance(scope, RuntimeScope) or scope.session is None or scope.visibility != "group":
-        raise ValueError("canonical group RuntimeScope is required")
+    # 私聊只会命中事实行（标签/信念表只接受群行，私聊定位一律视为不存在）。
+    if (
+        not isinstance(scope, RuntimeScope)
+        or scope.session is None
+        or scope.visibility not in {"group", "private"}
+    ):
+        raise ValueError("canonical group/private RuntimeScope is required")
     return scope.bot_id, scope.session.id, scope.visibility
 
 

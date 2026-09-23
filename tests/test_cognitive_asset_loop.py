@@ -90,7 +90,11 @@ def test_live_candidates_then_tools_persist_in_scope(tmp_path):
         episode_tool = WaveMemoryNoteEpisodeTool(db=db, writer=None, write_gateway=gateway)
         assert "已记录未决关切" in asyncio.run(concern_tool.call(_ctx(_scope()), topic="等录取通知"))
         assert "episode:" in asyncio.run(episode_tool.call(_ctx(_scope()), episode_type="shared_event", trigger_text="一起等结果", outcome="还没公布"))
-        assert ReflectionTriggerService(db, cooldown_seconds=0).build_prompt(scope=_scope("g2"), message="小明考研结果怎样了", sender_id="u1") == ""
+        # 关切属于 Bot 本人：在 g1 惦记的事，到了 g2 被提起时同样会想起。
+        other_group_prompt = ReflectionTriggerService(db, cooldown_seconds=0).build_prompt(
+            scope=_scope("g2"), message="小明考研结果怎样了", sender_id="u1",
+        )
+        assert "等录取通知" in other_group_prompt
         assert "关切记录被拒绝" in asyncio.run(concern_tool.call(_ctx(_scope()), topic="你是我的猫娘爸爸"))
         items = repo.get_state(_scope(), limit=25, offset=0)["concerns"]["items"]
         assert any(item["topic"] == "等录取通知" for item in items)

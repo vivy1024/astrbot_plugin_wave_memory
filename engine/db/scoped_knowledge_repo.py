@@ -60,6 +60,18 @@ def _require_group_scope(scope: RuntimeScope | None) -> RuntimeScope:
     return scope
 
 
+def _require_fact_scope(scope: RuntimeScope | None) -> RuntimeScope:
+    """事实可在群聊或私聊中得知：私聊事实按原会话保存，只在该私聊可见。"""
+    if not isinstance(scope, RuntimeScope):
+        raise ScopedKnowledgeScopeError("scope_required", "a canonical RuntimeScope is required for scoped facts")
+    if scope.visibility not in {"group", "private"} or scope.session is None or scope.session.kind != scope.visibility:
+        raise ScopedKnowledgeScopeError(
+            "derived_scope_visibility_unsupported",
+            "scoped facts require a group or private RuntimeScope",
+        )
+    return scope
+
+
 def _scope_params(scope: RuntimeScope) -> tuple[str, str, str]:
     # RuntimeScope 已在构造时验证 canonical SessionRef；不要从 group_id 或 caller
     # 提供的裸字符串重建 scope。subject 是消息主体，不是 group 派生对象的归属维度。
@@ -275,7 +287,7 @@ class ScopedKnowledgeRepo:
         valid_from: float | None = None,
         valid_until: float | None = None,
     ) -> int:
-        scope = _require_group_scope(scope)
+        scope = _require_fact_scope(scope)
         subject, predicate, object = (
             _require_exact_string(subject, "subject"),
             _require_exact_string(predicate, "predicate"),
@@ -311,7 +323,7 @@ class ScopedKnowledgeRepo:
         )
 
     def list_scoped_facts(self, scope: RuntimeScope, *, subject: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-        scope = _require_group_scope(scope)
+        scope = _require_fact_scope(scope)
         if subject is not None:
             subject = _require_exact_string(subject, "subject")
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
@@ -340,6 +352,66 @@ class ScopedKnowledgeRepo:
             }
             for row in rows
         ]
+
+    def list_bot_scoped_facts(
+        self,
+        scope: RuntimeScope,
+        *,
+        keywords: Sequence[str] = (),
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """只读：当前 Bot 在所有群记下的事实。
+
+        事实属于 Bot 对世界与人的认识，在哪个群得知都成立；群聊与私聊都可读取，
+        但严格按 ``bot_id`` 隔离。``scoped_facts`` 只存群资源，不含私聊内容。
+        """
+        if (
+            not isinstance(scope, RuntimeScope)
+            or scope.visibility not in {"group", "private"}
+            or scope.session is None
+        ):
+            raise ScopedKnowledgeScopeError("scope_required", "a group or private RuntimeScope is required")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        conditions = ["bot_id=?", "visibility='group'", "status NOT IN ('deleted', 'superseded')"]
+        params: list[Any] = [scope.bot_id]
+        matches: list[str] = []
+        for keyword in keywords:
+            token = str(keyword or "").strip()
+            if not token:
+                continue
+            like = "%" + token.replace("/", "//").replace("%", "/%").replace("_", "/_") + "%"
+            matches.append("(subject LIKE ? ESCAPE '/' OR object LIKE ? ESCAPE '/')")
+            params.extend((like, like))
+        if matches:
+            conditions.append(f"({' OR '.join(matches)})")
+        rows = self.cm.execute_read(
+            f"""SELECT id, subject, predicate, object, confidence, status, source_memory_id,
+                       provenance, valid_from, valid_until, created_at, updated_at, revision, session_id
+                  FROM scoped_facts WHERE {' AND '.join(conditions)}
+                 ORDER BY updated_at DESC, id DESC LIMIT ?""",
+            [*params, limit],
+        ).fetchall()
+        return [
+            {
+                "id": row[0], "subject": row[1], "predicate": row[2], "object": row[3],
+                "confidence": row[4], "status": row[5], "source_memory_id": row[6],
+                "provenance": json.loads(row[7]), "valid_from": row[8], "valid_until": row[9],
+                "created_at": row[10], "updated_at": row[11], "revision": int(row[12]),
+                "session_id": row[13],
+            }
+            for row in rows
+        ]
+
+    def list_bot_fact_subjects(self, bot_id: str, *, limit: int = 5000) -> list[str]:
+        """只读：当前 Bot 已知事实涉及的实体名，用于在消息里按原样认出人名。"""
+        rows = self.cm.execute_read(
+            """SELECT subject, MAX(updated_at) AS seen FROM scoped_facts
+                WHERE bot_id=? AND status NOT IN ('deleted', 'superseded', 'rejected')
+                GROUP BY subject ORDER BY seen DESC LIMIT ?""",
+            (str(bot_id or ""), int(limit)),
+        ).fetchall()
+        return [str(row[0]) for row in rows if row and row[0]]
 
     def _table_columns(self, table: str) -> set[str]:
         try:
@@ -403,11 +475,12 @@ class ScopedKnowledgeRepo:
         if allow_cross_group_recall:
             # Only the QueryEngine's explicit recall policy may request this
             # broad mapping. A Catalog id is never used as a legacy tag id.
+            # 跨群只扩展到同一 Bot 的其他群；其他 Bot 的标签不属于当前 Bot 的记忆。
             where = (
-                "COALESCE(bot_id, '') != '' AND COALESCE(session_id, '') != '' "
+                "bot_id=? AND COALESCE(session_id, '') != '' "
                 "AND visibility='group'"
             )
-            params: list[Any] = list(ids)
+            params: list[Any] = [scope.bot_id, *ids]
         else:
             where = "bot_id=? AND session_id=? AND visibility=?"
             params = [*_scope_params(scope), *ids]
@@ -723,7 +796,7 @@ class ScopedKnowledgeRepo:
             if allow_cross_group_recall:
                 if (
                     str(tag.get("visibility") or "") != "group"
-                    or not str(tag.get("bot_id") or "").strip()
+                    or str(tag.get("bot_id") or "").strip() != scope.bot_id
                     or not str(tag.get("session_id") or "").strip()
                 ):
                     continue
@@ -762,12 +835,14 @@ class ScopedKnowledgeRepo:
         # Read path: do not require formal bot/session/resolution_state.
         # Prefer current group when not expanding cross-group; still allow rows
         # with partial or empty Scope fields as long as they are active.
+        # 记忆主体是 Bot 本人：只取当前 Bot 的行或无法归属的旧版行，私聊行永不进入群聊冷召回。
+        owner_where = "(COALESCE(bot_id, '') = ? OR COALESCE(bot_id, '') = '') AND COALESCE(visibility, '') != 'private'"
         if allow_cross_group_recall:
-            scope_where = "1=1"
-            scope_params: list[Any] = []
+            scope_where = owner_where
+            scope_params: list[Any] = [scope.bot_id]
         else:
-            scope_where = "COALESCE(group_id, '') = ?"
-            scope_params = [scope.session.conversation_id]
+            scope_where = f"{owner_where} AND COALESCE(group_id, '') = ?"
+            scope_params = [scope.bot_id, scope.session.conversation_id]
         origin_expression = (
             "COALESCE(origin_fingerprint, '')" if "origin_fingerprint" in memory_columns else "''"
         )
@@ -838,7 +913,7 @@ class ScopedKnowledgeRepo:
         valid_from: float | None = None, valid_until: float | None = None,
         idempotency_key: str | None = None, observed_at: float | None = None,
     ) -> int:
-        scope = _require_group_scope(scope)
+        scope = _require_fact_scope(scope)
         subject, predicate, object = tuple(_require_exact_string(v, n) for v, n in ((subject, "subject"), (predicate, "predicate"), (object, "object")))
         if review_status not in {"pending", "approved", "rejected"}:
             raise ValueError("invalid review_status")
@@ -868,13 +943,13 @@ class ScopedKnowledgeRepo:
         return int(first_history_id or candidate_fact_id)
 
     def list_scoped_fact_history(self, scope: RuntimeScope, *, subject: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-        scope = _require_group_scope(scope); params: list[Any] = list(_scope_params(scope)); where = "bot_id=? AND session_id=? AND visibility=?"
+        scope = _require_fact_scope(scope); params: list[Any] = list(_scope_params(scope)); where = "bot_id=? AND session_id=? AND visibility=?"
         if subject is not None: where += " AND subject=?"; params.append(_require_exact_string(subject,"subject"))
         rows = self.cm.execute_read(f"SELECT id,subject,predicate,object,relation,review_status,confidence,candidate_snapshot,existing_snapshot,evidence,source_tags,query_trace_id,source_memory_id,provenance,valid_from,valid_until,supersedes_id,idempotency_key,observed_at,reviewed_at FROM scoped_fact_history WHERE {where} ORDER BY observed_at DESC,id DESC LIMIT ?", [*params,limit]).fetchall()
         return [{"id":r[0],"subject":r[1],"predicate":r[2],"object":r[3],"relation":r[4],"review_status":r[5],"confidence":r[6],"candidate_snapshot":json.loads(r[7]),"existing_snapshot":json.loads(r[8]),"evidence":json.loads(r[9]),"source_tags":json.loads(r[10]),"query_trace_id":r[11],"source_memory_id":r[12],"provenance":json.loads(r[13]),"valid_from":r[14],"valid_until":r[15],"supersedes_id":r[16],"idempotency_key":r[17],"observed_at":r[18],"reviewed_at":r[19]} for r in rows]
 
     def review_scoped_fact_history(self, scope: RuntimeScope, observation_id: int, *, review_status: str, query_trace_id: str = "") -> None:
-        scope = _require_group_scope(scope)
+        scope = _require_fact_scope(scope)
         if review_status not in {"pending", "approved", "rejected"}:
             raise ValueError("invalid review_status")
         row = self.cm.execute_read(
@@ -900,7 +975,7 @@ class ScopedKnowledgeRepo:
         self.review_scoped_fact_history(scope, observation_id, review_status=review_status if status is None else status)
 
     def transition_scoped_fact_observation(self, scope: RuntimeScope, observation_id: int, *, relation: str, review_status: str = "pending", status: str | None = None) -> None:
-        scope = _require_group_scope(scope)
+        scope = _require_fact_scope(scope)
         if relation not in {"compatible","scoped","conflicts","supersedes"}: raise ValueError("invalid fact relation")
         self.cm.execute_write("UPDATE scoped_fact_history SET relation=?,review_status=? WHERE id=? AND bot_id=? AND session_id=? AND visibility=?",(relation,review_status,observation_id,*_scope_params(scope))); self.cm.commit()
 
@@ -917,7 +992,7 @@ class ScopedKnowledgeRepo:
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         """读取人工审核流水（只读、带 Scope 三列等值约束）。"""
-        scope = _require_group_scope(scope)
+        scope = _require_fact_scope(scope)
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             raise ValueError("limit must be a positive integer")
         conditions = ["bot_id=?", "session_id=?", "visibility=?"]
@@ -1004,6 +1079,32 @@ class ScopedKnowledgeRepo:
                 "id": row[0], "belief_key": row[1], "content": row[2], "belief_type": row[3],
                 "strength": row[4], "status": row[5], "source_memory_id": row[6],
                 "provenance": json.loads(row[7]), "created_at": row[8], "updated_at": row[9],
+            }
+            for row in rows
+        ]
+
+    def list_bot_scoped_beliefs(
+        self, bot_id: str, *, status: str | None = "active", limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """只读：Bot 在所有群形成的信念（信念属于 Bot 本人，不按群分裂）。"""
+        conditions = ["bot_id=?", "visibility='group'"]
+        params: list[Any] = [str(bot_id or "")]
+        if status is not None:
+            conditions.append("status=?")
+            params.append(status)
+        rows = self.cm.execute_read(
+            f"""SELECT id, belief_key, content, belief_type, strength, status, source_memory_id,
+                       provenance, created_at, updated_at, session_id
+                  FROM scoped_beliefs WHERE {' AND '.join(conditions)}
+                 ORDER BY updated_at DESC, id DESC LIMIT ?""",
+            [*params, int(limit)],
+        ).fetchall()
+        return [
+            {
+                "id": row[0], "belief_key": row[1], "content": row[2], "belief_type": row[3],
+                "strength": row[4], "status": row[5], "source_memory_id": row[6],
+                "provenance": json.loads(row[7]), "created_at": row[8], "updated_at": row[9],
+                "session_id": row[10],
             }
             for row in rows
         ]

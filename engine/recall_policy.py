@@ -38,20 +38,28 @@ class RecallPolicy:
     active ``shared_memory_grants`` row for the consumer Scope may be read across
     groups.  It never authorizes writes or touch on foreign rows, and it is not
     physical fanout.
+
+    ``private_subject_group_recall`` 只用于私聊：私聊对象本人在群里公开说过的话
+    可以被读取（像真人一样记得对方在群里聊过什么），私聊内容本身仍不外流到任何群。
     """
 
     scope: RuntimeScope
     cross_group_enabled: bool = False
     shared_grants_enabled: bool = False
     granted_memory_ids: tuple[int, ...] = ()
+    private_subject_group_recall: bool = False
 
     @classmethod
     def from_config(cls, scope: RuntimeScope, config: Mapping[str, Any]) -> "RecallPolicy":
         # A private session is an exact owner boundary, never a group-sharing
         # envelope. Do not let persisted/global switches reopen legacy, grant, or
-        # cross-group lanes for a private query.
+        # cross-group lanes for a private query. 唯一例外是跨群开关开启时，
+        # 读取私聊对象本人的公开群发言。
         if scope.visibility == "private":
-            return cls(scope=scope)
+            return cls(
+                scope=scope,
+                private_subject_group_recall=_enabled(config.get("cross_group_enabled", False)),
+            )
         return cls(
             scope=scope,
             cross_group_enabled=_enabled(config.get("cross_group_enabled", False)),

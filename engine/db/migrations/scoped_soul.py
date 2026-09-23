@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..connection import ConnectionManager
+from .scoped_soul_private_visibility import apply_scoped_soul_private_visibility
 
 
 _SCOPED_SOUL_SCHEMA = """
@@ -143,6 +144,7 @@ def ensure_scoped_soul_schema(cm: ConnectionManager) -> None:
         for statement in statements:
             tx.execute(statement)
         _upgrade_scoped_soul_concerns(tx)
+        apply_scoped_soul_private_visibility(tx)
 
 
 __all__ = ["ensure_scoped_soul_schema"]

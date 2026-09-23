@@ -42,6 +42,7 @@ from .db.bot_jargon_repo import BotJargonRepository
 from .db.scoped_knowledge_repo import ScopedKnowledgeRepo
 from .db.scoped_learning_projection_repo import ScopedFewShotRepository
 from .db.person_timeline_repo import PersonTimelineRepo
+from .db.person_identity_repo import PersonIdentityRepo
 from .db.scoped_soul_repo import ScopedSoulRepository
 from .db.shared_memory_grant_repo import SharedMemoryGrantRepository
 from .db.tag_repo import TagRepo
@@ -94,6 +95,7 @@ class WaveMemoryDB:
                 soul_context_provider=self._soul_context_provider,
             )
             self._person_timeline = PersonTimelineRepo(self._cm)
+            self._person_identity = PersonIdentityRepo(self._cm)
             self._fewshot_repository = ScopedFewShotRepository(self._cm, ensure_schema=False)
             self._injection_metrics = InjectionMetricStore(self._cm)
 
@@ -130,6 +132,11 @@ class WaveMemoryDB:
     @property
     def person_timeline(self) -> PersonTimelineRepo:
         return self._person_timeline
+
+    @property
+    def person_identity(self) -> PersonIdentityRepo:
+        """管理员确认的跨平台身份关联（按 Bot 保存）。"""
+        return self._person_identity
 
     def record_scoped_fact_observation(self, scope, **kwargs):
         return self._scoped_knowledge_repo.record_scoped_fact_observation(scope, **kwargs)
@@ -418,6 +425,9 @@ class WaveMemoryDB:
 
     def list_scoped_facts(self, scope, **kwargs):
         return self._scoped_knowledge_repo.list_scoped_facts(scope, **kwargs)
+
+    def list_bot_scoped_facts(self, scope, **kwargs):
+        return self._scoped_knowledge_repo.list_bot_scoped_facts(scope, **kwargs)
 
     def upsert_scoped_tag(self, scope, **kwargs):
         return self._scoped_knowledge_repo.upsert_scoped_tag(scope, **kwargs)

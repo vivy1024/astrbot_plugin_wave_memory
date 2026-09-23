@@ -13,9 +13,11 @@ from ..channel_base import InjectionResult
 from .safety import is_channel_allowed_in_mode
 
 try:
-    from ....domain.scope import RuntimeScope
+    from ....domain.scope import RuntimeScope, is_visible_scene, scene_key
+    from ....engine.db.person_identity_repo import linked_principals_via, local_user_id
 except ImportError:  # pragma: no cover - focused repository tests
-    from domain.scope import RuntimeScope
+    from domain.scope import RuntimeScope, is_visible_scene, scene_key
+    from engine.db.person_identity_repo import linked_principals_via, local_user_id
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -113,10 +115,17 @@ class RelationshipChannel:
         if not _as_bool(cfg.get("enabled"), True):
             return InjectionResult.disabled(self.name, reason="affinity channel disabled by config")
         scope = getattr(ctx, "scope", None)
-        if not isinstance(scope, RuntimeScope) or scope.visibility != "group" or scope.session is None:
+        if (
+            not isinstance(scope, RuntimeScope)
+            or scope.visibility not in {"group", "private"}
+            or scope.session is None
+        ):
             return InjectionResult.empty(self.name, reason="runtime_scope_required")
         if not scope.subject_principal_id or self.repository is None:
             return InjectionResult.empty(self.name, reason="relationship_subject_or_repository_unavailable")
+        # 对一个人的态度不分场合：数值来自群聊与私聊的汇总；
+        # 具体内容（印象、观感、关系线索）群里的处处可见，私聊的只在该私聊可见。
+        scene = scene_key(scope)
         try:
             state = await self._run_sync(
                 self.repository.get_state, scope,
@@ -150,7 +159,7 @@ class RelationshipChannel:
                     "conn": conn,
                 })()
             impression_meta = await self._run_sync(
-                self._profile_metadata, db, conn, scope, sender_id, group_id,
+                self._profile_metadata, db, conn, scope, sender_id, scene,
                 finish_on_cancel=True,
             )
             try:
@@ -180,17 +189,29 @@ class RelationshipChannel:
                     limit=None,
                     connection=conn,
                     strict=True,
+                    viewer_scene=scene,
+                    user_ids=self._linked_user_ids(conn, scope, sender_id),
                 )
             unsettled = {"energy": 0.0, "traces": []}
-            if db is not None and sender_id and group_id:
+            if db is not None and sender_id:
+                # 未决能量按 (bot_id, user_id, "") 跨群累积；旧版按群存的行只作为兜底。
                 unsettled = await self._run_sync(
                     load_unsettled_state,
                     db,
                     bot_id=scope.bot_id,
                     user_id=sender_id,
-                    group_id=group_id,
+                    group_id="",
                     connection=conn,
                 )
+                if float(unsettled.get("energy") or 0.0) <= 0 and group_id and scope.visibility == "group":
+                    unsettled = await self._run_sync(
+                        load_unsettled_state,
+                        db,
+                        bot_id=scope.bot_id,
+                        user_id=sender_id,
+                        group_id=group_id,
+                        connection=conn,
+                    )
             context_config = _mapping(getattr(ctx, "config", {}))
             half_life_days = context_config.get(
                 "timeline_decay_half_life_days",
@@ -209,12 +230,21 @@ class RelationshipChannel:
                 if line:
                     (filtered_lines if is_identity_contamination(line) else impression_block).append(line)
             has_timeline = any(line.startswith("印象时间线") for line in impression_block)
-            if relationship.get("affinity") is None and not impression_block:
+            aggregate: Mapping[str, Any] = self._relationship_totals(scope, sender_id) if sender_id else {}
+            if (
+                relationship.get("affinity") is None
+                and not impression_block
+                and not _mapping(aggregate.get("merged_dimensions"))
+            ):
                 return InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="relationship_unknown")
+            visible_traces = [
+                trace for trace in list(unsettled.get("traces") or [])
+                if not isinstance(trace, Mapping) or is_visible_scene(trace.get("group_id"), scene)
+            ]
             energy_line = unsettled_energy_line(
                 impression_meta,
                 energy=float(unsettled.get("energy") or 0.0),
-                traces=list(unsettled.get("traces") or []),
+                traces=visible_traces,
             )
             if energy_line and not is_identity_contamination(energy_line):
                 impression_block.append(energy_line)
@@ -224,9 +254,6 @@ class RelationshipChannel:
             # 有 N 份互相矛盾的态度，不符合真人对人的认知方式。
             relation_state = relationship.get("state") or "unknown"
             relation_affinity = relationship.get("affinity")
-            aggregate: Mapping[str, Any] = {}
-            if sender_id:
-                aggregate = self._relationship_totals(scope, sender_id)
             merged_dimensions = _mapping(aggregate.get("merged_dimensions")) if aggregate else {}
             if merged_dimensions:
                 relation_affinity = aggregate.get("merged_affinity")
@@ -320,6 +347,14 @@ class RelationshipChannel:
             result = InjectionResult.error_result(self.name, exc)
             result.latency_ms = self._latency_ms(started)
             return result
+
+    @staticmethod
+    def _linked_user_ids(conn: Any, scope: RuntimeScope, sender_id: str) -> list[str]:
+        """同一个人在其他平台账号的本地 ID（管理员确认的关联）；无关联时只含自身。"""
+        if conn is None or not scope.subject_principal_id:
+            return [sender_id]
+        linked = linked_principals_via(conn, scope.bot_id, scope.subject_principal_id)
+        return list(dict.fromkeys([sender_id, *(local_user_id(item) for item in linked if local_user_id(item))]))
 
     def _relationship_totals(self, scope: Any, sender_id: str) -> dict[str, Any]:
         """汇总该用户在所有群的关系积累；不可用时返回空 dict。

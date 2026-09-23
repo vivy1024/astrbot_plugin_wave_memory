@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 from ..connection import ConnectionManager
+from .scoped_soul_private_visibility import apply_scoped_fact_private_visibility
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS scoped_fact_reviews (
@@ -33,5 +34,7 @@ def ensure_scoped_fact_review_schema(cm: ConnectionManager) -> None:
         for statement in _SCHEMA.split(';'):
             if statement.strip():
                 tx.execute(statement)
+        # 事实表同时接受私聊行（私聊得知的事实只在该私聊可见）。
+        apply_scoped_fact_private_visibility(tx)
 
 __all__ = ['ensure_scoped_fact_review_schema']

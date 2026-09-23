@@ -15,11 +15,13 @@ except Exception:
     class AstrAgentContext: pass
 try:
     from ..services.experience_episodes import ExperienceEpisodeService
-    from .scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
+    from .scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
+    from ..domain.scope import scene_key
     from ..services.identity_safety import is_identity_contamination
 except ImportError:
     from services.experience_episodes import ExperienceEpisodeService
-    from tools.scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
+    from tools.scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
+    from domain.scope import scene_key
     from services.identity_safety import is_identity_contamination
 
 @dataclass
@@ -43,7 +45,7 @@ class WaveMemoryNoteEpisodeTool(FunctionTool[AstrAgentContext]):
     write_gateway: Any = field(default=None, repr=False)
 
     async def call(self, ctx: ContextWrapper[AstrAgentContext], **kwargs) -> str:
-        scope, error = require_group_runtime_scope(ctx, "episode.note")
+        scope, error = require_memory_runtime_scope(ctx, "episode.note")
         if error:
             return scope_error_message("群经历记录", error)
         if self.db is None or scope is None or scope.session is None:
@@ -83,7 +85,7 @@ class WaveMemoryNoteEpisodeTool(FunctionTool[AstrAgentContext]):
                 return "群经历保存失败: episode_writer_unavailable"
             episode_id = await gateway.record_episode(
                 scope=scope,
-                group_id=scope.session.conversation_id,
+                group_id=scene_key(scope),
                 user_id=(scope.subject_principal_id or "").rsplit(":", 1)[-1] or None,
                 episode_type=values["episode_type"],
                 fields={

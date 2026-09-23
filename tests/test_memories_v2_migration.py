@@ -265,8 +265,10 @@ def test_cross_group_hot_recall_is_opt_in_and_rejects_non_group_partial_unresolv
     ensure_memories_v2_schema(manager)
     alpha = _group_scope(bot_id="bot-alpha", group_id="group-1")
     beta = _group_scope(bot_id="bot-beta", group_id="group-2")
+    alpha_other_group = _group_scope(bot_id="bot-alpha", group_id="group-3")
     alpha_id = repo.add_memory("group-1", "alpha", scope=alpha)
     beta_id = repo.add_memory("group-2", "beta", scope=beta)
+    alpha_elsewhere_id = repo.add_memory("group-3", "alpha elsewhere", scope=alpha_other_group)
     vector = np.asarray([0.1, 0.2], dtype=np.float32).tobytes()
     invalid_rows = [
         ("private", "private", "qq:private:1", "bot_private", "resolved", 0),
@@ -289,15 +291,17 @@ def test_cross_group_hot_recall_is_opt_in_and_rejects_non_group_partial_unresolv
     ).lastrowid
     manager.commit()
 
-    exact = repo.get_memories_by_ids([alpha_id, beta_id, legacy], scope=alpha)
+    exact = repo.get_memories_by_ids([alpha_id, beta_id, alpha_elsewhere_id, legacy], scope=alpha)
     expanded = repo.get_memories_by_ids(
-        [alpha_id, beta_id, legacy, *invalid_ids],
+        [alpha_id, beta_id, alpha_elsewhere_id, legacy, *invalid_ids],
         scope=alpha,
         allow_cross_group_recall=True,
     )
 
     assert [row["id"] for row in exact] == [alpha_id]
-    assert {row["id"] for row in expanded} == {alpha_id, beta_id, legacy}
+    # 跨群召回扩展到同一 Bot 在其他群的亲历记忆；其他 Bot 亲历的消息不属于当前 Bot。
+    assert {row["id"] for row in expanded} == {alpha_id, alpha_elsewhere_id, legacy}
+    assert beta_id not in {row["id"] for row in expanded}
     assert next(row for row in expanded if row["id"] == legacy)["_tag_lane"] == "legacy"
 
 

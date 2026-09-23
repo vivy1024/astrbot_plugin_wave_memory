@@ -101,7 +101,8 @@ def _group_scope_from_query(*, optional: bool = False) -> RuntimeScope | None:
             return None
         raise ScopedKnowledgeScopeError("scope_required")
     bot_id, session_id, visibility = (request.args.get(field) for field in required)
-    if visibility != "group":
+    # 事实可来自群聊或私聊；私聊事实只在该私聊会话下审核与展示。
+    if visibility not in {"group", "private"}:
         raise ScopedKnowledgeScopeError("derived_scope_visibility_unsupported")
     try:
         platform_id, kind, conversation_id = str(session_id).split(":", 2)
@@ -116,7 +117,7 @@ def _scope_from_envelope(body: dict) -> RuntimeScope:
     if "scope" not in body:
         raise ScopedKnowledgeScopeError("scope_required")
     scope = ScopeCodec.from_dict(body["scope"])
-    if not isinstance(scope, RuntimeScope) or scope.visibility != "group" or scope.session is None:
+    if not isinstance(scope, RuntimeScope) or scope.visibility not in {"group", "private"} or scope.session is None:
         raise ScopedKnowledgeScopeError("derived_scope_visibility_unsupported")
     return scope
 

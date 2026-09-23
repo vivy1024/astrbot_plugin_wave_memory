@@ -61,7 +61,12 @@ class SoulStateChannel:
         if not _as_bool(cfg.get("enabled"), True):
             return InjectionResult.disabled(self.name, reason="soul_state channel disabled by config")
         scope = getattr(ctx, "scope", None)
-        if not isinstance(scope, RuntimeScope) or scope.visibility != "group" or scope.session is None:
+        # Bot 自身状态属于 Bot 本人：群聊与私聊都注入（私密内容由仓储按场合过滤）。
+        if (
+            not isinstance(scope, RuntimeScope)
+            or scope.visibility not in {"group", "private"}
+            or scope.session is None
+        ):
             return InjectionResult.empty(self.name, reason="runtime_scope_required")
         if self.repository is None:
             return InjectionResult.empty(self.name, reason="soul_repository_unavailable")

@@ -21,13 +21,13 @@ except Exception:  # pragma: no cover
     class AstrAgentContext: pass
 
 try:
-    from ..domain.scope import RuntimeScope
+    from ..domain.scope import RuntimeScope, scene_key, subject_local_id
     from .person_identity import display_name_for_user, resolve_user_id
-    from .scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
+    from .scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
 except ImportError:  # pragma: no cover
-    from domain.scope import RuntimeScope
+    from domain.scope import RuntimeScope, scene_key, subject_local_id
     from tools.person_identity import display_name_for_user, resolve_user_id
-    from tools.scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
+    from tools.scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
 
 try:
     from astrbot.api import logger
@@ -84,7 +84,7 @@ class WaveMemoryNoteSocialAnchorTool(FunctionTool[AstrAgentContext]):
             except Exception:
                 return "数据库连接已断开"
 
-        runtime_scope, error_code = require_group_runtime_scope(ctx, "social_anchor.note")
+        runtime_scope, error_code = require_memory_runtime_scope(ctx, "social_anchor.note")
         if error_code:
             return scope_error_message("人情备忘", error_code)
         assert runtime_scope is not None
@@ -100,11 +100,15 @@ class WaveMemoryNoteSocialAnchorTool(FunctionTool[AstrAgentContext]):
         user_id = resolve_user_id(self.db, target, runtime_scope)
         if not user_id:
             return f"没有在当前群找到目标用户「{target}」，无法记录人情备忘"
+        if runtime_scope.visibility == "private" and user_id != subject_local_id(runtime_scope):
+            return "私聊里只能记录与当前私聊对象本人的人情备忘"
+        # 按场合存储：私聊为 private:<会话ID>，内容只在该私聊可见。
+        profile_scene = scene_key(runtime_scope)
 
         display = display_name_for_user(self.db, user_id, runtime_scope) or target
         target_scope = RuntimeScope(
             bot_id=runtime_scope.bot_id,
-            visibility="group",
+            visibility=runtime_scope.visibility,
             session=runtime_scope.session,
             subject_principal_id=f"{runtime_scope.session.platform_id}:user:{user_id}",
         )
@@ -171,7 +175,7 @@ class WaveMemoryNoteSocialAnchorTool(FunctionTool[AstrAgentContext]):
         try:
             row = self.db.conn.execute(
                 "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
-                (user_id, runtime_scope.session.conversation_id, runtime_scope.bot_id),
+                (user_id, profile_scene, runtime_scope.bot_id),
             ).fetchone()
             metadata: dict[str, Any] = {}
             if row and row[0]:
@@ -196,7 +200,7 @@ class WaveMemoryNoteSocialAnchorTool(FunctionTool[AstrAgentContext]):
                    VALUES (?, ?, ?, ?, 1, ?)
                    ON CONFLICT(user_id, group_id, bot_id) DO UPDATE SET
                    metadata=excluded.metadata, last_seen=excluded.last_seen""",
-                (user_id, runtime_scope.session.conversation_id, runtime_scope.bot_id, json.dumps(metadata, ensure_ascii=False), now),
+                (user_id, profile_scene, runtime_scope.bot_id, json.dumps(metadata, ensure_ascii=False), now),
             )
             self.db.conn.commit()
         except Exception as e:

@@ -15,7 +15,7 @@ import numpy as np
 try:
     from ..domain.commands import DomainCommand, EntityChange
     from ..domain.quality import QualityDecision, QualityProposal
-    from ..domain.scope import RuntimeScope
+    from ..domain.scope import RuntimeScope, scene_key
     from ..engine.db.migrations.memories_v2 import MEMORIES_V2_VERSION
     from ..engine.write_coordinator import (
         CommandRejectedError,
@@ -34,7 +34,7 @@ try:
 except ImportError:  # pragma: no cover - focused repository tests import top-level packages
     from domain.commands import DomainCommand, EntityChange
     from domain.quality import QualityDecision, QualityProposal
-    from domain.scope import RuntimeScope
+    from domain.scope import RuntimeScope, scene_key
     from engine.db.migrations.memories_v2 import MEMORIES_V2_VERSION
     from engine.write_coordinator import (
         CommandRejectedError,
@@ -526,13 +526,19 @@ def _concern_row_to_dict(row) -> dict[str, Any]:
 
 
 def _find_concern(connection, scope: RuntimeScope, *, concern_id: Any, topic: str) -> dict[str, Any] | None:
-    """按 id 或 topic 定位当前 Scope 内的关切；跨 Scope 一律视为不存在。"""
+    """按 id 或 topic 定位 Bot 在当前场合可见的关切。
+
+    关切属于 Bot 本人：群里惦记的事处处可见，私聊里的只在同一私聊可见；
+    同名 topic 优先当前场合那一条。其他 Bot 或其他私聊的关切一律视为不存在。
+    """
+    bot_id, session_id, visibility = _scope_tuple(scope)
     selector = "id=?" if concern_id is not None else "topic=?"
     value = int(concern_id) if concern_id is not None else topic
     row = connection.execute(
         f"SELECT {_CONCERN_COLUMNS} FROM scoped_soul_concerns "
-        f"WHERE bot_id=? AND session_id=? AND visibility=? AND {selector}",
-        (*_scope_tuple(scope), value),
+        f"WHERE bot_id=? AND (visibility='group' OR (visibility=? AND session_id=?)) AND {selector} "
+        f"ORDER BY (session_id=? AND visibility=?) DESC, last_triggered DESC, id DESC LIMIT 1",
+        (bot_id, visibility, session_id, value, session_id, visibility),
     ).fetchone()
     return None if row is None else _concern_row_to_dict(row)
 
@@ -565,7 +571,7 @@ def _concern_transition_handler(connection, command: DomainCommand, now: float) 
     刻意不做全量替换：任何动作只碰自己那一行，并发下不同关切不会互相覆盖；
     非法跳转由领域状态机拒绝，archived 是终态。
     """
-    scope = _require_group_scope(command.scope)
+    scope = _require_memory_scope(command.scope)
     payload = dict(command.payload)
     action = str(payload.get("action") or "").strip().lower()
     if action not in _CONCERN_ACTIONS:
@@ -607,7 +613,7 @@ def _concern_transition_handler(connection, command: DomainCommand, now: float) 
                           last_progress_at=COALESCE(last_progress_at, ?), revision=?,
                           expected_resolution_at=COALESCE(?, expected_resolution_at),
                           evidence=COALESCE(?, evidence)
-                    WHERE id=? AND bot_id=? AND session_id=? AND visibility=?""",
+                    WHERE id=? AND bot_id=?""",
                 (
                     min(1.0, float(current["intensity"]) + _CONCERN_REINFORCE_STEP),
                     next_status,
@@ -618,7 +624,7 @@ def _concern_transition_handler(connection, command: DomainCommand, now: float) 
                     expected_resolution_at,
                     evidence_json,
                     int(current["id"]),
-                    *_scope_tuple(scope),
+                    scope.bot_id,
                 ),
             )
             return _concern_mutation(
@@ -679,7 +685,7 @@ def _concern_transition_handler(connection, command: DomainCommand, now: float) 
         """UPDATE scoped_soul_concerns
               SET status=?, urgency=?, last_progress_at=?, resolution_note=?,
                   last_triggered=?, revision=?, evidence=COALESCE(?, evidence)
-            WHERE id=? AND bot_id=? AND session_id=? AND visibility=?""",
+            WHERE id=? AND bot_id=?""",
         (
             updated["status"],
             float(updated.get("urgency") or current.get("urgency") or 0.0),
@@ -689,7 +695,7 @@ def _concern_transition_handler(connection, command: DomainCommand, now: float) 
             new_revision,
             evidence_json,
             int(current["id"]),
-            *_scope_tuple(scope),
+            scope.bot_id,
         ),
     )
     return _concern_mutation(
@@ -703,10 +709,12 @@ def _concern_transition_handler(connection, command: DomainCommand, now: float) 
 
 
 def _record_episode_handler(connection, command: DomainCommand, now: float) -> MutationOutcome:
-    scope = _require_group_scope(command.scope)
+    scope = _require_memory_scope(command.scope)
     assert scope.session is not None
+    # 经历按场合保存：群为群号，私聊为 private:<会话ID>（其内容只在该私聊可见）。
+    episode_scene = scene_key(scope)
     payload = {**dict(command.payload), **dict(command.payload.get("fields") or {})}
-    if str(payload.get("group_id") or "") != scope.session.conversation_id:
+    if str(payload.get("group_id") or "") != episode_scene:
         raise ValueError("group_id does not match RuntimeScope")
     source_ids = tuple(dict.fromkeys(int(value) for value in payload.get("source_memory_ids") or ()))
     if source_ids:
@@ -722,7 +730,7 @@ def _record_episode_handler(connection, command: DomainCommand, now: float) -> M
     idem = str(command.idempotency_key)
     existing = connection.execute(
         "SELECT id FROM experience_episodes WHERE bot_id=? AND group_id=? AND idempotency_key=?",
-        (scope.bot_id, scope.session.conversation_id, idem),
+        (scope.bot_id, episode_scene, idem),
     ).fetchone()
     if existing:
         episode_id = int(existing[0])
@@ -731,7 +739,7 @@ def _record_episode_handler(connection, command: DomainCommand, now: float) -> M
             events=(),
         )
     columns = ("bot_id", "group_id", "user_id", "episode_type", "trigger_text", "bot_inner_thought", "bot_action", "bot_reply", "user_reaction", "outcome", "source_memory_ids", "emotional_weight", "idempotency_key", "created_at", "updated_at")
-    values = (scope.bot_id, scope.session.conversation_id, payload.get("user_id"), payload.get("episode_type"), payload.get("trigger_text"), payload.get("bot_inner_thought"), payload.get("bot_action"), payload.get("bot_reply"), payload.get("user_reaction"), payload.get("outcome"), json.dumps(list(source_ids), ensure_ascii=False), float(payload.get("emotional_weight") or 0), idem, now, now)
+    values = (scope.bot_id, episode_scene, payload.get("user_id"), payload.get("episode_type"), payload.get("trigger_text"), payload.get("bot_inner_thought"), payload.get("bot_action"), payload.get("bot_reply"), payload.get("user_reaction"), payload.get("outcome"), json.dumps(list(source_ids), ensure_ascii=False), float(payload.get("emotional_weight") or 0), idem, now, now)
     cur = connection.execute(f"INSERT INTO experience_episodes ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})", values)
     episode_id = int(cur.lastrowid)
     return MutationOutcome(

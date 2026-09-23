@@ -328,3 +328,39 @@ def test_scoped_fact_evidence_restores_chat_context_bubble(env):
     assert len(payload["messages"]) == 3
     assert payload["messages"][0]["role"] == "before"
     assert payload["messages"][2]["role"] == "after"
+
+
+def _private(user: str = "u1") -> RuntimeScope:
+    return RuntimeScope(
+        "bot-alpha", "private", SessionRef(f"qq:private:{user}", "qq", "private", user),
+        subject_principal_id=f"qq:user:{user}",
+    )
+
+
+@pytest.mark.asyncio
+async def test_private_fact_is_reviewed_within_its_private_chat_only(env):
+    """私聊事实按原会话审核：冲突只在该私聊内判断，群与其他私聊都定位不到它。"""
+    _, connection, _, gateway, repo = env
+    repo.upsert_scoped_fact(_scope(), subject="小明", predicate="住在", object="上海",
+                            confidence=0.9, status="active")
+    private_id = repo.upsert_scoped_fact(_private(), subject="小明", predicate="住在", object="北京",
+                                         confidence=0.85, status="pending")
+
+    result = await gateway.review_fact(
+        scope=_private(), target=ScopedKnowledgeMutationTarget("fact", private_id, 1),
+        action="approve", reason="私聊里本人说的",
+    )
+    assert result.status == "active", "群里的事实不参与私聊事实的冲突判断"
+    assert [row["object"] for row in repo.list_scoped_facts(_private())] == ["北京"]
+    assert [row["object"] for row in repo.list_scoped_facts(_scope())] == ["上海"]
+
+    for outsider in (_scope(), _private("u2")):
+        with pytest.raises(ScopedKnowledgeNotFound):
+            await gateway.review_fact(
+                scope=outsider, target=ScopedKnowledgeMutationTarget("fact", private_id, 2),
+                action="reject", reason="越界",
+            )
+    audit = connection.execute(
+        "SELECT session_id, visibility, to_status FROM scoped_fact_reviews WHERE fact_id=?", (private_id,),
+    ).fetchall()
+    assert audit == [("qq:private:u1", "private", "active")]

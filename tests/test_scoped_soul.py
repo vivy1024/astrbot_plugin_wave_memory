@@ -70,8 +70,6 @@ def test_repository_returns_real_state_with_exact_scope_and_subject_isolation(tm
             dimensions={"trust": 50},
             evidence=[{"event_id": 9}],
         )
-        repo.upsert_mood(other, valence=-0.5, arousal=0.2, cause="other")
-
         state = repo.get_state(scope, subject_principal_id="qq:user:u1", limit=25, offset=0)
         assert state["mood"]["value"] == 0.6
         assert state["mood"]["components"] == {"valence": 0.6, "arousal": 0.4}
@@ -83,7 +81,16 @@ def test_repository_returns_real_state_with_exact_scope_and_subject_isolation(tm
         assert state["relationship"]["affinity"] == 42
         assert state["relationship"]["revision"] == 1
         assert state["revision"] >= 1
-        assert repo.get_state(group_scope("g3"), limit=25, offset=0)["mood"]["state"] == "unknown"
+        # Bot 自身状态属于 Bot 本人：心情是连续的一个，换了群依然是最近那次心情，关切与经历也带着走。
+        repo.upsert_mood(other, valence=-0.5, arousal=0.2, cause="other")
+        elsewhere = repo.get_state(group_scope("g3"), limit=25, offset=0)
+        assert elsewhere["mood"]["value"] == -0.5
+        assert elsewhere["mood"]["cause"] == "other"
+        assert elsewhere["concerns"]["items"][0]["topic"] == "发布"
+        assert elsewhere["timeline"]["items"][0]["event_summary"] == "完成发布"
+        # 关系仍按场合读取（跨场合态度由只读汇总提供），不会混成当前群的关系行。
+        assert elsewhere["relationship"]["affinity"] is None
+        state = repo.get_state(scope, subject_principal_id="qq:user:u1", limit=25, offset=0)
 
         # 强制自省与 get_state 同为只读投影：结果一致、revision 不变（无副作用）
         refreshed = repo.refresh_state(scope, subject_principal_id="qq:user:u1", limit=25, offset=0)

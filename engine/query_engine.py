@@ -14,9 +14,9 @@ from typing import Any, Mapping, Optional
 import numpy as np
 
 try:
-    from ..domain.scope import RuntimeScope
+    from ..domain.scope import RuntimeScope, subject_local_id
 except ImportError:  # 兼容插件作为顶级模块加载
-    from domain.scope import RuntimeScope
+    from domain.scope import RuntimeScope, subject_local_id
 
 try:
     from astrbot.api import logger
@@ -294,12 +294,19 @@ class QueryEngine:
             # Prefer full signature; fall back for focused doubles that only know
             # cross-group flag or exact Scope.
             try:
-                memories = getter(
-                    ids,
-                    scope=policy.scope,
-                    allow_cross_group_recall=policy.cross_group_enabled,
-                    shared_grant_memory_ids=grant_ids,
-                )
+                if policy.private_subject_group_recall:
+                    memories = getter(
+                        ids,
+                        scope=policy.scope,
+                        private_subject_group_recall=True,
+                    )
+                else:
+                    memories = getter(
+                        ids,
+                        scope=policy.scope,
+                        allow_cross_group_recall=policy.cross_group_enabled,
+                        shared_grant_memory_ids=grant_ids,
+                    )
             except TypeError:
                 try:
                     memories = getter(
@@ -343,12 +350,24 @@ class QueryEngine:
         visibility = str(memory.get("visibility") or "")
         group_id = str(memory.get("group_id") or "")
         if scope.visibility == "private":
-            return (
+            if (
                 visibility == "private"
                 and str(memory.get("bot_id") or "") == scope.bot_id
                 and str(memory.get("session_id") or "") == scope.session.id
                 and group_id == scope.session.conversation_id
+            ):
+                return True
+            subject_id = subject_local_id(scope) if policy.private_subject_group_recall else ""
+            return bool(subject_id) and (
+                visibility == "group"
+                and str(memory.get("bot_id") or "") == scope.bot_id
+                and str(memory.get("session_id") or "").startswith(f"{scope.session.platform_id}:group:")
+                and str(memory.get("sender_id") or "") == subject_id
             )
+        # 其他 Bot 亲历的正式行不属于当前 Bot 的记忆；缺 owner 字段的旧测试替身保持兼容。
+        memory_bot = str(memory.get("bot_id") or "")
+        if memory_bot and memory_bot != scope.bot_id and not policy.is_shared_grant(memory):
+            return False
         return visibility != "private" and not group_id.casefold().startswith("private:")
 
     def _map_catalog_hits_to_scope(

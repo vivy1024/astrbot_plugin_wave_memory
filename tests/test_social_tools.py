@@ -446,3 +446,103 @@ def test_note_episode_tool_uses_coordinator(tmp_path):
         assert row == ("shared_event", "一起排查死锁", "问题暂未解决")
     finally:
         manager.close()
+
+
+def _private_scope(user: str = "u1") -> RuntimeScope:
+    return RuntimeScope(
+        "bot-alpha",
+        "private",
+        SessionRef(f"qq:private:{user}", "qq", "private", user),
+        subject_principal_id=f"qq:user:{user}",
+    )
+
+
+def test_private_chat_impression_shapes_attitude_but_content_stays_private(tmp_path):
+    """私聊里同样会形成印象与好感：数值汇入整体态度，具体印象只在该私聊可见。"""
+    db, rel_events, _, repo, manager = _setup_test_db(tmp_path)
+    try:
+        group = _scope()
+        repo.upsert_relationship(group, subject_principal_id="qq:user:u1", affinity=10, dimensions={"trust": 10})
+        tool = WaveMemoryRecordSocialImpressionTool(
+            db=db,
+            relationship_events=rel_events,
+            bot_db_ids={"bot-alpha": "bot-alpha"},
+        )
+        result = asyncio.run(tool.call(
+            _context_wrapper(_private_scope()),
+            target_user="u1",
+            impression="深夜私下跟我说了很多心里话",
+            shift_reason="私聊倾诉",
+            affinity_delta=1.5,
+            dimension="trust",
+        ))
+        assert "已记录对" in result
+        assert "好感度变动" in result
+
+        private_rows = repo.list_relationships(_private_scope(), subject_principal_id="qq:user:u1")
+        assert private_rows and private_rows[0]["subject_principal_id"] == "qq:user:u1"
+        summary = repo.summarize_cross_group_relationship(group, subject_principal_id="qq:user:u1")
+        assert summary["group_count"] == 2, "私聊里的关系变化汇入对这个人的整体态度"
+
+        events = db.person_timeline.list_events(bot_id="bot-alpha", user_id="u1")
+        assert any(item["group_id"] == "private:u1" for item in events)
+        in_group = db.person_timeline.list_events(bot_id="bot-alpha", user_id="u1", viewer_scene="g1")
+        in_private = db.person_timeline.list_events(bot_id="bot-alpha", user_id="u1", viewer_scene="private:u1")
+        in_other_private = db.person_timeline.list_events(bot_id="bot-alpha", user_id="u1", viewer_scene="private:u2")
+        assert not any("心里话" in str(item.get("detail") or item.get("summary")) for item in in_group)
+        assert any("心里话" in str(item.get("detail") or item.get("summary")) for item in in_private)
+        assert not any("心里话" in str(item.get("detail") or item.get("summary")) for item in in_other_private)
+
+        pool = db.person_timeline.get_unsettled_state(bot_id="bot-alpha", user_id="u1", group_id="")
+        assert all(trace.get("group_id") == "private:u1" for trace in pool["traces"])
+    finally:
+        manager.close()
+
+
+def test_private_chat_impression_only_about_the_partner(tmp_path):
+    """私聊里听到的第三人评价无法当面核实，不记成对第三人的印象。"""
+    db, rel_events, _, _repo, manager = _setup_test_db(tmp_path)
+    try:
+        tool = WaveMemoryRecordSocialImpressionTool(
+            db=db,
+            relationship_events=rel_events,
+            bot_db_ids={"bot-alpha": "bot-alpha"},
+        )
+        result = asyncio.run(tool.call(
+            _context_wrapper(_private_scope()),
+            target_user="1234567",
+            impression="他说这个人很坏",
+            shift_reason="转述",
+            affinity_delta=-1.0,
+            dimension="trust",
+        ))
+        assert result == "私聊里只能记录对当前私聊对象本人的印象"
+        assert db.person_timeline.list_events(bot_id="bot-alpha", user_id="1234567") == []
+    finally:
+        manager.close()
+
+
+def test_private_social_anchor_stays_in_that_private_chat(tmp_path):
+    """私聊里的人情备忘按 private:<会话ID> 保存；只能记与私聊对象本人的往来。"""
+    db, _, concerns, repo, manager = _setup_test_db(tmp_path)
+    try:
+        tool = WaveMemoryNoteSocialAnchorTool(
+            db=db, concern_tracker=concerns, repository=repo, write_gateway=_ConcernGatewayDouble(),
+        )
+        result = asyncio.run(tool.call(
+            _context_wrapper(_private_scope()),
+            target_user="u1", anchor_type="user_helped_bot", summary="私下借给我一本绝版书",
+        ))
+        assert "已记录与" in result
+        rows = db.conn.execute("SELECT group_id FROM user_profiles WHERE user_id='u1' AND metadata LIKE '%绝版书%'").fetchall()
+        assert rows == [("private:u1",)]
+        assert "绝版书" in str(repo.get_state(_private_scope(), limit=25, offset=0)["timeline"]["items"])
+        assert "绝版书" not in str(repo.get_state(_scope(), limit=25, offset=0)["timeline"]["items"])
+
+        refused = asyncio.run(tool.call(
+            _context_wrapper(_private_scope()),
+            target_user="1234567", anchor_type="user_helped_bot", summary="转述别人的事",
+        ))
+        assert refused == "私聊里只能记录与当前私聊对象本人的人情备忘"
+    finally:
+        manager.close()

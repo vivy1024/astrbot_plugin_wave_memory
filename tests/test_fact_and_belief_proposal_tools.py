@@ -128,7 +128,8 @@ def test_fact_proposal_tool_writes_pending_with_jargon_hits(tmp_path: Path):
     assert f["provenance"]["jargon_hits"][0]["word"] == "考研"
 
 
-def test_fact_proposal_tool_rejects_private_scope(tmp_path: Path):
+def test_fact_proposal_in_private_chat_stays_in_that_private_chat(tmp_path: Path):
+    """私聊里得知的事实可以提审，按原会话保存，只在该私聊可见。"""
     db_path = tmp_path / "fact_private.db"
     db = WaveMemoryDB(str(db_path))
     tool = WaveMemoryProposeFactTool(db=db)
@@ -142,7 +143,17 @@ def test_fact_proposal_tool_rejects_private_scope(tmp_path: Path):
         source_quote="我住上海",
         context_evidence="私聊对话",
     ))
-    assert "scope_required" in res
+    assert "已成功提审事实" in res
+    rows = db.list_scoped_facts(_private_scope())
+    assert [(row["subject"], row["status"]) for row in rows] == [("小明", "pending")]
+    assert db.list_scoped_facts(_group_scope()) == []
+    other_private = RuntimeScope(
+        "bot-alpha", "private", SessionRef("qq:private:user-2", "qq", "private", "user-2"),
+        subject_principal_id="qq:user:user-2",
+    )
+    assert db.list_scoped_facts(other_private) == []
+    assert db.list_bot_scoped_facts(_group_scope(), keywords=["小明"]) == [], "私聊事实不进入 Bot 级公开事实"
+    db.close()
 
 
 def test_belief_proposal_requires_at_least_two_approved_facts(tmp_path: Path):

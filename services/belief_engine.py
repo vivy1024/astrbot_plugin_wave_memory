@@ -17,10 +17,10 @@ except ImportError:  # pragma: no cover - focused repository tests
     logger = logging.getLogger(__name__)
 
 try:
-    from ..domain.scope import RuntimeScope
+    from ..domain.scope import RuntimeScope, SessionRef
     from ..engine.database import WaveMemoryDB
 except ImportError:  # pragma: no cover - direct service imports in focused tests
-    from domain.scope import RuntimeScope
+    from domain.scope import RuntimeScope, SessionRef
     from engine.database import WaveMemoryDB
 from .belief_confidence import POLICY_VERSION, calculate_confidence, is_activation_eligible
 from .belief_gating import (
@@ -349,17 +349,35 @@ class BeliefEngine:
         sender_id: str | None = None,
         keywords: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Build safe belief text plus auditable relationship-driven policy metadata."""
-        if not isinstance(scope, RuntimeScope) or scope.visibility != "group" or scope.session is None:
-            logger.warning("[BeliefEngine] Scoped injection rejected: group RuntimeScope required")
+        """Build safe belief text plus auditable relationship-driven policy metadata.
+
+        信念属于 Bot 本人：当前群的信念加上 Bot 在其他群形成的信念一起参与选择，
+        私聊里同样可用；每条信念的依据仍在它形成的那个群里校验。
+        """
+        if (
+            not isinstance(scope, RuntimeScope)
+            or scope.visibility not in {"group", "private"}
+            or scope.session is None
+        ):
+            logger.warning("[BeliefEngine] Scoped injection rejected: group/private RuntimeScope required")
             return {"text": "", "belief_ids": [], "gating": {}, "interaction_policy": {}}
 
         repo = getattr(self.db, "scoped_knowledge", None)
-        active_beliefs = self.db.list_scoped_beliefs(scope, status="active")
+        active_beliefs = list(self.db.list_scoped_beliefs(scope, status="active")) if scope.visibility == "group" else []
+        bot_lister = getattr(repo, "list_bot_scoped_beliefs", None)
+        if callable(bot_lister):
+            try:
+                known_keys = {belief.get("belief_key") for belief in active_beliefs if isinstance(belief, dict)}
+                for belief in bot_lister(scope.bot_id, status="active") or []:
+                    if belief.get("belief_key") not in known_keys:
+                        known_keys.add(belief.get("belief_key"))
+                        active_beliefs.append(belief)
+            except Exception:
+                logger.debug("[BeliefEngine] bot-level belief listing failed", exc_info=True)
         beliefs: list[dict] = [
             belief for belief in active_beliefs
             if isinstance(belief, dict) and belief.get("status") == "active"
-            and self._injectable(belief, scope, repo)
+            and self._injectable(belief, self._origin_scope(belief, scope), repo)
         ]
         relationship_snapshot, response_policy = self._current_relationship_policy(scope, sender_id)
         allow_person_judgment = bool(response_policy.get("allow_person_judgment", True))
@@ -395,7 +413,10 @@ class BeliefEngine:
                 continue
             seen_ids.add(belief_id)
             unique_beliefs.append(belief)
-        unique_beliefs = [belief for belief in unique_beliefs if self._injectable(belief, scope, repo)]
+        unique_beliefs = [
+            belief for belief in unique_beliefs
+            if self._injectable(belief, self._origin_scope(belief, scope), repo)
+        ]
 
         lines: list[str] = []
         if unique_beliefs:
@@ -430,6 +451,20 @@ class BeliefEngine:
     ) -> str:
         """获取当前 group RuntimeScope 内的 active 信念注入文本。"""
         return str(self.get_injection_details(scope, sender_id=sender_id, keywords=keywords).get("text") or "")
+
+    @staticmethod
+    def _origin_scope(belief: Mapping[str, Any], current: RuntimeScope) -> RuntimeScope:
+        """信念形成时所在的群 Scope；无法解析时退回当前 Scope（依据校验随之失败关闭）。"""
+        session_id = str(belief.get("session_id") or "")
+        if not session_id or (current.session is not None and session_id == current.session.id):
+            return current
+        parts = session_id.split(":", 2)
+        if len(parts) != 3 or parts[1] != "group" or not parts[0] or not parts[2]:
+            return current
+        try:
+            return RuntimeScope(current.bot_id, "group", SessionRef(session_id, parts[0], "group", parts[2]))
+        except Exception:
+            return current
 
     def _injectable(self, belief: dict, scope: RuntimeScope, repository: Any) -> bool:
         provenance = belief.get("provenance") if isinstance(belief.get("provenance"), dict) else {}

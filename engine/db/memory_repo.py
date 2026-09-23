@@ -11,9 +11,9 @@ from typing import Any, Optional
 import numpy as np
 
 try:
-    from ...domain.scope import RuntimeScope
+    from ...domain.scope import RuntimeScope, subject_local_id
 except ImportError:  # pragma: no cover - repository tests import engine as top-level
-    from domain.scope import RuntimeScope
+    from domain.scope import RuntimeScope, subject_local_id
 
 from .connection import ConnectionManager
 from .migrations.memories_v2 import MEMORIES_V2_VERSION
@@ -327,6 +327,7 @@ class MemoryRepo:
         allow_unscoped: bool = False,
         allow_cross_group_recall: bool = False,
         shared_grant_memory_ids: list[int] | tuple[int, ...] | None = None,
+        private_subject_group_recall: bool = False,
     ) -> list:
         """Read hot IDs through the formal Scope boundary plus legacy group fallback.
 
@@ -339,6 +340,10 @@ class MemoryRepo:
         those IDs may be returned even when their owner group differs, but only
         if they are formal resolved group rows. This is not physical fanout and
         does not authorize touch/write.
+
+        记忆主体是 Bot 本人：正式行无论本群还是跨群都只返回 ``bot_id`` 相同的行，
+        其他 Bot 亲历的消息不会被召回。``private_subject_group_recall`` 只对私聊生效：
+        额外返回同一 Bot、同一平台下该私聊对象本人在群里公开说过的话。
         """
         if not ids:
             return []
@@ -416,7 +421,7 @@ class MemoryRepo:
             required_private = {"bot_id", "session_id", "visibility", "resolution_state", "quarantine"}
             if required_private - columns or allow_cross_group_recall or grant_ids:
                 return []
-            where.extend([
+            private_lane = " AND ".join([
                 "bot_id=? AND session_id=? AND visibility='private'",
                 "COALESCE(group_id, '')=?",
                 "resolution_state='resolved'",
@@ -428,6 +433,21 @@ class MemoryRepo:
                 scope.session.id,
                 scope.session.conversation_id,
             ])
+            subject_id = subject_local_id(scope) if private_subject_group_recall else ""
+            if subject_id and "sender_id" in columns:
+                # 当事人自己在群里公开说过的话：同 Bot、同平台、正式群行。
+                subject_lane = " AND ".join([
+                    "bot_id=? AND visibility='group'",
+                    "session_id LIKE ? ESCAPE '/'",
+                    "sender_id=?",
+                    "resolution_state='resolved'",
+                    *_read_active_memory_predicates(columns),
+                ])
+                platform = scope.session.platform_id.replace("/", "//").replace("%", "/%").replace("_", "/_")
+                where.append(f"(({private_lane}) OR ({subject_lane}))")
+                parameters.extend([scope.bot_id, f"{platform}:group:%", subject_id])
+            else:
+                where.append(private_lane)
         elif isinstance(scope, RuntimeScope) and scope.session is not None:
             # Group reads allow only the exact formal owner plus fully-unscoped
             # legacy rows in the current group.  Cross-group recall may expand to
@@ -452,7 +472,8 @@ class MemoryRepo:
                 *_active_memory_predicates(columns, legacy_compat=True),
             ])
             if allow_cross_group_recall:
-                where.append(f"(({formal_lane}) OR ({legacy_lane}))")
+                where.append(f"((({formal_lane}) AND bot_id=?) OR ({legacy_lane}))")
+                parameters.append(scope.bot_id)
             else:
                 local_formal = f"(({formal_lane}) AND bot_id=? AND session_id=? AND group_id=?)"
                 local_legacy = f"(({legacy_lane}) AND group_id=?)"

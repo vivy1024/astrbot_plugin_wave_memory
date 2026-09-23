@@ -61,22 +61,27 @@ def test_scoped_cold_candidates_use_effective_tags_and_never_cross_scope(tmp_pat
         db.close()
 
 
-def test_scoped_cold_candidates_expand_across_group_and_bot_only_with_explicit_policy(tmp_path):
+def test_scoped_cold_candidates_expand_across_groups_of_same_bot_only_with_explicit_policy(tmp_path):
     db = WaveMemoryDB(str(tmp_path / "cross-cold.sqlite"), dimension=3)
     scope = _scope("g1", "bot-a")
-    other_scope = _scope("g2", "bot-b")
+    same_bot_scope = _scope("g3", "bot-a")
+    other_bot_scope = _scope("g2", "bot-b")
     try:
         current_id = _memory(db, scope, content="当前 Scope 的 Catalog 冷记忆")
-        cross_id = _memory(db, other_scope, content="跨群跨 Bot 的 Catalog 冷记忆")
+        same_bot_id = _memory(db, same_bot_scope, content="同一 Bot 在另一个群的 Catalog 冷记忆")
+        other_bot_id = _memory(db, other_bot_scope, content="另一个 Bot 的 Catalog 冷记忆")
         current_tag = db.upsert_scoped_tag(scope, name="共享话题", tag_type="topic", confidence=0.9, metadata={})
-        cross_tag = db.upsert_scoped_tag(other_scope, name="共享话题", tag_type="topic", confidence=0.9, metadata={})
+        same_bot_tag = db.upsert_scoped_tag(same_bot_scope, name="共享话题", tag_type="topic", confidence=0.9, metadata={})
+        other_bot_tag = db.upsert_scoped_tag(other_bot_scope, name="共享话题", tag_type="topic", confidence=0.9, metadata={})
         db.link_scoped_memory_tag(scope, memory_id=current_id, tag_id=current_tag, relevance=1.0)
-        db.link_scoped_memory_tag(other_scope, memory_id=cross_id, tag_id=cross_tag, relevance=1.0)
+        db.link_scoped_memory_tag(same_bot_scope, memory_id=same_bot_id, tag_id=same_bot_tag, relevance=1.0)
+        db.link_scoped_memory_tag(other_bot_scope, memory_id=other_bot_id, tag_id=other_bot_tag, relevance=1.0)
 
-        exact = db.list_scoped_cold_memory_candidates(scope, [current_tag, cross_tag], limit=8)
+        tags = [current_tag, same_bot_tag, other_bot_tag]
+        exact = db.list_scoped_cold_memory_candidates(scope, tags, limit=8)
         expanded = db.list_scoped_cold_memory_candidates(
             scope,
-            [current_tag, cross_tag],
+            tags,
             limit=8,
             allow_cross_group_recall=True,
         )
@@ -86,8 +91,9 @@ def test_scoped_cold_candidates_expand_across_group_and_bot_only_with_explicit_p
         expanded_links = db.list_scoped_catalog_links(scope, [catalog_id], allow_cross_group_recall=True)
 
         assert [row["id"] for row in exact] == [current_id]
-        assert {row["id"] for row in expanded} == {current_id, cross_id}
+        # 跨群只扩展到同一 Bot 的其他群；另一个 Bot 亲历的记忆不属于当前 Bot。
+        assert {row["id"] for row in expanded} == {current_id, same_bot_id}
         assert len(exact_links) == 1
-        assert {row["scoped_tag_id"] for row in expanded_links} == {current_tag, cross_tag}
+        assert {row["scoped_tag_id"] for row in expanded_links} == {current_tag, same_bot_tag}
     finally:
         db.close()

@@ -9,9 +9,9 @@ from collections.abc import Mapping
 from typing import Any
 
 try:
-    from ....domain.scope import RuntimeScope
+    from ....domain.scope import RuntimeScope, subject_local_id
 except ImportError:  # 兼容独立测试/插件顶级加载
-    from domain.scope import RuntimeScope
+    from domain.scope import RuntimeScope, subject_local_id
 
 from ...identity_safety import is_identity_contamination
 from ..channel_base import InjectionResult, estimate_injection_tokens
@@ -206,24 +206,47 @@ class FTS5Channel:
             required = {"bot_id", "session_id", "visibility", "group_id"}
             if not required <= columns:
                 return "0=1", ()
-            return (
-                f"({active_base}) AND {prefix}bot_id = ? AND {prefix}session_id = ? "
-                f"AND {prefix}visibility = ? AND COALESCE({prefix}group_id, '') = ?",
-                (scope.bot_id, scope.session.id, "private", scope.session.conversation_id),
+            private_sql = (
+                f"{prefix}bot_id = ? AND {prefix}session_id = ? "
+                f"AND {prefix}visibility = ? AND COALESCE({prefix}group_id, '') = ?"
             )
+            private_params: tuple[Any, ...] = (
+                scope.bot_id, scope.session.id, "private", scope.session.conversation_id,
+            )
+            subject_id = subject_local_id(scope) if self.cross_group_enabled else ""
+            if subject_id and "sender_id" in columns:
+                # 私聊对象本人在群里公开说过的话（同 Bot、同平台）；私聊内容不外流。
+                platform = scope.session.platform_id.replace("/", "//").replace("%", "/%").replace("_", "/_")
+                subject_sql = (
+                    f"{prefix}bot_id = ? AND {prefix}visibility = 'group' "
+                    f"AND {prefix}session_id LIKE ? ESCAPE '/' AND {prefix}sender_id = ? "
+                    f"AND {prefix}resolution_state = 'resolved'"
+                )
+                return (
+                    f"({active_base}) AND (({private_sql}) OR ({subject_sql}))",
+                    private_params + (scope.bot_id, f"{platform}:group:%", subject_id),
+                )
+            return f"({active_base}) AND {private_sql}", private_params
         visibility_exclusion = (
             f"COALESCE({prefix}visibility, '') != 'private'"
             if "visibility" in columns else "1=1"
         )
+        # 记忆主体是 Bot 本人：只召回当前 Bot 亲历的正式行，以及无法归属的旧版无 Scope 行。
+        owner = (
+            f"(COALESCE({prefix}bot_id, '') = ? OR COALESCE({prefix}bot_id, '') = '')"
+            if "bot_id" in columns else "1=1"
+        )
+        owner_params: list[Any] = [scope.bot_id] if "bot_id" in columns else []
         active = f"""{active_base}
             AND {visibility_exclusion}
             AND COALESCE({prefix}group_id, '') NOT LIKE 'private:%'
+            AND {owner}
         """
         if self.cross_group_enabled:
-            return f"({active})", ()
+            return f"({active})", tuple(owner_params)
         current_group = scope.session.conversation_id
         local = f"({active}) AND COALESCE({prefix}group_id, '') = ?"
-        params: list[Any] = [current_group]
+        params: list[Any] = [*owner_params, current_group]
         ids = list(grant_ids or [])
         if ids:
             try:

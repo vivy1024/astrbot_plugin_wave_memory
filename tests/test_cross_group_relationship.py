@@ -290,3 +290,90 @@ def test_injection_always_aggregates_regardless_of_cross_group_switch():
 
     assert "综合值=27" in result.text, "好感度合并是默认行为，不受开关影响"
     assert repo.summarize_calls == 1
+
+
+def _private_scope(bot: str = "bot-0001") -> RuntimeScope:
+    return RuntimeScope(
+        bot, "private",
+        SessionRef("qq:private:u1", "qq", "private", "u1"),
+        subject_principal_id=SUBJECT,
+    )
+
+
+def test_aggregate_is_readable_from_private_chat(repo):
+    """私聊里认得同一个人：态度等于其在各群积累的汇总，且不混入其他 Bot。"""
+    _upsert_dims(repo, _scope(session="qq:group:g1"), 29, "neutral", '{"familiarity":80.0,"trust":15.0,"depth":20.0}', 1000.0)
+    _upsert_dims(repo, _scope(session="qq:group:g2"), 29, "neutral", '{"familiarity":80.0,"trust":15.0,"depth":20.0}', 1200.0)
+    _upsert(repo, _scope(bot="bot-0002", session="qq:group:g1"), 99, "hostile", 1500.0)
+
+    data = repo.summarize_cross_group_relationship(_private_scope(), subject_principal_id=SUBJECT)
+
+    assert data["available"] is True
+    assert data["group_count"] == 2
+    assert data["merged_state"] == "friendly"
+
+
+def _private_channel_ctx():
+    from types import SimpleNamespace
+
+    scope = RuntimeScope(
+        "bot-0001", "private",
+        SessionRef("qq:private:1", "qq", "private", "1"),
+        subject_principal_id="qq:user:1",
+    )
+    return SimpleNamespace(
+        mode="full", config={"channels": {"affinity": {"enabled": True}}},
+        scope=scope, sender_id="1", group_id="1",
+    )
+
+
+def test_private_chat_injection_recognizes_person_with_unified_attitude():
+    """私聊不再失忆：读取本私聊的关系行，态度取群聊与私聊的汇总。"""
+
+    class _PrivateRepo(_CrossGroupRepo):
+        def __init__(self):
+            super().__init__()
+            self.state_scopes = []
+
+        def get_state(self, scope, subject_principal_id=None, limit=25, offset=0):
+            self.state_scopes.append(scope.visibility)
+            return super().get_state(scope, subject_principal_id=subject_principal_id, limit=limit, offset=offset)
+
+    repo = _PrivateRepo()
+    result = _run_channel(repo, _private_channel_ctx())
+
+    assert result.status == "hit"
+    assert "综合值=27" in result.text
+    assert repo.state_scopes == ["private"]
+    assert repo.summarize_calls == 1
+
+
+def test_injection_reads_unsettled_energy_from_cross_group_pool(tmp_path):
+    """未决能量写入 (bot, user, "") 跨群池，注入必须读同一个 key，而不是当前群的旧行。"""
+    from types import SimpleNamespace
+
+    from engine.db.person_timeline_repo import PersonTimelineRepo
+
+    cm = ConnectionManager(str(tmp_path / "timeline.sqlite3"))
+    try:
+        timeline = PersonTimelineRepo(cm)
+        timeline.set_unsettled_state(
+            bot_id="bot-0001", user_id="1", group_id="", energy=6.5, interaction_count=3,
+            traces=[{"text": "在别的群帮过我", "impact": 3.0, "ts": 1000.0}],
+        )
+        db = SimpleNamespace(conn=cm, person_timeline=timeline)
+
+        from services.injection.channels.relationship import RelationshipChannel
+        import asyncio
+
+        result = asyncio.run(RelationshipChannel(repository=_CrossGroupRepo(), db=db).build(
+            SimpleNamespace(
+                mode="full", config={"channels": {"affinity": {"enabled": True}}},
+                scope=_channel_scope(), sender_id="1", group_id="g1",
+            )
+        ))
+        assert result.status == "hit"
+        assert "未结算能量 6.5/" in result.text
+        assert "在别的群帮过我" in result.text
+    finally:
+        cm.close()

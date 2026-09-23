@@ -22,9 +22,9 @@ except ImportError:  # pragma: no cover - 插件根目录直接导入
     from services.belief_engine import APPROVED_FACT_STATUSES
 
 try:
-    from ..domain.scope import RuntimeScope
+    from ..domain.scope import RuntimeScope, is_visible_scene, scene_key
 except ImportError:  # pragma: no cover
-    from domain.scope import RuntimeScope
+    from domain.scope import RuntimeScope, is_visible_scene, scene_key
 
 try:
     from astrbot.api import logger
@@ -232,8 +232,9 @@ class ReflectionTriggerService:
             # person_unsettled_state 没有 text 列；观感文本存在 traces JSON 数组里。
             # 这里必须读 traces 并解析，否则该源每次查询都抛 OperationalError，
             # 而候选为空 + 依赖失败会让整条反思链路被判为 dependency_error 丢弃。
+            # 未决能量写入跨群池 group_id=""；旧版按群存的行一并读取作兼容。
             rows = conn.execute(
-                "SELECT traces FROM person_unsettled_state WHERE bot_id=? AND group_id=? AND user_id=?"
+                "SELECT traces FROM person_unsettled_state WHERE bot_id=? AND group_id IN ('', ?) AND user_id=?"
                 " ORDER BY updated_at DESC LIMIT 3",
                 (scope.bot_id, group_id, str(sender_id or "")),
             ).fetchall()
@@ -250,6 +251,9 @@ class ReflectionTriggerService:
                     continue
                 for item in traces:
                     if isinstance(item, dict):
+                        # 其他私聊里的观感不外流到当前场合。
+                        if not is_visible_scene(item.get("group_id"), scene_key(scope)):
+                            continue
                         body = str(item.get("text") or item.get("summary") or "").strip()
                     else:
                         body = str(item or "").strip()
@@ -279,7 +283,7 @@ class ReflectionTriggerService:
             episodes = fetch_recent_episodes(
                 conn,
                 bot_id=scope.bot_id,
-                group_id=group_id,
+                group_id=scene_key(scope),
                 user_id=str(sender_id or "") or None,
                 limit=2,
                 since=now - 14 * 86400,

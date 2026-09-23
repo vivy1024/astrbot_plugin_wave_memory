@@ -22,11 +22,11 @@ except Exception:  # pragma: no cover
 try:
     from ..domain.scope import RuntimeScope
     from ..services.identity_safety import is_identity_contamination
-    from .scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
+    from .scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
 except ImportError:  # pragma: no cover
     from domain.scope import RuntimeScope
     from services.identity_safety import is_identity_contamination
-    from tools.scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
+    from tools.scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
 
 
 _IRONY_MARKERS = ("irony", "sarcasm", "ironic", "反串", "阴阳")
@@ -151,7 +151,7 @@ class WaveMemoryProposeFactTool(FunctionTool[AstrAgentContext]):
             except Exception:
                 return "数据库连接已断开"
 
-        runtime_scope, error_code = require_group_runtime_scope(ctx, "fact_proposal.propose")
+        runtime_scope, error_code = require_memory_runtime_scope(ctx, "fact_proposal.propose")
         if error_code:
             return scope_error_message("事实提审", error_code)
         assert runtime_scope is not None
