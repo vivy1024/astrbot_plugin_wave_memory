@@ -11,10 +11,11 @@ import {
   type FactEvidencePayload,
   type FactReviewAction,
   type FactReviewHint,
+  type FactVisibility,
   type ScopedFactItem,
   type ScopedFactsResponse,
 } from '@/api/facts'
-import { getScopeOptions, groupSessionOptions, scopeOptionsFor } from '@/api/options'
+import { getScopeOptions, groupSessionOptions, isPrivateSessionId, scopeOptionsFor } from '@/api/options'
 import {
   BatchActionBar,
   ChatContextEvidenceDialog,
@@ -61,7 +62,7 @@ function FactEvidenceDialog({
   onClose,
 }: {
   fact: ScopedFactItem | null
-  scope: { bot_id: string; session_id: string; visibility: 'group' }
+  scope: { bot_id: string; session_id: string; visibility: FactVisibility }
   onClose: () => void
 }) {
   const [before, setBefore] = useState(15)
@@ -218,9 +219,11 @@ export function FactsPage() {
 
   const loadBots = useCallback(async () => scopeOptionsFor(await getScopeOptions(), ['bot']), [])
   const loadSessions = useCallback(async () => {
-    return groupSessionOptions(scopeOptionsFor(await getScopeOptions(), ['session']), botId)
+    // 私聊里得知的事实同样需要审核，私聊会话在本页可选。
+    return groupSessionOptions(scopeOptionsFor(await getScopeOptions(), ['session']), botId, { allowPrivate: true })
   }, [botId])
 
+  const visibility: FactVisibility = isPrivateSessionId(sessionId) ? 'private' : 'group'
   useEffect(() => { setFilterDraft({ search, status: statusFilter }) }, [search, statusFilter])
   useEffect(() => {
     if (!botId || !sessionId) { setData(null); setLoading(false); setError(undefined); return }
@@ -230,7 +233,7 @@ export function FactsPage() {
     listFacts({
       bot_id: botId,
       session_id: sessionId,
-      visibility: 'group',
+      visibility,
       search: search || undefined,
       status: statusFilter || undefined,
       limit: pagination.limit,
@@ -240,9 +243,9 @@ export function FactsPage() {
       .catch((reason: unknown) => { if (active) { setData(null); setError(reason) } })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [botId, pagination.limit, pagination.offset, reload, search, sessionId, statusFilter])
+  }, [botId, pagination.limit, pagination.offset, reload, search, sessionId, statusFilter, visibility])
 
-  const scope = useMemo(() => ({ bot_id: botId, session_id: sessionId, visibility: 'group' as const }), [botId, sessionId])
+  const scope = useMemo(() => ({ bot_id: botId, session_id: sessionId, visibility }), [botId, sessionId, visibility])
   const submitSearch = (event: FormEvent) => {
     event.preventDefault()
     pagination.setFilters({ search: filterDraft.search.trim() || null, status: filterDraft.status || null })

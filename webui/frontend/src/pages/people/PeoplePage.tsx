@@ -6,12 +6,16 @@ import { AlertCircleIcon, EyeIcon, RefreshCwIcon, SearchIcon, SlidersHorizontalI
 import { getScopeOptions, groupSessionOptions, scopeOptionsFor } from '@/api/options'
 import {
   clearImpression,
+  getIdentityLinks,
   getLegacyPeople,
+  linkIdentities,
+  unlinkIdentity,
   getPeople,
   getPersonTimeline,
   getRelationshipHistoricalAudit,
   getRelationships,
   type HistoricalAuditPage,
+  type IdentityPerson,
   type PersonItem,
   type PersonTimelineEventItem,
   type RelationshipItem,
@@ -280,6 +284,76 @@ function ImpressionTimelinePanel({ query, userId }: { query: { bot_id: string; s
   )
 }
 
+/** 管理员确认同一个人在其他平台的账号；关联后态度与印象时间线合并。 */
+function IdentityLinksPanel({ query, principal }: { query: { bot_id: string; session_id: string; visibility: 'group' }; principal: string }) {
+  const { bot_id: botId, session_id: sessionId } = query
+  const scopeQuery = useMemo(() => ({ bot_id: botId, session_id: sessionId, visibility: 'group' as const }), [botId, sessionId])
+  const [person, setPerson] = useState<IdentityPerson | null>(null)
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      const data = await getIdentityLinks(scopeQuery)
+      setPerson(data.items.find((entry) => entry.principals.includes(principal)) ?? null)
+      setError('')
+    } catch (err) {
+      setError(humanizeApiError(err, '读取跨平台身份失败'))
+    }
+  }, [scopeQuery, principal])
+
+  useEffect(() => { void load() }, [load])
+
+  async function handleLink(event: FormEvent) {
+    event.preventDefault()
+    const other = draft.trim()
+    if (!other) return
+    setBusy(true)
+    try {
+      await linkIdentities(scopeQuery, { principals: [principal, other] })
+      setDraft('')
+      await load()
+    } catch (err) {
+      setError(humanizeApiError(err, '关联失败（格式：平台:user:账号，如 bilibili:user:123）'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleUnlink(target: string) {
+    setBusy(true)
+    try {
+      await unlinkIdentity(scopeQuery, target)
+      await load()
+    } catch (err) {
+      setError(humanizeApiError(err, '解除关联失败'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const others = (person?.principals ?? []).filter((entry) => entry !== principal)
+  return (
+    <div className="rounded-lg border p-3.5">
+      <span className="mb-1.5 block text-xs text-muted-foreground">跨平台身份（同一个人在其他平台的账号，关联后态度与印象合并）</span>
+      <div className="mb-2 flex flex-wrap gap-1">
+        {others.length ? others.map((entry) => (
+          <Badge key={entry} variant="outline" className="gap-1 font-mono font-normal">
+            {entry}
+            <button type="button" className="text-muted-foreground hover:text-destructive" disabled={busy} onClick={() => void handleUnlink(entry)} aria-label={`解除 ${entry}`}>×</button>
+          </Badge>
+        )) : <span className="text-muted-foreground">未关联其他平台账号</span>}
+      </div>
+      <form className="flex gap-2" onSubmit={(event) => void handleLink(event)}>
+        <Input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="bilibili:user:123456" className="h-8 font-mono text-xs" />
+        <Button type="submit" size="sm" variant="outline" disabled={busy || !draft.trim()}>关联</Button>
+      </form>
+      {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
+    </div>
+  )
+}
+
 function PersonDetail({ item, relationship, relationshipError, query, onChanged }: { item: PersonItem; relationship: RelationshipItem | null; relationshipError?: string | null; query: { bot_id: string; session_id: string; visibility: 'group'; user_id?: string }; onChanged?: () => void }) {
   const experienceHref = scopedHref('/knowledge/experiences', '', { bot_id: query.bot_id, session_id: query.session_id, visibility: 'group' })
   const soulHref = scopedHref('/soul', '', { bot_id: query.bot_id, session_id: query.session_id, visibility: 'group' })
@@ -317,6 +391,11 @@ function PersonDetail({ item, relationship, relationshipError, query, onChanged 
       <div><span className="mb-0.5 block text-xs text-muted-foreground">用户 ID</span><span className="break-all font-mono text-xs">{item.user_id}</span></div>
       <div><span className="mb-0.5 block text-xs text-muted-foreground">所在群</span><span className="break-all font-mono text-xs">{item.bot_id} · {item.group_id}</span></div>
     </div>
+
+    <IdentityLinksPanel
+      query={{ bot_id: query.bot_id, session_id: query.session_id, visibility: 'group' }}
+      principal={`${query.session_id.split(':')[0]}:user:${item.user_id}`}
+    />
 
     <div className="grid grid-cols-2 gap-3 rounded-lg border p-3.5">
       <div><span className="mb-0.5 block text-xs text-muted-foreground">互动数</span><span className="font-mono font-medium">{interactionCount(item) ?? '未记录'}</span></div>

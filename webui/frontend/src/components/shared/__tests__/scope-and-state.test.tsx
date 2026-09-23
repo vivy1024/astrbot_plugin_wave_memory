@@ -89,6 +89,11 @@ describe('ScopeSelect 与 ObjectDeepLink', () => {
     expect(options[0]).toMatchObject({ value: '羽书:group:42', disabled: false })
     expect(options[1]?.disabled).toBe(true)
     expect(options[1]?.description).toContain('本页只支持群会话')
+
+    // 事实审核页允许选择私聊会话（私聊里得知的事实只在该私聊审核）。
+    const withPrivate = groupSessionOptions(scopeOptionsFor(payload, ['session']), 'yushu', { allowPrivate: true })
+    expect(withPrivate[1]?.disabled).toBe(false)
+    expect(withPrivate[1]?.label).toContain('私聊')
   })
 
   it('触发器只显示单行标签，不把下拉说明带进固定高度输入框', async () => {

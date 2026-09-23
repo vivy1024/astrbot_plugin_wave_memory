@@ -244,3 +244,24 @@ export interface LegacyPeopleQuery {
 export function getLegacyPeople(query: LegacyPeopleQuery): Promise<PageResponse<PersonItem>> {
   return fetchJson<PageResponse<PersonItem>>(`/api/people/legacy/audit${queryString(query)}`)
 }
+
+/** 管理员确认的跨平台同一人（按 Bot 保存）。 */
+export interface IdentityPerson {
+  person_key: string
+  principals: string[]
+  note: string
+  created_by?: string
+  created_at?: number
+}
+
+export function getIdentityLinks(query: PeopleQuery): Promise<{ bot_id: string; items: IdentityPerson[] }> {
+  return fetchJson<{ bot_id: string; items: IdentityPerson[] }>(`/api/people/identity-links${queryString(query)}`)
+}
+
+export function linkIdentities(query: PeopleQuery, payload: { principals: string[]; note?: string }): Promise<{ item: IdentityPerson }> {
+  return fetchJson<{ item: IdentityPerson }>(`/api/people/identity-links${queryString(query)}`, { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function unlinkIdentity(query: PeopleQuery, principal: string): Promise<unknown> {
+  return fetchJson<unknown>(`/api/people/identity-links/unlink${queryString(query)}`, { method: 'POST', body: JSON.stringify({ principal }) })
+}

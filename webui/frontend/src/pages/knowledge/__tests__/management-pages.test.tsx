@@ -62,6 +62,7 @@ vi.mock('@/api/options', () => ({
     ? [{ value: 'bot-real', label: '真实 Bot', kind: 'bot', description: 'Bot ID bot-real' }]
     : [{ value: 'qq:group:42', label: '群 42', kind: 'session', description: 'bot-real · group · runtime' }],
   groupSessionOptions: (options: Array<{ kind?: string }>) => options.filter((option) => option.kind === 'session'),
+  isPrivateSessionId: (sessionId: string) => sessionId.includes(':private:'),
 }))
 
 const page = { total: 1, total_status: 'exact', reason_code: null, limit: 25, offset: 0, page: 1, page_count: 1, has_more: false }

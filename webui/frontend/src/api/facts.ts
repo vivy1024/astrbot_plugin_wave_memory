@@ -1,13 +1,15 @@
 import { fetchJson } from './client'
 import type { EvidenceRef, ObjectRefDescriptor, PageResponse } from '@/components/shared/types'
 
+/** 事实可来自群聊或私聊；私聊事实只在该私聊会话下审核与展示。 */
+export type FactVisibility = 'group' | 'private'
 export type FactReviewAction = 'approve' | 'reject'
 export type FactReviewHint = '' | 'suggest_approve' | 'suggest_reject' | 'needs_review'
 
 export interface FactSelection {
   bot_id: string
   session_id: string
-  visibility: 'group'
+  visibility: FactVisibility
 }
 
 export interface FactActionAvailability {
@@ -20,7 +22,7 @@ export interface ScopedFactItem {
   id: number
   bot_id: string
   session_id: string
-  visibility: 'group'
+  visibility: FactVisibility
   subject: string
   predicate: string
   object: string

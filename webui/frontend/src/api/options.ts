@@ -111,12 +111,23 @@ export function scopeOptionsFor(payload: ScopeOptionsPayload, kinds: Array<Scope
   return items
 }
 
-export function groupSessionOptions(options: ScopeOption[], botId?: string): ScopeOption[] {
+export function isPrivateSessionId(sessionId: string): boolean {
+  return sessionId.includes(':private:')
+}
+
+export function groupSessionOptions(
+  options: ScopeOption[],
+  botId?: string,
+  { allowPrivate = false }: { allowPrivate?: boolean } = {},
+): ScopeOption[] {
   return options
     .filter((option) => option.kind === 'session' && (!botId || option.description?.startsWith(`${botId} ·`)))
     .map((option) => {
-      const isPrivate = option.disabled || option.description?.includes(' · private ·') || option.value.includes(':private:')
-      return isPrivate
+      const isPrivate = option.description?.includes(' · private ·') || isPrivateSessionId(option.value)
+      if (isPrivate && allowPrivate) {
+        return { ...option, disabled: false, label: `${option.label} · 私聊` }
+      }
+      return isPrivate || option.disabled
         ? { ...option, disabled: true, description: `${option.description ?? ''} · 本页只支持群会话` }
         : option
     })
