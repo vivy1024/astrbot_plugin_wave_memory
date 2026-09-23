@@ -205,6 +205,8 @@ export interface PersonTimelineEventItem {
   summary: string
   detail: string
   source_quote?: string | null
+  source_memory_id?: number | null
+  source_quote_inferred?: boolean
   subject: string
   predicate: string
   object: string

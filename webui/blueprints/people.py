@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import time
 from collections.abc import Mapping
 from typing import Any
@@ -996,28 +997,103 @@ async def clear_impression():
 
 
 _TIMELINE_KINDS = frozenset({"impression", "affinity", "person_fact"})
+_QUOTE_IN_TEXT_RE = re.compile(r"原话(?:证据)?[:：]\s*[“\"'「](.*?)[”\"'」]")
+# 时间窗口反查：事件发生前 300 秒至后 15 秒内该群友的最后一条发言
+_QUOTE_WINDOW_BEFORE = 300
+_QUOTE_WINDOW_AFTER = 15
 
 
-def _serialize_timeline_event(item: Mapping[str, Any]) -> dict[str, Any]:
+def _scoped_memory_quote(conn: Any, scope: RuntimeScope, memory_id: Any) -> str:
+    """只在当前 RuntimeScope 内按 ID 读取原话，跨 Bot/跨群的 ID 一律视为不存在。"""
+    try:
+        row = conn.execute(
+            "SELECT content FROM memories WHERE id=? AND bot_id=? AND session_id=? AND visibility=? "
+            "AND COALESCE(quarantine,0)=0",
+            (int(memory_id), scope.bot_id, scope.session.id, scope.visibility),
+        ).fetchone()
+    except Exception:
+        return ""
+    return str(row[0]).strip() if row and row[0] else ""
+
+
+def _infer_window_quote(conn: Any, scope: RuntimeScope, user_id: str, occurred_at: Any) -> tuple[Any, str]:
+    """在当前 RuntimeScope 内按时间窗口推测事件对应的群友发言（结果只是推测，不是确证）。"""
+    try:
+        at = float(occurred_at)
+        row = conn.execute(
+            """SELECT id, content FROM memories
+                WHERE bot_id=? AND session_id=? AND visibility=?
+                  AND (sender_id=? OR sender_name=?)
+                  AND timestamp <= ? AND timestamp >= ?
+                  AND resolution_state='resolved' AND COALESCE(quarantine,0)=0
+                  AND COALESCE(memory_type, 'message') NOT IN ('archived', 'evicted', 'deleted', 'noise')
+                ORDER BY timestamp DESC LIMIT 1""",
+            (
+                scope.bot_id, scope.session.id, scope.visibility, user_id, user_id,
+                at + _QUOTE_WINDOW_AFTER, at - _QUOTE_WINDOW_BEFORE,
+            ),
+        ).fetchone()
+    except Exception:
+        return None, ""
+    if not row or not row[1]:
+        return None, ""
+    return row[0], str(row[1]).strip()[:150]
+
+
+def _serialize_timeline_event(
+    item: Mapping[str, Any],
+    conn: Any = None,
+    scope: RuntimeScope | None = None,
+) -> dict[str, Any]:
     provenance = item.get("provenance") if isinstance(item.get("provenance"), Mapping) else {}
     event = provenance.get("event") if isinstance(provenance.get("event"), Mapping) else {}
     ledger = provenance.get("ledger") if isinstance(provenance.get("ledger"), Mapping) else {}
     kind = str(item.get("kind") or "").strip()
     source_quote = str(provenance.get("source_quote") or "").strip()
+    source_mid = provenance.get("source_memory_id")
+    quote_inferred = bool(provenance.get("source_quote_inferred"))
+
+    detail = str(item.get("detail") or "").strip()
+    summary = str(item.get("summary") or "").strip()
+    user_id = str(item.get("user_id") or "")
+    group_id = str(item.get("group_id") or "")
+    occurred_at = item.get("occurred_at")
+
+    # 1. 从 detail / summary 中提取写入时已记录的原话
+    for text in (detail, summary):
+        if source_quote:
+            break
+        match = _QUOTE_IN_TEXT_RE.search(text)
+        if match:
+            source_quote = match.group(1).strip()
+
+    can_lookup = conn is not None and scope is not None and scope.session is not None
+    # 2. 有 source_memory_id 但缺原话时，在当前 Scope 内查表
+    if not source_quote and source_mid and can_lookup:
+        source_quote = _scoped_memory_quote(conn, scope, source_mid)
+
+    # 3. 仍无原话时，按时间窗口推测当时的发言，并显式标记为推测
+    if not source_quote and user_id and occurred_at and can_lookup:
+        inferred_mid, inferred_quote = _infer_window_quote(conn, scope, user_id, occurred_at)
+        if inferred_quote:
+            source_mid, source_quote, quote_inferred = inferred_mid, inferred_quote, True
+
     return {
         "id": item.get("id"),
-        "user_id": str(item.get("user_id") or ""),
-        "group_id": str(item.get("group_id") or ""),
+        "user_id": user_id,
+        "group_id": group_id,
         "bot_id": str(item.get("bot_id") or ""),
         "kind": kind,
-        "summary": str(item.get("summary") or "").strip(),
-        "detail": str(item.get("detail") or "").strip(),
+        "summary": summary,
+        "detail": detail,
         "source_quote": source_quote or None,
+        "source_memory_id": source_mid or None,
+        "source_quote_inferred": quote_inferred if source_quote else False,
         "subject": str(item.get("subject") or "").strip(),
         "predicate": str(item.get("predicate") or "").strip(),
         "object": str(item.get("object") or "").strip(),
         "confidence": item.get("confidence"),
-        "occurred_at": item.get("occurred_at"),
+        "occurred_at": occurred_at,
         "created_at": item.get("created_at"),
         "event_type": str(event.get("event_type") or ledger.get("event_type") or kind),
         "dimension": str(event.get("dimension") or ledger.get("dimension") or ""),
@@ -1060,7 +1136,7 @@ async def list_person_timeline():
             offset=offset,
             connection=conn,
         )
-        items = [_serialize_timeline_event(item) for item in page.get("items") or []]
+        items = [_serialize_timeline_event(item, conn=conn, scope=scope) for item in page.get("items") or []]
         payload = page_response(items, total=int(page.get("total") or 0), limit=limit, offset=offset)
         payload.update({
             "scope": scope.to_dict(),

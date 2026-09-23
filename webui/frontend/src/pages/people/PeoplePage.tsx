@@ -250,8 +250,8 @@ function ImpressionTimelinePanel({ query, userId }: { query: { bot_id: string; s
             <li key={`${entry.id}-${index}`} className="rounded-md bg-background/60 px-2.5 py-2">
               <p className="whitespace-pre-wrap break-words text-sm">{entry.summary || entry.detail || '未命名事件'}</p>
               {entry.source_quote ? (
-                <div className="mt-1.5 rounded bg-muted/40 px-2 py-1 text-xs text-muted-foreground border-l-2 border-primary/60">
-                  <span className="font-semibold text-foreground/80">原话证据：</span>“{entry.source_quote}”
+                <div className={`mt-1.5 rounded bg-muted/40 px-2 py-1 text-xs text-muted-foreground border-l-2 ${entry.source_quote_inferred ? 'border-dashed border-muted-foreground/50' : 'border-primary/60'}`}>
+                  <span className="font-semibold text-foreground/80">{entry.source_quote_inferred ? '推测原话（按时间窗口匹配）：' : '原话证据：'}</span>“{entry.source_quote}”
                 </div>
               ) : null}
               <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
