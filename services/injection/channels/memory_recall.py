@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 try:
-    from ...domain import bot_identity
+    from ....domain import bot_identity
 except ImportError:  # top-level import in isolated tests
     from domain import bot_identity
 
