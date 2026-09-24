@@ -65,6 +65,8 @@ class ServiceContainer:
         self.tool_registry: Any = None
         # Runtime 写入入口（WaveMemoryPlugin.ingest_observation）：与 AstrBot 消息钩子同一套处理。
         self.observation_ingestor: Any = None
+        # 后台服务注册表（services.service_registry.ServiceRegistry）：9876「服务与扩展」页用。
+        self.service_registry: Any = None
 
         # ─── 认证 ───
         self.password: str = ""

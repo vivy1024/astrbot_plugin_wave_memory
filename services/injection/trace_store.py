@@ -337,6 +337,7 @@ class InjectionTraceStore:
         scope: str | None = None,
         session_id: str | None = None,
         config_revision: str | None = None,
+        source: str | None = None,
     ) -> tuple[str, list[Any]]:
         conditions = ["timestamp >= ?", "timestamp <= ?"]
         params: list[Any] = [float(from_ts), float(to_ts)]
@@ -368,6 +369,10 @@ class InjectionTraceStore:
         if config_revision:
             conditions.append("json_extract(metadata_json, '$.config_revision') = ?")
             params.append(config_revision)
+        if source:
+            # v6 之前的 trace 没有 source 字段，全部来自 AstrBot 消息钩子。
+            conditions.append("COALESCE(json_extract(metadata_json, '$.source'), 'astrbot') = ?")
+            params.append(source)
         channel_error_exists = (
             "EXISTS (SELECT 1 FROM injection_trace_channels ec "
             "WHERE ec.trace_id = injection_traces.trace_id "
@@ -403,13 +408,14 @@ class InjectionTraceStore:
         scope: str | None = None,
         session_id: str | None = None,
         config_revision: str | None = None,
+        source: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         where, params = self._query_filter(
             from_ts=from_ts, to_ts=to_ts, group_id=group_id, sender_id=sender_id,
             bot_id=bot_id, channel=channel, status=status, has_error=has_error, scope=scope,
-            session_id=session_id, config_revision=config_revision,
+            session_id=session_id, config_revision=config_revision, source=source,
         )
         rows = self.conn.execute(
             f"""SELECT trace_id, timestamp, mode, group_id, sender_id, sender_name, bot_id,
@@ -437,6 +443,7 @@ class InjectionTraceStore:
                 "session": session if isinstance(session, dict) else None,
                 "session_id": session.get("id") if isinstance(session, dict) else None,
                 "config_revision": metadata.get("config_revision") if isinstance(metadata, dict) else None,
+                "source": (metadata.get("source") if isinstance(metadata, dict) else None) or "astrbot",
             })
         return result
 
@@ -444,7 +451,7 @@ class InjectionTraceStore:
         """返回与 ``query`` 完全相同筛选条件的精确总数。"""
         allowed = {
             key: value for key, value in filters.items()
-            if key in {"from_ts", "to_ts", "group_id", "sender_id", "bot_id", "channel", "status", "has_error", "scope", "session_id", "config_revision"}
+            if key in {"from_ts", "to_ts", "group_id", "sender_id", "bot_id", "channel", "status", "has_error", "scope", "session_id", "config_revision", "source"}
         }
         where, params = self._query_filter(**allowed)
         return int(self.conn.execute(

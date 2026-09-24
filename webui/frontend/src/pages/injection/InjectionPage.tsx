@@ -119,9 +119,10 @@ type TraceFilterDraft = {
   from_ts: string
   to_ts: string
   config_revision: string
+  source: string
 }
 
-const privateFilterKeys: Array<keyof TraceFilterDraft> = ['channel', 'sender_id', 'status', 'has_error', 'scope', 'from_ts', 'to_ts', 'config_revision']
+const privateFilterKeys: Array<keyof TraceFilterDraft> = ['channel', 'sender_id', 'status', 'has_error', 'scope', 'from_ts', 'to_ts', 'config_revision', 'source']
 
 function draftFromSearchParams(params: URLSearchParams): TraceFilterDraft {
   return {
@@ -133,6 +134,7 @@ function draftFromSearchParams(params: URLSearchParams): TraceFilterDraft {
     from_ts: params.get('from_ts') ?? '',
     to_ts: params.get('to_ts') ?? '',
     config_revision: params.get('config_revision') ?? '',
+    source: params.get('source') ?? '',
   }
 }
 
@@ -170,6 +172,7 @@ export function InjectionPage() {
     has_error: searchParams.get('has_error') || undefined,
     scope: searchParams.get('scope') || undefined,
     config_revision: searchParams.get('config_revision') || undefined,
+    source: searchParams.get('source') || undefined,
     from_ts: searchParams.get('from_ts') || undefined,
     to_ts: searchParams.get('to_ts') || undefined,
     limit: pagination.limit,
@@ -295,6 +298,13 @@ export function InjectionPage() {
             <Field><FieldLabel htmlFor="trace-scope">群 / 聊天类型</FieldLabel><Input id="trace-scope" value={filterDraft.scope} onChange={(event) => setFilterDraft((current) => ({ ...current, scope: event.target.value }))} placeholder="按实际群或聊天类型筛选" /></Field>
             <Field><FieldLabel htmlFor="trace-from">开始时间</FieldLabel><Input id="trace-from" type="datetime-local" value={epochToInput(filterDraft.from_ts || null)} onChange={(event) => setFilterDraft((current) => ({ ...current, from_ts: inputToEpoch(event.target.value) }))} /></Field>
             <Field><FieldLabel htmlFor="trace-to">结束时间</FieldLabel><Input id="trace-to" type="datetime-local" value={epochToInput(filterDraft.to_ts || null)} onChange={(event) => setFilterDraft((current) => ({ ...current, to_ts: inputToEpoch(event.target.value) }))} /></Field>
+            <Field>
+              <FieldLabel>来源</FieldLabel>
+              <Select value={filterDraft.source || 'all'} onValueChange={(value) => setFilterDraft((current) => ({ ...current, source: value === 'all' ? '' : value }))}>
+                <SelectTrigger aria-label="调用来源"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectGroup><SelectItem value="all">全部来源</SelectItem><SelectItem value="astrbot">AstrBot 消息</SelectItem><SelectItem value="cortico">Cortico</SelectItem></SelectGroup></SelectContent>
+              </Select>
+            </Field>
             <Field><FieldLabel htmlFor="trace-revision">配置版本</FieldLabel><Input id="trace-revision" value={filterDraft.config_revision} onChange={(event) => setFilterDraft((current) => ({ ...current, config_revision: event.target.value }))} placeholder="例如 cfg-…" /></Field>
           </FieldGroup>
           <div className="flex flex-wrap gap-2">
@@ -323,7 +333,7 @@ export function InjectionPage() {
               keyExtractor={(row) => String(row.trace_id ?? '')}
               columns={[
                 { key: 'trace', header: '记录 / 时间', isTitle: true, render: (row) => <span className="flex min-w-40 flex-col"><Button type="button" variant="link" className="h-auto justify-start p-0 font-mono text-xs" onClick={(event) => { event.stopPropagation(); selectTrace(String(row.trace_id ?? '')) }}>{row.trace_id || '未记录编号'}</Button><span className="text-xs text-muted-foreground">{formatTime(row.timestamp ?? row.created_at)}</span></span> },
-                { key: 'bot', header: 'Bot', render: (row) => <span className="font-mono text-xs">{traceBot(row)}</span> },
+                { key: 'bot', header: 'Bot / 来源', render: (row) => <span className="flex flex-col gap-1"><span className="font-mono text-xs">{traceBot(row)}</span><Badge className="w-fit" variant="outline">{row.source === 'cortico' ? 'Cortico' : row.source && row.source !== 'astrbot' ? String(row.source) : 'AstrBot'}</Badge></span> },
                 { key: 'session', header: '会话', render: (row) => { const s = traceSession(row); return <span className="flex min-w-44 flex-col"><span>{s.primary}</span>{s.secondary ? <span className="text-xs text-muted-foreground">{s.secondary}</span> : null}</span> } },
                 { key: 'status', header: '模式 / 状态', render: (row) => { const st = String(row.status ?? (row.has_error ? 'error' : 'unknown')); return <span className="flex flex-col gap-1"><span>{textValue(row.mode)}</span><Badge className="w-fit" variant={st === 'ok' ? 'secondary' : st === 'unknown' ? 'outline' : 'destructive'}>{statusLabel(st)}</Badge></span> } },
                 { key: 'preview', header: '预览', render: (row) => <span className="max-w-md truncate" title={tracePreview(row)}>{tracePreview(row)}</span> },

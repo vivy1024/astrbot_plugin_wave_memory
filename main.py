@@ -1051,6 +1051,30 @@ class WaveMemoryPlugin(Star):
             self.channel_registry = registry
         return registry
 
+    def _setup_service_registry(self) -> None:
+        """登记可在 9876 上单独启停的后台服务（getter 每次读当前实例，热插拔后也准确）。"""
+        from .services.service_registry import ServiceRegistry, ServiceSpec
+        from .webui.container import get_container
+
+        registry = ServiceRegistry(self.task_supervisor)
+        for spec in (
+            ServiceSpec("writer", "记忆写入器", lambda: getattr(self, "writer", None), owner="message-writer",
+                        description="消息入库队列（核心服务，不能停）", stoppable=False),
+            ServiceSpec("tag_worker", "标签提取", lambda: getattr(self, "tag_worker", None), owner="tag-worker",
+                        description="后台匀速给新记忆打标签"),
+            ServiceSpec("dream", "做梦", lambda: getattr(self, "dream_service", None), owner="dream",
+                        description="定时回放近期与中期记忆，生成联想"),
+            ServiceSpec("eviction", "记忆淘汰", lambda: getattr(self, "eviction_service", None), owner="eviction",
+                        description="定时清理噪声与过期聊天记忆的向量"),
+            ServiceSpec("lifecycle", "好感生命周期", lambda: getattr(self, "lifecycle", None), owner="lifecycle",
+                        description="好感触达/衰减、表达模式聚合；停止前会先落盘缓冲"),
+            ServiceSpec("maintenance_jobs", "维护任务执行器", lambda: getattr(self, "maintenance_job_runner", None),
+                        owner="durable-jobs", description="执行索引重建、回填等可恢复任务"),
+        ):
+            registry.register(spec)
+        self.service_registry = registry
+        get_container().service_registry = registry
+
     def _setup_runtime_context_preparer(self) -> None:
         """Runtime API（Cortico 等）复用与 AstrBot 相同的编排器和通道实例。"""
         from .webui.container import get_container
@@ -1803,6 +1827,7 @@ class WaveMemoryPlugin(Star):
         # 新编排器影子链路：只写 trace，不改真实 ProviderRequest。
         self._setup_injection_shadow_pipeline()
         self._setup_runtime_context_preparer()
+        self._setup_service_registry()
 
         # ─── 注册所有服务状态到健康面板（WebUI 可视化）───
         from .utils.health_registry import register as _reg

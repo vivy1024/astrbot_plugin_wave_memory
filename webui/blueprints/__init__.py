@@ -49,6 +49,7 @@ _OPTIONAL = (
     ("compatibility", "compatibility_bp"),
     ("runtime", "runtime_bp"),
     ("bots", "bots_bp"),
+    ("services", "services_bp"),
 )
 
 _NAMES = [n for _, n in _CORE] + [n for _, n in _OPTIONAL]

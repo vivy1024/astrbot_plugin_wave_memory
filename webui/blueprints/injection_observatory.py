@@ -171,6 +171,7 @@ async def list_traces():
         "scope": filters.get("scope") or filters.get("chat_type") or None,
         "session_id": filters.get("session_id") or None,
         "config_revision": filters.get("config_revision") or None,
+        "source": filters.get("source") or None,
     }
     try:
         traces = trace_store.query(**query_filters, limit=limit, offset=offset)

@@ -13,6 +13,8 @@ export interface TraceFilters {
   scope?: string
   chat_type?: string
   config_revision?: string
+  /** 调用来源：astrbot（消息钩子）或 cortico 等 Runtime 调用方 */
+  source?: string
   limit?: PageSize
   offset?: number
 }
@@ -36,6 +38,7 @@ export interface InjectionTraceSummary {
   bot_profile_id?: string
   mode?: string
   config_revision?: string | number | null
+  source?: string
   preview?: string
   final_text_preview?: string
   total_tokens?: number

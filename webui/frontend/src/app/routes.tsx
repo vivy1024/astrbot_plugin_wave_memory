@@ -4,6 +4,7 @@ import {
   BookHeartIcon,
   BookOpenIcon,
   BotIcon,
+  ServerCogIcon,
   BrainCircuitIcon,
   CompassIcon,
   DatabaseIcon,
@@ -43,6 +44,7 @@ const IndexesPage = lazy(() => import('@/pages/diagnostics/IndexesPage').then((m
 const CompatibilityPage = lazy(() => import('@/pages/review/CompatibilityPage').then((m) => ({ default: m.CompatibilityPage })))
 const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 const ConfigInventoryPage = lazy(() => import('@/pages/settings/ConfigInventoryPage').then((m) => ({ default: m.ConfigInventoryPage })))
+const ServicesPage = lazy(() => import('@/pages/services/ServicesPage').then((m) => ({ default: m.ServicesPage })))
 const BotsPage = lazy(() => import('@/pages/bots/BotsPage').then((m) => ({ default: m.BotsPage })))
 const QueryLabPage = lazy(() => import('@/pages/lab/QueryLabPage').then((m) => ({ default: m.QueryLabPage })))
 
@@ -77,6 +79,7 @@ export const appRoutes: AppRoute[] = [
   { path: '/knowledge/style-examples', title: '风格样例', description: '已通过审核的正式回复范例', group: 'knowledge', icon: BrainCircuitIcon, element: FewShotPage },
   { path: '/people', title: '人物与关系', description: '按 Bot、群和用户查看画像与好感', group: 'knowledge', icon: UsersIcon, element: PeoplePage },
   { path: '/bots', title: 'Bot 管理', description: '新增、编辑、停用 Bot，保存即热生效', group: 'system', icon: BotIcon, element: BotsPage },
+  { path: '/services', title: '服务与扩展', description: '后台服务启停、工具开关与扩展加载状态', group: 'runtime', icon: ServerCogIcon, element: ServicesPage },
   { path: '/diagnostics/indexes', title: '索引诊断', description: '检索索引来源、数量与健康状态', group: 'system', icon: SearchCheckIcon, element: IndexesPage },
   { path: '/compatibility', title: '生态兼容', description: '探测状态、来源、错误与证据', group: 'system', icon: GitCompareArrowsIcon, element: CompatibilityPage },
   { path: '/settings/inventory', title: '配置来源', description: '四层配置摊平：每项的当前值、来源与生效方式', group: 'system', icon: SlidersIcon, element: ConfigInventoryPage },

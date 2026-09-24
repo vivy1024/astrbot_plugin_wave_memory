@@ -21,6 +21,9 @@ Bot 不再只能是静态配置里的两个槽位。v6 起 Bot 存进 WaveMemory
 11. **插件化：通道注册表**：12 个注入通道改为在 `services/injection/channel_registry.py` 登记，顺序与参数不变。外部扩展放 `<plugin_data>/extensions/*.py`，实现 `register(tool_registry, channel_registry=...)` 即可登记工具和通道（外部通道需自带默认配置）。
 12. **写入统一**：`/observations/batch` 不再只把文本塞进写入队列，改为走与 AstrBot 消息钩子相同的流程：`message`/`danmaku` 进 InboundMessagePipeline（记住/忘记/teach、入库、黑话积累、纠错自省、好感触达），`self`（Bot 自己说的话）进与 `after_message_sent` 共用的 `_process_bot_reply`（入库、互动计数、未结算印象、自省记录）。`event_id` 必填，按「Bot + 可见性 + 会话 + 平台消息号」去重；AstrBot 路径同样改用平台原始消息号（此前取不到 `message_id` 时不去重）。
 
+13. **热插拔**：新增后台服务注册表与 9876「服务与扩展」页。标签提取、做梦、记忆淘汰、好感生命周期、维护任务执行器可以单独停止/启动/重启（好感引擎停止前先落盘缓冲），不中断 QQ 回复、不重启 AstrBot；重启时任务名加代次后缀，满足 TaskSupervisor 任务名唯一的约束。工具可以在同一页整体停用，AstrBot 与 Cortico 立即不再提供。
+14. **可视化**：注入观测台按来源（AstrBot / Cortico）筛选，列表显示来源；v6 之前的 trace 视为 AstrBot。
+
 ### 升级须知
 
 - 首次启动自动把 `MetaThinking_Bot1/2`（以及任意 `MetaThinking_BotN`）迁进 `bot_profiles`：`db_id` 不变，会话前缀从该 Bot 最近的记忆里检测（线上为「羽书」「白真真」），v5 写死的人设片段按 db_id 补进 Profile。**历史数据一条不改。**
