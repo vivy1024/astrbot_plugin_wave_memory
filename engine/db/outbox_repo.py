@@ -132,6 +132,51 @@ class OutboxRepository:
         )
 
     @staticmethod
+    def prune_history(connection: sqlite3.Connection, *, before: float, limit: int = 5000) -> dict[str, int]:
+        """删除早于 ``before`` 的已归档 outbox 事件、其已完成投递，以及不再被引用的已提交写操作。
+
+        这三张表只追加不清理，线上库里三者合计约 0.9 GB（占全库两成多）。只删已经全部
+        投递完成的事件；写操作只删已提交、且没有 outbox 事件引用的行，并始终保留
+        write_sequence 最大的一行，保证下一个写序号单调递增。幂等键随写操作一起过期，
+        超过保留期的同一请求重放会被当作新请求执行。
+        """
+        limit = max(1, int(limit))
+        event_ids = [
+            row[0]
+            for row in connection.execute(
+                """SELECT o.event_id FROM domain_outbox o
+                    WHERE o.archived_at IS NOT NULL AND o.archived_at < ?
+                      AND NOT EXISTS (
+                          SELECT 1 FROM outbox_deliveries d
+                           WHERE d.event_id = o.event_id AND d.state != 'completed')
+                    ORDER BY o.rowid
+                    LIMIT ?""",
+                (float(before), limit),
+            ).fetchall()
+        ]
+        deliveries = events = 0
+        for start in range(0, len(event_ids), 500):
+            chunk = event_ids[start:start + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            deliveries += connection.execute(
+                f"DELETE FROM outbox_deliveries WHERE event_id IN ({placeholders})", chunk
+            ).rowcount or 0
+            events += connection.execute(
+                f"DELETE FROM domain_outbox WHERE event_id IN ({placeholders})", chunk
+            ).rowcount or 0
+        operations = connection.execute(
+            """DELETE FROM write_operations WHERE rowid IN (
+                   SELECT w.rowid FROM write_operations w
+                    WHERE w.status = 'committed' AND COALESCE(w.committed_at, w.created_at) < ?
+                      AND w.write_sequence < (SELECT MAX(write_sequence) FROM write_operations)
+                      AND NOT EXISTS (SELECT 1 FROM domain_outbox o WHERE o.operation_id = w.operation_id)
+                    ORDER BY w.rowid
+                    LIMIT ?)""",
+            (float(before), limit),
+        ).rowcount or 0
+        return {"events": int(events), "deliveries": int(deliveries), "operations": int(operations)}
+
+    @staticmethod
     def next_write_sequence(connection: sqlite3.Connection) -> int:
         row = connection.execute(
             "SELECT COALESCE(MAX(write_sequence), 0) + 1 FROM write_operations"

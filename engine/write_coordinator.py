@@ -10,6 +10,7 @@ import os
 import queue
 import sqlite3
 import threading
+import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Mapping
@@ -231,6 +232,29 @@ class WriteCoordinator:
         """Run a serialized transaction; ``actor`` is accepted for caller audit context."""
         del actor
         return await self._dispatch(function, True)
+
+    async def prune_outbox_history(
+        self,
+        *,
+        retention_days: float = 30.0,
+        batch: int = 500,
+        max_batches: int = 200,
+        pause_seconds: float = 0.2,
+    ) -> dict[str, int]:
+        """分批清理过期的 outbox 历史；每批一个短事务，批与批之间让出写线程给消息写入。"""
+        before = time.time() - max(1.0, float(retention_days)) * 86400
+        totals = {"events": 0, "deliveries": 0, "operations": 0, "batches": 0}
+        for _ in range(max(1, int(max_batches))):
+            result = await self.transaction(
+                lambda connection: OutboxRepository.prune_history(connection, before=before, limit=batch)
+            )
+            totals["batches"] += 1
+            for key in ("events", "deliveries", "operations"):
+                totals[key] += int(result.get(key, 0))
+            if not any(result.values()):
+                break
+            await asyncio.sleep(pause_seconds)
+        return totals
 
     def transaction_blocking(self, function: Callable[[sqlite3.Connection], Any]) -> Any:
         """Submit a short synchronous caller operation to the writer-owned transaction."""

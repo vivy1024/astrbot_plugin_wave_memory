@@ -286,3 +286,41 @@ def test_tier_channel_names_exist():
 
     for tier, names in TIER_CHANNELS.items():
         assert names is None or names <= set(KNOWN_CHANNELS), tier
+
+
+@pytest.mark.asyncio
+async def test_memories_query_uses_fts_content_column(app, container_mock):
+    import sqlite3
+    from types import SimpleNamespace
+
+    conn = sqlite3.connect(":memory:")
+    conn.executescript("""
+        CREATE TABLE memories (id INTEGER PRIMARY KEY, content TEXT, sender_id TEXT, sender_name TEXT,
+            group_id TEXT, timestamp REAL, importance REAL, bot_id TEXT, visibility TEXT, resolution_state TEXT);
+        CREATE VIRTUAL TABLE fts_memories USING fts5(content, sender_name, group_id,
+            content='memories', content_rowid='id', tokenize='unicode61');
+        CREATE TRIGGER fts_ai AFTER INSERT ON memories BEGIN
+            INSERT INTO fts_memories(rowid, content, sender_name, group_id) VALUES (new.id, new.content, new.sender_name, new.group_id);
+        END;
+    """)
+    rows = [
+        (1, "张羽 今天又去打工了", "u1", "阿一", "g", 1.0, 1.0, "yushu", "group", "resolved"),
+        (2, "随便聊聊天气", "u2", "张羽", "g", 2.0, 1.0, "yushu", "group", "resolved"),
+        (3, "张羽 的灵石", "u3", "阿三", "g", 3.0, 1.0, "baizz", "group", "resolved"),
+    ]
+    conn.executemany("INSERT INTO memories VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
+    saved_db = container_mock.db
+    container_mock.db = SimpleNamespace(conn=conn)
+    client = app.test_client()
+    headers = {"Authorization": "Bearer yushu-dev-token"}
+    scope = {"bot_id": "yushu", "session": {"id": "bilibili:group:24292304"}}
+    try:
+        res = await client.post("/api/runtime/v1/memories/query", headers=headers, json={"query": "张羽", "scope": scope})
+        data = await res.get_json()
+        # 只命中正文里有「张羽」的羽书记忆；昵称叫张羽的人说的无关话、别的 Bot 的记忆都不返回。
+        assert [item["id"] for item in data["data"]["items"]] == [1]
+        short = await client.post("/api/runtime/v1/memories/query", headers=headers, json={"query": "a", "scope": scope})
+        assert short.status_code == 400
+    finally:
+        container_mock.db = saved_db
+        conn.close()

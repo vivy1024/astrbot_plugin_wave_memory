@@ -676,15 +676,35 @@ async def memory_query():
         where_clauses.append("(sender_id = ? OR visibility = 'group')")
         params.append(uid)
 
+    # v6：关键词走 FTS5 全文索引（与注入的 fts5 通道同一套分词），不再对 4 GB 的记忆表做 LIKE 全表扫描。
+    match_expr = ""
     if q:
-        where_clauses.append("content LIKE ?")
-        params.append(f"%{q}%")
+        try:
+            from ...services.injection.channels.fts5 import _keywords, _match_expr
+        except ImportError:
+            from services.injection.channels.fts5 import _keywords, _match_expr
+        words_expr = _match_expr(_keywords(q))
+        # 只匹配正文列：fts_memories 还索引了发言人昵称，不限定列时会把"叫这个名字的人说的任何话"也搜出来。
+        match_expr = f"content : ({words_expr})" if words_expr else ""
+        if not match_expr:
+            return jsonify({"ok": False, "error": {"code": "query_too_short", "message": "query has no usable keywords (need 2+ characters)"}}), 400
+    elif not uid:
+        return jsonify({"ok": False, "error": {"code": "missing_query", "message": "query or uid is required"}}), 400
 
-    sql = f"""SELECT id, content, sender_id, sender_name, timestamp, importance 
-              FROM memories 
-              WHERE {' AND '.join(where_clauses)}
-              ORDER BY timestamp DESC LIMIT ?"""
-    params.append(limit)
+    qualified = [clause.replace("bot_id", "m.bot_id").replace("resolution_state", "m.resolution_state")
+                 .replace("sender_id", "m.sender_id").replace("visibility", "m.visibility") for clause in where_clauses]
+    if match_expr:
+        sql = f"""SELECT m.id, m.content, m.sender_id, m.sender_name, m.timestamp, m.importance
+                  FROM fts_memories JOIN memories AS m ON m.id = fts_memories.rowid
+                  WHERE fts_memories MATCH ? AND {' AND '.join(qualified)}
+                  ORDER BY bm25(fts_memories), m.timestamp DESC LIMIT ?"""
+        params = [match_expr, *params, limit]
+    else:
+        sql = f"""SELECT m.id, m.content, m.sender_id, m.sender_name, m.timestamp, m.importance
+                  FROM memories AS m
+                  WHERE {' AND '.join(qualified)}
+                  ORDER BY m.timestamp DESC LIMIT ?"""
+        params.append(limit)
 
     try:
         rows = db.conn.execute(sql, tuple(params)).fetchall()
