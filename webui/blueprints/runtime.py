@@ -456,150 +456,79 @@ def _extract_keywords(text: str, limit: int = 4) -> list[str]:
 @runtime_bp.route("/context/prepare", methods=["POST"])
 @runtime_bp.route("/inject", methods=["POST"])
 async def context_prepare():
-    """在 9876 核心上组装当前轮次的记忆注入块（彻底替代 8030 临时进程）。"""
+    """外部应用的记忆注入：与 AstrBot 走同一个编排器、同一套通道、同一份通道配置。
+
+    请求体：``text``、``speaker{id,name}``/``uid``、``tier``（full/light/minimal）、
+    ``recent``（可选，最近几条对话文本）、``channels``（可选，只跑这些通道）、
+    ``source``（写进 trace 的来源标签，默认 cortico）、``dry_run``。
+    """
     if not _check_auth():
         return jsonify({"ok": False, "error": {"code": "unauthorized", "message": "Invalid runtime bearer token"}}), 401
 
-    body = await request.get_json() or {}
+    started = time.perf_counter()
+    body = await request.get_json(silent=True) or {}
     text = str(body.get("text") or "").strip()
     speaker = body.get("speaker") if isinstance(body.get("speaker"), dict) else {}
     tier = str(body.get("tier") or "light").strip().lower()
-    limit = max(1, min(int(body.get("limit") or 5), 10))
+    source = re.sub(r"[^a-z0-9_.-]", "", str(body.get("source") or "cortico").strip().lower())[:32] or "cortico"
 
-    scope_data = body.get("scope") or {}
+    scope_data = dict(body.get("scope") or {})
+    speaker_id = str(body.get("uid") or speaker.get("id") or "").strip()
+    speaker_name = str(speaker.get("name") or "").strip()
+    if speaker_id and not scope_data.get("subject_principal_id"):
+        scope_data["subject_principal_id"] = speaker_id
     try:
         scope = _parse_runtime_scope(scope_data)
     except Exception as exc:
         return jsonify({"ok": False, "error": {"code": "invalid_scope", "message": str(exc)}}), 400
 
     container = _get_container()
-    db = getattr(container, "db", None)
+    preparer = getattr(container, "runtime_context_preparer", None)
+    if preparer is None or not preparer.available():
+        return jsonify({
+            "ok": False,
+            "error": {"code": "injection_unavailable", "message": "注入编排器未就绪（检查 Channel_Settings 与启动日志）"},
+        }), 503
 
-    parts: list[str] = []
-    channels_stat: dict[str, Any] = {}
+    try:
+        from ...services.injection.runtime_prepare import channel_stats, persona_lore_block
+    except ImportError:
+        from services.injection.runtime_prepare import channel_stats, persona_lore_block
 
-    # 1. [世界观书设]：来自 Bot Profile 的常驻书设（persona.lore_lines）
-    profile = None
+    recent = body.get("recent")
+    recent_context = [str(item) for item in recent] if isinstance(recent, list) else None
+    requested_channels = body.get("channels")
+    channel_filter = [str(item) for item in requested_channels] if isinstance(requested_channels, list) else None
+    try:
+        result = await preparer.prepare(
+            scope=scope,
+            message=text,
+            sender_id=speaker_id,
+            sender_name=speaker_name,
+            tier=tier,
+            recent_context=recent_context,
+            source=source,
+            dry_run=bool(body.get("dry_run")),
+            channel_filter=channel_filter,
+        )
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": {"code": "invalid_scope", "message": str(exc)}}), 400
+    except Exception as exc:
+        logger.warning(f"[Runtime API] context prepare failed: {exc}")
+        return jsonify({"ok": False, "error": {"code": "injection_failed", "message": str(exc)}}), 500
+
     registry = _bot_registry()
-    if registry is not None and hasattr(registry, "get"):
-        profile = registry.get(scope.bot_id)
-    persona = getattr(profile, "persona", None)
-    core_lore = list(getattr(persona, "lore_lines", None) or [])
-    if core_lore:
-        title = str(getattr(persona, "lore_title", "") or "常驻书设").strip()
-        parts.append(f"[世界观书设：{title}]\n" + "\n".join(f"- {l}" for l in core_lore))
-        channels_stat["book_lore"] = {"status": "hit", "items": len(core_lore)}
-    else:
-        channels_stat["book_lore"] = {"status": "empty", "items": 0}
-
-    # 2. [当前 Soul 状态]
-    soul_lines = []
-    if db is not None:
-        try:
-            mood_row = db.conn.execute(
-                "SELECT valence, arousal, cause FROM soul_mood WHERE bot_id=? ORDER BY updated_at DESC LIMIT 1",
-                (scope.bot_id,),
-            ).fetchone()
-            if mood_row:
-                v, a, c = mood_row[0], mood_row[1], mood_row[2] or ""
-                soul_lines.append(f"近期情绪：valence={round(float(v), 2)}，arousal={round(float(a), 2)}" + (f"（原因：{c}）" if c else ""))
-        except Exception:
-            pass
-    if soul_lines:
-        parts.append("[当前 Soul 状态：仅作为内部上下文，不要机械复述]\n" + "\n".join(f"- {l}" for l in soul_lines))
-        channels_stat["soul_state"] = {"status": "hit", "items": len(soul_lines)}
-    else:
-        channels_stat["soul_state"] = {"status": "empty", "items": 0}
-
-    # 3. [对话者画像]
-    uid_in = str(body.get("uid") or "").strip()
-    sid = uid_in or str(speaker.get("id") or "").strip()
-    sname = str(speaker.get("name") or "").strip()
-    norm_sid = _normalize_uid(sid)
-    system_speakers = {"server", "minecraft", "system", "internal", "anon"}
-    for bot in (registry.all() if registry is not None and hasattr(registry, "all") else ()):
-        # Bot 自己（及其游戏摄像机账号 <名字>cam）的发言不当成观众画像来查。
-        for term in [bot.db_id, *bot.identity_terms]:
-            lowered = str(term or "").strip().lower()
-            if lowered:
-                system_speakers.update({lowered, f"{lowered}cam"})
-    if norm_sid and norm_sid.lower() not in system_speakers and sname.lower() not in system_speakers:
-        p_lines = []
-        if db is not None:
-            try:
-                # 查画像维度（支持原 ID、规范化 ID 与昵称）
-                p_row = db.conn.execute(
-                    "SELECT interaction_count, last_seen, metadata FROM user_profiles WHERE (user_id=? OR user_id=? OR user_id=?) AND bot_id=? LIMIT 1",
-                    (norm_sid, sid, sname, scope.bot_id),
-                ).fetchone()
-                if p_row:
-                    cnt, last_seen, meta_raw = p_row[0], p_row[1], p_row[2]
-                    p_lines.append(f"历史互动：{cnt} 次")
-                    if meta_raw:
-                        meta = json.loads(meta_raw)
-                        dims = meta.get("dimensions", {})
-                        if dims:
-                            order = ("familiarity", "trust", "depth", "fun", "hostility")
-                            rendered = "，".join(f"{k}={round(float(dims.get(k, 0.0)), 2)}" for k in order if k in dims)
-                            p_lines.append(f"五维关系：{rendered}")
-            except Exception:
-                pass
-        label = sname or norm_sid
-        if not p_lines:
-            p_lines.append("首次在直播间出现，暂无历史印象，保持礼貌与好奇。")
-        parts.append(f"[对话者画像：{label}（仅用于调整自然回应，不必主动提及关系）]\n" + "\n".join(f"- {l}" for l in p_lines))
-        channels_stat["relationship"] = {"status": "hit", "items": len(p_lines), "uid": norm_sid}
-    else:
-        channels_stat["relationship"] = {"status": "skipped", "reason": "system_or_no_speaker"}
-
-    # 4. [相关记忆]：按高信息量关键词召回历史群聊/弹幕记忆（优先召回该用户专属记忆）
-    mem_lines = []
-    tokens = _extract_keywords(text, limit=3)
-    if tokens and db is not None:
-        try:
-            like_clauses = " OR ".join(["content LIKE ?" for _ in tokens])
-            params = [f"%{tok}%" for tok in tokens]
-
-            # 若提供了非系统 uid，优先精准召回该用户的专属记忆
-            if norm_sid and norm_sid.lower() not in system_speakers:
-                user_sql = f"""SELECT content, sender_name, timestamp FROM memories
-                              WHERE ({like_clauses}) AND (sender_id=? OR sender_id=?) AND bot_id=? AND resolution_state='resolved'
-                              ORDER BY timestamp DESC LIMIT ?"""
-                u_rows = db.conn.execute(user_sql, (*params, norm_sid, sid, scope.bot_id, limit)).fetchall()
-                for r in u_rows:
-                    c = str(r[0] or "")[:120]
-                    who = str(r[1] or "")[:12]
-                    mem_lines.append(f"{c}（{who}）" if who else c)
-
-            # 若专属记忆不足，补充群内全局记忆
-            if len(mem_lines) < limit:
-                remain = limit - len(mem_lines)
-                sql = f"""SELECT content, sender_name, timestamp FROM memories
-                          WHERE ({like_clauses}) AND bot_id=? AND resolution_state='resolved'
-                          ORDER BY timestamp DESC LIMIT ?"""
-                rows = db.conn.execute(sql, (*params, scope.bot_id, remain)).fetchall()
-                for r in rows:
-                    c = str(r[0] or "")[:120]
-                    who = str(r[1] or "")[:12]
-                    item_str = f"{c}（{who}）" if who else c
-                    if item_str not in mem_lines:
-                        mem_lines.append(item_str)
-        except Exception:
-            pass
-
-    if mem_lines:
-        parts.append("[相关记忆：真实发生过的历史片段，可自然引用，不要机械复述]\n" + "\n".join(f"- {l}" for l in mem_lines))
-        channels_stat["memory"] = {"status": "hit", "items": len(mem_lines)}
-    else:
-        channels_stat["memory"] = {"status": "empty", "items": 0}
-
+    profile = registry.get(scope.bot_id) if registry is not None and hasattr(registry, "get") else None
+    parts = [block for block in (persona_lore_block(profile) if tier != "minimal" else "", result.final_text) if block]
     final_block = "\n\n".join(parts)
     return jsonify({
         "ok": True,
         "block": final_block,
         "chars": len(final_block),
         "tier": tier,
-        "channels": channels_stat,
+        "trace_id": result.trace_id,
+        "elapsed_ms": round((time.perf_counter() - started) * 1000, 1),
+        "channels": channel_stats(result),
     })
 
 

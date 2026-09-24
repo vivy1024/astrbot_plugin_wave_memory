@@ -12,12 +12,18 @@ Bot 不再只能是静态配置里的两个槽位。v6 起 Bot 存进 WaveMemory
 4. **代码里不再写死角色**：自称词、常驻书设、第一人称经历来源、日记署名、Bot QQ 号、`/context/prepare` 的书设与系统发言者、`user_profiles` 的默认 `bot_id` 全部改从 Profile 读取；身份安全、黑话过滤、召回分段通过 `domain/bot_identity` 快照感知所有已注册 Bot。
 5. **修复**：跨平台身份关联拒绝中文平台前缀（`羽书:user:…` 无法关联）。
 
+6. **Cortico 注入走完整编排器**：`/context/prepare`（及别名 `/inject`）不再是另写的简化版，改为复用 AstrBot 路径的 `InjectionOrchestrator` 与同一套通道实例、同一份通道配置（含 Bot Profile 的通道覆盖）。按 `tier` 选通道：`full` 全部、`light` 去掉书设检索/风格样例/人格包、`minimal` 只留记忆、原词、事实、关系。trace 标注来源（默认 `cortico`），可在注入观测台核对。删除了写死的书设与 `LIKE` 模糊检索。
+7. **配置统一**：新增 `/api/config/inventory` 与 9876「配置来源」页，把 AstrBot 静态配置、热参数、注入通道、Bot 覆盖四层摊平，每项显示默认值、当前生效值、来源层与生效方式；列出"默认开启但被保存成关闭"的可疑开关。
+8. **热参数持久化**：没有静态配置映射的热参数改存 WaveMemory 数据库 `config_overrides`，重启后仍生效（此前只对当前进程有效）。
+9. **写死的常量改为热参数**：消息合并窗口 `ingress.debounce_seconds`（默认 4 秒）、最长等待 `ingress.debounce_max_seconds`（默认 12 秒）、注入慢警告 `injection.slow_warning_ms`（默认 2000 毫秒）。
+
 ### 升级须知
 
 - 首次启动自动把 `MetaThinking_Bot1/2`（以及任意 `MetaThinking_BotN`）迁进 `bot_profiles`：`db_id` 不变，会话前缀从该 Bot 最近的记忆里检测（线上为「羽书」「白真真」），v5 写死的人设片段按 db_id 补进 Profile。**历史数据一条不改。**
 - 迁移之后以数据库为准：**再改 AstrBot 静态配置里的 Bot 槽位不会生效**（升级用户需知晓），请到 9876「Bot 管理」页修改。
 - `_conf_schema.json` 旧槽位的身份默认值改为空，只影响全新安装。
 - Runtime API 调用方必须带 `scope.bot_id` 或部署名；`/users/<uid>/profile` 需要 `bot_id` 查询参数或请求体字段。
+- `/context/prepare` 在注入编排器未就绪时返回 503（此前会退回简化检索）；响应新增 `trace_id`、`elapsed_ms`，`channels` 内含每个通道的状态、条数、token 与耗时。
 
 ---
 

@@ -38,3 +38,5 @@ class InjectionContext:
     config_provenance: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     now: float = 0.0
     trace_id: str = ""
+    # 调用来源：astrbot=消息钩子；cortico 等=Runtime API。写进 trace，观测台可按来源筛选。
+    source: str = "astrbot"

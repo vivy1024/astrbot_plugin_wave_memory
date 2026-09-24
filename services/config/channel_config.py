@@ -543,6 +543,7 @@ def resolve_effective_channel_config(
     plugin_config: Mapping[str, Any] | None,
     *,
     scope: Any,
+    bot_channels: Mapping[str, Any] | None = None,
 ) -> tuple[ChannelConfigSet, EffectiveConfigResult]:
     """解析 exact RuntimeScope 的通道配置，并返回 provenance/revision。"""
     plugin_config = plugin_config or {}
@@ -558,6 +559,9 @@ def resolve_effective_channel_config(
     )
     settings = _channel_settings(plugin_config)
     system_config = apply_channel_overrides(base, _legacy_system_overrides(settings))
+    if bot_channels:
+        # Bot Profile 自带的通道覆盖：视为该 Bot 的默认值，9876 分层配置仍可在其上覆盖。
+        system_config = apply_channel_overrides(system_config, {"channels": dict(bot_channels)})
     layers = settings.get("layers", {})
     # validate_layer_store checks every layer, including entries unrelated to this Scope.
     validate_layer_store(layers)
@@ -598,11 +602,12 @@ def build_channel_config_from_plugin_config(
     plugin_config: Mapping[str, Any] | None,
     *,
     scope: Any = None,
+    bot_channels: Mapping[str, Any] | None = None,
 ) -> ChannelConfigSet:
     """兼容旧 Channel_Settings；有 Scope 时叠加严格分层配置。"""
     plugin_config = plugin_config or {}
     if scope is not None:
-        return resolve_effective_channel_config(plugin_config, scope=scope)[0]
+        return resolve_effective_channel_config(plugin_config, scope=scope, bot_channels=bot_channels)[0]
     try:
         from ..runtime_mode import resolve_runtime_mode
         mode = resolve_runtime_mode(plugin_config).mode

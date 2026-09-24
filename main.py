@@ -635,6 +635,9 @@ class WaveMemoryPlugin(Star):
             hostility_step_cap=_positive_float(social_cfg.get("affinity_hostility_step_cap"), 3.0),
             impact_cap=_positive_float(social_cfg.get("impact_cap"), 5.0),
         )
+        # 9876 保存的热参数覆盖（数据库持久化），叠加在静态配置之上。
+        self._apply_persisted_hot_overrides()
+        self.hot_config.on_change(self._on_core_hot_config_change)
         if self.spike_router:
             self.hot_config.on_change(self.spike_router.on_config_change)
 
@@ -1065,6 +1068,55 @@ class WaveMemoryPlugin(Star):
             self.injection_trace_store = None
             self.injection_shadow_channels = []
 
+    def _apply_persisted_hot_overrides(self) -> None:
+        overrides_repo = getattr(self.db, "config_overrides", None)
+        if overrides_repo is None:
+            return
+        try:
+            known = self.hot_config.tunable_keys()
+            stored = overrides_repo.values()
+            applied = {key: value for key, value in stored.items() if key in known}
+            unknown = sorted(set(stored) - known)
+            if applied:
+                self.hot_config.update(applied)
+                logger.info(f"[WaveMemory] 已加载 9876 热参数覆盖: {sorted(applied)}")
+            if unknown:
+                logger.warning(f"[WaveMemory] 忽略未知的热参数覆盖（可能来自新版本）: {unknown}")
+        except Exception as exc:
+            logger.warning(f"[WaveMemory] 读取热参数覆盖失败，使用静态配置: {exc}")
+            _record_err("HotConfig", exc)
+        self._on_core_hot_config_change({})
+
+    def _on_core_hot_config_change(self, _changed: dict) -> None:
+        from .services.injection.orchestrator import set_slow_warning_ms
+
+        set_slow_warning_ms(self.hot_config.get("injection.slow_warning_ms", 2000))
+
+    def _setup_runtime_context_preparer(self) -> None:
+        """Runtime API（Cortico 等）复用与 AstrBot 相同的编排器和通道实例。"""
+        from .webui.container import get_container
+        from .services.injection.runtime_prepare import RuntimeContextPreparer
+
+        def _exclude_sources(bot_id: str) -> list[str]:
+            profile = self.bot_registry.get(bot_id)
+            return list(profile.exclude_sources) if profile else []
+
+        self.runtime_context_preparer = RuntimeContextPreparer(
+            channels_provider=lambda: getattr(self, "injection_shadow_channels", None) or [],
+            config_resolver=self._effective_injection_config,
+            context_config_builder=self._build_shadow_context_config,
+            query_options_factory=lambda cfg: QueryOptions(
+                touch=True,
+                stages=cfg.query_stages,
+                params=cfg.query_params,
+            ),
+            trace_store=getattr(self, "injection_trace_store", None),
+            mode_provider=lambda: getattr(self, "runtime_mode_name", "full"),
+            recent_messages=lambda scope, limit: self._get_recent_messages(None, scope=scope, max_messages=limit),
+            exclude_sources_for=_exclude_sources,
+        )
+        get_container().runtime_context_preparer = self.runtime_context_preparer
+
     def _build_shadow_persona_realtime_ctx(
         self,
         *,
@@ -1111,7 +1163,12 @@ class WaveMemoryPlugin(Star):
         if not isinstance(scope, RuntimeScope):
             return None
         from .services.config.channel_config import build_channel_config_from_plugin_config
-        return build_channel_config_from_plugin_config(self.config, scope=scope)
+        profile = self.bot_registry.get(scope.bot_id) if getattr(self, "bot_registry", None) else None
+        return build_channel_config_from_plugin_config(
+            self.config,
+            scope=scope,
+            bot_channels=getattr(profile, "channels", None) or None,
+        )
 
     def _build_shadow_context_config(self, *, channel_config, exclude_sources, recent_context: list[str], realtime_ctx: dict) -> dict:
         from .services.impression_timeline import normalize_timeline_half_life
@@ -1825,6 +1882,7 @@ class WaveMemoryPlugin(Star):
 
         # 新编排器影子链路：只写 trace，不改真实 ProviderRequest。
         self._setup_injection_shadow_pipeline()
+        self._setup_runtime_context_preparer()
 
         # ─── 注册所有服务状态到健康面板（WebUI 可视化）───
         from .utils.health_registry import register as _reg
@@ -2424,7 +2482,7 @@ class WaveMemoryPlugin(Star):
                 for stale_key in oldest_keys:
                     seen_deliveries.pop(stale_key, None)
 
-        # ─── 4s 消息合并防抖机制 (Debounce Coalescing) ───
+        # ─── 消息合并防抖机制 (Debounce Coalescing)，窗口见热参数 ingress.debounce_* ───
         # 不重写 event.message_obj.message：底层组件链由 AstrBot/适配器维护，
         # 插件越级替换会让后续引用/发送阶段把组件结构当作 Plain 文本嵌套序列化。
         sender_name = ""
@@ -2468,6 +2526,9 @@ class WaveMemoryPlugin(Star):
                 "last_event_id": id(event)
             }
             self._semantic_message_buffers[debounce_key] = buffer
+            hot = getattr(self, "hot_config", None)
+            debounce_window = float(hot.get("ingress.debounce_seconds", 4.0)) if hot else 4.0
+            debounce_max = max(debounce_window, float(hot.get("ingress.debounce_max_seconds", 12.0)) if hot else 12.0)
 
             try:
                 while True:
@@ -2475,16 +2536,16 @@ class WaveMemoryPlugin(Star):
                     elapsed_since_update = now_time - buffer["updated_ts"]
                     elapsed_since_start = now_time - buffer["first_ts"]
 
-                    if elapsed_since_start >= 12.0:
-                        # 达到最长 12s 强制截断
+                    if elapsed_since_start >= debounce_max:
+                        # 达到最长等待，强制截断
                         break
 
-                    remaining_debounce = 4.0 - elapsed_since_update
+                    remaining_debounce = debounce_window - elapsed_since_update
                     if remaining_debounce <= 0:
-                        # 4s 内没有新消息，防抖正常结束
+                        # 合并窗口内没有新消息，防抖正常结束
                         break
 
-                    wait_time = min(remaining_debounce, 12.0 - elapsed_since_start)
+                    wait_time = min(remaining_debounce, debounce_max - elapsed_since_start)
                     await asyncio.sleep(wait_time)
             finally:
                 # 无论如何，移除 buffer

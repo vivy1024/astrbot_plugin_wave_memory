@@ -334,9 +334,11 @@ class InjectionOrchestratorTest(unittest.TestCase):
         import services.injection.orchestrator as orchestrator_module
 
         self.assertEqual(orchestrator_module.SLOW_INJECTION_WARNING_MS, 2000)
-        with patch.object(orchestrator_module, "SLOW_INJECTION_WARNING_MS", 500):
-            with self.assertLogs("services.injection.orchestrator", level="WARNING") as logs:
-                result = asyncio.run(orchestrator.run(ctx))
+        # 阈值是热参数 injection.slow_warning_ms，运行时通过 set_slow_warning_ms 调整。
+        orchestrator_module.set_slow_warning_ms(500)
+        self.addCleanup(orchestrator_module.set_slow_warning_ms, orchestrator_module.SLOW_INJECTION_WARNING_MS)
+        with self.assertLogs("services.injection.orchestrator", level="WARNING") as logs:
+            result = asyncio.run(orchestrator.run(ctx))
 
         self.assertTrue(result.injected)
         message = "\n".join(logs.output)

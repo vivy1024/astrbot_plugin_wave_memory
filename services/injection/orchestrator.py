@@ -21,7 +21,17 @@ from ..config.channel_config import ChannelConfigSet, channel_config_revision
 
 logger = logging.getLogger(__name__)
 # Warn only when total injection exceeds the remote-embedding memory budget.
+# 默认值；运行时由热参数 injection.slow_warning_ms 通过 set_slow_warning_ms() 调整。
 SLOW_INJECTION_WARNING_MS = 2000
+_slow_warning_ms = SLOW_INJECTION_WARNING_MS
+
+
+def set_slow_warning_ms(value: int) -> None:
+    global _slow_warning_ms
+    try:
+        _slow_warning_ms = max(1, int(value))
+    except (TypeError, ValueError):
+        _slow_warning_ms = SLOW_INJECTION_WARNING_MS
 
 
 @dataclass
@@ -63,11 +73,11 @@ class InjectionOrchestrator:
             injected = True
 
         total_latency_ms = round((time.perf_counter() - started) * 1000, 2)
-        if total_latency_ms > SLOW_INJECTION_WARNING_MS:
+        if total_latency_ms > _slow_warning_ms:
             logger.warning(
                 "[WaveMemory] inject_memory 耗时过长: %.0fms > %dms | channels=%s",
                 total_latency_ms,
-                SLOW_INJECTION_WARNING_MS,
+                _slow_warning_ms,
                 self._channel_breakdown(ordered),
             )
         if self.trace_store and self.config.trace_enabled and not ctx.dry_run:
@@ -85,6 +95,7 @@ class InjectionOrchestrator:
                     "metadata": {
                         **runtime_scope_metadata(ctx.scope),
                         "config_revision": channel_config_revision(self.config),
+                        "source": getattr(ctx, "source", "astrbot") or "astrbot",
                     },
                     "message": ctx.message,
                     "final_text": final_text,

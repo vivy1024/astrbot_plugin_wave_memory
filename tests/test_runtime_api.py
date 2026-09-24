@@ -139,8 +139,36 @@ async def test_runtime_commands_propose_fact(app, container_mock):
     container_mock.db.scoped_knowledge.upsert_scoped_fact.assert_called_once()
 
 
+class _FakeChannel:
+    def __init__(self, name, text):
+        self.name = name
+        self.text = text
+        self.seen = []
+
+    async def build(self, ctx):
+        from services.injection.channel_base import InjectionResult
+
+        self.seen.append(ctx)
+        return InjectionResult.hit(self.name, f"{self.text}：{ctx.sender_name}", items=[{"id": 1}])
+
+
+def _install_preparer(container, channels):
+    from services.config.channel_config import build_channel_config_from_plugin_config
+    from services.injection.runtime_prepare import RuntimeContextPreparer
+
+    container.runtime_context_preparer = RuntimeContextPreparer(
+        channels_provider=lambda: channels,
+        config_resolver=lambda scope: build_channel_config_from_plugin_config({}, scope=scope),
+        context_config_builder=lambda **kwargs: {},
+        query_options_factory=lambda cfg: None,
+    )
+
+
 @pytest.mark.asyncio
-async def test_runtime_context_prepare_inject(app):
+async def test_runtime_context_prepare_uses_orchestrator(app, container_mock):
+    memory = _FakeChannel("memory", "相关记忆")
+    lore = _FakeChannel("book_lore", "书设检索")
+    _install_preparer(container_mock, [memory, lore])
     client = app.test_client()
     payload = {
         "text": "张羽师兄最近有去过万法大学吗？",
@@ -157,14 +185,39 @@ async def test_runtime_context_prepare_inject(app):
             }
         }
     }
-    res = await client.post(
-        "/api/runtime/v1/context/prepare",
-        headers={"Authorization": "Bearer yushu-dev-token"},
-        json=payload
-    )
-    assert res.status_code == 200
-    data = await res.get_json()
-    assert data["ok"] is True
-    assert "[世界观书设" in data["block"]
-    assert "没钱修什么仙" in data["block"]
-    assert "对话者画像：老张" in data["block"]
+    try:
+        res = await client.post(
+            "/api/runtime/v1/context/prepare",
+            headers={"Authorization": "Bearer yushu-dev-token"},
+            json=payload
+        )
+        assert res.status_code == 200
+        data = await res.get_json()
+        assert data["ok"] is True
+        # Profile 的常驻书设在最前，其后是编排器输出。
+        assert data["block"].startswith("[世界观书设：羽书出自《没钱修什么仙》]")
+        assert "相关记忆：老张" in data["block"]
+        # light 档不跑书设检索通道。
+        assert "book_lore" not in data["channels"] and not lore.seen
+        assert data["channels"]["memory"]["status"] == "hit"
+        ctx = memory.seen[0]
+        assert ctx.source == "cortico"
+        assert ctx.scope.subject_principal_id == "bilibili:user:user_456"
+        assert data["trace_id"].startswith("cortico-")
+    finally:
+        container_mock.runtime_context_preparer = None
+
+
+@pytest.mark.asyncio
+async def test_runtime_context_prepare_rejects_unknown_bot_and_missing_preparer(app, container_mock):
+    client = app.test_client()
+    headers = {"Authorization": "Bearer yushu-dev-token"}
+    scope = {"bot_id": "nobody", "session": {"id": "qq:group:1"}}
+    res = await client.post("/api/runtime/v1/context/prepare", headers=headers, json={"text": "hi", "scope": scope})
+    assert res.status_code == 400
+    assert "unknown_bot" in (await res.get_json())["error"]["message"]
+
+    container_mock.runtime_context_preparer = None
+    scope["bot_id"] = "yushu"
+    res = await client.post("/api/runtime/v1/context/prepare", headers=headers, json={"text": "hi", "scope": scope})
+    assert res.status_code == 503

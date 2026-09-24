@@ -35,8 +35,10 @@ except Exception:  # pragma: no cover
 
 try:
     from domain.bot_profile import BINDING_HOSTS, BotProfile, BotProfileError
+    from services.config.channel_config import apply_channel_overrides, build_default_channel_config
 except ImportError:  # pragma: no cover - AstrBot 包导入路径
     from ...domain.bot_profile import BINDING_HOSTS, BotProfile, BotProfileError
+    from ...services.config.channel_config import apply_channel_overrides, build_default_channel_config
 
 from ..api_contract import error_payload
 
@@ -141,6 +143,12 @@ async def save_bot(db_id: str):
         data.setdefault("origin", existing.origin)
     try:
         profile = BotProfile.from_dict(data)
+        if profile.channels:
+            # 通道覆盖在注入时严格校验，非法值会让该 Bot 的注入整体失败；保存时先拦住。
+            try:
+                apply_channel_overrides(build_default_channel_config(), {"channels": profile.channels})
+            except ValueError as exc:
+                return jsonify(error_payload("invalid_channels", f"通道覆盖不合法：{exc}")), 400
         saved = registry.save(
             profile,
             expected_version=expected_version,

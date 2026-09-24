@@ -232,3 +232,16 @@ def test_person_identity_accepts_chinese_session_prefix(cm):
     key = repo.link("yushu", ["羽书:user:123", "bilibili:user:456"])
     assert key.startswith("person:")
     assert set(repo.linked_principals("yushu", "羽书:user:123")) == {"羽书:user:123", "bilibili:user:456"}
+
+
+def test_profile_channel_overrides_apply_but_private_envelope_wins():
+    from domain.scope import RuntimeScope, SessionRef
+    from services.config.channel_config import build_channel_config_from_plugin_config
+
+    group = RuntimeScope("yushu", "group", SessionRef("羽书:group:1", "羽书", "group", "1"))
+    cfg = build_channel_config_from_plugin_config({}, scope=group, bot_channels={"jargon": {"enabled": False}})
+    assert cfg.channels["jargon"].enabled is False
+
+    private = RuntimeScope("yushu", "private", SessionRef("羽书:private:9", "羽书", "private", "9"), subject_principal_id="羽书:user:9")
+    cfg = build_channel_config_from_plugin_config({}, scope=private, bot_channels={"fewshot": {"enabled": True}})
+    assert cfg.channels["fewshot"].enabled is False

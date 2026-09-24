@@ -85,3 +85,12 @@ async def test_export_import_round_trip(client, registry):
     body = await res.get_json()
     assert body["imported"] == ["bot_b"] and body["ok"]
     assert registry.get("bot_b").name == "乙"
+
+
+@pytest.mark.asyncio
+async def test_invalid_channel_override_rejected(client):
+    res = await client.put("/api/bots/bot_x", json={"version": 0, "item": {"name": "x", "channels": {"nope": {"enabled": False}}}})
+    assert res.status_code == 400
+    assert (await res.get_json())["error"]["code"] == "invalid_channels"
+    res = await client.put("/api/bots/bot_x", json={"version": 0, "item": {"name": "x", "channels": {"jargon": {"enabled": False}}}})
+    assert res.status_code == 200

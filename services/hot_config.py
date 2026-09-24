@@ -5,7 +5,12 @@ from __future__ import annotations
 import threading
 from typing import Any, Callable
 
-from astrbot.api import logger
+try:
+    from astrbot.api import logger
+except ImportError:  # 单测与独立运行时没有 AstrBot
+    import logging
+
+    logger = logging.getLogger("astrbot")
 
 
 class HotConfig:
@@ -102,7 +107,17 @@ class HotConfig:
              "description": "辱骂冷却上限秒数"},
             {"key": "social.aba_window_seconds", "type": "int", "min": 10, "max": 120, "default": 30,
              "description": "ABA连续对话窗口（秒）"},
+            # v6：原来写死在代码里的常量
+            {"key": "ingress.debounce_seconds", "type": "float", "min": 0.5, "max": 15.0, "default": 4.0,
+             "description": "同一人连发消息的合并等待（秒）：这段时间内没有新消息就合并成一条处理"},
+            {"key": "ingress.debounce_max_seconds", "type": "float", "min": 2.0, "max": 60.0, "default": 12.0,
+             "description": "消息合并最长等待（秒）：从第一条算起，到点强制截断"},
+            {"key": "injection.slow_warning_ms", "type": "int", "min": 200, "max": 20000, "default": 2000,
+             "description": "注入总耗时超过这个值时记警告日志（毫秒）"},
         ]
+
+    def tunable_keys(self) -> set[str]:
+        return {item["key"] for item in self.get_tunable_params()}
 
     def _set_nested(self, key: str, value: Any):
         """设置嵌套键值。"""

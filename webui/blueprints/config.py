@@ -46,9 +46,19 @@ def _settings_effective_since(container) -> dict[str, object]:
     return values
 
 
+def _service_module(name: str):
+    """插件包内（AstrBot 运行时）用相对导入，单测里插件根目录是顶层包。"""
+    import importlib
+
+    try:
+        return importlib.import_module(f"...{name}", __package__)
+    except ImportError:
+        return importlib.import_module(name)
+
+
 def _build_settings_payload(container, schema: Mapping | None = None) -> dict:
-    from ...services.config.settings_state import build_settings_schema
-    from ...services.hot_config import HotConfig
+    build_settings_schema = _service_module("services.config.settings_state").build_settings_schema
+    HotConfig = _service_module("services.hot_config").HotConfig
 
     cfg = getattr(container, "plugin_config", None)
     if cfg is None:
@@ -95,6 +105,24 @@ def _persist_hot_config_to_file(validated: dict):
         pass
 
 
+_NO_OVERRIDE_STORE: dict = {}
+
+
+def _override_repo(container):
+    db = getattr(container, "db", None)
+    return getattr(db, "config_overrides", None) if db is not None else None
+
+
+def _db_overrides(container) -> dict:
+    repo = _override_repo(container)
+    if repo is None:
+        return _NO_OVERRIDE_STORE
+    try:
+        return repo.values()
+    except Exception:
+        return _NO_OVERRIDE_STORE
+
+
 def _hot_params_payload(container, hot) -> list[dict]:
     cfg = getattr(container, "plugin_config", None)
     if cfg is None:
@@ -108,13 +136,20 @@ def _hot_params_payload(container, hot) -> list[dict]:
         saved = None
         source = "runtime_hot_config_only"
         error = None
+        overrides = _db_overrides(container)
         if mapping is not None:
             section, field = mapping
             group = cfg.get(section, {}) or {}
             saved = group.get(field, meta["default"]) if isinstance(group, Mapping) else meta["default"]
             source = f"plugin_config.{section}.{field}"
+        elif key in overrides:
+            saved = overrides[key]
+            source = "wavememory_db.config_overrides"
+        elif overrides is _NO_OVERRIDE_STORE:
+            error = "数据库覆盖层不可用；应用后只对当前进程有效，重启会恢复。"
         else:
-            error = "该热参数没有持久化配置映射；应用后只对当前进程有效，重启会恢复。"
+            saved = meta["default"]
+            source = "builtin_default"
         effective = hot.get(key, saved if saved is not None else meta["default"])
         params.append({
             **meta,
@@ -298,8 +333,13 @@ async def update_hot_config():
     cfg = getattr(c, "plugin_config", {}) or {}
     snapshot = copy.deepcopy(dict(cfg))
     saved_keys = [key for key in validated if key in _HOT_TO_CONFIG_MAP]
-    runtime_only_keys = [key for key in validated if key not in _HOT_TO_CONFIG_MAP]
+    db_keys = [key for key in validated if key not in _HOT_TO_CONFIG_MAP]
+    override_repo = _override_repo(c)
+    runtime_only_keys = [] if override_repo is not None else db_keys
     try:
+        if db_keys and override_repo is not None:
+            # 没有静态配置映射的热参数存进 WaveMemory 数据库，重启后仍生效。
+            override_repo.set_many({key: validated[key] for key in db_keys}, updated_by="webui")
         for key in saved_keys:
             section, field = _HOT_TO_CONFIG_MAP[key]
             group = dict(cfg.get(section, {}) or {})
@@ -330,13 +370,50 @@ async def update_hot_config():
     return jsonify({
         "ok": True,
         "updated": list(validated.keys()),
-        "saved": saved_keys,
+        "saved": saved_keys + ([key for key in db_keys if key not in runtime_only_keys]),
         "runtime_only": runtime_only_keys,
         "errors": [],
         "warnings": warnings,
         "message": "热参数已应用。" + (" 部分参数仅当前进程生效。" if runtime_only_keys else " 已持久化保存。"),
         "params": _hot_params_payload(c, hot),
     })
+
+
+@config_bp.route("/config/inventory", methods=["GET"])
+@require_auth
+async def get_config_inventory():
+    """配置总览：静态配置、热参数、注入通道、Bot 覆盖四层摊平，每项带来源与生效方式。"""
+    channel_config = _service_module("services.config.channel_config")
+    build_channel_config_from_plugin_config = channel_config.build_channel_config_from_plugin_config
+    build_default_channel_config = channel_config.build_default_channel_config
+    build_inventory = _service_module("services.config.inventory").build_inventory
+    HotConfig = _service_module("services.hot_config").HotConfig
+    resolve_runtime_mode = _service_module("services.runtime_mode").resolve_runtime_mode
+
+    c = get_container()
+    cfg = getattr(c, "plugin_config", None) or {}
+    schema = _load_schema()
+    try:
+        mode = resolve_runtime_mode(cfg).mode
+    except Exception:
+        mode = "full"
+    default_channels = build_default_channel_config(runtime_mode=mode)
+    try:
+        effective_channels = build_channel_config_from_plugin_config(cfg)
+    except ValueError:
+        effective_channels = default_channels
+    registry = getattr(c, "bot_registry", None)
+    profiles = registry.all(include_disabled=False) if registry is not None else []
+    payload = build_inventory(
+        settings_payload=_build_settings_payload(c, schema),
+        hot_params=_hot_params_payload(c, HotConfig()),
+        default_channel_config=default_channels,
+        effective_channel_config=effective_channels,
+        bot_profiles=profiles,
+        schema=schema,
+        saved_config=cfg,
+    )
+    return jsonify(payload)
 
 
 @config_bp.route("/config/schema", methods=["GET"])

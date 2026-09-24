@@ -59,6 +59,8 @@ class ServiceContainer:
         self.fewshot_repository: Any = None
         # v6 Bot 注册表（services.bot_registry.BotRegistry）；Bot 管理页和 Runtime API 用它解析 Bot。
         self.bot_registry: Any = None
+        # Runtime API 的注入入口（services.injection.runtime_prepare.RuntimeContextPreparer）。
+        self.runtime_context_preparer: Any = None
 
         # ─── 认证 ───
         self.password: str = ""

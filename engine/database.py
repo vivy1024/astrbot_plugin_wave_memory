@@ -44,6 +44,7 @@ from .db.scoped_learning_projection_repo import ScopedFewShotRepository
 from .db.person_timeline_repo import PersonTimelineRepo
 from .db.person_identity_repo import PersonIdentityRepo
 from .db.bot_profile_repo import BotProfileRepo
+from .db.config_override_repo import ConfigOverrideRepo
 from .db.scoped_soul_repo import ScopedSoulRepository
 from .db.shared_memory_grant_repo import SharedMemoryGrantRepository
 from .db.tag_repo import TagRepo
@@ -98,6 +99,7 @@ class WaveMemoryDB:
             self._person_timeline = PersonTimelineRepo(self._cm)
             self._person_identity = PersonIdentityRepo(self._cm)
             self._bot_profiles = BotProfileRepo(self._cm)
+            self._config_overrides = ConfigOverrideRepo(self._cm)
             self._fewshot_repository = ScopedFewShotRepository(self._cm, ensure_schema=False)
             self._injection_metrics = InjectionMetricStore(self._cm)
 
@@ -144,6 +146,11 @@ class WaveMemoryDB:
     def bot_profiles(self) -> BotProfileRepo:
         """Bot Profile v2 仓储（v6 起 Bot 定义的唯一来源）。"""
         return self._bot_profiles
+
+    @property
+    def config_overrides(self) -> ConfigOverrideRepo:
+        """9876 热参数覆盖（启动时叠加在 AstrBot 静态配置之上）。"""
+        return self._config_overrides
 
     def record_scoped_fact_observation(self, scope, **kwargs):
         return self._scoped_knowledge_repo.record_scoped_fact_observation(scope, **kwargs)
