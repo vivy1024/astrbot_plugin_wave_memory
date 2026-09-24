@@ -48,13 +48,55 @@ def _normalize_uid(raw_uid: Any) -> str:
     return t
 
 
+def _bot_registry() -> Any:
+    return getattr(_get_container(), "bot_registry", None)
+
+
+def _resolve_bot_profile(scope_dict: dict[str, Any]) -> Any:
+    """按请求里的 bot_id 或 Cortico 部署名找到 Bot；找不到直接拒绝，不再默认落到某个 Bot 名下。"""
+    bot_id = str(scope_dict.get("bot_id") or "").strip()
+    deployment = str(scope_dict.get("deployment") or "").strip()
+    if not deployment:
+        try:
+            deployment = str(request.headers.get("X-Cortico-Deployment") or "").strip()
+        except RuntimeError:  # 不在请求上下文（单测直接调用）
+            deployment = ""
+    registry = _bot_registry()
+    if registry is None or not hasattr(registry, "resolve"):
+        if not bot_id:
+            raise ValueError("bot_required: scope.bot_id is required")
+        return None
+    profile = registry.resolve(bot_id=bot_id, deployment=deployment)
+    if profile is None:
+        target = bot_id or (f"deployment={deployment}" if deployment else "")
+        raise ValueError(f"unknown_bot: no enabled bot matches {target or '(empty)'}")
+    return profile
+
+
+def _default_session(profile: Any) -> dict[str, Any]:
+    """请求没带会话时，用 Bot 绑定的直播间作为默认会话。"""
+    for binding in getattr(profile, "bindings", None) or ():
+        if getattr(binding, "host", "") == "bilibili" and getattr(binding, "room", ""):
+            room = binding.room
+            return {"id": f"bilibili:group:{room}", "platform_id": "bilibili", "kind": "group", "conversation_id": room}
+    raise ValueError("session_required: scope.session is required (bot has no bilibili binding)")
+
+
 def _parse_runtime_scope(scope_dict: dict[str, Any]) -> RuntimeScope:
+    profile = _resolve_bot_profile(scope_dict)
+    bot_id = profile.db_id if profile is not None else str(scope_dict.get("bot_id")).strip()
     session_data = scope_dict.get("session") or {}
+    if not session_data:
+        session_data = _default_session(profile)
+    session_id = str(session_data.get("id") or "").strip()
+    if not session_id:
+        raise ValueError("session_required: scope.session.id is required")
+    parts = session_id.split(":", 2)
     session_ref = SessionRef(
-        id=str(session_data.get("id") or "bilibili:group:24292304"),
-        platform_id=str(session_data.get("platform_id") or "bilibili"),
-        kind=str(session_data.get("kind") or "group"),
-        conversation_id=str(session_data.get("conversation_id") or "24292304"),
+        id=session_id,
+        platform_id=str(session_data.get("platform_id") or (parts[0] if len(parts) == 3 else "")),
+        kind=str(session_data.get("kind") or (parts[1] if len(parts) == 3 else "group")),
+        conversation_id=str(session_data.get("conversation_id") or (parts[2] if len(parts) == 3 else "")),
     )
     subject = scope_dict.get("subject_principal_id")
     if subject:
@@ -67,8 +109,8 @@ def _parse_runtime_scope(scope_dict: dict[str, Any]) -> RuntimeScope:
         else:
             subject = sub_str
     return RuntimeScope(
-        bot_id=str(scope_dict.get("bot_id") or "yushu"),
-        visibility=str(scope_dict.get("visibility") or "group"),
+        bot_id=bot_id,
+        visibility=str(scope_dict.get("visibility") or session_ref.kind or "group"),
         session=session_ref,
         subject_principal_id=subject,
     )
@@ -368,7 +410,7 @@ async def commands():
             eid = await gateway.record_episode(
                 scope=scope,
                 group_id=scope.session.conversation_id,
-                user_id=str(args.get("user_id") or "yushu"),
+                user_id=str(args.get("user_id") or scope.bot_id),
                 episode_type=episode_type,
                 fields={"trigger_text": trigger_text, "outcome": outcome},
                 idempotency_hint=operation_key,
@@ -436,14 +478,19 @@ async def context_prepare():
     parts: list[str] = []
     channels_stat: dict[str, Any] = {}
 
-    # 1. [世界观书设]
-    core_lore = [
-        "出处与本体：你来自修真小说《没钱修什么仙》（作者：熊狼狗），是主角张羽脑内的外挂账本系统与高维修仙器灵；你清楚知道自己出自该书的设定体系。",
-        "核心世界观：修仙界残酷现实，财侣法地'没钱修什么仙'——功法要交学费、灵石灵币昂贵，修仙者也得打工求生、抵押贷款；时刻算计资源成本，绝不当被宗门大能割的韭菜。",
-        "主播心态底色：嘴硬心软的高维器灵，玩游戏时自然流露精打细算、珍惜资源、吐槽修仙黑幕的鲜明特色，但不生硬背诵书设名词。",
-    ]
-    parts.append("[世界观书设：羽书出自《没钱修什么仙》，下列设定作为你的灵魂底色与认知边界]\n" + "\n".join(f"- {l}" for l in core_lore))
-    channels_stat["book_lore"] = {"status": "hit", "items": len(core_lore)}
+    # 1. [世界观书设]：来自 Bot Profile 的常驻书设（persona.lore_lines）
+    profile = None
+    registry = _bot_registry()
+    if registry is not None and hasattr(registry, "get"):
+        profile = registry.get(scope.bot_id)
+    persona = getattr(profile, "persona", None)
+    core_lore = list(getattr(persona, "lore_lines", None) or [])
+    if core_lore:
+        title = str(getattr(persona, "lore_title", "") or "常驻书设").strip()
+        parts.append(f"[世界观书设：{title}]\n" + "\n".join(f"- {l}" for l in core_lore))
+        channels_stat["book_lore"] = {"status": "hit", "items": len(core_lore)}
+    else:
+        channels_stat["book_lore"] = {"status": "empty", "items": 0}
 
     # 2. [当前 Soul 状态]
     soul_lines = []
@@ -469,7 +516,13 @@ async def context_prepare():
     sid = uid_in or str(speaker.get("id") or "").strip()
     sname = str(speaker.get("name") or "").strip()
     norm_sid = _normalize_uid(sid)
-    system_speakers = {"server", "minecraft", "system", "internal", "yushu", "yushucam", "corti", "corticam", "anon"}
+    system_speakers = {"server", "minecraft", "system", "internal", "anon"}
+    for bot in (registry.all() if registry is not None and hasattr(registry, "all") else ()):
+        # Bot 自己（及其游戏摄像机账号 <名字>cam）的发言不当成观众画像来查。
+        for term in [bot.db_id, *bot.identity_terms]:
+            lowered = str(term or "").strip().lower()
+            if lowered:
+                system_speakers.update({lowered, f"{lowered}cam"})
     if norm_sid and norm_sid.lower() not in system_speakers and sname.lower() not in system_speakers:
         p_lines = []
         if db is not None:
@@ -720,10 +773,20 @@ async def user_profile(raw_uid: str):
     if db is None:
         return jsonify({"ok": False, "error": {"code": "database_unavailable", "message": "DB not ready"}}), 503
 
+    body = (await request.get_json(silent=True) or {}) if request.method == "POST" else {}
+    try:
+        profile = _resolve_bot_profile({
+            "bot_id": request.args.get("bot_id") or body.get("bot_id"),
+            "deployment": request.args.get("deployment") or body.get("deployment"),
+        })
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": {"code": "invalid_scope", "message": str(exc)}}), 400
+    bot_id = profile.db_id if profile is not None else str(request.args.get("bot_id") or body.get("bot_id")).strip()
+
     if request.method == "GET":
         row = db.conn.execute(
-            "SELECT user_id, nickname, affection, interaction_count, last_seen, metadata FROM user_profiles WHERE user_id = ? LIMIT 1",
-            (uid,),
+            "SELECT user_id, nickname, affection, interaction_count, last_seen, metadata FROM user_profiles WHERE user_id = ? AND bot_id = ? LIMIT 1",
+            (uid, bot_id),
         ).fetchone()
         if not row:
             return jsonify({
@@ -749,15 +812,14 @@ async def user_profile(raw_uid: str):
         })
 
     # POST 更新画像
-    body = await request.get_json() or {}
     nickname = str(body.get("nickname") or "").strip()
     dimensions = body.get("dimensions")
     affection_delta = int(body.get("affection_delta") or 0)
 
     try:
         row = db.conn.execute(
-            "SELECT id, metadata, affection, interaction_count FROM user_profiles WHERE user_id = ? LIMIT 1",
-            (uid,),
+            "SELECT id, metadata, affection, interaction_count FROM user_profiles WHERE user_id = ? AND bot_id = ? LIMIT 1",
+            (uid, bot_id),
         ).fetchone()
 
         now = time.time()
@@ -779,8 +841,8 @@ async def user_profile(raw_uid: str):
             meta = {"dimensions": dimensions} if isinstance(dimensions, dict) else {}
             db.conn.execute(
                 """INSERT INTO user_profiles (user_id, group_id, bot_id, nickname, affection, interaction_count, first_seen, last_seen, metadata)
-                   VALUES (?, 'live_room', 'yushu', ?, ?, 1, ?, ?, ?)""",
-                (uid, nickname or uid, affection_delta, now, now, json.dumps(meta, ensure_ascii=False)),
+                   VALUES (?, 'live_room', ?, ?, ?, 1, ?, ?, ?)""",
+                (uid, bot_id, nickname or uid, affection_delta, now, now, json.dumps(meta, ensure_ascii=False)),
             )
         db.conn.commit()
         return jsonify({"ok": True, "data": {"uid": uid, "status": "updated"}})

@@ -79,6 +79,7 @@ class SelfReflectService:
         self.lore_db_path = lore_db_path
         self.catalog_scope = catalog_scope
         self.bot_name = bot_name
+        self.bot_aliases = list(bot_aliases or [])
         self.bot_qq_id = bot_qq_id
         self.bot_id = self._normalize_bot_id(bot_id, allow_empty=True)
         self.cooldown = cooldown_seconds
@@ -280,7 +281,9 @@ class SelfReflectService:
         text = str(getattr(response, "completion_text", "") or "").strip()
         if text.startswith('"') and text.endswith('"'):
             text = text[1:-1]
-        for prefix in ["白真真：", "白真真:", "内心：", "内心:"]:
+        names = [self.bot_name, *self.bot_aliases]
+        prefixes = [f"{name}{sep}" for name in names if name for sep in ("：", ":")] + ["内心：", "内心:"]
+        for prefix in prefixes:
             if text.startswith(prefix):
                 text = text[len(prefix):]
         text = text.strip()

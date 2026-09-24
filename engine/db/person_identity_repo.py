@@ -14,7 +14,8 @@ from typing import Any
 
 from .connection import ConnectionManager
 
-PRINCIPAL_PATTERN = re.compile(r"^[A-Za-z0-9_.\-]+:user:[^\s:]+$")
+# 平台前缀可以是中文（线上羽书的会话前缀就是「羽书」），只排除空白和冒号。
+PRINCIPAL_PATTERN = re.compile(r"^[^\s:]+:user:[^\s:]+$")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS person_identity_links (

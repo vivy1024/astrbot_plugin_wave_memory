@@ -41,11 +41,14 @@ class PlatformContextManager:
         manager = getattr(self.context, "platform_manager", None)
         get_insts = getattr(manager, "get_insts", None)
         platforms = get_insts() if callable(get_insts) else getattr(manager, "platform_insts", ())
-        profiles_by_name = {
-            str(profile.name or "").strip(): profile
-            for profile in self.bot_registry.values()
-            if str(getattr(profile, "name", "") or "").strip()
-        }
+        # 平台实例 id → Bot：Profile 里登记的平台 id、规范会话前缀，最后才退回显示名（v5 约定）。
+        profiles_by_name: dict[str, Any] = {}
+        for profile in self.bot_registry.values():
+            candidates = list(getattr(profile, "platform_ids", None) or [getattr(profile, "name", "")])
+            for platform_id in candidates:
+                key = str(platform_id or "").strip()
+                if key:
+                    profiles_by_name.setdefault(key, profile)
         for platform in platforms or ():
             try:
                 metadata = platform.meta()

@@ -151,8 +151,13 @@ class MemoryRecallChannelTest(unittest.TestCase):
         channel = MemoryRecallChannel(query_engine=query_engine)
         result = asyncio.run(channel.build(self._ctx()))
         self.assertEqual(result.status, "hit")
-        self.assertEqual(query_engine.query_calls[0]["source_filter"], list(_DEFAULT_SOURCE_FILTER))
+        from domain import bot_identity
+
+        expected = list(_DEFAULT_SOURCE_FILTER) + sorted(bot_identity.experience_sources())
+        self.assertEqual(query_engine.query_calls[0]["source_filter"], expected)
         self.assertIn("chat", query_engine.query_calls[0]["source_filter"])
+        # 各 Bot 的第一人称经历来源（含 v5 历史来源）总是在默认过滤里。
+        self.assertIn(bot_identity.LEGACY_EXPERIENCE_SOURCE, query_engine.query_calls[0]["source_filter"])
 
 
 if __name__ == "__main__":

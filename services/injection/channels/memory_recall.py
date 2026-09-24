@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+try:
+    from ...domain import bot_identity
+except ImportError:  # top-level import in isolated tests
+    from domain import bot_identity
+
 import time
 from collections.abc import Mapping
 from typing import Any
@@ -18,7 +23,6 @@ _DEFAULT_SOURCE_FILTER = [
     "evolution",
     "experience",
     "lore",
-    "bzz_experience",
     "book_lore",
 ]
 
@@ -250,7 +254,7 @@ class MemoryRecallChannel:
         exclude_sources = recall_cfg.get("exclude_sources")
         source_filter = recall_cfg.get("source_filter")
         if source_filter is None and not exclude_sources:
-            source_filter = list(_DEFAULT_SOURCE_FILTER)
+            source_filter = list(_DEFAULT_SOURCE_FILTER) + sorted(bot_identity.experience_sources())
         return await self.query_engine.query(
             text=getattr(ctx, "message", ""),
             group_id=getattr(ctx, "group_id", None),

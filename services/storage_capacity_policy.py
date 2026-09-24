@@ -13,6 +13,11 @@ real, write-path decision:
 
 from __future__ import annotations
 
+try:
+    from ..domain import bot_identity
+except ImportError:  # top-level import in isolated tests
+    from domain import bot_identity
+
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -20,7 +25,6 @@ from typing import Any, Mapping
 _DURABLE_SOURCES = frozenset({
     "core",
     "explicit",
-    "bzz_experience",
     "book_lore",
     "oni_lore",
     "knowledge",
@@ -126,7 +130,7 @@ def decide_storage_admission(
             source=normalized_source,
         )
 
-    if normalized_source in _DURABLE_SOURCES:
+    if normalized_source in _DURABLE_SOURCES or bot_identity.is_experience_source(normalized_source):
         return StorageAdmissionDecision(
             keep_vector=has_vector,
             over_capacity=True,

@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+try:
+    from ...domain import bot_identity
+except ImportError:  # top-level import in isolated tests
+    from domain import bot_identity
+
 import re
 import time
 from collections import defaultdict
@@ -106,7 +111,7 @@ class JargonStatisticalFilter:
     @staticmethod
     def _is_bot_sender(sender_id: str) -> bool:
         sid = str(sender_id or "")
-        return sid in {"bot", "2500447291", "1336495069"} or sid.endswith("_archived") or sid.startswith("bot_")
+        return sid in bot_identity.bot_sender_ids() or sid.endswith("_archived") or sid.startswith("bot_")
 
     @staticmethod
     def _is_vocal_noise(word: str) -> bool:

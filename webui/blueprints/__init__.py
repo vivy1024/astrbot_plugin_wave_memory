@@ -48,6 +48,7 @@ _OPTIONAL = (
     ("agent_feedback", "agent_feedback_bp"),
     ("compatibility", "compatibility_bp"),
     ("runtime", "runtime_bp"),
+    ("bots", "bots_bp"),
 )
 
 _NAMES = [n for _, n in _CORE] + [n for _, n in _OPTIONAL]

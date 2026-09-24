@@ -1,8 +1,8 @@
 """群分析插件 (astrbot_plugin_qq_group_daily_analysis) 成果与群聊日记桥接器。
 
 每日复用群分析插件对 3200 条消息总结产出的 SummaryTopic、GoldenQuote 与 QualityReview，
-直接转化为羽书的第一人称生活日记并入库 experience_episodes 与 scoped_soul_timeline。
-无需羽书在聊天会话中重复抓取海量上下文，实现零额外开销的认知闭环。
+直接转化为 Bot 的第一人称生活日记并入库 experience_episodes 与 scoped_soul_timeline。
+无需 Bot 在聊天会话中重复抓取海量上下文，实现零额外开销的认知闭环。
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ def fetch_latest_group_analysis(
         return None
 
 
-def convert_analysis_to_diary(analysis: dict[str, Any], bot_name: str = "羽书") -> dict[str, str]:
+def convert_analysis_to_diary(analysis: dict[str, Any], bot_name: str = "") -> dict[str, str]:
     """将群分析的结构化数据转换为一篇第一人称群聊日记。"""
     date_str = analysis.get("date_str") or time.strftime("%Y-%m-%d")
     topics = analysis.get("topics") or []
@@ -152,8 +152,18 @@ def sync_analysis_report_to_diary(
     bot_id: str,
     group_id: str,
     analysis_db_path: Path | None = None,
+    *,
+    bot_name: str,
+    session_prefix: str = "",
 ) -> int | None:
-    """幂等将最新群分析结果同步为该群该 Bot 的群聊日记。若今日已同步则跳过。"""
+    """幂等将最新群分析结果同步为该群该 Bot 的群聊日记。若今日已同步则跳过。
+
+    ``bot_name`` 用作日记署名（Profile 的 diary_signature 或显示名），
+    ``session_prefix`` 是 Profile 的规范会话前缀，为空时用 ``bot_name``。
+    """
+    prefix = str(session_prefix or bot_name or "").strip()
+    if not str(bot_id or "").strip() or not prefix:
+        raise ValueError("sync_analysis_report_to_diary requires bot_id and bot_name/session_prefix")
     analysis = fetch_latest_group_analysis(group_id=group_id, db_path=analysis_db_path)
     if not analysis:
         return None
@@ -176,7 +186,7 @@ def sync_analysis_report_to_diary(
     except Exception:
         pass
 
-    diary = convert_analysis_to_diary(analysis, bot_name="羽书")
+    diary = convert_analysis_to_diary(analysis, bot_name=bot_name)
     now = analysis.get("created_at") or time.time()
 
     try:
@@ -213,7 +223,7 @@ def sync_analysis_report_to_diary(
                ) VALUES (?, ?, 'group', NULL, ?, 'episode', 6.0, ?, 1, ?, ?)""",
             (
                 bot_id,
-                f"羽书:group:{group_id}",
+                f"{prefix}:group:{group_id}",
                 f"【日记】{diary['title']}：{diary['summary']}",
                 now,
                 evidence_json,

@@ -3,6 +3,8 @@ from unittest.mock import AsyncMock, MagicMock
 from quart import Quart
 from webui.blueprints.runtime import runtime_bp
 from webui.container import get_container
+from domain.bot_profile import BotProfile
+from services.bot_registry import BotRegistry
 
 
 @pytest.fixture
@@ -23,7 +25,19 @@ def container_mock():
     gateway_mock.record_episode = AsyncMock(return_value=202)
     c.write_gateway = gateway_mock
 
+    profile = BotProfile.from_dict({
+        "db_id": "yushu",
+        "name": "羽书",
+        "qq_id": "10001",
+        "persona": {
+            "lore_title": "羽书出自《没钱修什么仙》",
+            "lore_lines": ["出处与本体：你来自修真小说《没钱修什么仙》。"],
+        },
+    })
+    c.bot_registry = BotRegistry.from_profiles([profile])
+
     yield c
+    c.bot_registry = None
 
 
 @pytest.fixture

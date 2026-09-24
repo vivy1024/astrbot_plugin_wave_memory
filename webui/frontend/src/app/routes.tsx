@@ -3,6 +3,7 @@ import {
   ActivityIcon,
   BookHeartIcon,
   BookOpenIcon,
+  BotIcon,
   BrainCircuitIcon,
   CompassIcon,
   DatabaseIcon,
@@ -41,6 +42,7 @@ const PeoplePage = lazy(() => import('@/pages/people/PeoplePage').then((m) => ({
 const IndexesPage = lazy(() => import('@/pages/diagnostics/IndexesPage').then((m) => ({ default: m.IndexesPage })))
 const CompatibilityPage = lazy(() => import('@/pages/review/CompatibilityPage').then((m) => ({ default: m.CompatibilityPage })))
 const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })))
+const BotsPage = lazy(() => import('@/pages/bots/BotsPage').then((m) => ({ default: m.BotsPage })))
 const QueryLabPage = lazy(() => import('@/pages/lab/QueryLabPage').then((m) => ({ default: m.QueryLabPage })))
 
 export type RouteGroup = 'overview' | 'data' | 'runtime' | 'cognition' | 'knowledge' | 'system'
@@ -73,6 +75,7 @@ export const appRoutes: AppRoute[] = [
   { path: '/knowledge/experiences', title: '经历片段', description: '对话沉淀的个人经历与重要事件', group: 'knowledge', icon: SparklesIcon, element: ExperiencesPage },
   { path: '/knowledge/style-examples', title: '风格样例', description: '已通过审核的正式回复范例', group: 'knowledge', icon: BrainCircuitIcon, element: FewShotPage },
   { path: '/people', title: '人物与关系', description: '按 Bot、群和用户查看画像与好感', group: 'knowledge', icon: UsersIcon, element: PeoplePage },
+  { path: '/bots', title: 'Bot 管理', description: '新增、编辑、停用 Bot，保存即热生效', group: 'system', icon: BotIcon, element: BotsPage },
   { path: '/diagnostics/indexes', title: '索引诊断', description: '检索索引来源、数量与健康状态', group: 'system', icon: SearchCheckIcon, element: IndexesPage },
   { path: '/compatibility', title: '生态兼容', description: '探测状态、来源、错误与证据', group: 'system', icon: GitCompareArrowsIcon, element: CompatibilityPage },
   { path: '/settings', title: '系统配置', description: '默认值、已保存值和当前生效方式', group: 'system', icon: SlidersIcon, element: SettingsPage },

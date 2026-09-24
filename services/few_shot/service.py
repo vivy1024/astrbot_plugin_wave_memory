@@ -8,6 +8,11 @@
 
 from __future__ import annotations
 
+try:
+    from ...domain import bot_identity
+except ImportError:  # top-level import in isolated tests
+    from domain import bot_identity
+
 import asyncio
 import json
 import random
@@ -108,12 +113,14 @@ class FewShotService:
 
         # 获取最近 7 天的 bot 回复
         seven_days_ago = int(now) - 7 * 86400
+        sources = ["bot_reply", *sorted(bot_identity.experience_sources())]
+        placeholders = ",".join("?" for _ in sources)
         rows = self._db.conn.execute(
-            """SELECT id, content FROM memories
-               WHERE source IN ('bot_reply', 'bzz_experience')
+            f"""SELECT id, content FROM memories
+               WHERE source IN ({placeholders})
                AND timestamp > ? AND LENGTH(content) >= 20
                ORDER BY RANDOM() LIMIT 50""",
-            (seven_days_ago,),
+            (*sources, seven_days_ago),
         ).fetchall()
 
         if not rows:

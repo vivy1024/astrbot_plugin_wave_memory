@@ -66,7 +66,8 @@ class RuntimeScopeOptionsSource:
         group_name_resolver: Callable[[str, str], str | None] | None = None,
     ) -> None:
         self._db = db
-        self._bot_registry = dict(bot_registry or {})
+        # 保留引用而不是复制：Bot 注册表热重载时原地更新，这里自动看到新 Bot。
+        self._bot_registry = bot_registry if bot_registry is not None else {}
         self._channel_config = channel_config
         self._group_name_resolver = group_name_resolver
 
@@ -390,9 +391,13 @@ class ExplicitRequestScopeProvider:
     """只接受请求显式携带的规范 Scope，不猜测默认 Bot 或会话。"""
 
     def __init__(self, *, bot_registry: Mapping[str, Any] | None) -> None:
-        self._bot_ids = {
+        self._bot_registry = bot_registry if bot_registry is not None else {}
+
+    @property
+    def _bot_ids(self) -> set[str]:
+        return {
             str(_value(profile, "db_id", None) or "").strip()
-            for key, profile in dict(bot_registry or {}).items()
+            for key, profile in dict(self._bot_registry).items()
             if str(_value(profile, "db_id", key) or "").strip()
         }
 

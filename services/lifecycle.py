@@ -121,11 +121,14 @@ class AffinityEngine:
         self,
         db: WaveMemoryDB,
         bot_qq_id: str = "",
-        bot_db_id: str = "yushu",
+        bot_db_id: str = "",
         target_profiles: dict[str, dict[str, str]] | None = None,
         relationship_service: Any | None = None,
         jargon_service: Any | None = None,
     ):
+        if not str(bot_db_id or "").strip():
+            # 好感按 Bot 本人归属；缺 db_id 时写进去的行会落到别的 Bot 名下。
+            raise ValueError("AffinityEngine requires an explicit bot_db_id")
         self.db = db
         self.relationship_service = relationship_service
         self.jargon_service = jargon_service
@@ -480,7 +483,7 @@ class LifecycleService:
         self,
         db: WaveMemoryDB,
         bot_qq_id: str = "",
-        bot_db_id: str = "yushu",
+        bot_db_id: str = "",
         mood_duration_hours: float = 2.0,
         mood_msg_threshold: int = 30,
         positive_emotion_threshold: float = 0.6,
@@ -500,17 +503,10 @@ class LifecycleService:
         }
         if bot_db_id and bot_db_id not in identities:
             identities[str(bot_db_id)] = str(bot_qq_id or "")
-        self._affinities: dict[str, AffinityEngine] = {
-            identity: AffinityEngine(
-                db,
-                bot_qq_id=qq_id,
-                bot_db_id=identity,
-                target_profiles=target_profiles,
-                relationship_service=relationship_service,
-                jargon_service=jargon_service,
-            )
-            for identity, qq_id in identities.items()
-        }
+        self._target_profiles = target_profiles
+        self._relationship_service = relationship_service
+        self._affinities: dict[str, AffinityEngine] = {}
+        self.sync_bot_identities(identities)
         # 兼容属性只允许精确命中配置的 Bot；禁止退回注册表中的第一个 Bot。
         self.affinity = self._affinities.get(str(bot_db_id))
         self.patterns = PatternAggregator(db)
@@ -526,6 +522,28 @@ class LifecycleService:
         self.run_global_jobs = run_global_jobs
         self._scoped_mood_scopes: dict[tuple[str, str, str], RuntimeScope] = {}
         self._last_scoped_mood_update: dict[tuple[str, str, str], float] = {}
+
+    def sync_bot_identities(self, bot_identities: Mapping[str, str]) -> list[str]:
+        """Bot 注册表热重载时补建新 Bot 的好感引擎；已有引擎保留缓冲，不重建。"""
+        added: list[str] = []
+        for identity, qq_id in dict(bot_identities or {}).items():
+            identity = str(identity or "").strip()
+            if not identity:
+                continue
+            engine = self._affinities.get(identity)
+            if engine is not None:
+                engine.bot_qq_id = str(qq_id or "").strip()
+                continue
+            self._affinities[identity] = AffinityEngine(
+                self.db,
+                bot_qq_id=str(qq_id or "").strip(),
+                bot_db_id=identity,
+                target_profiles=self._target_profiles,
+                relationship_service=self._relationship_service,
+                jargon_service=self.jargon_service,
+            )
+            added.append(identity)
+        return added
 
     def process_scoped_message(
         self,

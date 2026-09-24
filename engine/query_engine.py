@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+try:
+    from ..domain import bot_identity
+except ImportError:  # top-level import in isolated tests
+    from domain import bot_identity
+
 import asyncio
 import copy
 import json
@@ -1362,13 +1367,13 @@ class QueryEngine:
         ordered = self._prefer_current_group_and_dedupe(memories, current_group_id=current_group_id)
 
         # 按 source 分组
-        your_memories = []  # bzz_experience — 白真真第一人称经历
+        your_memories = []  # 各 Bot 的第一人称经历（Profile.persona.experience_source）
         world_knowledge = []  # book_lore — 书设常识
         chat_memories = []  # live 及其他 — 群聊记忆
 
         for mem in ordered:
             source = mem.get("source", "live")
-            if source == "bzz_experience":
+            if bot_identity.is_experience_source(source):
                 your_memories.append(mem)
             elif source == "book_lore":
                 world_knowledge.append(mem)

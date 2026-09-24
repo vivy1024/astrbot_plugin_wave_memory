@@ -57,6 +57,8 @@ class ServiceContainer:
         self.soul_repository: Any = None
         self.relationship_calibration: Any = None
         self.fewshot_repository: Any = None
+        # v6 Bot 注册表（services.bot_registry.BotRegistry）；Bot 管理页和 Runtime API 用它解析 Bot。
+        self.bot_registry: Any = None
 
         # ─── 认证 ───
         self.password: str = ""

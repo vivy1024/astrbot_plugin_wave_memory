@@ -7,6 +7,11 @@ while rebuilding a derived index from a read connection.
 
 from __future__ import annotations
 
+try:
+    from ..domain import bot_identity
+except ImportError:  # top-level import in isolated tests
+    from domain import bot_identity
+
 import json
 import math
 import time
@@ -27,7 +32,7 @@ _INACTIVE_MEMORY_TYPES = frozenset({"archived", "evicted", "deleted"})
 # must not occupy bounded knn slots that QueryEngine will drop after fetch.
 # Legacy rows still use the unscoped lane; they just cannot be dead weight.
 _LEGACY_EXCLUDED_MEMORY_TYPES = frozenset({"archived", "evicted", "deleted", "noise"})
-_DURABLE_SOURCES = frozenset({"bzz_experience", "book_lore", "oni_lore"})
+_DURABLE_SOURCES = frozenset({"book_lore", "oni_lore"})  # 另加各 Bot 的经历来源（bot_identity）
 _DURABLE_MEMORY_TYPES = frozenset({"experience", "knowledge"})
 _REQUIRED_MEMORY_COLUMNS = frozenset({"id", "vector", "group_id"})
 
@@ -404,7 +409,7 @@ def _eligible_candidates(
             continue
 
         tag_relevance = sum(max(0.0, _number(tag.get("relevance"), 1.0)) for tag in tags)
-        durable = source in _DURABLE_SOURCES or memory_type in _DURABLE_MEMORY_TYPES
+        durable = source in _DURABLE_SOURCES or bot_identity.is_experience_source(source) or memory_type in _DURABLE_MEMORY_TYPES
         timestamp = _number(row.get("timestamp"))
         # ``chat_hot_days`` is now a score half-life for group chat, not a hard
         # cutoff: stale-but-valuable memories compete on score instead of being

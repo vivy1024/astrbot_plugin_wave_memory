@@ -1,4 +1,4 @@
-"""MetaThinking — 羽书的内心判断层
+"""MetaThinking — Bot 的内心判断层
 
 每次被 @ 或抽样群消息时，先"想一下"再决定行为。
 替代 response_gate 的硬规则门控。
@@ -92,6 +92,27 @@ class MetaThinking:
         self._interest_keywords: set[str] = set(self.FIXED_INTERESTS)
         self._load_interest_keywords()
 
+    def update_bots(
+        self,
+        *,
+        bot_qq_ids: list[str],
+        bot_prompts: dict[str, str],
+        bot_names: dict[str, str],
+        bot_db_ids: dict[str, str],
+        extra_interests: list[str] | None = None,
+    ) -> None:
+        """Bot 注册表热重载：替换身份映射，保留 @ 频率与主动对话计数。"""
+        self.bot_qq_ids = set(bot_qq_ids or []) - {""}
+        if self.bot_qq_id not in self.bot_qq_ids:
+            self.bot_qq_id = next(iter(bot_qq_ids), "") if bot_qq_ids else ""
+        self.bot_prompts = dict(bot_prompts or {})
+        self.bot_names = dict(bot_names or {})
+        self.bot_db_ids = dict(bot_db_ids or {})
+        fixed = self._BASE_INTERESTS | frozenset(extra_interests or [])
+        self._interest_keywords.difference_update(self.FIXED_INTERESTS - fixed)
+        self._interest_keywords.update(fixed)
+        self.FIXED_INTERESTS = fixed
+
     def _load_interest_keywords(self):
         """从 memory_tags 加载高频标签 + 从 kv_store 加载自定义兴趣词。"""
         try:
@@ -106,7 +127,7 @@ class MetaThinking:
                 if name not in self.BORING_TAGS and len(name) >= 2:
                     self._interest_keywords.add(name)
 
-            # 自定义兴趣词（羽书自己添加的）
+            # 自定义兴趣词（Bot 自己添加的）
             row = self.db.conn.execute(
                 "SELECT value FROM kv_store WHERE key = 'meta_thinking_interests'"
             ).fetchone()
@@ -153,7 +174,7 @@ class MetaThinking:
             logger.warning(f"[MetaThinking] 更新兴趣词失败: {e}")
 
     def is_interesting(self, message: str) -> bool:
-        """判断一条群消息是否触发羽书的兴趣（轻量匹配，不调 LLM）。"""
+        """判断一条群消息是否触发 Bot 的兴趣（轻量匹配，不调 LLM）。"""
         if not message:
             return False
         # 超长消息只取前 500 字做匹配，避免热路径上对长文本反复扫描

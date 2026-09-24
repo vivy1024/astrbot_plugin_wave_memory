@@ -21,6 +21,10 @@ class BotIdentityBinding:
     self_id: str
     db_id: str
     display_name: str = ""
+    # 规范会话前缀：非空时替代事件里的平台实例 id，平台改名后新旧记忆仍是同一条线。
+    session_prefix: str = ""
+    # 同一个 Bot 的第几个平台账号；同 db_id 的多个账号必须编号不同，否则视为配置歧义。
+    account_index: int = 0
 
     def __post_init__(self) -> None:
         self_id = _stripped(self.self_id)
@@ -36,6 +40,10 @@ class BotIdentityBinding:
         object.__setattr__(self, "self_id", self_id)
         object.__setattr__(self, "db_id", db_id)
         object.__setattr__(self, "display_name", display_name)
+        prefix = _stripped(self.session_prefix)
+        if prefix and (":" in prefix or any(ch.isspace() for ch in prefix)):
+            raise ScopeResolutionError("invalid_session_prefix", "session_prefix must not contain ':' or whitespace")
+        object.__setattr__(self, "session_prefix", prefix)
 
 
 @dataclass(frozen=True)
@@ -45,6 +53,8 @@ class ResolvedEventContext:
     bot_name: str
     sender_local_id: str
     conversation_local_id: str
+    # 事件原始的 AstrBot 平台实例 id（发消息、取群列表要用它，而不是规范前缀）。
+    host_platform_id: str = ""
 
 
 class ScopeResolver:
@@ -57,7 +67,7 @@ class ScopeResolver:
 
     def __init__(self, bindings: Iterable[BotIdentityBinding]) -> None:
         by_self_id: dict[str, BotIdentityBinding] = {}
-        db_ids: set[str] = set()
+        db_ids: set[tuple[str, int]] = set()
         duplicate_ids: set[str] = set()
         try:
             supplied = tuple(bindings)
@@ -76,15 +86,20 @@ class ScopeResolver:
                 duplicate_ids.add(f"self_id:{binding.self_id}")
             else:
                 by_self_id[binding.self_id] = binding
-            if binding.db_id in db_ids:
+            db_key = (binding.db_id, int(binding.account_index))
+            if db_key in db_ids:
                 duplicate_ids.add(f"db_id:{binding.db_id}")
-            db_ids.add(binding.db_id)
+            db_ids.add(db_key)
         if duplicate_ids:
             raise ScopeResolutionError(
                 "ambiguous_bot_registry",
                 f"duplicate Bot registry identifiers: {sorted(duplicate_ids)!r}",
             )
         self._bindings = by_self_id
+
+    @property
+    def bindings(self) -> tuple[BotIdentityBinding, ...]:
+        return tuple(self._bindings.values())
 
     def resolve_event(self, event: Any) -> ResolvedEventContext:
         self_id = _event_string(event, "get_self_id", "unknown_bot_self_id")
@@ -147,6 +162,8 @@ class ScopeResolver:
                     "private event requires event.get_session_id()",
                 )
 
+        host_platform_id = platform_id
+        platform_id = binding.session_prefix or platform_id
         session = SessionRef(
             id=f"{platform_id}:{kind}:{conversation_id}",
             platform_id=platform_id,
@@ -165,6 +182,7 @@ class ScopeResolver:
             bot_name=binding.display_name,
             sender_local_id=sender_id,
             conversation_local_id=conversation_id,
+            host_platform_id=host_platform_id,
         )
 
 
@@ -190,7 +208,28 @@ def _stripped(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
+def bindings_from_profiles(profiles: Iterable[Any]) -> list[BotIdentityBinding]:
+    """把 BotRegistry 里已启用的 Profile 展开成 ScopeResolver 绑定（每个平台账号一条）。"""
+    out: list[BotIdentityBinding] = []
+    for profile in profiles:
+        if not getattr(profile, "enabled", True) or not getattr(profile, "db_id", ""):
+            continue
+        self_ids = list(getattr(profile, "self_ids", None) or [getattr(profile, "qq_id", "")])
+        for index, self_id in enumerate(sid for sid in self_ids if sid):
+            out.append(
+                BotIdentityBinding(
+                    self_id=self_id,
+                    db_id=profile.db_id,
+                    display_name=getattr(profile, "name", ""),
+                    session_prefix=getattr(profile, "session_prefix", "") or "",
+                    account_index=index,
+                )
+            )
+    return out
+
+
 __all__ = [
+    "bindings_from_profiles",
     "BotIdentityBinding",
     "ResolvedEventContext",
     "ScopeResolutionError",

@@ -118,25 +118,9 @@ from .services.identity_safety import (
 )
 
 
-@dataclass
-class BotProfile:
-    """配置驱动的 Bot 身份描述，消除所有硬编码。"""
-    qq_id: str
-    name: str
-    db_id: str = ""                          # 数据库标识（如 "yushu"）
-    aliases: list[str] = field(default_factory=list)  # 别名，用于兴趣词匹配
-    meta_prompt: str = ""                    # 自定义 MetaThinking prompt（留空用默认模板）
-    proactive_enabled: bool = True
-    proactive_interval_seconds: int = 600
-    proactive_max_per_hour: int = 3
-    exclude_sources: list[str] = field(default_factory=list)  # 排除的记忆 source
-    interest_keywords: list[str] = field(default_factory=list)  # 自定义兴趣词
-
-    @property
-    def all_keywords(self) -> list[str]:
-        """该 bot 的所有兴趣关键词（名字 + 别名 + 自定义词）。"""
-        words = [self.name] + self.aliases + self.interest_keywords
-        return [w for w in words if w]
+# BotProfile v2 定义在 domain 层；这里重新导出，旧代码 `from main import BotProfile` 不受影响。
+from .domain.bot_profile import BotProfile, BotProfileError, profile_from_legacy_config
+from .services.bot_registry import BotRegistry, legacy_profiles_from_config
 
 
 def _stringify_config_value(value, default: str = "") -> str:
@@ -195,40 +179,15 @@ def _positive_float(value, default: float) -> float:
 
 def _parse_bot_config(cfg: dict) -> BotProfile:
     """从显式配置字典解析 BotProfile；稳定 db_id 缺失时拒绝注册。"""
-    cfg = cfg or {}
-    qq_id = _stringify_config_value(cfg.get("qq_id"))
-    name = _stringify_config_value(cfg.get("name"))
-    db_id = _stringify_config_value(cfg.get("db_id"))
-    if not qq_id or not db_id:
-        raise ValueError("BotProfile requires explicit qq_id and stable db_id")
-    return BotProfile(
-        qq_id=qq_id,
-        name=name,
-        db_id=db_id,
-        aliases=_parse_csv_config_value(cfg.get("aliases")),
-        meta_prompt=_stringify_config_value(cfg.get("meta_prompt")),
-        proactive_enabled=_parse_bool_config_value(cfg.get("proactive_enabled"), True),
-        proactive_interval_seconds=_parse_int_config_value(cfg.get("proactive_interval_seconds"), 600),
-        proactive_max_per_hour=_parse_int_config_value(cfg.get("proactive_max_per_hour"), 3),
-        exclude_sources=_parse_csv_config_value(cfg.get("exclude_sources")),
-        interest_keywords=_parse_csv_config_value(cfg.get("interest_keywords")),
-    )
+    try:
+        return profile_from_legacy_config(cfg)
+    except BotProfileError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _build_bot_registry(config: dict) -> dict[str, BotProfile]:
-    """仅从显式用户配置构建 BotProfile registry；缺失身份时保持空并失败关闭。"""
-    registry: dict[str, BotProfile] = {}
-    for key in ("MetaThinking_Bot1", "MetaThinking_Bot2"):
-        bot_cfg = (config or {}).get(key, {}) or {}
-        if not _stringify_config_value(bot_cfg.get("qq_id")):
-            continue
-        try:
-            profile = _parse_bot_config(bot_cfg)
-        except ValueError as exc:
-            logger.error("[WaveMemory] ignored incomplete BotProfile %s: %s", key, exc)
-            continue
-        registry[profile.qq_id] = profile
-    return registry
+    """仅解析静态配置里的旧槽位（v6 起真正的注册表是 BotRegistry）。"""
+    return {profile.qq_id: profile for profile in legacy_profiles_from_config(config)}
 
 
 @register(
@@ -248,8 +207,10 @@ class WaveMemoryPlugin(Star):
         self._group_names: dict[tuple[str, str], str] = {}
 
         # Bot identity 只能来自显式配置；缺失配置时 Scope 解析与相关能力失败关闭。
-        self._bot_registry = _build_bot_registry(self.config)
-        self._bot_qq_ids = [p.qq_id for p in self._bot_registry.values()]
+        # 构造阶段数据库还没打开，先用静态配置的旧槽位；数据库就绪后 attach() 切到 bot_profiles 表。
+        self.bot_registry = BotRegistry(self.config)
+        self._bot_registry = self.bot_registry.profiles
+        self._bot_qq_ids = list(self._bot_registry)
 
         # Scope API 允许与主插件分切片落地：模块缺失时启动不崩溃，消息入口严格 fail closed。
         self.scope_resolver = None
@@ -514,6 +475,13 @@ class WaveMemoryPlugin(Star):
         tag_catalog_index_path = os.path.join(self.data_dir, "tag_catalog.hnsw")
 
         self.db = WaveMemoryDB(db_path, dimension=self.dimension)
+        try:
+            self.bot_registry.attach(self.db.bot_profiles, connection=self.db.conn)
+        except Exception as exc:
+            # 表损坏等异常不阻止启动：继续用静态配置里的 Bot，9876 Bot 页会显示未接入。
+            logger.error(f"[WaveMemory] Bot 注册表接入数据库失败，暂用静态配置: {exc}")
+            _record_err("BotRegistry", exc)
+        self._bot_qq_ids[:] = list(self._bot_registry)
         if getattr(self.db, "soul_repository", None):
             self.db.soul_repository.manual_adjustment_delta_cap = _positive_float(
                 affinity_cfg.get("manual_adjustment_delta_cap"), 20.0
@@ -885,6 +853,57 @@ class WaveMemoryPlugin(Star):
         except Exception as exc:
             # Retried on the next process initialization, still before lease acquisition.
             logger.warning(f"[WaveMemory] v2.1 migration failed (non-fatal): {exc}")
+
+    def _rebuild_scope_resolver(self) -> None:
+        """按当前 Bot 注册表重建 ScopeResolver；失败时保持 fail closed。"""
+        try:
+            from .services.scopes import ScopeResolver, bindings_from_profiles
+
+            bindings = bindings_from_profiles(self.bot_registry.all())
+            self.scope_resolver = ScopeResolver(bindings)
+            logger.info(f"[WaveMemory] ScopeResolver initialized: {len(bindings)} bot bindings")
+        except Exception as exc:
+            self.scope_resolver = None
+            logger.warning(f"[WaveMemory] ScopeResolver unavailable; message ingress fail closed: {exc}")
+            _record_err("ScopeResolution", "scope_resolver_unavailable")
+
+    def _meta_thinking_bot_maps(self) -> dict:
+        profiles = list(self._bot_registry.values())
+        interests: list[str] = []
+        for profile in profiles:
+            interests.extend(profile.all_keywords)
+        return {
+            "bot_qq_ids": [p.qq_id for p in profiles if p.qq_id],
+            "bot_prompts": {p.qq_id: p.meta_prompt for p in profiles if p.meta_prompt},
+            "bot_names": {p.qq_id: p.name for p in profiles},
+            "bot_db_ids": {p.qq_id: p.db_id for p in profiles},
+            "extra_interests": list(dict.fromkeys(interests)),
+        }
+
+    def _bot_keywords(self) -> set[str]:
+        keywords: set[str] = set()
+        for profile in self._bot_registry.values():
+            keywords.update(profile.all_keywords)
+        return keywords
+
+    def _on_bot_registry_changed(self, registry) -> None:
+        """Bot 在 9876 上被新增、修改或停用后，原地刷新各模块持有的身份信息。"""
+        self._bot_qq_ids[:] = list(self._bot_registry)
+        self._rebuild_scope_resolver()
+        keywords = self._bot_keywords()
+        for holder in (getattr(self, "writer", None), getattr(self, "tag_worker", None)):
+            if holder is not None and hasattr(holder, "bot_keywords"):
+                holder.bot_keywords = set(keywords)
+        meta = getattr(self, "meta_thinking", None)
+        if meta is not None and hasattr(meta, "update_bots"):
+            meta.update_bots(**self._meta_thinking_bot_maps())
+        lifecycle = getattr(self, "lifecycle", None)
+        if lifecycle is not None and hasattr(lifecycle, "sync_bot_identities"):
+            lifecycle.sync_bot_identities({p.db_id: p.qq_id for p in registry.all() if p.db_id})
+        for tool in getattr(self, "_bot_aware_tools", ()):
+            if hasattr(tool, "bot_db_ids"):
+                tool.bot_db_ids = {p.qq_id: p.db_id for p in self._bot_registry.values()}
+        logger.info(f"[WaveMemory] Bot 注册表已热重载: {len(registry.all())} 个启用的 Bot")
 
     def _spawn(self, coro, *, name: str | None = None, owner: str = "plugin") -> asyncio.Task:
         """通过统一 supervisor 创建可观察、可等待的命名后台任务。"""
@@ -1358,24 +1377,8 @@ class WaveMemoryPlugin(Star):
     async def _initialize_once(self):
         """AstrBot 完成 handler 绑定后执行一次实际初始化。"""
         # 从现有 Bot Registry 构造唯一 ScopeResolver；领域切片未落地时显式保持 fail closed。
-        try:
-            from .services.scopes import BotIdentityBinding, ScopeResolver
-
-            bindings = [
-                BotIdentityBinding(
-                    self_id=profile.qq_id,
-                    db_id=profile.db_id,
-                    display_name=profile.name,
-                )
-                for profile in self._bot_registry.values()
-                if profile.qq_id and profile.db_id
-            ]
-            self.scope_resolver = ScopeResolver(bindings)
-            logger.info(f"[WaveMemory] ScopeResolver initialized: {len(bindings)} bot bindings")
-        except Exception as exc:
-            self.scope_resolver = None
-            logger.warning(f"[WaveMemory] ScopeResolver unavailable; message ingress fail closed: {exc}")
-            _record_err("ScopeResolution", "scope_resolver_unavailable")
+        self._rebuild_scope_resolver()
+        self.bot_registry.add_listener(self._on_bot_registry_changed)
 
         # 启动写入器
         self.writer.start(self.task_supervisor)
@@ -1444,13 +1447,15 @@ class WaveMemoryPlugin(Star):
             ])
         if runtime_capability_enabled(self.runtime_mode, "affinity_tools", True):
             _bot_db_ids_map = {profile.qq_id: profile.db_id for profile in self._bot_registry.values()}
+            _social_impression_tool = WaveMemoryRecordSocialImpressionTool(
+                db=self.db,
+                relationship_events=self.relationship_service,
+                bot_db_ids=_bot_db_ids_map,
+            )
+            self._bot_aware_tools = [_social_impression_tool]
             llm_tools.extend([
                 WaveMemoryAffinityTool(db=self.db),
-                WaveMemoryRecordSocialImpressionTool(
-                    db=self.db,
-                    relationship_events=self.relationship_service,
-                    bot_db_ids=_bot_db_ids_map,
-                ),
+                _social_impression_tool,
                 WaveMemoryNoteSocialAnchorTool(
                     db=self.db,
                     concern_tracker=getattr(self, "concern_tracker", None),
@@ -1528,8 +1533,9 @@ class WaveMemoryPlugin(Star):
                     livingmemory_facade_enabled=self.livingmemory_compat_enabled,
                     livingmemory_alias_tools_registered=self.livingmemory_alias_tools_registered,
                     detected_memory_plugins=self.detected_memory_plugins,
-                    bot_registry=self._bot_registry,
+                    bot_registry=self.bot_registry.by_db_id,
                     group_name_resolver=self._get_group_name,
+                    bot_registry_service=self.bot_registry,
                 )
                 await self.webui.start()
                 self._spawn(
@@ -1577,7 +1583,7 @@ class WaveMemoryPlugin(Star):
             self.lifecycle = LifecycleService(
                 db=self.db,
                 bot_qq_id=_first_bot.qq_id if _first_bot else "",
-                bot_db_id=_first_bot.db_id if _first_bot else "yushu",
+                bot_db_id=_first_bot.db_id if _first_bot else "",
                 bot_identities=_affinity_bot_identities,
                 mood_duration_hours=self.mood_duration_hours,
                 mood_msg_threshold=self.mood_msg_threshold,
@@ -1663,25 +1669,19 @@ class WaveMemoryPlugin(Star):
         if runtime_capability_enabled(self.runtime_mode, "metathinking", meta_cfg.get("enabled", True)):
             try:
                 # 从 bot registry 构建 prompt 映射（配置驱动）
-                bot_prompts = {}
-                interest_keywords = set()
-                for profile in self._bot_registry.values():
-                    if profile.meta_prompt:
-                        bot_prompts[profile.qq_id] = profile.meta_prompt
-                    interest_keywords.update(profile.all_keywords)
-
+                maps = self._meta_thinking_bot_maps()
                 self.meta_thinking = MetaThinking(
                     db=self.db,
                     context=self.context,
                     bot_qq_id=self._bot_qq_ids[0] if self._bot_qq_ids else "",
-                    bot_qq_ids=self._bot_qq_ids,
-                    bot_prompts=bot_prompts,
-                    bot_names={p.qq_id: p.name for p in self._bot_registry.values()},
-                    bot_db_ids={p.qq_id: p.db_id for p in self._bot_registry.values()},
+                    bot_qq_ids=maps["bot_qq_ids"],
+                    bot_prompts=maps["bot_prompts"],
+                    bot_names=maps["bot_names"],
+                    bot_db_ids=maps["bot_db_ids"],
                     admin_ids=self._get_admin_ids(),
                     config=meta_cfg,
                     global_fallback_ids=self.config.get("meta_thinking_fallback_ids", ""),
-                    extra_interests=list(interest_keywords),
+                    extra_interests=maps["extra_interests"],
                 )
                 self.meta_thinking._plugin_config = self.config  # 好感度约束需要顶层 config
             except Exception as e:
@@ -1710,6 +1710,9 @@ class WaveMemoryPlugin(Star):
         # 找到没有 exclude_sources 的 bot（即经历所有者）
         _registry = getattr(self, '_bot_registry', {})
         experience_bot = next(
+            (p for p in _registry.values() if p.experience_source),
+            None,
+        ) or next(
             (p for p in _registry.values() if not p.exclude_sources),
             None
         )
@@ -1838,7 +1841,7 @@ class WaveMemoryPlugin(Star):
         _reg("MetaThinking", "ok" if getattr(self, 'meta_thinking', None) else "off", "" if getattr(self, 'meta_thinking', None) else "MetaThinking 配置缺失或初始化失败", dependency="MetaThinking_Settings.enabled + LLM Provider")
         _reg("做梦系统", "ok" if getattr(self, 'dream_service', None) else "off", "" if getattr(self, 'dream_service', None) else "enable_dream=false 或初始化失败", dependency="enable_dream=true")
 
-        missing_bot_profile_reason = "未配置 Bot Profile（MetaThinking_Bot1/2 缺 qq_id/db_id）"
+        missing_bot_profile_reason = "未配置 Bot Profile（在 9876「Bot 管理」页添加 Bot）"
         self_reflect_off_reason = (
             "SelfReflect 未启用" if not runtime_capability_enabled(self.runtime_mode, "self_reflect", study_cfg.get("self_reflect_enabled", True))
             else "tag_llm_provider_id 未配置" if not self.tag_llm_provider_id

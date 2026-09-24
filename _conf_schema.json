@@ -655,44 +655,44 @@
   },
   "MetaThinking_Bot1": {
     "description": "对话规则 · Bot 1",
-    "hint": "仅对 Bot 1 生效的覆盖配置",
+    "hint": "旧版 Bot 槽位（只读回退）。v6 起 Bot 在 WaveMemory 9876 的「Bot 管理」页新增和编辑，数量不限；这里填的 Bot 只在数据库里还没有同一 db_id 时迁移一次，之后改这里不再生效。",
     "type": "object",
     "items": {
       "qq_id": {
         "description": "QQ 号",
         "type": "string",
-        "default": "2500447291",
+        "default": "",
         "restart_required": true
       },
       "name": {
         "description": "显示名称",
         "type": "string",
-        "default": "羽书",
+        "default": "",
         "restart_required": true
       },
       "db_id": {
         "description": "数据库标识（用于 user_profiles/beliefs/concerns 等表，不是 QQ 号）",
         "hint": "必须保持为稳定短 ID；羽书默认 yushu。",
         "type": "string",
-        "default": "yushu",
+        "default": "",
         "restart_required": true
       },
       "aliases": {
         "description": "别名（逗号分隔，用于兴趣词匹配和纠正检测）",
         "type": "string",
-        "default": "羽书,羽书bot,器灵"
+        "default": ""
       },
       "exclude_sources": {
         "description": "排除的记忆来源（逗号分隔）",
         "hint": "羽书默认不直接注入白真真第一人称经历，避免身份串线。",
         "type": "string",
-        "default": "bzz_experience,bzz_pending",
+        "default": "",
         "restart_required": true
       },
       "interest_keywords": {
         "description": "自定义兴趣关键词（逗号分隔，触发主动对话）",
         "type": "string",
-        "default": "没钱修什么仙,张羽,熊狼狗"
+        "default": ""
       },
       "meta_prompt": {
         "description": "自定义 MetaThinking prompt（留空用默认模板）",
@@ -726,32 +726,32 @@
   },
   "MetaThinking_Bot2": {
     "description": "对话规则 · Bot 2",
-    "hint": "仅对 Bot 2 生效的覆盖配置",
+    "hint": "旧版 Bot 槽位（只读回退）。v6 起 Bot 在 WaveMemory 9876 的「Bot 管理」页新增和编辑，数量不限；这里填的 Bot 只在数据库里还没有同一 db_id 时迁移一次，之后改这里不再生效。",
     "type": "object",
     "items": {
       "qq_id": {
         "description": "QQ 号（留空则不启用该 bot）",
         "type": "string",
-        "default": "1336495069",
+        "default": "",
         "restart_required": true
       },
       "name": {
         "description": "显示名称",
         "type": "string",
-        "default": "白真真",
+        "default": "",
         "restart_required": true
       },
       "db_id": {
         "description": "数据库标识（用于 user_profiles/beliefs/concerns 等表，不是 QQ 号）",
         "hint": "白真真默认 baizz，需与历史数据一致。",
         "type": "string",
-        "default": "baizz",
+        "default": "",
         "restart_required": true
       },
       "aliases": {
         "description": "别名（逗号分隔）",
         "type": "string",
-        "default": "白真真,阿真,白主管"
+        "default": ""
       },
       "exclude_sources": {
         "description": "排除的记忆来源（逗号分隔，留空表示不排除任何来源）",
@@ -762,7 +762,7 @@
       "interest_keywords": {
         "description": "自定义兴趣关键词（逗号分隔）",
         "type": "string",
-        "default": "白真真,张羽,安监局,灵币,极情剑道"
+        "default": ""
       },
       "meta_prompt": {
         "description": "自定义 MetaThinking prompt（留空用默认模板）",

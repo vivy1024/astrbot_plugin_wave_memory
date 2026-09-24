@@ -1,5 +1,26 @@
 # Changelog
 
+## 未发布（v6 开发中）：多 Bot 通用化
+
+Bot 不再只能是静态配置里的两个槽位。v6 起 Bot 存进 WaveMemory 自己的 `bot_profiles` 表，数量不限，在 9876「Bot 管理」页新增、编辑、停用、导入导出，保存即热生效。
+
+### 行为变化
+
+1. **Bot 注册表热重载**：保存 Bot 后原地刷新 ScopeResolver、MetaThinking、好感引擎、写入器的 Bot 关键词、身份安全快照与 WebUI 作用域选项，不需要重启 AstrBot。编辑带乐观锁（版本不一致返回 409），每次修改留历史（每个 Bot 保留 50 条）。
+2. **多身份绑定**：一个 Bot 可以有多个 QQ 账号、Cortico 部署名、B 站直播间。Runtime API 按 `bot_id` 或部署名（`scope.deployment` / `X-Cortico-Deployment`）解析 Bot，找不到直接返回 400，**不再默认落到羽书名下**；请求不带会话时用 Bot 绑定的直播间。
+3. **规范会话前缀**：`session_prefix` 固定会话 id 与用户 principal 的前缀，与 AstrBot 平台实例名解耦。平台改名后新旧记忆仍是同一条线；事件原始平台 id 另存为 `host_platform_id`。
+4. **代码里不再写死角色**：自称词、常驻书设、第一人称经历来源、日记署名、Bot QQ 号、`/context/prepare` 的书设与系统发言者、`user_profiles` 的默认 `bot_id` 全部改从 Profile 读取；身份安全、黑话过滤、召回分段通过 `domain/bot_identity` 快照感知所有已注册 Bot。
+5. **修复**：跨平台身份关联拒绝中文平台前缀（`羽书:user:…` 无法关联）。
+
+### 升级须知
+
+- 首次启动自动把 `MetaThinking_Bot1/2`（以及任意 `MetaThinking_BotN`）迁进 `bot_profiles`：`db_id` 不变，会话前缀从该 Bot 最近的记忆里检测（线上为「羽书」「白真真」），v5 写死的人设片段按 db_id 补进 Profile。**历史数据一条不改。**
+- 迁移之后以数据库为准：**再改 AstrBot 静态配置里的 Bot 槽位不会生效**（升级用户需知晓），请到 9876「Bot 管理」页修改。
+- `_conf_schema.json` 旧槽位的身份默认值改为空，只影响全新安装。
+- Runtime API 调用方必须带 `scope.bot_id` 或部署名；`/users/<uid>/profile` 需要 `bot_id` 查询参数或请求体字段。
+
+---
+
 ## 未发布（2026-09-24）：Bot 是一个人
 
 按"羽书是一个人"重新划定记忆边界：只记得自己亲历的事，对同一个人在哪都认得，自己的状态跨场合连续，私聊里的事不在别处说。

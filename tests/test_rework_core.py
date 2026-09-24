@@ -595,6 +595,11 @@ class ReworkCoreTest(unittest.TestCase):
             "group",
             SessionRef("qq:group:g1", "qq", "group", "g1"),
         )
+        from domain import bot_identity
+
+        # Bot 账号来自注册表快照（v6 不再在过滤器里写死 QQ 号）。
+        bot_identity.publish(sender_ids=["2500447291"])
+        self.addCleanup(bot_identity.publish)
         filt = JargonStatisticalFilter(context_keep=10, jieba_threshold=999999)
         now = time.time()
         for i in range(8):

@@ -30,7 +30,7 @@ class SocialRepo:
                 personality_tags TEXT,
                 notes TEXT,
                 metadata TEXT,
-                bot_id TEXT DEFAULT 'yushu',
+                bot_id TEXT DEFAULT '',
                 UNIQUE(user_id, group_id, bot_id)
             );
 
@@ -84,6 +84,7 @@ class SocialRepo:
         try:
             cols = [c[1] for c in self.cm.execute("PRAGMA table_info(user_profiles)").fetchall()]
             if "bot_id" not in cols:
+                # 迁移（v2 之前的单 Bot 库）：旧行全部属于当时唯一的 Bot，沿用当年的 db_id。
                 self.cm.execute("ALTER TABLE user_profiles ADD COLUMN bot_id TEXT DEFAULT 'yushu'")
                 self.cm.commit()
         except Exception:

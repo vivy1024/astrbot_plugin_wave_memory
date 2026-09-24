@@ -70,11 +70,14 @@ def test_bot_profile_schema_is_explicit_and_runtime_has_no_fixed_identity_fallba
 
     assert "MetaThinking_Bot1" in schema
     assert "MetaThinking_Bot2" in schema
-    assert schema["MetaThinking_Bot1"]["items"]["db_id"]["default"] == "yushu"
-    assert schema["MetaThinking_Bot2"]["items"]["db_id"]["default"] == "baizz"
+    # v6：旧槽位只作迁移回退，默认值不再写死任何具体 Bot 的身份。
+    for slot in ("MetaThinking_Bot1", "MetaThinking_Bot2"):
+        for key in ("qq_id", "name", "db_id"):
+            assert schema[slot]["items"][key]["default"] == ""
     assert "_BUILTIN_BOT_PROFILE_CONFIGS" not in source
     assert "_bot_registry_compat_fallback" not in source
-    assert "BotProfile requires explicit qq_id and stable db_id" in source
+    domain_source = Path("domain/bot_profile.py").read_text(encoding="utf-8")
+    assert "BotProfile requires explicit qq_id and stable db_id" in domain_source
     assert "no implicit bot administrator granted" in source
 
 

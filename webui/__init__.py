@@ -64,6 +64,7 @@ class WaveMemoryWebUI:
         detected_memory_plugins: list[dict[str, Any]] | None = None,
         bot_registry: dict[str, Any] | None = None,
         group_name_resolver=None,
+        bot_registry_service=None,
     ):
         # 生产 WebUI 只从真实 registry/数据库组合 options，并且只接受请求显式 Scope。
         from .scope_options import ExplicitRequestScopeProvider, RuntimeScopeOptionsSource
@@ -114,6 +115,7 @@ class WaveMemoryWebUI:
             request_scope_provider=request_scope_provider,
         )
         container.relationship_calibration = calibration
+        container.bot_registry = bot_registry_service
 
         self._task_supervisor = task_supervisor
 
