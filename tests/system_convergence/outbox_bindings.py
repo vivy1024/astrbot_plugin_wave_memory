@@ -34,7 +34,7 @@ class _OutboxTestPortBinding:
 
 def bind_outbox_test_port(reason: str) -> _OutboxTestPortBinding:
     production_port = require_module(
-        "services.system_convergence_test_port",
+        "services.migrations_archive.system_convergence_test_port",
         ("create_runtime", "make_probe_command"),
         reason,
     )

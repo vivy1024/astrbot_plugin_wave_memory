@@ -8,8 +8,8 @@ import pytest
 
 pytest.importorskip("hnswlib")
 
-from services.approved_scope_recovery import APPROVED_SCOPE_RECOVERY_RULE_VERSION
-from services.approved_scope_recovery_indexes import (
+from services.migrations_archive.approved_scope_recovery import APPROVED_SCOPE_RECOVERY_RULE_VERSION
+from services.migrations_archive.approved_scope_recovery_indexes import (
     rebuild_approved_scope_recovery_indexes,
     verify_approved_scope_recovery_indexes,
 )

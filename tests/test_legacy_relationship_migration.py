@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from services.legacy_relationship_migration import (
+from services.migrations_archive.legacy_relationship_migration import (
     CONFIRMATION,
     LegacyRelationshipMigrationError,
     compute_legacy_affection,

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from services.approved_scope_recovery import (
+from services.migrations_archive.approved_scope_recovery import (
     APPROVED_SCOPE_RECOVERY_POLICY,
     APPROVED_SCOPE_RECOVERY_RULE_VERSION,
     FORBIDDEN_FANOUT_RULE_VERSIONS,
@@ -20,7 +20,7 @@ def test_recovery_policy_is_no_fanout_v4():
 
 def test_classified_promote_is_hard_disabled():
     from scripts.apply_classified_scope_recovery import _promote
-    from services.scope_recovery_migration import ScopeRecoveryMigrationError
+    from services.migrations_archive.scope_recovery_migration import ScopeRecoveryMigrationError
 
     with pytest.raises(ScopeRecoveryMigrationError) as exc:
         _promote(

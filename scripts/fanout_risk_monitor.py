@@ -25,13 +25,13 @@ def _connect(db: Path) -> sqlite3.Connection:
 def gate_status() -> dict:
     out: dict = {"importable": False}
     try:
-        from services.approved_scope_recovery import (
+        from services.migrations_archive.approved_scope_recovery import (
             APPROVED_SCOPE_RECOVERY_POLICY,
             APPROVED_SCOPE_RECOVERY_RULE_VERSION,
             FORBIDDEN_FANOUT_RULE_VERSIONS,
         )
         from scripts.apply_classified_scope_recovery import _promote
-        from services.scope_recovery_migration import ScopeRecoveryMigrationError
+        from services.migrations_archive.scope_recovery_migration import ScopeRecoveryMigrationError
 
         out.update(
             {

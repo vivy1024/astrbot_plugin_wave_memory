@@ -20,17 +20,17 @@ import numpy as np
 
 try:
     from .approved_scope_recovery import APPROVED_SCOPE_RECOVERY_RULE_VERSION, ApprovedScopeRecoveryError
-    from .memory_index_policy import (
+    from ..memory_index_policy import (
         MemoryIndexPolicy,
         decode_vector,
         memory_index_policy_from_settings,
         select_hot_memory_candidates,
     )
-    from ..engine.db.outbox_repo import OutboxRepository
-    from ..engine.index_manifest import read_index_manifest, validate_index_manifest
-    from ..engine.vector_index import VectorIndex
+    from ...engine.db.outbox_repo import OutboxRepository
+    from ...engine.index_manifest import read_index_manifest, validate_index_manifest
+    from ...engine.vector_index import VectorIndex
 except ImportError:  # pragma: no cover - direct repository imports
-    from services.approved_scope_recovery import APPROVED_SCOPE_RECOVERY_RULE_VERSION, ApprovedScopeRecoveryError
+    from services.migrations_archive.approved_scope_recovery import APPROVED_SCOPE_RECOVERY_RULE_VERSION, ApprovedScopeRecoveryError
     from services.memory_index_policy import (
         MemoryIndexPolicy,
         decode_vector,

@@ -16,7 +16,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from services.legacy_relationship_migration import (
+from services.migrations_archive.legacy_relationship_migration import (
     CONFIRMATION as STAGE_CONFIRMATION,
     stage,
     _ensure_audit_tables,

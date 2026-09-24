@@ -16,7 +16,7 @@ from services.scope_recovery import (
     build_recovery_request,
     plan_snapshot,
 )
-from services.approved_scope_recovery import (
+from services.migrations_archive.approved_scope_recovery import (
     ApprovedScopeRecoveryError,
     apply_approved_scope_recovery,
     build_approved_scope_recovery_plan,
@@ -24,7 +24,7 @@ from services.approved_scope_recovery import (
     verify_approved_scope_recovery,
     write_approved_scope_recovery_plan,
 )
-from services.scope_recovery_migration import (
+from services.migrations_archive.scope_recovery_migration import (
     ScopeRecoveryMigrationError,
     apply_classified_scope_recovery,
     apply_staged_migration,

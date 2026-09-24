@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main, v6]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # 与线上 AstrBot 容器一致
+          python-version: "3.12"
+      - name: Install test dependencies
+        # 测试不依赖 AstrBot 本体（用桩替身），hnswlib / scikit-learn 缺失时相关模块自动降级
+        run: python -m pip install pytest pytest-asyncio quart hypercorn numpy pydantic jieba
+      - name: Run tests
+        run: python -m pytest tests -q -p no:cacheprovider
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webui/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webui/frontend/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc -b
+      - name: Unit tests
+        run: npx vitest run
+      - name: Build
+        # 产物提交在 webui/static/app，这里只校验能构建，输出到临时目录不覆盖
+        run: npx vite build --outDir "$RUNNER_TEMP/webui-dist" --emptyOutDir

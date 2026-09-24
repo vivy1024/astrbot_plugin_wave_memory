@@ -18,14 +18,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from services.approved_scope_recovery import (
+from services.migrations_archive.approved_scope_recovery import (
     apply_approved_scope_recovery,
     create_approved_scope_snapshot,
     build_approved_scope_recovery_plan,
     verify_approved_scope_recovery,
     write_approved_scope_recovery_plan,
 )
-from services.approved_scope_recovery_indexes import (
+from services.migrations_archive.approved_scope_recovery_indexes import (
     rebuild_approved_scope_recovery_indexes,
     verify_approved_scope_recovery_indexes,
 )

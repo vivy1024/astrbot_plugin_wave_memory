@@ -98,7 +98,7 @@ def load_scope_validation_adapter(validator: Any, reason: str) -> ScopeValidatio
 
 @runtime_checkable
 class OutboxTestPortAdapter(Protocol):
-    """Thin forwarding boundary to services.system_convergence_test_port."""
+    """Thin forwarding boundary to services.migrations_archive.system_convergence_test_port."""
 
     def create_runtime(
         self, database_path: str, *, consumers: Mapping[str, Any], clock: Any

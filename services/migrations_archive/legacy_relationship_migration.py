@@ -20,13 +20,13 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 try:
-    from ..domain.relationship_policy import (
+    from ...domain.relationship_policy import (
         DIMENSION_RANGES,
         attitude_level,
         clamp_dimension,
         compute_affinity,
     )
-    from ..engine.db.migrations.scoped_relationship_calibration import (
+    from ...engine.db.migrations.scoped_relationship_calibration import (
         ensure_scoped_relationship_calibration_schema_connection,
     )
 except ImportError:  # pragma: no cover - direct service imports in focused tests

@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
 from engine.db.outbox_repo import OutboxRepository
 from engine.index_manifest import read_index_manifest, validate_index_manifest
 from engine.vector_index import VectorIndex
-from services.scope_recovery_migration import (
+from services.migrations_archive.scope_recovery_migration import (
     CLASSIFIED_RECOVERY_RULE_VERSION,
     ScopeRecoveryMigrationError,
     apply_classified_scope_recovery,

@@ -6,14 +6,14 @@ from collections.abc import Mapping
 from typing import Any
 
 try:
-    from ..domain.commands import DomainCommand, EntityChange
-    from ..engine.write_coordinator import (
+    from ...domain.commands import DomainCommand, EntityChange
+    from ...engine.write_coordinator import (
         MutationOutcome,
         OutboxEventDraft,
         WriteCoordinator,
     )
-    from .outbox_dispatcher import OutboxDispatcher
-    from .task_supervisor import TaskSupervisor
+    from ..outbox_dispatcher import OutboxDispatcher
+    from ..task_supervisor import TaskSupervisor
 except ImportError:  # pragma: no cover - repository tests import top-level packages
     from domain.commands import DomainCommand, EntityChange
     from engine.write_coordinator import (

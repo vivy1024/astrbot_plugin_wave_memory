@@ -28,6 +28,8 @@ Bot 不再只能是静态配置里的两个槽位。v6 起 Bot 存进 WaveMemory
 16. **outbox 历史清理**：`write_operations`、`domain_outbox`、`outbox_deliveries` 只追加不清理，线上合计约 0.9 GB。记忆淘汰服务每轮顺带删除 30 天前已归档且投递完成的事件、对应投递记录，以及不再被引用的已提交写操作（始终保留最大写序号）。每批 500 条一个短事务，批间让出写线程。在线上库副本上实测可回收约 710 MB。
 17. **`/memories/query` 改用 FTS5**：不再对记忆表做 `LIKE '%词%'` 全表扫描（线上副本实测 8.4 秒 → 5 毫秒），并只匹配正文列（全文索引同时收录了发言人昵称）。
 
+18. **代码健康**：一次性迁移与恢复代码（约 4900 行：`approved_scope_recovery`、`scope_recovery_migration`、`legacy_relationship_migration` 等）从服务层移到 `services/migrations_archive/`，插件运行时不导入；`scripts/README.md` 按「还在用 / 已执行完毕」分类。新增 GitHub Actions：Python 3.12 跑 pytest，前端跑类型检查、单测与构建。
+
 ### 升级须知
 
 - 首次启动自动把 `MetaThinking_Bot1/2`（以及任意 `MetaThinking_BotN`）迁进 `bot_profiles`：`db_id` 不变，会话前缀从该 Bot 最近的记忆里检测（线上为「羽书」「白真真」），v5 写死的人设片段按 db_id 补进 Profile。**历史数据一条不改。**

@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 try:
-    from .data_governance_jobs import open_readonly_snapshot
-    from .scope_recovery import normalize_scope_mappings
+    from ..data_governance_jobs import open_readonly_snapshot
+    from ..scope_recovery import normalize_scope_mappings
     from .scope_recovery_migration import (
         ScopeRecoveryMigrationError,
         _canonical,
@@ -38,7 +38,7 @@ try:
 except ImportError:  # pragma: no cover - direct repository imports
     from services.data_governance_jobs import open_readonly_snapshot
     from services.scope_recovery import normalize_scope_mappings
-    from services.scope_recovery_migration import (
+    from services.migrations_archive.scope_recovery_migration import (
         ScopeRecoveryMigrationError,
         _canonical,
         _columns,

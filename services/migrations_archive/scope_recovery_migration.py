@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 try:
-    from .scope_recovery import (
+    from ..scope_recovery import (
         PURGE_TABLES_BY_DOMAIN,
         SCOPE_RECOVERY_RULE_VERSION,
         _valid_bot_id,
