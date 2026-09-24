@@ -58,30 +58,12 @@ from .services.hot_config import HotConfig
 from .services.memory_index_policy import memory_index_policy_from_settings, select_hot_memory_candidates
 from .services.maintenance_tokens import maintenance_repair_token
 from .services.platform_context import PlatformContextManager
-from .services.inbound_message_handler import InboundMessagePipeline
+from .services.inbound_message_handler import InboundMessagePipeline, event_message_id
 from .services.backup_lifecycle import DatabaseBackupManager
 from .services.runtime_mode import effective_native_injection_enabled, effective_query_feature, resolve_runtime_mode, runtime_capability_enabled, should_self_heal_advanced_query
 from .services.compat import build_duplicate_memory_warnings, build_livingmemory_compat_surface, detect_memory_plugins
 from .services.impression_timeline import configure_social_limits, parse_impression_mark, persist_unsettled_trace
 from .services.lifecycle import LifecycleService
-from .tools.memory_search import WaveMemorySearchTool, WaveMemoryRememberTool
-from .tools.deep_search import WaveMemoryDeepSearchTool
-from .tools.extra_tools import WaveMemoryFactsTool
-from .tools.person_search import WaveMemoryPersonSearchTool
-from .tools.injection_explain import WaveMemoryExplainInjectionTool
-from .tools.memory_feedback import WaveMemoryFeedbackMemoryTool
-from .tools.config_suggestion import WaveMemorySuggestConfigTool
-from .tools.review_candidate import WaveMemorySubmitReviewCandidateTool
-from .tools.affinity_update import WaveMemoryAffinityTool, WaveMemoryAffinityUpdateTool
-from .tools.social_impression import WaveMemoryRecordSocialImpressionTool
-from .tools.social_anchor import WaveMemoryNoteSocialAnchorTool
-from .tools.cultural_moment import WaveMemoryMarkCulturalMomentTool
-from .tools.fact_proposal import WaveMemoryProposeFactTool
-from .tools.belief_proposal import WaveMemoryProposeBeliefTool
-from .tools.episode import WaveMemoryNoteEpisodeTool
-from .tools.diary_episode import WaveMemoryRecordDiaryEpisodeTool
-from .tools.browse_chat import WaveMemoryBrowseRecentChatTool
-from .tools.concern import WaveMemoryNoteConcernTool
 from .tools.livingmemory_compat_tools import build_livingmemory_compat_tools
 from .engine.book_lore_index import BookLoreIndex
 from .services.meta_thinking import MetaThinking
@@ -121,6 +103,15 @@ from .services.identity_safety import (
 # BotProfile v2 定义在 domain 层；这里重新导出，旧代码 `from main import BotProfile` 不受影响。
 from .domain.bot_profile import BotProfile, BotProfileError, profile_from_legacy_config
 from .services.bot_registry import BotRegistry, legacy_profiles_from_config
+
+
+@dataclass
+class _ObservationEvent:
+    """Runtime 观察在 InboundMessagePipeline 里的替身：管道只读 message_id 与 message_str。"""
+
+    message_id: object = None
+    message_str: str = ""
+    message_obj: object = None
 
 
 def _stringify_config_value(value, default: str = "") -> str:
@@ -1007,20 +998,6 @@ class WaveMemoryPlugin(Star):
             return
         try:
             from .services.injection.trace_store import InjectionTraceStore
-            from .services.injection.channels.safety import SafetyChannel
-            from .services.injection.channels.memory_recall import MemoryRecallChannel
-            from .services.injection.channels.facts import FactsChannel
-            from .services.injection.channels.persona import PersonaChannel
-            from .services.injection.channels.belief import BeliefChannel
-            from .services.injection.channels.book_lore import BookLoreChannel
-            from .services.injection.channels.fewshot import FewShotChannel
-            from .services.injection.channels.jargon import JargonChannel
-            from .services.injection.channels.holyman_persona import HolymanPersonaChannel
-            from .services.injection.channels.fts5 import FTS5Channel
-            from .services.injection.channels.relationship import RelationshipChannel
-            from .services.injection.channels.soul_state import SoulStateChannel
-            from .services.jargon.holyman_persona import HolymanPersonaPack
-            from .services.persona_composer import PersonaComposer
 
             self.injection_trace_store = InjectionTraceStore(
                 self.db.conn,
@@ -1030,36 +1007,8 @@ class WaveMemoryPlugin(Star):
                 cleanup_on_record=True,
             )
             self.injection_trace_store.ensure_schema()
-            safety = SafetyChannel()
-            persona_composer = PersonaComposer(
-                db=self.db,
-                query_engine=self.query_engine,
-                bot_profiles=self._bot_registry,
-            )
-            self.injection_shadow_channels = [
-                safety,
-                MemoryRecallChannel(query_engine=self.query_engine, safety_channel=safety),
-                FTS5Channel(
-                    db=self.db,
-                    cross_group_enabled=self.cross_group_enabled,
-                    shared_memory_grants_enabled=self.shared_memory_grants_enabled,
-                ),
-                FactsChannel(db=self.db, facts_decay_rate=getattr(self, "_facts_decay_rate", 0.005)),
-                PersonaChannel(composer=persona_composer),
-                BeliefChannel(belief_engine=getattr(self, "belief_engine", None)),
-                JargonChannel(jargon_service=getattr(self, "jargon_service", None)),
-                # 可选风格人格包：默认关闭，需在通道配置里显式开启。
-                HolymanPersonaChannel(persona_pack=HolymanPersonaPack()),
-                FewShotChannel(few_shot_service=getattr(self, "few_shot_service", None)),
-                RelationshipChannel(repository=self.db.soul_repository, db=self.db),
-                SoulStateChannel(repository=self.db.soul_repository),
-                BookLoreChannel(
-                    book_lore_index=self.book_lore_index,
-                    embedding_service=self.embedding_service,
-                    lore_db_path=self.lore_db_path,
-                    catalog_scope=self.book_lore_catalog_scope,
-                ),
-            ]
+            # 通道定义在 services/injection/channel_registry.py（外部扩展经 extensions/ 登记）。
+            self.injection_shadow_channels = self._channel_registry().build(self)
             get_container().injection_channels = list(self.injection_shadow_channels)
             logger.info(f"[WaveMemory] Injection orchestrator shadow ready: {len(self.injection_shadow_channels)} channels")
         except Exception as e:
@@ -1092,6 +1041,16 @@ class WaveMemoryPlugin(Star):
 
         set_slow_warning_ms(self.hot_config.get("injection.slow_warning_ms", 2000))
 
+    def _channel_registry(self):
+        registry = getattr(self, "channel_registry", None)
+        if registry is None:
+            from .services.injection.channel_registry import ChannelRegistry, builtin_channel_specs
+
+            registry = ChannelRegistry()
+            registry.register_many(builtin_channel_specs())
+            self.channel_registry = registry
+        return registry
+
     def _setup_runtime_context_preparer(self) -> None:
         """Runtime API（Cortico 等）复用与 AstrBot 相同的编排器和通道实例。"""
         from .webui.container import get_container
@@ -1116,6 +1075,7 @@ class WaveMemoryPlugin(Star):
             exclude_sources_for=_exclude_sources,
         )
         get_container().runtime_context_preparer = self.runtime_context_preparer
+        get_container().observation_ingestor = self.ingest_observation
 
     def _build_shadow_persona_realtime_ctx(
         self,
@@ -1164,11 +1124,13 @@ class WaveMemoryPlugin(Star):
             return None
         from .services.config.channel_config import build_channel_config_from_plugin_config
         profile = self.bot_registry.get(scope.bot_id) if getattr(self, "bot_registry", None) else None
-        return build_channel_config_from_plugin_config(
+        config = build_channel_config_from_plugin_config(
             self.config,
             scope=scope,
             bot_channels=getattr(profile, "channels", None) or None,
         )
+        registry = getattr(self, "channel_registry", None)
+        return registry.with_external_defaults(config) if registry is not None else config
 
     def _build_shadow_context_config(self, *, channel_config, exclude_sources, recent_context: list[str], realtime_ctx: dict) -> dict:
         from .services.impression_timeline import normalize_timeline_half_life
@@ -1481,78 +1443,36 @@ class WaveMemoryPlugin(Star):
             self._spawn(self._init_epa())
 
         # 注册 LLM 工具：memory_only 保留纯记忆工具；compat_only 仅暴露 LivingMemory 风格别名（如已启用）。
+        # 工具定义在 tools/builtin_registry.py（外部扩展放 <plugin_data>/extensions/），这里只按能力开关实例化。
         livingmemory_alias_tools = build_livingmemory_compat_tools(
             self.memory_engine,
             enabled=self.livingmemory_alias_tools_enabled,
         )
         self.livingmemory_alias_tools_registered = bool(livingmemory_alias_tools)
 
-        llm_tools = [*livingmemory_alias_tools]
-        if runtime_capability_enabled(self.runtime_mode, "memory_tools", True):
-            llm_tools.extend([
-                WaveMemorySearchTool(query_engine=self.query_engine, db=self.db),
-                WaveMemoryRememberTool(writer=self.writer),
-                WaveMemoryFactsTool(db=self.db),
-                WaveMemoryPersonSearchTool(db=self.db),
-            ])
-        if runtime_capability_enabled(self.runtime_mode, "agent_feedback_tools", False):
-            llm_tools.extend([
-                WaveMemoryExplainInjectionTool(db=self.db),
-                WaveMemoryFeedbackMemoryTool(db=self.db),
-                WaveMemorySuggestConfigTool(db=self.db),
-                WaveMemorySubmitReviewCandidateTool(db=self.db),
-            ])
-        if runtime_capability_enabled(self.runtime_mode, "affinity_tools", True):
-            _bot_db_ids_map = {profile.qq_id: profile.db_id for profile in self._bot_registry.values()}
-            _social_impression_tool = WaveMemoryRecordSocialImpressionTool(
-                db=self.db,
-                relationship_events=self.relationship_service,
-                bot_db_ids=_bot_db_ids_map,
-            )
-            self._bot_aware_tools = [_social_impression_tool]
-            llm_tools.extend([
-                WaveMemoryAffinityTool(db=self.db),
-                _social_impression_tool,
-                WaveMemoryNoteSocialAnchorTool(
-                    db=self.db,
-                    concern_tracker=getattr(self, "concern_tracker", None),
-                    repository=getattr(self.db, "soul_repository", None),
-                    write_gateway=self.write_gateway,
-                ),
-                WaveMemoryMarkCulturalMomentTool(
-                    db=self.db,
-                    jargon_service=getattr(self, "jargon_service", None),
-                ),
-                WaveMemoryProposeFactTool(
-                    db=self.db,
-                    jargon_service=getattr(self, "jargon_service", None),
-                ),
-                WaveMemoryProposeBeliefTool(db=self.db),
-                WaveMemoryNoteEpisodeTool(db=self.db, writer=self.writer, write_gateway=self.write_gateway),
-                WaveMemoryRecordDiaryEpisodeTool(db=self.db, write_gateway=self.write_gateway),
-                WaveMemoryNoteConcernTool(
-                    db=self.db,
-                    concern_tracker=getattr(self, "concern_tracker", None),
-                    write_gateway=self.write_gateway,
-                ),
-            ])
-        if runtime_capability_enabled(self.runtime_mode, "book_lore_tools", True):
-            # 书设工具直读 Catalog（book_lore.db + HNSW），优先挂载统一检索入口
-            try:
-                from .tools.book_lore_query import WaveMemoryBookLoreQueryTool
+        from .services.tool_registry import ToolRegistry
+        from .tools.builtin_registry import builtin_tool_specs
 
-                llm_tools.append(
-                    WaveMemoryBookLoreQueryTool(
-                        book_lore_index=self.book_lore_index,
-                        embedding_service=self.embedding_service,
-                        lore_db_path=self.lore_db_path,
-                        catalog_scope=self.book_lore_catalog_scope,
-                    )
-                )
-            except Exception as exc:
-                logger.info("[WaveMemory] book_lore search tool unavailable: %s", exc)
-            except Exception as exc:
-                logger.info("[WaveMemory] book_lore search tool unavailable: %s", exc)
+        self.tool_registry = ToolRegistry()
+        self.tool_registry.register_many(builtin_tool_specs())
+        self.tool_registry.load_extensions(
+            os.path.join(self.data_dir, "extensions"),
+            extra_registries={"channel_registry": self._channel_registry()},
+        )
+        llm_tools = [
+            *livingmemory_alias_tools,
+            *self.tool_registry.build(
+                self,
+                capability_enabled=lambda capability, default: runtime_capability_enabled(
+                    self.runtime_mode, capability, default
+                ),
+            ),
+        ]
+        social_record = self.tool_registry.get("wave_memory_record_social_impression")
+        self._bot_aware_tools = [social_record.instance] if social_record else []
+        from .webui.container import get_container
+
+        get_container().tool_registry = self.tool_registry
 
         if llm_tools:
             self.context.add_llm_tools(*llm_tools)
@@ -2282,6 +2202,24 @@ class WaveMemoryPlugin(Star):
             logger.debug(f"[WaveMemory] Jargon mine error: {e}")
             _record_err("JargonMine", e)
 
+    # ─── Hook: 按 Bot Profile 与 9876 工具开关过滤本次请求的工具 ───
+
+    @filter.on_llm_request(priority=6)
+    async def filter_bot_tools(self, event: AstrMessageEvent, req=None):
+        registry = getattr(self, "tool_registry", None)
+        func_tool = getattr(req, "func_tool", None) if req is not None else None
+        if registry is None or func_tool is None:
+            return
+        runtime_scope = getattr(event, "_wave_memory_runtime_scope", None)
+        profile = self.bot_registry.get(runtime_scope.bot_id) if isinstance(runtime_scope, RuntimeScope) else None
+        try:
+            removed = registry.filter_request_tools(func_tool, profile)
+        except Exception as exc:
+            logger.debug(f"[WaveMemory] tool filter skipped: {exc}")
+            return
+        if removed:
+            logger.debug(f"[WaveMemory] tools hidden for this request: {removed}")
+
     # ─── Hook: 自动注入记忆 ───
 
     @filter.on_llm_request(priority=5)
@@ -2726,20 +2664,37 @@ class WaveMemoryPlugin(Star):
             _record_err("BotSentScopeResolution", reason)
             return
 
+        group = getattr(getattr(event, "message_obj", None), "group", None)
+        await self._process_bot_reply(
+            runtime_scope=runtime_scope,
+            bot_text=bot_text,
+            message_id=event_message_id(event),
+            bot_self_id=event.get_self_id() or "",
+            group_name=getattr(group, "group_name", None),
+        )
+
+    async def _process_bot_reply(
+        self,
+        *,
+        runtime_scope: RuntimeScope,
+        bot_text: str,
+        message_id=None,
+        bot_self_id: str = "",
+        group_name: str | None = None,
+    ) -> None:
+        """Bot 自己说出的话：入库、互动计数、未结算印象、自省记录。
+
+        AstrBot 的 after_message_sent 与 Runtime API（Cortico 的 qq.self / 直播口播）共用这一段。
+        """
         group_id = runtime_scope.session.conversation_id
         if runtime_scope.visibility == "group":
-            group = getattr(getattr(event, "message_obj", None), "group", None)
             remember_group_name = getattr(self, "_remember_group_name", None)
             if callable(remember_group_name):
-                remember_group_name(
-                    runtime_scope.bot_id,
-                    group_id,
-                    getattr(group, "group_name", None),
-                )
+                remember_group_name(runtime_scope.bot_id, group_id, group_name)
         principal = runtime_scope.subject_principal_id or ""
         principal_prefix = f"{runtime_scope.session.platform_id}:user:"
         sender_id = principal[len(principal_prefix):] if principal.startswith(principal_prefix) else ""
-        bot_id = event.get_self_id() or ""
+        bot_id = bot_self_id
         bot_db_id = runtime_scope.bot_id
 
         # reply tracker 使用完整 Scope，避免群聊/私聊兼容 conversation id 相撞。
@@ -2769,10 +2724,10 @@ class WaveMemoryPlugin(Star):
             "scope": runtime_scope,
             "group_id": group_id,
             "sender_id": "bot",
-            "sender_name": self._get_bot_name(bot_id),
+            "sender_name": self._get_bot_name(bot_id) if bot_id else self._bot_display_name(bot_db_id),
             "content": bot_text,
             "timestamp": time.time(),
-            "event_id": getattr(event, "message_id", None),
+            "event_id": message_id,
         })
 
         # 兜底：decorating 未跑时，日常观感只进未结算表，不写 metadata.impression。
@@ -2802,8 +2757,62 @@ class WaveMemoryPlugin(Star):
                 group_id,
                 bot_id=runtime_scope.bot_id,
                 scope=runtime_scope,
-                message_id=getattr(event, "message_id", None),
+                message_id=message_id,
             )
+
+    def _bot_display_name(self, db_id: str) -> str:
+        profile = self.bot_registry.get(db_id) if getattr(self, "bot_registry", None) else None
+        return profile.name if profile else "bot"
+
+    async def ingest_observation(self, observation: dict, runtime_scope: RuntimeScope) -> dict:
+        """宿主无关的写入入口：Runtime API 的一条观察走与 AstrBot 消息钩子相同的处理。
+
+        ``kind``：``message``（别人说的话，默认）、``self``（Bot 自己说的话）。
+        别人说的话进 InboundMessagePipeline（记住/忘记/teach、入库、黑话积累、纠错自省、
+        好感触达）；Bot 自己的话进 ``_process_bot_reply``。``event_id`` 用平台原始消息号，
+        与 AstrBot 路径同会话同消息号去重。
+        """
+        if runtime_scope.visibility not in {"group", "private"} or runtime_scope.session is None:
+            return {"status": "rejected", "error": "memory_scope_visibility_unsupported"}
+        content = str(observation.get("content") or "").strip()
+        if not content:
+            return {"status": "rejected", "error": "empty_content"}
+        kind = str(observation.get("kind") or "message").strip().lower()
+        event_id = observation.get("event_id")
+        group_id = runtime_scope.session.conversation_id
+        profile = self.bot_registry.get(runtime_scope.bot_id)
+        group_name = observation.get("group_name")
+        if kind == "self":
+            await self._process_bot_reply(
+                runtime_scope=runtime_scope,
+                bot_text=content,
+                message_id=event_id,
+                bot_self_id=profile.qq_id if profile else "",
+                group_name=group_name,
+            )
+            return {"status": "accepted", "kind": "self"}
+        if kind not in {"message", "danmaku"}:
+            return {"status": "rejected", "error": f"unknown_kind:{kind}"}
+        principal = runtime_scope.subject_principal_id or ""
+        prefix = f"{runtime_scope.session.platform_id}:user:"
+        sender_id = str(observation.get("sender_id") or (principal[len(prefix):] if principal.startswith(prefix) else "")).strip()
+        if not sender_id:
+            return {"status": "rejected", "error": "sender_id_required"}
+        if runtime_scope.visibility == "group" and group_name:
+            self._remember_group_name(runtime_scope.bot_id, group_id, group_name)
+        marker = " ".join(profile.self_ids) if (profile and observation.get("is_at_bot")) else ""
+        event = _ObservationEvent(message_id=event_id, message_str=f"{content} {marker}".strip())
+        await self.inbound_pipeline.process_message(
+            event=event,
+            runtime_scope=runtime_scope,
+            message=content,
+            message_ts=float(observation.get("timestamp") or time.time()),
+            group_id=group_id,
+            sender_id=sender_id,
+            sender_name=str(observation.get("sender_name") or ""),
+            bot_id=profile.qq_id if profile else "",
+        )
+        return {"status": "accepted", "kind": kind}
 
     # ─── 后台任务 ───
 

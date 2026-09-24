@@ -302,14 +302,18 @@ def _load_on_bot_sent():
         node for node in tree.body
         if isinstance(node, ast.ClassDef) and node.name == "WaveMemoryPlugin"
     )
-    method = copy.deepcopy(next(
-        node for node in plugin_class.body
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "on_bot_sent"
-    ))
-    method.decorator_list = []
-    method.returns = None
-    for argument in (*method.args.posonlyargs, *method.args.args, *method.args.kwonlyargs):
-        argument.annotation = None
+    methods = []
+    # v6：on_bot_sent 的写入部分拆到 _process_bot_reply（Runtime API 共用），两段一起编译。
+    for name in ("on_bot_sent", "_process_bot_reply"):
+        method = copy.deepcopy(next(
+            node for node in plugin_class.body
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == name
+        ))
+        method.decorator_list = []
+        method.returns = None
+        for argument in (*method.args.posonlyargs, *method.args.args, *method.args.kwonlyargs):
+            argument.annotation = None
+        methods.append(method)
 
     class _DropComponentImport(ast.NodeTransformer):
         def visit_ImportFrom(self, node):
@@ -317,9 +321,10 @@ def _load_on_bot_sent():
                 return None
             return node
 
-    method = _DropComponentImport().visit(method)
-    module = ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[]))
+    methods = [_DropComponentImport().visit(method) for method in methods]
+    module = ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[]))
     from domain.scope import RuntimeScope
+    from services.inbound_message_handler import event_message_id
 
     logger = _FakeLogger()
     recorded_errors = []
@@ -330,8 +335,10 @@ def _load_on_bot_sent():
         "Plain": _FakePlain,
         "Image": _FakeImage,
         "_record_err": lambda source, reason: recorded_errors.append((source, reason)),
+        "event_message_id": event_message_id,
     }
     exec(compile(module, str(source_path), "exec"), namespace)
+    _BotSentPlugin._process_bot_reply = namespace["_process_bot_reply"]
     return namespace["on_bot_sent"], logger, recorded_errors
 
 

@@ -220,23 +220,33 @@ def test_main_production_wiring_passes_formal_repositories_writer_and_runtime_sc
         assert service_name in _call_names(initializer)
     assert "repository=soul_repository" in initializer_source
     assert "coordinator=soul_coordinator" in initializer_source
-    assert {"FewShotChannel", "BookLoreChannel"} <= set(_call_names(injection))
-    assert "book_lore_index=self.book_lore_index" in injection_source
+    # v6：通道实例化搬到 services/injection/channel_registry.py，main 只调 build。
+    channel_source = (ROOT / "services" / "injection" / "channel_registry.py").read_text(encoding="utf-8")
+    channel_tree = ast.parse(channel_source)
+    channel_calls = {
+        node.func.id for node in ast.walk(channel_tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert {"FewShotChannel", "BookLoreChannel"} <= channel_calls
+    assert "book_lore_index=d.book_lore_index" in channel_source
+    assert "_channel_registry().build(self)" in injection_source
     assert "from .webui.container import get_container" in injection_source
     assert "_parse_bool_config_value(cross_group_cfg.get('cross_group_enabled'), True)" in constructor_source
     assert constructor_source.count("'cross_group_enabled': self.cross_group_enabled") == 1
-    assert injection_source.count("cross_group_enabled=self.cross_group_enabled") == 1
-    assert injection_source.count(
-        "shared_memory_grants_enabled=self.shared_memory_grants_enabled"
-    ) == 1
+    assert channel_source.count("cross_group_enabled=d.cross_group_enabled") == 1
+    assert channel_source.count("shared_memory_grants_enabled=d.shared_memory_grants_enabled") == 1
     assert "config['cross_group_enabled'] = self.cross_group_enabled" in context_config_source
     assert "config['shared_memory_grants_enabled'] = self.shared_memory_grants_enabled" in context_config_source
     # 后台盲抽已整体废除：on_message 不得自动创建关切或时间锚点，
     # 两者都只能由模型现场基于证据经工具 / 命令链写入。
     for blind_write in ("concern_tracker.add(", "subjective_time.add_anchor("):
         assert blind_write not in on_message_source, f"on_message 不得后台盲抽: {blind_write}"
-    assert "WaveMemoryNoteConcernTool(" in initializer_source, "关切必须由现场工具显式提审"
-    assert "write_gateway=self.write_gateway" in initializer_source, "关切工具必须绑定正式写入网关"
+    # v6：工具实例化搬到 tools/builtin_registry.py，main 只按能力开关 build。
+    registry_source = (ROOT / "tools" / "builtin_registry.py").read_text(encoding="utf-8")
+    assert "builtin_tool_specs()" in initializer_source
+    assert "WaveMemoryNoteConcernTool(" in registry_source, "关切必须由现场工具显式提审"
+    assert "write_gateway=d.write_gateway" in registry_source, "关切工具必须绑定正式写入网关"
+    assert "write_gateway=self.write_gateway" in initializer_source
     assert "scope=runtime_scope" in on_message_source
     # 注意：proactive 主动追问所需的 concern_score 目前无供数方，
     # ConcernTracker.match/summary 与 SubjectiveTime.add_anchor 均无生产调用者，

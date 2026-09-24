@@ -22,6 +22,17 @@ except ImportError:  # pragma: no cover - focused repository tests
     from domain.scope import RuntimeScope
 
 
+def event_message_id(event: Any) -> Any:
+    """平台原始消息号：AstrBot 事件放在 message_obj.message_id，Runtime 观察直接给 message_id。
+
+    写入时它进幂等键（Bot + 可见性 + 会话 + 消息号），AstrBot 与 Cortico 同时收到同一条消息只入库一次。
+    """
+    raw = getattr(event, "message_id", None)
+    if raw in (None, ""):
+        raw = getattr(getattr(event, "message_obj", None), "message_id", None)
+    return None if raw == "" else raw
+
+
 class InboundMessagePipeline:
     """Pipelines locked message processing, administrative commands, and lifecycle hooks."""
 
@@ -119,7 +130,7 @@ class InboundMessagePipeline:
                         "sender_id": sender_id,
                         "sender_name": sender_name,
                         "timestamp": time.time(),
-                        "event_id": getattr(event, "message_id", None),
+                        "event_id": event_message_id(event),
                         "importance": 2.5,
                         "source": "teach",
                     })
@@ -160,7 +171,7 @@ class InboundMessagePipeline:
                         "sender_id": sender_id,
                         "sender_name": sender_name if sender_name else "",
                         "timestamp": time.time(),
-                        "event_id": getattr(event, "message_id", None),
+                        "event_id": event_message_id(event),
                         "importance": 2.0,
                         "source": "explicit",
                     })
@@ -187,7 +198,7 @@ class InboundMessagePipeline:
             "sender_id": sender_id,
             "sender_name": sender_name,
             "timestamp": message_ts,
-            "event_id": getattr(event, "message_id", None),
+            "event_id": event_message_id(event),
             "importance": 1.0,
         })
 
@@ -198,7 +209,7 @@ class InboundMessagePipeline:
         # 5. 派发给自省系统与生命周期
         if runtime_scope.visibility == "group" and getattr(self.plugin, "self_reflect", None) and group_id:
             try:
-                correction_message_id = getattr(event, "message_id", None)
+                correction_message_id = event_message_id(event)
                 await self.plugin.self_reflect.check_correction(
                     locked_message,
                     sender_name,

@@ -17,12 +17,17 @@ Bot 不再只能是静态配置里的两个槽位。v6 起 Bot 存进 WaveMemory
 8. **热参数持久化**：没有静态配置映射的热参数改存 WaveMemory 数据库 `config_overrides`，重启后仍生效（此前只对当前进程有效）。
 9. **写死的常量改为热参数**：消息合并窗口 `ingress.debounce_seconds`（默认 4 秒）、最长等待 `ingress.debounce_max_seconds`（默认 12 秒）、注入慢警告 `injection.slow_warning_ms`（默认 2000 毫秒）。
 
+10. **插件化：工具注册表**：18 个内置工具改为在 `tools/builtin_registry.py` 登记 `ToolSpec`（工厂 + 能力开关 + 分组），`main.py` 只按能力开关实例化。同一份工具实例同时交给 AstrBot 与 Runtime API：新增 `POST /api/runtime/v1/tools/<name>`（带 `scope`、`arguments`），`/capabilities` 列出全部工具（`?bot_id=` 时按该 Bot 的工具开关过滤，并返回 Bot 的规范会话前缀）。Bot Profile 的 `tools_allow`/`tools_deny` 在两条路径都生效（AstrBot 侧在 `on_llm_request` 里从本次 ToolSet 移除）。修正：生效的 `wave_memory_affinity` 来自 `affinity_update`，不是 `extra_tools` 里的退役占位。
+11. **插件化：通道注册表**：12 个注入通道改为在 `services/injection/channel_registry.py` 登记，顺序与参数不变。外部扩展放 `<plugin_data>/extensions/*.py`，实现 `register(tool_registry, channel_registry=...)` 即可登记工具和通道（外部通道需自带默认配置）。
+12. **写入统一**：`/observations/batch` 不再只把文本塞进写入队列，改为走与 AstrBot 消息钩子相同的流程：`message`/`danmaku` 进 InboundMessagePipeline（记住/忘记/teach、入库、黑话积累、纠错自省、好感触达），`self`（Bot 自己说的话）进与 `after_message_sent` 共用的 `_process_bot_reply`（入库、互动计数、未结算印象、自省记录）。`event_id` 必填，按「Bot + 可见性 + 会话 + 平台消息号」去重；AstrBot 路径同样改用平台原始消息号（此前取不到 `message_id` 时不去重）。
+
 ### 升级须知
 
 - 首次启动自动把 `MetaThinking_Bot1/2`（以及任意 `MetaThinking_BotN`）迁进 `bot_profiles`：`db_id` 不变，会话前缀从该 Bot 最近的记忆里检测（线上为「羽书」「白真真」），v5 写死的人设片段按 db_id 补进 Profile。**历史数据一条不改。**
 - 迁移之后以数据库为准：**再改 AstrBot 静态配置里的 Bot 槽位不会生效**（升级用户需知晓），请到 9876「Bot 管理」页修改。
 - `_conf_schema.json` 旧槽位的身份默认值改为空，只影响全新安装。
 - Runtime API 调用方必须带 `scope.bot_id` 或部署名；`/users/<uid>/profile` 需要 `bot_id` 查询参数或请求体字段。
+- `/observations/batch` 的事件必须带 `event_id`（平台原始消息号），写入流程未就绪时返回 503。
 - `/context/prepare` 在注入编排器未就绪时返回 503（此前会退回简化检索）；响应新增 `trace_id`、`elapsed_ms`，`channels` 内含每个通道的状态、条数、token 与耗时。
 
 ---

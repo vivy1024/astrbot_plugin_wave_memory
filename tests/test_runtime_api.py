@@ -86,18 +86,39 @@ async def test_runtime_observations_batch(app, container_mock):
             }
         ]
     }
+    seen = []
+
+    async def ingest(event, scope):
+        seen.append((event, scope))
+        return {"status": "accepted", "kind": event.get("kind", "message")}
+
+    payload["events"].append({"content": "没有消息号", "scope": payload["events"][0]["scope"]})
+    container_mock.observation_ingestor = ingest
+    try:
+        res = await client.post(
+            "/api/runtime/v1/observations/batch",
+            headers={"Authorization": "Bearer yushu-dev-token"},
+            json=payload
+        )
+        assert res.status_code == 200
+        data = await res.get_json()
+        assert data["ok"] is True
+        assert [r["status"] for r in data["receipts"]] == ["accepted", "rejected"]
+        assert data["receipts"][1]["error"] == "event_id_required"
+        assert data["accepted"] == 1
+        # 发言人补成规范 principal，与 AstrBot 路径一致。
+        _, scope = seen[0]
+        assert scope.bot_id == "yushu"
+        assert scope.subject_principal_id == "bilibili:user:user_123"
+    finally:
+        container_mock.observation_ingestor = None
+
     res = await client.post(
         "/api/runtime/v1/observations/batch",
         headers={"Authorization": "Bearer yushu-dev-token"},
         json=payload
     )
-    assert res.status_code == 200
-    data = await res.get_json()
-    assert data["ok"] is True
-    assert len(data["receipts"]) == 1
-    assert data["receipts"][0]["status"] == "accepted"
-    assert data["receipts"][0]["delivery_state"] == "inbox_enqueued"
-    container_mock.writer.enqueue.assert_awaited_once()
+    assert res.status_code == 503
 
 
 @pytest.mark.asyncio
@@ -221,3 +242,47 @@ async def test_runtime_context_prepare_rejects_unknown_bot_and_missing_preparer(
     scope["bot_id"] = "yushu"
     res = await client.post("/api/runtime/v1/context/prepare", headers=headers, json={"text": "hi", "scope": scope})
     assert res.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_runtime_tools_listing_and_invoke(app, container_mock):
+    from services.tool_registry import ToolRegistry, ToolSpec
+    from tools.scope_boundary import extract_event_runtime_scope
+
+    class Echo:
+        name = "wave_memory_echo"
+        description = "echo"
+        parameters = {"type": "object", "properties": {"q": {"type": "string"}}}
+
+        async def call(self, context, **kwargs):
+            scope = extract_event_runtime_scope(context)
+            return f"{scope.bot_id}:{kwargs.get('q')}"
+
+    registry = ToolRegistry()
+    registry.register(ToolSpec("echo", lambda d: Echo()))
+    registry.build(None, capability_enabled=lambda c, d: True)
+    container_mock.tool_registry = registry
+    client = app.test_client()
+    headers = {"Authorization": "Bearer yushu-dev-token"}
+    try:
+        caps = await (await client.get("/api/runtime/v1/capabilities?bot_id=yushu", headers=headers)).get_json()
+        assert [tool["name"] for tool in caps["tools"]] == ["wave_memory_echo"]
+        res = await client.post(
+            "/api/runtime/v1/tools/wave_memory_echo",
+            headers=headers,
+            json={"scope": {"bot_id": "yushu", "session": {"id": "bilibili:group:24292304"}}, "arguments": {"q": "hi"}},
+        )
+        data = await res.get_json()
+        assert res.status_code == 200 and data["result"] == "yushu:hi"
+        missing = await client.post("/api/runtime/v1/tools/nope", headers=headers, json={"scope": {"bot_id": "yushu", "session": {"id": "qq:group:1"}}})
+        assert missing.status_code == 404
+    finally:
+        container_mock.tool_registry = None
+
+
+def test_tier_channel_names_exist():
+    from services.config.channel_config import KNOWN_CHANNELS
+    from services.injection.runtime_prepare import TIER_CHANNELS
+
+    for tier, names in TIER_CHANNELS.items():
+        assert names is None or names <= set(KNOWN_CHANNELS), tier

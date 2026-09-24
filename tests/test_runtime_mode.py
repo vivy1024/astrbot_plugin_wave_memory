@@ -106,8 +106,11 @@ class RuntimeModeTest(unittest.TestCase):
         source = Path("main.py").read_text(encoding="utf-8")
 
         self.assertIn("effective_native_injection_enabled", source)
-        self.assertIn('runtime_capability_enabled(self.runtime_mode, "memory_tools"', source)
-        self.assertIn('runtime_capability_enabled(self.runtime_mode, "agent_feedback_tools"', source)
+        # v6：工具按 ToolSpec.capability 统一经 runtime_capability_enabled 门控。
+        self.assertIn("self.runtime_mode, capability, default", source)
+        registry = Path("tools/builtin_registry.py").read_text(encoding="utf-8")
+        self.assertIn('"capability": "agent_feedback_tools", "capability_default": False', registry)
+        self.assertIn('capability="book_lore_tools"', registry)
 
     def test_unknown_mode_falls_back_to_full_instead_of_crashing(self):
         from services.runtime_mode import resolve_runtime_mode

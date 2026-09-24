@@ -61,6 +61,10 @@ class ServiceContainer:
         self.bot_registry: Any = None
         # Runtime API 的注入入口（services.injection.runtime_prepare.RuntimeContextPreparer）。
         self.runtime_context_preparer: Any = None
+        # 工具注册表（services.tool_registry.ToolRegistry）：Runtime API 与 9876 工具页共用。
+        self.tool_registry: Any = None
+        # Runtime 写入入口（WaveMemoryPlugin.ingest_observation）：与 AstrBot 消息钩子同一套处理。
+        self.observation_ingestor: Any = None
 
         # ─── 认证 ───
         self.password: str = ""

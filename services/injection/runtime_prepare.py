@@ -25,10 +25,11 @@ except ImportError:  # top-level import in isolated tests
     from domain.scope import RuntimeScope
 
 # 各档位允许运行的通道；未列出的通道本次不运行（不改变全局配置）。
+# 通道名以 channel.name 为准（关系通道叫 affinity）。
 TIER_CHANNELS: dict[str, frozenset[str] | None] = {
     "full": None,
-    "light": frozenset({"safety", "memory", "fts5", "facts", "persona", "belief", "jargon", "relationship", "soul_state"}),
-    "minimal": frozenset({"safety", "memory", "fts5", "facts", "relationship"}),
+    "light": frozenset({"safety", "memory", "fts5", "facts", "persona", "belief", "jargon", "affinity", "soul_state"}),
+    "minimal": frozenset({"safety", "memory", "fts5", "facts", "affinity"}),
 }
 
 

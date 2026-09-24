@@ -173,21 +173,77 @@ def _get_book_lore_service():
 
 @runtime_bp.route("/capabilities", methods=["GET"])
 async def capabilities():
+    """Runtime 能力清单。``?bot_id=`` 时工具列表按该 Bot 的工具开关过滤。"""
     if not _check_auth():
         return jsonify({"ok": False, "error": {"code": "unauthorized", "message": "Invalid runtime bearer token"}}), 401
+    container = _get_container()
+    registry = getattr(container, "tool_registry", None)
+    profile = None
+    bot_id = str(request.args.get("bot_id") or "").strip()
+    bots = _bot_registry()
+    if bot_id and bots is not None and hasattr(bots, "get"):
+        profile = bots.get(bot_id)
+    tools = registry.describe(profile=profile, runtime_only=True) if registry is not None else []
+    channels = [getattr(ch, "name", "") for ch in (getattr(container, "injection_channels", None) or [])]
     return jsonify({
         "ok": True,
-        "protocol_version": "1.0",
+        "protocol_version": "1.1",
         "capabilities": {
             "book_lore_search": True,
             "book_lore_graph": True,
-            "context_prepare": True,
+            "context_prepare": getattr(container, "runtime_context_preparer", None) is not None,
             "observations_batch": True,
             "commands": True,
+            "tools": registry is not None,
         },
-        "supported_channels": [
-            "soul_state", "relationship", "facts", "book_lore", "memory"
-        ],
+        "supported_channels": [name for name in channels if name],
+        "tiers": ["full", "light", "minimal"],
+        "tools": [tool for tool in tools if tool["enabled"]],
+        # 调用方据此拼出与 AstrBot 路径一致的会话 id（如 QQ 群用 <session_prefix>:group:<群号>）。
+        "bot": {
+            "db_id": profile.db_id,
+            "name": profile.name,
+            "session_prefix": profile.session_prefix,
+            "self_ids": profile.self_ids,
+        } if profile is not None else None,
+    })
+
+
+@runtime_bp.route("/tools/<name>", methods=["POST"])
+async def invoke_tool(name: str):
+    """用请求里的作用域调用与 AstrBot 相同的工具实例。请求体：``scope``、``arguments``。"""
+    if not _check_auth():
+        return jsonify({"ok": False, "error": {"code": "unauthorized", "message": "Invalid runtime bearer token"}}), 401
+    container = _get_container()
+    registry = getattr(container, "tool_registry", None)
+    if registry is None:
+        return jsonify({"ok": False, "error": {"code": "tools_unavailable", "message": "工具注册表未就绪"}}), 503
+    body = await request.get_json(silent=True) or {}
+    try:
+        scope = _parse_runtime_scope(dict(body.get("scope") or {}))
+    except Exception as exc:
+        return jsonify({"ok": False, "error": {"code": "invalid_scope", "message": str(exc)}}), 400
+    bots = _bot_registry()
+    profile = bots.get(scope.bot_id) if bots is not None and hasattr(bots, "get") else None
+    arguments = body.get("arguments") if isinstance(body.get("arguments"), dict) else {}
+    try:
+        from ...services.tool_registry import ToolRegistryError
+    except ImportError:
+        from services.tool_registry import ToolRegistryError
+    started = time.perf_counter()
+    try:
+        result = await registry.invoke(name, scope=scope, arguments=arguments, profile=profile, source=str(body.get("source") or "cortico"))
+    except ToolRegistryError as exc:
+        status = {"tool_not_found": 404, "tool_disabled": 403, "tool_denied": 403}.get(exc.code, 400)
+        return jsonify({"ok": False, "error": {"code": exc.code, "message": str(exc)}}), status
+    except Exception as exc:
+        logger.warning(f"[Runtime API] tool {name} failed: {exc}")
+        return jsonify({"ok": False, "error": {"code": "tool_failed", "message": str(exc)}}), 500
+    return jsonify({
+        "ok": True,
+        "tool": name,
+        "result": result,
+        "elapsed_ms": round((time.perf_counter() - started) * 1000, 1),
     })
 
 
@@ -273,61 +329,62 @@ async def book_lore_graph():
 
 @runtime_bp.route("/observations/batch", methods=["POST"])
 async def observations_batch():
-    """被动事件摄入：将观众弹幕与主播实际播出片段异步真实入库。"""
+    """被动事件摄入：QQ 群消息、弹幕、Bot 自己说的话，走与 AstrBot 消息钩子相同的处理。
+
+    每个事件：``event_id``（平台原始消息号，用于去重）、``kind``（message/danmaku/self）、
+    ``content``、``sender_id``、``sender_name``、``timestamp``、``scope``、可选 ``group_name``、
+    ``is_at_bot``。逐条返回回执；任何一条失败不影响其他条。
+    """
     if not _check_auth():
         return jsonify({"ok": False, "error": {"code": "unauthorized", "message": "Invalid runtime bearer token"}}), 401
 
-    body = await request.get_json() or {}
+    body = await request.get_json(silent=True) or {}
     events = body.get("events") or []
     if not isinstance(events, list):
         return jsonify({"ok": False, "error": {"code": "invalid_body", "message": "events must be an array"}}), 400
+    if len(events) > 500:
+        return jsonify({"ok": False, "error": {"code": "batch_too_large", "message": "at most 500 events per batch"}}), 400
 
     container = _get_container()
-    writer = getattr(container, "writer", None)
+    ingest = getattr(container, "observation_ingestor", None)
+    if not callable(ingest):
+        # 真实服务不可用，返回 503 绝不报虚假 committed
+        return jsonify({
+            "ok": False,
+            "error": {"code": "service_unavailable", "message": "WaveMemory 写入流程未就绪"},
+        }), 503
 
     results = []
     for ev in events:
-        eid = ev.get("event_id") or f"ev-{time.time()}"
-        content = str(ev.get("content") or "").strip()
-        sender_id = str(ev.get("sender_id") or "anon")
-        sender_name = str(ev.get("sender_name") or "观众")
-        scope_data = ev.get("scope") or {}
-
+        if not isinstance(ev, dict):
+            results.append({"event_id": None, "status": "rejected", "error": "event_must_be_object"})
+            continue
+        eid = ev.get("event_id")
+        if eid in (None, ""):
+            results.append({"event_id": None, "status": "rejected", "error": "event_id_required"})
+            continue
+        scope_data = dict(ev.get("scope") or {})
+        sender_id = str(ev.get("sender_id") or "").strip()
+        if sender_id and not scope_data.get("subject_principal_id") and str(ev.get("kind") or "message") != "self":
+            scope_data["subject_principal_id"] = sender_id
         try:
             scope = _parse_runtime_scope(scope_data)
         except Exception as exc:
             results.append({"event_id": eid, "status": "rejected", "error": f"invalid_scope: {exc}"})
             continue
+        try:
+            receipt = await ingest(ev, scope)
+        except Exception as exc:
+            logger.warning(f"[Runtime API] observation {eid} failed: {exc}")
+            receipt = {"status": "rejected", "error": f"ingest_failed: {exc}"}
+        results.append({"event_id": eid, **receipt})
 
-        if not content:
-            results.append({"event_id": eid, "status": "rejected", "error": "empty_content"})
-            continue
-
-        if writer is not None and hasattr(writer, "enqueue"):
-            try:
-                await writer.enqueue({
-                    "group_id": scope.session.conversation_id,
-                    "content": content,
-                    "sender_id": sender_id,
-                    "sender_name": sender_name,
-                    "timestamp": ev.get("timestamp") or time.time(),
-                    "source": "live_observation",
-                    "scope": scope,
-                    "event_id": eid,
-                })
-                results.append({"event_id": eid, "status": "accepted", "delivery_state": "inbox_enqueued"})
-            except Exception as exc:
-                results.append({"event_id": eid, "status": "rejected", "error": f"enqueue_failed: {exc}"})
-        else:
-            # 真实服务不可用，返回 503 绝不报虚假 committed
-            return jsonify({
-                "ok": False,
-                "error": {"code": "service_unavailable", "message": "MessageWriter service is not ready in container"},
-            }), 503
-
+    accepted = sum(1 for item in results if item.get("status") == "accepted")
     return jsonify({
         "ok": True,
         "batch_id": body.get("batch_id") or f"batch-{time.time()}",
+        "accepted": accepted,
+        "rejected": len(results) - accepted,
         "receipts": results,
     })
 
