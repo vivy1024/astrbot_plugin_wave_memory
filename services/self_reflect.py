@@ -11,12 +11,14 @@ from collections import defaultdict, deque
 from typing import Optional
 
 try:  # 兼容插件包导入和仓库测试直接导入
+    from ..domain.bot_profile import bot_catalog_scope
     from ..domain.evidence import EvidenceBinding, EvidenceRef
     from ..domain.scope import CatalogScope, RuntimeScope, validate_formal_command_scope
     from ..engine.database import WaveMemoryDB
     from ..engine.vector_index import VectorIndex
     from ..engine.book_lore_index import BookLoreIndex
 except ImportError:  # pragma: no cover - 由仓库测试/旧调用路径使用
+    from domain.bot_profile import bot_catalog_scope
     from domain.evidence import EvidenceBinding, EvidenceRef
     from domain.scope import CatalogScope, RuntimeScope, validate_formal_command_scope
     from engine.database import WaveMemoryDB
@@ -70,6 +72,7 @@ class SelfReflectService:
         repositories=None,
         candidate_service: LearningCandidateService | None = None,
         catalog_scope: CatalogScope | None = None,
+        profile_lookup=None,
     ):
         self.db = db
         self.memory_index = memory_index
@@ -78,6 +81,7 @@ class SelfReflectService:
         self.book_lore_index = book_lore_index
         self.lore_db_path = lore_db_path
         self.catalog_scope = catalog_scope
+        self.profile_lookup = profile_lookup
         self.bot_name = bot_name
         self.bot_aliases = list(bot_aliases or [])
         self.bot_qq_id = bot_qq_id
@@ -207,7 +211,13 @@ class SelfReflectService:
     async def _search_book_lore(self, bot_id: str, bot_reply: str, correction: str) -> tuple[str, list[dict]]:
         """只在显式 CatalogScope 下检索书设参考。"""
         hits_evidence: list[dict] = []
-        catalog_scope = self.catalog_scope
+        profile = None
+        if self.profile_lookup is not None:
+            try:
+                profile = self.profile_lookup(bot_id)
+            except Exception:
+                profile = None
+        catalog_scope, _reason = bot_catalog_scope(profile, self.catalog_scope)
         if not isinstance(catalog_scope, CatalogScope):
             return "（无额外参考）", hits_evidence
         catalog_decision = validate_formal_command_scope("catalog.read", catalog_scope)

@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from ...identity_safety import is_identity_contamination
@@ -15,9 +15,11 @@ from ..channel_base import InjectionResult
 from .safety import is_channel_allowed_in_mode
 
 try:
+    from ....domain.bot_profile import bot_catalog_scope
     from ....domain.scope import CatalogScope, validate_formal_command_scope
     from ....engine.external_book_lore import ExternalBookLoreStore
 except ImportError:  # pragma: no cover - direct services imports in isolated tests
+    from domain.bot_profile import bot_catalog_scope
     from domain.scope import CatalogScope, validate_formal_command_scope
     from engine.external_book_lore import ExternalBookLoreStore
 
@@ -79,6 +81,8 @@ class BookLoreChannel:
         lore_store: ExternalBookLoreStore | None = None,
         # 兼容旧装配参数；正式路径不再读取 reviewed projection。
         projection_repository: Any = None,
+        # bot_id → BotProfile；按 Profile 的书设语料决定这个 Bot 读不读书设。
+        profile_lookup: Callable[[str], Any] | None = None,
     ):
         self.book_lore_index = book_lore_index
         self.embedding_service = embedding_service
@@ -86,6 +90,7 @@ class BookLoreChannel:
         self.catalog_scope = catalog_scope
         self.lore_store = lore_store
         self.projection_repository = projection_repository
+        self.profile_lookup = profile_lookup
 
     async def build(self, ctx: Any) -> InjectionResult:
         started = time.perf_counter()
@@ -96,9 +101,12 @@ class BookLoreChannel:
         cfg = _channel_cfg(ctx)
         if not _as_bool(cfg.get("enabled"), True):
             return InjectionResult.disabled(self.name, reason="book_lore channel disabled by config")
-        if not isinstance(self.catalog_scope, CatalogScope):
+        catalog_scope, reason = bot_catalog_scope(self._profile(ctx), self.catalog_scope)
+        if reason:
+            return InjectionResult.disabled(self.name, reason=reason)
+        if not isinstance(catalog_scope, CatalogScope):
             return InjectionResult.disabled(self.name, reason="catalog_scope_required")
-        scope_decision = validate_formal_command_scope("catalog.read", self.catalog_scope)
+        scope_decision = validate_formal_command_scope("catalog.read", catalog_scope)
         if not scope_decision.allowed:
             return InjectionResult.disabled(
                 self.name,
@@ -127,7 +135,7 @@ class BookLoreChannel:
             filtered: list[dict[str, Any]] = []
             if hits:
                 store = self.lore_store or ExternalBookLoreStore(self.lore_db_path)
-                rows = store.communities_by_ids([cid for cid, _ in hits], scope=self.catalog_scope)
+                rows = store.communities_by_ids([cid for cid, _ in hits], scope=catalog_scope)
                 by_id = {str(row.get("id")): row for row in rows}
                 for cid, score in hits:
                     score = float(score or 0.0)
@@ -187,6 +195,14 @@ class BookLoreChannel:
             result = InjectionResult.error_result(self.name, exc)
             result.latency_ms = self._latency_ms(started)
             return result
+
+    def _profile(self, ctx: Any) -> Any:
+        if self.profile_lookup is None:
+            return None
+        try:
+            return self.profile_lookup(str(getattr(ctx, "bot_profile_id", "") or ""))
+        except Exception:
+            return None
 
     @staticmethod
     def _audit_item(item: Mapping[str, Any]) -> dict[str, Any]:

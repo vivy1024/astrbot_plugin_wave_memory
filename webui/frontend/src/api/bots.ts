@@ -19,6 +19,8 @@ export interface PersonaDto {
   lore_title: string
   experience_source: string
   reflection_prefixes: string[]
+  /** 空=部署默认书设；none=不用书设；其他=语料 id */
+  lore_corpus?: string
 }
 
 export interface BotProfileDto {
@@ -134,6 +136,7 @@ export function emptyBot(dbId = ''): BotProfileDto {
       lore_title: '',
       experience_source: '',
       reflection_prefixes: [],
+      lore_corpus: '',
     },
     channels: {},
     tools_allow: [],

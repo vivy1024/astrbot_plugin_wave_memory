@@ -152,6 +152,7 @@ def builtin_channel_specs() -> list[ChannelSpec]:
                 embedding_service=d.embedding_service,
                 lore_db_path=d.lore_db_path,
                 catalog_scope=d.book_lore_catalog_scope,
+                profile_lookup=lambda bot_id: d.bot_registry.get(bot_id),
             ),
         ),
     ]

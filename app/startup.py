@@ -423,6 +423,9 @@ class StartupMixin:
                     bot_qq_id=reflect_bot.qq_id,
                     bot_aliases=reflect_bot.aliases,
                     bot_id=reflect_bot.db_id,
+                    # v5 起没传 CatalogScope，自省检索书设一直是空的
+                    catalog_scope=self.book_lore_catalog_scope if self.book_lore_index else None,
+                    profile_lookup=lambda bot_id: self.bot_registry.get(bot_id),
                 )
             except Exception as e:
                 logger.warning(f"[WaveMemory] SelfReflectService init failed: {e}")

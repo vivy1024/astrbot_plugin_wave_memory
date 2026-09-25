@@ -167,7 +167,8 @@ function BotEditor({ draft, onChange, isNew }: { draft: BotProfileDto; onChange:
           <FieldDescription>防认主、防猫娘化。关闭会放开防护。</FieldDescription>
         </Field>
         <TextField id="bot-lore-title" label="常驻书设标题" value={draft.persona.lore_title} onChange={(v) => setPersona('lore_title', v)} />
-        <div />
+        <TextField id="bot-lore-corpus" label="书设语料" value={draft.persona.lore_corpus ?? ''} onChange={(v) => setPersona('lore_corpus', v)}
+          placeholder="留空用部署默认" hint="书设检索与纠错自省读哪份语料。填 none 表示这个 Bot 不读书设；填其他语料 id 须与部署加载的一致，否则不读。" />
         <div className="md:col-span-2">
           <AreaField id="bot-lore" label="常驻书设（每行一条）" rows={5} value={lines(draft.persona.lore_lines)} onChange={(v) => setPersona('lore_lines', fromLines(v))}
             hint="Cortico 等外部应用调用注入接口时放在最前面的灵魂底色。" />

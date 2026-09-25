@@ -34,6 +34,8 @@ Bot 不再只能是静态配置里的两个槽位。v6 起 Bot 存进 WaveMemory
 
 20. **中文全文索引**：旧 `fts_memories` 用 unicode61 分词，中文连续字串整段算一个词，搜「张羽」只能命中它单独成词的行，搜不到时 fts5 通道再对全表 `LIKE`（约 8 秒）。新增派生索引 `fts_memories_cjk`：正文按相邻两字切词，查询词组成相邻短语（「张羽」不会命中「张某羽」），不依赖 jieba。由 outbox 消费者 `fts_cjk` 增量维护，历史数据由维护任务 `maintenance.fts_cjk.rebuild` 分批回填（启动时自动排队）；回填完成前 fts5 通道与 `/memories/query` 继续用旧索引。线上副本实测：30.7 万条回填 17 秒；「张羽」旧索引 113 条 → 2696 条（`LIKE` 2710 条，差额为隔离/噪声/归档行），「尖塔」0 → 154 条，查询毫秒级；fts5 通道在新索引就绪后不再退回全表 `LIKE`。
 
+21. **每个 Bot 的书设语料**：Bot Profile 新增 `persona.lore_corpus`（9876「Bot 管理」→ 书设语料）。留空用部署默认语料；`none` 表示这个 Bot 不读书设；填其他语料 id 时须与部署加载的一致，否则书设通道返回 `corpus_not_loaded:<id>`，不会把别的世界观当成自己的设定。书设注入通道与纠错自省同时遵守。**修复**：纠错自省从 v5 起没拿到 CatalogScope，检索书设参考一直是空的，现在按 Bot 的语料检索。
+
 ### 升级须知
 
 - 首次启动自动把 `MetaThinking_Bot1/2`（以及任意 `MetaThinking_BotN`）迁进 `bot_profiles`：`db_id` 不变，会话前缀从该 Bot 最近的记忆里检测（线上为「羽书」「白真真」），v5 写死的人设片段按 db_id 补进 Profile。**历史数据一条不改。**
@@ -43,6 +45,7 @@ Bot 不再只能是静态配置里的两个槽位。v6 起 Bot 存进 WaveMemory
 - outbox 清理删除的写操作会带走其幂等键：超过 30 天后重放同一请求会被当作新请求执行。
 - `/memories/query` 需要带至少一个 2 字以上的关键词，或只按 `uid` 查最近记忆。
 - `/observations/batch` 的事件必须带 `event_id`（平台原始消息号），写入流程未就绪时返回 503。
+- 纠错自省开始检索书设参考（此前一直为空）；不希望某个 Bot 读书设时把它的书设语料设为 `none`。
 - 首次启动后台回填中文全文索引（线上约 30 万条、十几秒），数据库增大约 200 MB（4.4 GB 库实测）。
 - `/context/prepare` 在注入编排器未就绪时返回 503（此前会退回简化检索）；响应新增 `trace_id`、`elapsed_ms`，`channels` 内含每个通道的状态、条数、token 与耗时。
 

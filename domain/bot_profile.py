@@ -143,6 +143,8 @@ class PersonaSettings:
     experience_source: str = ""
     # 自省输出里需要剥掉的前缀（如「角色名：」），名字本身会自动加入。
     reflection_prefixes: list[str] = field(default_factory=list)
+    # 书设语料：空=用部署默认语料；none=这个 Bot 不用书设；其他=语料 id（须与部署加载的一致）。
+    lore_corpus: str = ""
 
     @classmethod
     def from_dict(cls, data: Any) -> "PersonaSettings":
@@ -156,6 +158,7 @@ class PersonaSettings:
             lore_title=_text(data.get("lore_title")),
             experience_source=_text(data.get("experience_source")),
             reflection_prefixes=_text_list(data.get("reflection_prefixes")),
+            lore_corpus=_text(data.get("lore_corpus")),
         )
 
 
@@ -311,7 +314,32 @@ __all__ = [
     "BotBinding",
     "BotProfile",
     "BotProfileError",
+    "LORE_CORPUS_DISABLED",
     "PersonaSettings",
+    "bot_catalog_scope",
     "profile_from_legacy_config",
     "validate_db_id",
 ]
+
+
+LORE_CORPUS_DISABLED = frozenset({"none", "off", "-"})
+
+
+def bot_catalog_scope(profile: Any, default: Any) -> tuple[Any, str]:
+    """按 Bot 的书设语料选择 CatalogScope，返回 (scope 或 None, 原因)。
+
+    一个部署只加载一份书设（``book_lore.db`` + 向量索引），Bot 指定的语料与之不同就不读，
+    避免把别的世界观当成自己的设定。
+    """
+    persona = getattr(profile, "persona", None)
+    corpus = str(getattr(persona, "lore_corpus", "") or "").strip()
+    if not corpus:
+        return default, ""
+    if corpus.lower() in LORE_CORPUS_DISABLED:
+        return None, "bot_book_lore_disabled"
+    if default is None:
+        return None, "catalog_scope_required"
+    if corpus != getattr(default, "corpus_id", None):
+        return None, f"corpus_not_loaded:{corpus}"
+    return default, ""
+
