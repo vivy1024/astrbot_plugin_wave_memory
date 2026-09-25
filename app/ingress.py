@@ -107,7 +107,14 @@ class IngressMixin:
             except Exception as exc:
                 scope_failure_reason = str(getattr(exc, "reason_code", "") or "scope_resolution_error")
 
+        ingress_health = getattr(self, "ingress_health", None)
         if scope_failure_reason:
+            if ingress_health is not None:
+                try:
+                    self_id = str(event.get_self_id() or "")
+                except Exception:
+                    self_id = ""
+                ingress_health.record_rejected(scope_failure_reason, self_id=self_id)
             counters = getattr(self, "_scope_resolution_failed_total", None)
             if not isinstance(counters, dict):
                 counters = {}
@@ -129,6 +136,8 @@ class IngressMixin:
             return
 
         runtime_scope = resolved_event_context.scope
+        if ingress_health is not None:
+            ingress_health.record_accepted()
         # on_message 是唯一的事件 Scope 解析点；后续 LLM hook 若接收同一事件，
         # 只可透传该对象，不得再次从原始字段推断身份或会话。
         try:

@@ -134,6 +134,14 @@ def refresh_dynamic_services_health(c: Any, services: list[Mapping[str, Any]] | 
                 return
         refreshed.append({"name": name, "status": status, "reason": reason, "dependency": dependency, "ts": time.time()})
 
+    ingress = getattr(c, "ingress_health", None)
+    if ingress is not None:
+        try:
+            snapshot = ingress.snapshot()
+            upsert("消息入库", snapshot["status"], ingress.summary_text(), "Bot 账号绑定")
+        except Exception as exc:
+            upsert("消息入库", "degraded", f"统计不可用: {exc}")
+
     epa = getattr(c, "epa", None)
     if epa is not None:
         initialized = bool(getattr(epa, "initialized", False))
@@ -430,6 +438,13 @@ async def health_check():
 
     # Cooccurrence
     services["cooccurrence"] = {"status": "ok" if c.cooccurrence else "unavailable"}
+
+    # 消息入库：被拒过多（如 Bot 换号未绑定）时整体降级
+    ingress = getattr(c, "ingress_health", None)
+    if ingress is not None:
+        snapshot = ingress.snapshot()
+        services["ingress"] = {**snapshot, "status": "ok" if snapshot["status"] == "ok" else "error",
+                               "message": ingress.summary_text()}
 
     overall = "healthy" if all(s.get("status") == "ok" for s in services.values()) else "degraded"
     try:

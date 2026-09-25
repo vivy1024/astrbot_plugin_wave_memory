@@ -103,6 +103,10 @@ class BootstrapMixin:
         # Bot identity 只能来自显式配置；缺失配置时 Scope 解析与相关能力失败关闭。
         # 构造阶段数据库还没打开，先用静态配置的旧槽位；数据库就绪后 attach() 切到 bot_profiles 表。
         self.bot_registry = BotRegistry(self.config)
+        # 入站消息接收/被拒统计：拒绝过多时 /api/health 与 9876 首页报警（换号导致记忆静默丢失的教训）
+        from ..services.ingress_health import IngressHealth
+
+        self.ingress_health = IngressHealth()
         self._bot_registry = self.bot_registry.profiles
         self._bot_qq_ids = list(self._bot_registry)
 
@@ -896,6 +900,7 @@ class BootstrapMixin:
             exclude_sources_for=_exclude_sources,
         )
         get_container().runtime_context_preparer = self.runtime_context_preparer
+        get_container().ingress_health = self.ingress_health
         get_container().observation_ingestor = self.ingest_observation
 
     def _setup_service_registry(self) -> None:

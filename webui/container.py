@@ -69,6 +69,8 @@ class ServiceContainer:
         self.service_registry: Any = None
         # 扩展热重载入口（WaveMemoryPlugin.reload_extensions）。
         self.extension_reloader: Any = None
+        # 入站消息接收/被拒统计（services.ingress_health.IngressHealth）。
+        self.ingress_health: Any = None
 
         # ─── 认证 ───
         self.password: str = ""
