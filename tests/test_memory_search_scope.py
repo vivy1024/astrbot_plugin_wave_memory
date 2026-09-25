@@ -81,7 +81,7 @@ def _context(scope):
     return SimpleNamespace(context=SimpleNamespace(event=event))
 
 
-class DeepSearchScopeTest(unittest.TestCase):
+class MemorySearchScopeTest(unittest.TestCase):
     def setUp(self):
         self.db = _Db()
         self.addCleanup(self.db.conn.close)
@@ -97,38 +97,6 @@ class DeepSearchScopeTest(unittest.TestCase):
         from domain.scope import RuntimeScope, SessionRef
 
         return RuntimeScope("yushu", "group", SessionRef("qq:group:g1", "qq", "group", "g1"))
-
-    def test_hits_and_context_window_are_scope_filtered(self):
-        """Group-open read: same group any bot/session; other groups excluded."""
-        from tools.deep_search import WaveMemoryDeepSearchTool
-
-        # Historical display-name session must still hit in the same group.
-        self.db.add(
-            15,
-            "历史编码 咖啡",
-            bot="yushu",
-            session="羽书:group:g1",
-            group="g1",
-            state="",
-        )
-
-        tool = WaveMemoryDeepSearchTool(db=self.db)
-        result = asyncio.run(tool.call(_context(self._scope()), keywords="咖啡", window_size=3))
-
-        self.assertIn("命中消息", result)
-        self.assertIn("同一会话上下文", result)
-        self.assertIn("另一个 Bot", result)  # same group
-        self.assertIn("历史编码", result)
-        self.assertIn("legacy", result)  # same group, unresolved still searchable
-        self.assertNotIn("跨会话", result)
-        self.assertNotIn("隔离", result)
-
-    def test_missing_scope_fails_closed_before_querying(self):
-        from tools.deep_search import WaveMemoryDeepSearchTool
-
-        tool = WaveMemoryDeepSearchTool(db=self.db)
-        result = asyncio.run(tool.call(_context(None), keywords="咖啡"))
-        self.assertIn("已拒绝", result)
 
     def test_unified_memory_search_tool_with_context_window(self):
         from tools.memory_search import WaveMemorySearchTool

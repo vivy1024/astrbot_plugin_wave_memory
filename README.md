@@ -324,7 +324,6 @@ v5.0.0 彻底收敛了历史堆叠的工具集，常驻工具数量减半，释�
 | **`wave_memory_remember`** | **即时记忆存储**：对话中遇到明确叮嘱时，以最高优先级即时落盘记忆 | allowed |
 | **`wave_memory_book_lore_search`** | **书设百科检索**：专属世界观/游戏设定语义近邻检索 | full |
 | `wave_memory_affinity_update` | *兼容别名*：保留标准接口，底层已与 `record_social_impression` 逻辑统一 | full |
-| `wave_memory_deep_search` | *兼容别名*：FTS5 检索能力已完整合流至 `wave_memory_search`，不再单独常驻挂载 | allowed |
 | `wave_memory_explain_injection` 等 | *自愈调试类*：默认移出日常闲聊常驻列表，按需在开发与审查模式下开启 | debug/review |
 
 ---

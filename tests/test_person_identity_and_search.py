@@ -324,9 +324,9 @@ def test_person_search_timeline_reads_full_detail_and_pages(tmp_path):
         cm.close()
 
 
-def test_facts_and_deep_search_tools_work_in_private_chat():
+def test_facts_and_search_tools_work_in_private_chat():
     from tools.extra_tools import WaveMemoryFactsTool
-    from tools.deep_search import WaveMemoryDeepSearchTool
+    from tools.memory_search import WaveMemorySearchTool
 
     class _ScopedKnowledge:
         def list_scoped_facts(self, scope, limit=50):
@@ -368,7 +368,8 @@ def test_facts_and_deep_search_tools_work_in_private_chat():
     assert "张羽" in fact_res and "散修" in fact_res
     assert "scope_required" not in fact_res
 
-    deep_tool = WaveMemoryDeepSearchTool(db=db)
-    deep_res = asyncio.run(deep_tool.call(_ctx(private_scope), keywords="极情剑道"))
-    assert "极情剑道" in deep_res
-    assert "scope_required" not in deep_res
+    # 原词兜底在私聊里只查本私聊会话（deep_search 已退役，能力并入 wave_memory_search）
+    search_tool = WaveMemorySearchTool(db=db, query_engine=None)
+    search_res = asyncio.run(search_tool.call(_ctx(private_scope), query="极情剑道", include_context=True))
+    assert "极情剑道" in search_res
+    assert "scope_required" not in search_res
