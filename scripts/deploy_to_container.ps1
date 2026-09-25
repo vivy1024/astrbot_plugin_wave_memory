@@ -69,16 +69,30 @@ function Invoke-Apply([string]$archive, [string]$stamp) {
     return ($out | Select-Object -Last 1 | ConvertFrom-Json)
 }
 
+# 读容器最近的日志（去掉颜色码）。不用 docker logs --since：Docker Desktop 上它对本容器始终返回空。
+function Get-RecentLog {
+    return (docker logs $Container --tail 3000 2>&1 | Out-String) -replace "\x1b\[[0-9;]*m", ''
+}
+
+function Get-InitLine([string]$log) {
+    return ($log -split "`n" | Where-Object { $_ -match '\[WaveMemory\] Fully initialized' } | Select-Object -Last 1)
+}
+
 function Restart-AndWait([string]$expectCommit) {
-    $since = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    # 重启前最后一条启动完成行作为分界：只看它之后的日志，旧进程的报错与启动行不算数
+    $marker = Get-InitLine (Get-RecentLog)
     Write-Host "  docker restart $Container（QQ Bot 会短暂离线）"
     Invoke-Checked 'docker restart' { docker restart $Container | Out-Null }
     $deadline = (Get-Date).AddSeconds($StartTimeoutSeconds)
     $short = if ($expectCommit) { $expectCommit.Substring(0, 10) } else { '' }
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Seconds 5
-        $log = docker logs $Container --since $since 2>&1 | Out-String
-        $line = ($log -split "`n" | Where-Object { $_ -match '\[WaveMemory\] Fully initialized' } | Select-Object -Last 1)
+        $log = Get-RecentLog
+        if ($marker) {
+            $at = $log.LastIndexOf($marker)
+            if ($at -ge 0) { $log = $log.Substring($at + $marker.Length) }
+        }
+        $line = Get-InitLine $log
         if ($line) {
             if ($short -and $line -notmatch [regex]::Escape($short)) { throw "插件启动了，但日志里的提交不是 ${short}: $line" }
             Write-Host "  $($line.Trim())"

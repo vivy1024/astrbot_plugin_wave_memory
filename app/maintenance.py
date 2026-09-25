@@ -756,7 +756,8 @@ class MaintenanceMixin:
         from ..engine.db import fts_cjk
 
         def _open():
-            connection = sqlite3.connect(self.db.db_path, timeout=30.0)
+            # 每步都经 asyncio.to_thread，线程池不保证同一线程；各步顺序执行、不并发，可以跨线程用
+            connection = sqlite3.connect(self.db.db_path, timeout=30.0, check_same_thread=False)
             connection.execute("PRAGMA busy_timeout=10000")
             fts_cjk.ensure_schema(connection)
             connection.commit()

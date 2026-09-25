@@ -48,6 +48,8 @@ Bot 不再只能是静态配置里的两个槽位。本版起 Bot 存进 WaveMem
 
 25. **宿主端口**：新增 `domain/host_ports.py`，把核心对 AstrBot 的全部依赖面写成 Protocol：消息事件（7 个读取方法）、插件上下文（查 provider、登记/撤下工具）、工具管理器、LLM provider 的 `text_chat`、函数工具。`scripts/boot_check.py` 用真实 AstrBot 源码核对这些方法都在、全部内置工具满足 `HostTool`，AstrBot 升级改名时启动检查直接报出来；作用域解析与 LLM 降级链按端口标注类型。
 
+26. **修复（上线首跑发现）**：中文全文索引回填任务的数据库连接跨 `asyncio.to_thread` 使用，线程池换线程后报 `SQLite objects created in a thread can only be used in that same thread`，回填失败、新索引一直不就绪（查询方继续用旧索引，不影响功能）。部署脚本改为按「重启前最后一条启动完成行」判断新进程启动（Docker Desktop 上 `docker logs --since` 对该容器始终返回空）。
+
 #### 升级须知
 
 - 首次启动自动把 `MetaThinking_Bot1/2`（以及任意 `MetaThinking_BotN`）迁进 `bot_profiles`：`db_id` 不变，会话前缀从该 Bot 最近的记忆里检测（线上为「羽书」「白真真」），v5 写死的人设片段按 db_id 补进 Profile。**历史数据一条不改。**
