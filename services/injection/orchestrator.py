@@ -34,6 +34,24 @@ def set_slow_warning_ms(value: int) -> None:
         _slow_warning_ms = SLOW_INJECTION_WARNING_MS
 
 
+
+def _run_in_thread(channel: Any, ctx: Any) -> Any:
+    # 这类通道的 build 里没有 await（纯同步读库），在工作线程自己的事件循环里一次跑完
+    return asyncio.run(channel.build(ctx))
+
+
+async def _build(channel: Any, ctx: Any) -> Any:
+    """整段是同步读库的通道放到工作线程，不占事件循环。
+
+    线上实测：6 个同步通道在事件循环上依次执行，所有通道的完成时间被拖到同一刻
+    （中位数都是 67 ms、最坏 660 ms），并行名存实亡。只给 build 里确实没有 await、
+    不碰事件循环对象的通道打 ``offload_to_thread = True``；共享的 SQLite 连接是
+    ``check_same_thread=False`` 且库为串行化线程模式（threadsafety=3）。
+    """
+    if getattr(channel, "offload_to_thread", False):
+        return await asyncio.to_thread(_run_in_thread, channel, ctx)
+    return await channel.build(ctx)
+
 @dataclass
 class OrchestrationResult:
     trace_id: str
@@ -117,6 +135,7 @@ class InjectionOrchestrator:
         )
 
     async def _run_channels(self, ctx: InjectionContext) -> list[InjectionResult]:
+        """并行跑各通道；声明 ``offload_to_thread`` 的通道在工作线程里跑（见 :func:`_build`）。"""
         runnable = [channel for channel in self.channels if self._channel_runnable(channel)]
         tasks = [self._run_one(channel, ctx) for channel in runnable]
         if not tasks:
@@ -144,7 +163,7 @@ class InjectionOrchestrator:
             channel_options[name] = cfg.to_dict()
         channel_ctx = replace(ctx, channel_options=channel_options)
         # 超时只记警告，不取消、不丢结果。通道继续跑完再注入。
-        task = asyncio.create_task(channel.build(channel_ctx))
+        task = asyncio.create_task(_build(channel, channel_ctx))
         timed_out = False
         try:
             result = await asyncio.wait_for(asyncio.shield(task), timeout=max(timeout_ms / 1000.0, 0.001))

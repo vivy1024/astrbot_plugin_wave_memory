@@ -91,6 +91,8 @@ class JargonChannel:
     """只读调用现有 JargonService/JargonInjector 的黑话解释通道。"""
 
     name = "jargon"
+    # build 里没有 await、全是同步读库：编排器放到工作线程跑，不占事件循环
+    offload_to_thread = True
 
     def __init__(self, *, jargon_service: Any = None):
         self.jargon_service = jargon_service

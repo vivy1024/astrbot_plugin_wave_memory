@@ -92,6 +92,8 @@ class BeliefChannel:
     """只读调用 BeliefEngine.get_injection，不写入或提升信念。"""
 
     name = "belief"
+    # build 里没有 await、全是同步读库：编排器放到工作线程跑，不占事件循环
+    offload_to_thread = True
 
     def __init__(self, *, belief_engine: Any = None):
         self.belief_engine = belief_engine

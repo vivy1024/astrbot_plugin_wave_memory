@@ -82,6 +82,8 @@ class FewShotChannel:
     """只读调用 FewShotService.get_injection，注入已批准健康风格样例。"""
 
     name = "fewshot"
+    # build 里没有 await、全是同步读库：编排器放到工作线程跑，不占事件循环
+    offload_to_thread = True
 
     def __init__(self, *, few_shot_service: Any = None):
         self.few_shot_service = few_shot_service

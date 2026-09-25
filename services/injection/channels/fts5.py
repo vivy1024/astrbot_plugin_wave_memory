@@ -153,6 +153,8 @@ class FTS5Channel:
     """基于 fts_memories 的精确关键词召回通道。"""
 
     name = "fts5"
+    # build 里没有 await、全是同步读库：编排器放到工作线程跑，不占事件循环
+    offload_to_thread = True
 
     def __init__(
         self,

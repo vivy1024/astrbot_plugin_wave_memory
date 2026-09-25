@@ -48,6 +48,8 @@ class SoulStateChannel:
     """Inject only formal current Scope Soul state; no legacy mood/concern fallback."""
 
     name = "soul_state"
+    # build 里没有 await、全是同步读库：编排器放到工作线程跑，不占事件循环
+    offload_to_thread = True
 
     def __init__(self, *, repository: Any = None):
         self.repository = repository

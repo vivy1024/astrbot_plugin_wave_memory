@@ -119,6 +119,8 @@ class FactsChannel:
     """基于当前 RuntimeScope 的 scoped facts 进行关键词召回。"""
 
     name = "facts"
+    # build 里没有 await、全是同步读库：编排器放到工作线程跑，不占事件循环
+    offload_to_thread = True
 
     # 已知实体名缓存：{bot_id: (加载时间, 实体名列表)}
     _ENTITY_TTL_SECONDS = 120.0
