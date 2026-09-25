@@ -48,7 +48,8 @@ class _Db:
             """CREATE TABLE memories (
                 id INTEGER PRIMARY KEY, sender_name TEXT, content TEXT, timestamp REAL,
                 bot_id TEXT, session_id TEXT, visibility TEXT, resolution_state TEXT,
-                quarantine INTEGER, group_id TEXT, memory_type TEXT, source TEXT
+                quarantine INTEGER, group_id TEXT, memory_type TEXT, source TEXT,
+                sender_id TEXT, importance REAL DEFAULT 1.0
             )"""
         )
         self.conn.execute("CREATE VIRTUAL TABLE fts_memories USING fts5(content)")
@@ -68,7 +69,7 @@ class _Db:
     ):
         group_id = group if group is not None else session.rsplit(":", 1)[-1]
         self.conn.execute(
-            "INSERT INTO memories VALUES (?, '用户', ?, 1, ?, ?, 'group', ?, ?, ?, ?, ?)",
+            "INSERT INTO memories VALUES (?, '用户', ?, 1, ?, ?, 'group', ?, ?, ?, ?, ?, 'u1', 1.0)",
             (memory_id, content, bot, session, state, quarantine, group_id, memory_type, source),
         )
         self.conn.execute("INSERT INTO fts_memories(rowid, content) VALUES (?, ?)", (memory_id, content))
@@ -138,6 +139,53 @@ class DeepSearchScopeTest(unittest.TestCase):
         self.assertIn("对话切片", result)
         self.assertIn("咖啡", result)
         self.assertIn("同一会话上下文", result)
+        # 上下文只取本 Bot、同会话的邻居
+        self.assertNotIn("另一个 Bot", result)
+        self.assertNotIn("跨会话", result)
+
+    def test_search_fallback_is_bot_scoped(self):
+        from tools.memory_search import WaveMemorySearchTool
+
+        self.db.add(20, "奶茶 只有白真真见过", bot="bzz")
+        tool = WaveMemorySearchTool(db=self.db, query_engine=None)
+        result = asyncio.run(tool.call(_context(self._scope()), query="奶茶", include_context=True))
+        self.assertIn("没有找到", result)
+
+    def test_search_fallback_uses_cjk_index_when_ready(self):
+        from engine.db import fts_cjk
+        from tools.memory_search import WaveMemorySearchTool
+
+        # 旧索引里「张羽」和后文连成一个词，只有中文索引能按词命中
+        self.db.add(30, "昨天张羽师兄来过")
+        fts_cjk.ensure_schema(self.db.conn)
+        fts_cjk.sync_memory(self.db.conn, 30)
+        self.db.add(31, "张羽今天没进中文索引")  # 只在旧索引里
+        tool = WaveMemorySearchTool(db=self.db, query_engine=None)
+        before = asyncio.run(tool.call(_context(self._scope()), query="张羽", include_context=False))
+        self.assertIn("张羽师兄", before)  # 未就绪：旧索引 + 作用域内 LIKE 兜底
+        self.assertIn("没进中文索引", before)
+        fts_cjk.mark_ready(self.db.conn)
+        after = asyncio.run(tool.call(_context(self._scope()), query="张羽", include_context=False))
+        self.assertIn("张羽师兄", after)
+        self.assertNotIn("没进中文索引", after)  # 就绪后只查中文索引，不再全表 LIKE
+
+    def test_context_window_skips_interleaved_other_conversations(self):
+        from tools.memory_search import WaveMemorySearchTool
+
+        # 同一会话的相邻消息被别的群、别的 Bot 的写入隔开很远
+        self.db.add(100, "前一句 同一会话")
+        for i in range(101, 140):
+            self.db.add(i, f"别的群 {i}", session="qq:group:g9")
+        self.db.add(140, "豆浆 命中")
+        for i in range(141, 160):
+            self.db.add(i, f"白真真副本 {i}", bot="bzz")
+        self.db.add(160, "后一句 同一会话")
+        tool = WaveMemorySearchTool(db=self.db, query_engine=None)
+        result = asyncio.run(tool.call(_context(self._scope()), query="豆浆", include_context=True))
+        self.assertIn("前一句", result)
+        self.assertIn("后一句", result)
+        self.assertNotIn("别的群", result)
+        self.assertNotIn("白真真副本", result)
 
 
 

@@ -30,6 +30,59 @@ def _extract_memory_scope(context: ContextWrapper[AstrAgentContext]):
     return extract_memory_runtime_scope(context)
 
 
+# 在命中前后这么多个 id 里找同会话邻居：多个群、多个 Bot 交错写入，id 相邻的往往不是同一段对话。
+_WINDOW_SPAN = 200
+_WINDOW_SIDE = 2
+_INACTIVE_TYPES = ("archived", "evicted", "deleted", "noise")
+
+
+def _context_window(conn, memory_id: int, *, bot_id: str) -> list[tuple]:
+    """命中记忆所在会话里、属于当前 Bot（或无归属旧行）的前后各 2 条，含命中本身。
+
+    命中本身不属于当前 Bot 或已失效时返回空，调用方只显示命中片段。
+    """
+    try:
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
+        wanted = [name for name in ("session_id", "group_id", "bot_id") if name in columns]
+        if not wanted:
+            return []
+        anchor = conn.execute(f"SELECT {', '.join(wanted)} FROM memories WHERE id = ?", (memory_id,)).fetchone()
+        if anchor is None:
+            return []
+        values = dict(zip(wanted, anchor))
+        if str(values.get("bot_id") or "") not in {"", str(bot_id or "")}:
+            return []
+        if values.get("session_id"):
+            same_conversation, key = "COALESCE(session_id, '') = ?", values["session_id"]
+        elif "group_id" in values:
+            same_conversation, key = "COALESCE(group_id, '') = ?", values.get("group_id") or ""
+        else:
+            return []
+        conditions = [same_conversation]
+        params: list = [key]
+        if "bot_id" in columns:
+            conditions.append("COALESCE(bot_id, '') IN (?, '')")
+            params.append(str(bot_id or ""))
+        if "quarantine" in columns:
+            conditions.append("COALESCE(quarantine, 0) = 0")
+        if "memory_type" in columns:
+            conditions.append(f"COALESCE(memory_type, 'message') NOT IN ({', '.join('?' for _ in _INACTIVE_TYPES)})")
+            params.extend(_INACTIVE_TYPES)
+        rows = conn.execute(
+            f"""SELECT id, sender_name, content FROM memories
+                 WHERE id BETWEEN ? AND ? AND {' AND '.join(conditions)}
+                 ORDER BY id ASC""",
+            (memory_id - _WINDOW_SPAN, memory_id + _WINDOW_SPAN, *params),
+        ).fetchall()
+    except Exception:
+        return []
+    ids = [int(row[0]) for row in rows]
+    if memory_id not in ids:
+        return []
+    at = ids.index(memory_id)
+    return rows[max(0, at - _WINDOW_SIDE): at + _WINDOW_SIDE + 1]
+
+
 @dataclass
 class WaveMemorySearchTool(FunctionTool[AstrAgentContext]):
     """让模型主动搜索记忆的统一工具。"""
@@ -63,6 +116,20 @@ class WaveMemorySearchTool(FunctionTool[AstrAgentContext]):
     # 运行时注入
     query_engine: Any = field(default=None, repr=False)
     db: Any = field(default=None, repr=False)
+    # 与注入 fts5 通道一致的跨群设置（由工具注册表按插件配置传入）
+    cross_group_enabled: bool = True
+    shared_memory_grants_enabled: bool = False
+
+    def _exact_channel(self):
+        try:
+            from ..services.injection.channels.fts5 import FTS5Channel
+        except ImportError:  # 仓库测试直接导入
+            from services.injection.channels.fts5 import FTS5Channel
+        return FTS5Channel(
+            db=self.db,
+            cross_group_enabled=self.cross_group_enabled,
+            shared_memory_grants_enabled=self.shared_memory_grants_enabled,
+        )
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> str:
         query = str(kwargs.get("query") or kwargs.get("keywords") or "").strip()
@@ -96,43 +163,13 @@ class WaveMemorySearchTool(FunctionTool[AstrAgentContext]):
             except Exception:
                 memories = []
 
-        # 若语义检索为空，且有数据库，尝试 FTS5 全文精准匹配兜底
-        if not memories and self.db and hasattr(self.db, "conn"):
-            conn = getattr(self.db, "conn", None) or getattr(self.db, "_conn", None)
-            if conn:
-                try:
-                    # 消毒与包裹每个 token 为合法 FTS5 字面量，防止语法解析崩溃
-                    clean_terms = [t.replace('"', '""') for t in query.split() if t.strip()]
-                    if clean_terms:
-                        fts_query = " AND ".join(f'"{t}"' for t in clean_terms)
-                        if scope.visibility == "private":
-                            clause = "AND (COALESCE(m.session_id, '') = ? OR COALESCE(m.group_id, '') = ?)"
-                            params = (scope.session.id, scope.session.conversation_id)
-                        else:
-                            clause = "AND COALESCE(m.group_id, '') = ?"
-                            params = (scope.session.conversation_id,)
-
-                        rows = conn.execute(f"""
-                            SELECT m.id, m.sender_name, m.content, m.timestamp
-                            FROM fts_memories
-                            JOIN memories AS m ON m.id = fts_memories.rowid
-                            WHERE fts_memories MATCH ?
-                              AND COALESCE(m.quarantine, 0) = 0
-                              AND COALESCE(m.memory_type, 'message') NOT IN ('archived', 'evicted', 'deleted', 'noise')
-                              {clause}
-                            ORDER BY rank
-                            LIMIT ?
-                        """, (fts_query, *params, limit)).fetchall()
-                        for r in rows:
-                            memories.append({
-                                "id": r[0],
-                                "sender_name": r[1],
-                                "content": r[2],
-                                "timestamp": r[3],
-                                "source": "live",
-                            })
-                except Exception:
-                    pass
+        # 语义检索为空时退回原词检索：与注入的 fts5 通道同一套作用域（本 Bot、可见性、跨群开关）
+        # 和索引（中文两字切词索引就绪后用它）。
+        if not memories and self.db and getattr(self.db, "conn", None) is not None:
+            try:
+                memories = self._exact_channel().search_scoped(scope, query, top_k=limit)
+            except Exception:
+                memories = []
 
         if not memories:
             return f"没有找到关于「{query}」的相关记忆"
@@ -156,13 +193,6 @@ class WaveMemorySearchTool(FunctionTool[AstrAgentContext]):
                 )
             return "\n".join(f"- {m.get('sender_name', '某人')}: {m.get('content', '')}" for m in memories)
 
-        if scope.visibility == "private":
-            scope_window_clause = "AND (COALESCE(session_id, '') = ? OR COALESCE(group_id, '') = ?)"
-            scope_window_params = (scope.session.id, scope.session.conversation_id)
-        else:
-            scope_window_clause = "AND COALESCE(group_id, '') = ?"
-            scope_window_params = (scope.session.conversation_id,)
-
         output_sections = []
         seen_msg_ids = set()
         for idx, m in enumerate(memories[:limit], 1):
@@ -174,26 +204,12 @@ class WaveMemorySearchTool(FunctionTool[AstrAgentContext]):
             if mid in seen_msg_ids:
                 continue
 
-            # 严格作用域下查前后 2 条消息
-            try:
-                context_rows = conn.execute(f"""
-                    SELECT id, sender_name, content
-                    FROM memories
-                    WHERE id BETWEEN ? AND ?
-                      {scope_window_clause}
-                      AND COALESCE(quarantine, 0) = 0
-                      AND COALESCE(memory_type, 'message') NOT IN ('archived', 'evicted', 'deleted', 'noise')
-                    ORDER BY id ASC
-                """, (mid - 2, mid + 2, *scope_window_params)).fetchall()
-            except Exception:
-                context_rows = []
-
+            context_rows = _context_window(conn, mid, bot_id=scope.bot_id)
             if not context_rows:
                 output_sections.append(f"【记忆片段 {idx}】 {m.get('sender_name', '某人')}: {m.get('content', '')}")
             else:
                 block_lines = [f"【对话切片 {idx}】"]
-                for crow in context_rows:
-                    cid, csender, ctext = crow
+                for cid, csender, ctext in context_rows:
                     seen_msg_ids.add(cid)
                     marker = "▶ " if cid == mid else "  "
                     block_lines.append(f"{marker}{csender or '某人'}: {ctext}")

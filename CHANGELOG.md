@@ -50,6 +50,8 @@ Bot 不再只能是静态配置里的两个槽位。本版起 Bot 存进 WaveMem
 
 26. **修复（上线首跑发现）**：中文全文索引回填任务的数据库连接跨 `asyncio.to_thread` 使用，线程池换线程后报 `SQLite objects created in a thread can only be used in that same thread`，回填失败、新索引一直不就绪（查询方继续用旧索引，不影响功能）。部署脚本改为按「重启前最后一条启动完成行」判断新进程启动（Docker Desktop 上 `docker logs --since` 对该容器始终返回空）。
 
+27. **修复 `wave_memory_search` 工具**：语义检索为空时的原词兜底改为与注入 fts5 通道同一套作用域（本 Bot、可见性、跨群开关）与索引（中文索引就绪后用它），此前只按群过滤、会搜出同群其他 Bot 的记忆，且仍查旧的整句分词索引。上下文展开改为取命中所在会话、本 Bot 的前后各 2 条（在前后 200 个 id 内找）：此前按 `id±2` 且只按群过滤，多群交错写入时常常只剩命中本身，还可能混入其他 Bot 的副本。
+
 #### 升级须知
 
 - 首次启动自动把 `MetaThinking_Bot1/2`（以及任意 `MetaThinking_BotN`）迁进 `bot_profiles`：`db_id` 不变，会话前缀从该 Bot 最近的记忆里检测（线上为「羽书」「白真真」），v5 写死的人设片段按 db_id 补进 Profile。**历史数据一条不改。**

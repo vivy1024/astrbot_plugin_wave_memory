@@ -6,6 +6,7 @@ import json
 import re
 import time
 from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import Any
 
 try:
@@ -339,6 +340,21 @@ class FTS5Channel:
             result = InjectionResult.error_result(self.name, exc)
             result.latency_ms = self._latency_ms(started)
             return result
+
+    def search_scoped(self, scope: RuntimeScope, query: str, *, top_k: int) -> list[dict[str, Any]]:
+        """与注入通道同一套作用域谓词和索引切换的关键词检索（给工具用，不做格式化与预算）。
+
+        去掉扇出副本与身份污染行，保持和注入时看到的一致。
+        """
+        words = _keywords(query)
+        expr = _match_expr(words)
+        if not expr:
+            return []
+        rows = self._query_memories(SimpleNamespace(scope=scope), expr=expr, words=words, top_k=top_k)
+        return [
+            row for row in rows
+            if not row.get("_fanout_duplicate") and not is_identity_contamination(row.get("content") or "")
+        ][:top_k]
 
     def _query_memories(self, ctx: Any, *, expr: str, words: list[str], top_k: int) -> list[dict[str, Any]]:
         scope = _memory_scope(ctx)

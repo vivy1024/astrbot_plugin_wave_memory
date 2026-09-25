@@ -21,7 +21,12 @@ def _memory_tools() -> list[ToolSpec]:
     from .person_search import WaveMemoryPersonSearchTool
 
     return [
-        ToolSpec("wave_memory_search", lambda d: WaveMemorySearchTool(query_engine=d.query_engine, db=d.db)),
+        ToolSpec("wave_memory_search", lambda d: WaveMemorySearchTool(
+            query_engine=d.query_engine,
+            db=d.db,
+            cross_group_enabled=getattr(d, "cross_group_enabled", True),
+            shared_memory_grants_enabled=getattr(d, "shared_memory_grants_enabled", False),
+        )),
         ToolSpec("wave_memory_remember", lambda d: WaveMemoryRememberTool(writer=d.writer), writes=True),
         ToolSpec("wave_memory_facts", lambda d: WaveMemoryFactsTool(db=d.db)),
         ToolSpec("wave_memory_person_search", lambda d: WaveMemoryPersonSearchTool(db=d.db)),
