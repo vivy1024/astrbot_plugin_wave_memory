@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
+from collections import OrderedDict
 from typing import Optional
 
 import numpy as np
@@ -23,11 +26,40 @@ class EmbeddingService:
     配置中的 embedding_provider_id 用于匹配 embedding provider 的 ID。
     """
 
+    # 同一句话在一次注入里会被 memory、book_lore 两个通道各算一次，消息入库时再算一次；
+    # 结果短期缓存，并发的同句请求共享一次 provider 调用。
+    CACHE_SIZE = 512
+    CACHE_TTL_SECONDS = 600.0
+
     def __init__(self, context, provider_id: str, dimension: int = 1024):
         self.context = context
         self.provider_id = provider_id
         self.dimension = dimension
         self._provider = None
+        self._cache: OrderedDict[str, tuple[float, np.ndarray]] = OrderedDict()
+        self._inflight: dict[str, asyncio.Future] = {}
+        self._inflight_loop = None
+        self.stats = {"hits": 0, "misses": 0, "joined": 0, "provider_calls": 0}
+
+    def cache_clear(self) -> None:
+        self._cache.clear()
+
+    def _cache_get(self, text: str) -> Optional[np.ndarray]:
+        item = self._cache.get(text)
+        if item is None:
+            return None
+        stored_at, vector = item
+        if time.monotonic() - stored_at > self.CACHE_TTL_SECONDS:
+            self._cache.pop(text, None)
+            return None
+        self._cache.move_to_end(text)
+        return vector.copy()
+
+    def _cache_put(self, text: str, vector: np.ndarray) -> None:
+        self._cache[text] = (time.monotonic(), vector.copy())
+        self._cache.move_to_end(text)
+        while len(self._cache) > self.CACHE_SIZE:
+            self._cache.popitem(last=False)
 
     def _get_provider(self):
         """获取 embedding provider 实例。"""
@@ -69,10 +101,62 @@ class EmbeddingService:
         return result[0] if result else None
 
     async def get_embeddings(self, texts: list[str]) -> list[Optional[np.ndarray]]:
-        """批量获取 embedding 向量。"""
+        """批量获取 embedding 向量（先查缓存，并发的同句请求合并成一次调用）。"""
         if not texts:
             return []
+        loop = asyncio.get_running_loop()
+        if self._inflight_loop is not loop:  # 热重载换了事件循环，旧 Future 不能再等
+            self._inflight = {}
+            self._inflight_loop = loop
 
+        results: list[Optional[np.ndarray]] = [None] * len(texts)
+        waits: list[tuple[int, asyncio.Future]] = []
+        owned: dict[str, asyncio.Future] = {}
+        fetch: list[str] = []
+        for i, text in enumerate(texts):
+            key = str(text)
+            cached = self._cache_get(key)
+            if cached is not None:
+                self.stats["hits"] += 1
+                results[i] = cached
+                continue
+            future = self._inflight.get(key) or owned.get(key)
+            if future is not None:
+                if key not in owned:
+                    self.stats["joined"] += 1
+                waits.append((i, future))
+                continue
+            future = loop.create_future()
+            self._inflight[key] = future
+            owned[key] = future
+            fetch.append(key)
+            waits.append((i, future))
+
+        if fetch:
+            self.stats["misses"] += len(fetch)
+            self.stats["provider_calls"] += 1
+            vectors: list[Optional[np.ndarray]] = [None] * len(fetch)
+            try:
+                vectors = await self._fetch(fetch)
+            finally:
+                # 失败或被取消也要唤醒等待者（拿到 None），不能让并发请求一直挂着
+                for index, key in enumerate(fetch):
+                    # provider 少返回时补 None，保证每个等待者都被唤醒
+                    vector = vectors[index] if index < len(vectors) else None
+                    if vector is not None:
+                        self._cache_put(key, vector)
+                    future = owned[key]
+                    if not future.done():
+                        future.set_result(vector)
+                    if self._inflight.get(key) is future:
+                        self._inflight.pop(key, None)
+
+        for i, future in waits:
+            vector = await asyncio.shield(future)
+            results[i] = vector.copy() if vector is not None else None
+        return results
+
+    async def _fetch(self, texts: list[str]) -> list[Optional[np.ndarray]]:
         provider = self._get_provider()
         if not provider:
             return [None] * len(texts)
@@ -95,6 +179,7 @@ class EmbeddingService:
                 # Provider 的 event loop 已关闭（热重载/重启残留），清缓存重试一次
                 logger.warning(f"[WaveMemory] Embedding provider event loop closed, refreshing...")
                 self._provider = None
+                self.cache_clear()
                 provider = self._get_provider()
                 if provider:
                     try:
