@@ -1,3 +1,4 @@
+from plugin_source import plugin_source_text
 import json
 import unittest
 from pathlib import Path
@@ -48,7 +49,7 @@ class RuntimeModeTest(unittest.TestCase):
             self.assertTrue(runtime_capability_enabled(mode, capability, configured=True), capability)
 
     def test_main_uses_runtime_capability_gates_for_memory_only_services(self):
-        source = Path("main.py").read_text(encoding="utf-8")
+        source = plugin_source_text()
 
         for capability in ["affinity", "mood", "dream", "consolidation", "book_lore", "jargon", "fewshot", "metathinking", "belief", "self_reflect"]:
             self.assertIn(f'runtime_capability_enabled(self.runtime_mode, "{capability}"', source)
@@ -103,7 +104,7 @@ class RuntimeModeTest(unittest.TestCase):
         self.assertFalse(runtime_capability_enabled(mode, "agent_feedback_tools", True))
 
     def test_main_uses_compat_only_native_injection_and_tool_gates(self):
-        source = Path("main.py").read_text(encoding="utf-8")
+        source = plugin_source_text()
 
         self.assertIn("effective_native_injection_enabled", source)
         # v6：工具按 ToolSpec.capability 统一经 runtime_capability_enabled 门控。

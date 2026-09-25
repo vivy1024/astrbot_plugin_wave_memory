@@ -1,3 +1,4 @@
+from plugin_source import plugin_source_text
 from pathlib import Path
 
 
@@ -55,7 +56,7 @@ def test_live_epa_state_overrides_stale_registry_status():
 
 
 def test_health_registry_reasons_distinguish_missing_bot_profile_from_llm_missing():
-    source = Path("main.py").read_text(encoding="utf-8")
+    source = plugin_source_text()
 
     assert "tag_llm_provider_id 未配置" in source
     assert "未配置 Bot Profile" in source
@@ -66,7 +67,7 @@ def test_bot_profile_schema_is_explicit_and_runtime_has_no_fixed_identity_fallba
     import json
 
     schema = json.loads(Path("_conf_schema.json").read_text(encoding="utf-8"))
-    source = Path("main.py").read_text(encoding="utf-8")
+    source = plugin_source_text()
 
     assert "MetaThinking_Bot1" in schema
     assert "MetaThinking_Bot2" in schema

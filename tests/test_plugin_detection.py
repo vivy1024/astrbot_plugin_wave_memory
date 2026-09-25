@@ -1,3 +1,4 @@
+from plugin_source import plugin_source_text
 import unittest
 from pathlib import Path
 
@@ -73,7 +74,7 @@ class PluginDetectionTest(unittest.TestCase):
         self.assertEqual(len(payload["duplicate_warnings"]), 1)
 
     def test_main_source_logs_and_passes_detected_plugins_to_webui(self):
-        source = Path("main.py").read_text(encoding="utf-8")
+        source = plugin_source_text()
 
         self.assertIn("detect_memory_plugins(context=self.context)", source)
         self.assertIn("self.detected_memory_plugins", source)

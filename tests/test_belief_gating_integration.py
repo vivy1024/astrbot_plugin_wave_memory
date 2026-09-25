@@ -1,4 +1,5 @@
 from __future__ import annotations
+from plugin_source import helper_nodes, plugin_class_node, plugin_method, plugin_source_text
 
 import ast
 import asyncio
@@ -350,7 +351,7 @@ def test_refresh_after_tags_promotes_direct_pending_and_keeps_quarantine(tmp_pat
 def _bind_tag_refresh_methods(host):
     source = Path(__file__).resolve().parents[1] / "main.py"
     module = ast.parse(source.read_text(encoding="utf-8"))
-    class_node = next(node for node in module.body if isinstance(node, ast.ClassDef) and node.name == "WaveMemoryPlugin")
+    class_node = plugin_class_node()
     wanted = {
         "_on_memory_projection_refresh",
         "_schedule_belief_tag_refresh",

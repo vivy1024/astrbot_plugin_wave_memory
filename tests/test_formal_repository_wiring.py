@@ -1,4 +1,5 @@
 from __future__ import annotations
+from plugin_source import helper_nodes, plugin_class_node, plugin_method, plugin_source_text
 
 import ast
 import asyncio
@@ -198,12 +199,12 @@ def test_service_container_explicitly_holds_formal_repositories():
 
 
 def test_main_production_wiring_passes_formal_repositories_writer_and_runtime_scope():
-    tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
-    constructor = _method(tree, "__init__")
-    initializer = _method(tree, "_initialize_once")
-    injection = _method(tree, "_setup_injection_shadow_pipeline")
-    context_config = _method(tree, "_build_shadow_context_config")
-    on_message = _method(tree, "on_message")
+    # v6：插件拆成 main.py + app/ mixin；__init__/on_message 的实现在 _construct/_handle_message。
+    constructor = plugin_method("__init__")
+    initializer = plugin_method("_initialize_once")
+    injection = plugin_method("_setup_injection_shadow_pipeline")
+    context_config = plugin_method("_build_shadow_context_config")
+    on_message = plugin_method("on_message")
 
     constructor_source = ast.unparse(constructor)
     initializer_source = ast.unparse(initializer)
@@ -230,7 +231,7 @@ def test_main_production_wiring_passes_formal_repositories_writer_and_runtime_sc
     assert {"FewShotChannel", "BookLoreChannel"} <= channel_calls
     assert "book_lore_index=d.book_lore_index" in channel_source
     assert "_channel_registry().build(self)" in injection_source
-    assert "from .webui.container import get_container" in injection_source
+    assert "from ..webui.container import get_container" in injection_source
     assert "_parse_bool_config_value(cross_group_cfg.get('cross_group_enabled'), True)" in constructor_source
     assert constructor_source.count("'cross_group_enabled': self.cross_group_enabled") == 1
     assert channel_source.count("cross_group_enabled=d.cross_group_enabled") == 1

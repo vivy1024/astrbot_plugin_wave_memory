@@ -1,3 +1,4 @@
+from plugin_source import helper_nodes, plugin_class_node, plugin_method, plugin_source_text
 import ast
 import asyncio
 import copy
@@ -62,10 +63,7 @@ class _FakeEvent:
 def _load_method(method_name: str):
     source_path = Path(__file__).resolve().parents[1] / "main.py"
     tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
-    plugin_class = next(
-        node for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "WaveMemoryPlugin"
-    )
+    plugin_class = plugin_class_node()
     method = copy.deepcopy(next(
         node for node in plugin_class.body
         if isinstance(node, ast.AsyncFunctionDef) and node.name == method_name
@@ -215,12 +213,10 @@ class ImpressionHookTest(unittest.TestCase):
         self.assertEqual(state["traces"][0]["text"], "最新深入讨论的新印象")
 
     def test_impression_persistence_uses_package_relative_import(self):
-        source_path = Path(__file__).resolve().parents[1] / "main.py"
+        # v6：钩子实现在 app/ingress.py（比插件根目录深一层，相对导入是两个点）。
+        source_path = Path(__file__).resolve().parents[1] / "app" / "ingress.py"
         tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
-        plugin_class = next(
-            node for node in tree.body
-            if isinstance(node, ast.ClassDef) and node.name == "WaveMemoryPlugin"
-        )
+        plugin_class = plugin_class_node()
         method = next(
             node for node in plugin_class.body
             if isinstance(node, ast.AsyncFunctionDef) and node.name == "on_decorating_result"
@@ -232,7 +228,7 @@ class ImpressionHookTest(unittest.TestCase):
         ]
         self.assertEqual(len(module_imports), 1)
         self.assertEqual(module_imports[0].module, "services.impression_timeline")
-        self.assertEqual(module_imports[0].level, 1)
+        self.assertEqual(module_imports[0].level, 2)
         imported = {alias.name for alias in module_imports[0].names}
         self.assertIn("persist_unsettled_trace", imported)
         self.assertIn("parse_impression_mark", imported)

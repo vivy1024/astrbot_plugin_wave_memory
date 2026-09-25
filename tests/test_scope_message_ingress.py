@@ -1,3 +1,4 @@
+from plugin_source import helper_nodes, plugin_class_node, plugin_method, plugin_source_text
 import ast
 import asyncio
 import copy
@@ -267,10 +268,7 @@ def _load_on_message():
     """只编译 main.py 中真实 on_message，避免测试环境安装完整 AstrBot。"""
     source_path = Path(__file__).resolve().parents[1] / "main.py"
     tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
-    plugin_class = next(
-        node for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "WaveMemoryPlugin"
-    )
+    plugin_class = plugin_class_node()
     method = copy.deepcopy(next(
         node for node in plugin_class.body
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "on_message"
@@ -298,10 +296,7 @@ def _load_on_bot_sent():
     """编译真实 on_bot_sent，并以测试组件替换 AstrBot 的局部组件 import。"""
     source_path = Path(__file__).resolve().parents[1] / "main.py"
     tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
-    plugin_class = next(
-        node for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "WaveMemoryPlugin"
-    )
+    plugin_class = plugin_class_node()
     methods = []
     # v6：on_bot_sent 的写入部分拆到 _process_bot_reply（Runtime API 共用），两段一起编译。
     for name in ("on_bot_sent", "_process_bot_reply"):
@@ -475,7 +470,7 @@ class ScopeMessageIngressTest(unittest.TestCase):
         self.assertEqual(plugin.belief_emergence.calls, [])
 
     def test_main_does_not_auto_start_consolidation_loop(self):
-        source = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
+        source = plugin_source_text()
         self.assertNotIn("self.consolidation.start(", source)
         self.assertNotIn("from .services.consolidation import ConsolidationService", source)
         self.assertIn("ConsolidationService removed", source)

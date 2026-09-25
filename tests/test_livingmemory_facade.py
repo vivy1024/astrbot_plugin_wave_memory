@@ -1,3 +1,4 @@
+from plugin_source import plugin_source_text
 import asyncio
 import unittest
 
@@ -158,7 +159,7 @@ class LivingMemoryFacadeTest(unittest.TestCase):
     def test_plugin_source_mounts_facade_without_spoofing_livingmemory_plugin_name(self):
         from pathlib import Path
 
-        source = Path("main.py").read_text(encoding="utf-8")
+        source = plugin_source_text()
 
         self.assertIn("self.memory_engine = livingmemory_surface.memory_engine", source)
         self.assertIn("self.initializer = livingmemory_surface.initializer", source)

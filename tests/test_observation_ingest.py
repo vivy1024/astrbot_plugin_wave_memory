@@ -1,6 +1,7 @@
 """Runtime 观察写入：与 AstrBot 消息钩子共用 InboundMessagePipeline 与 Bot 回复处理。"""
 
 from __future__ import annotations
+from plugin_source import helper_nodes, plugin_class_node, plugin_method, plugin_source_text
 
 import ast
 import asyncio
@@ -17,10 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load_ingest():
-    tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
-    obs_class = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "_ObservationEvent")
-    plugin = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "WaveMemoryPlugin")
-    method = next(n for n in plugin.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "ingest_observation")
+    obs_class = helper_nodes()["_ObservationEvent"]
+    method = plugin_method("ingest_observation")
     for arg in (*method.args.args, *method.args.kwonlyargs):
         arg.annotation = None
     method.returns = None

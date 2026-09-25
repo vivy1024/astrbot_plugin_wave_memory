@@ -30,6 +30,8 @@ Bot 不再只能是静态配置里的两个槽位。v6 起 Bot 存进 WaveMemory
 
 18. **代码健康**：一次性迁移与恢复代码（约 4900 行：`approved_scope_recovery`、`scope_recovery_migration`、`legacy_relationship_migration` 等）从服务层移到 `services/migrations_archive/`，插件运行时不导入；`scripts/README.md` 按「还在用 / 已执行完毕」分类。新增 GitHub Actions：Python 3.12 跑 pytest，前端跑类型检查、单测与构建。
 
+19. **拆分组合根**：`main.py` 从 3761 行降到 164 行，只留 `@register` 入口、`initialize/terminate` 和 6 个 AstrBot 钩子的一行转发（AstrBot 按 handler 的 `__module__` 把钩子绑到插件，钩子必须定义在 main 模块）。实现按领域拆成 `app/` 下的 mixin：`bootstrap`（构造期组装）、`startup`（启动与关停）、`ingress`（消息入口与写入）、`injection`（LLM 请求钩子与注入编排）、`maintenance`（维护任务与派生投影），顶层辅助在 `app/common.py`。新增 `scripts/boot_check.py`：真实 AstrBot + 临时空数据目录完整启动一遍插件并走一遍 Runtime API。
+
 ### 升级须知
 
 - 首次启动自动把 `MetaThinking_Bot1/2`（以及任意 `MetaThinking_BotN`）迁进 `bot_profiles`：`db_id` 不变，会话前缀从该 Bot 最近的记忆里检测（线上为「羽书」「白真真」），v5 写死的人设片段按 db_id 补进 Profile。**历史数据一条不改。**

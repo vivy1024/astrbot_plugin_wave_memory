@@ -1,4 +1,5 @@
 from __future__ import annotations
+from plugin_source import plugin_source_text
 
 import sqlite3
 from dataclasses import dataclass
@@ -548,8 +549,7 @@ async def test_legacy_batch_ids_receive_stable_migration_error(monkeypatch):
 def test_memory_job_kinds_are_registered_in_main_runner():
     from pathlib import Path
 
-    source = Path(__file__).resolve().parents[1] / "main.py"
-    text = source.read_text(encoding="utf-8")
+    text = plugin_source_text()
 
     assert "MemoryDurableJobHandlers" in text, "记忆作业 handler 必须接入生产 runner"
     assert "maintenance_handlers.update(" in text

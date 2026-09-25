@@ -1,3 +1,4 @@
+from plugin_source import plugin_source_text
 import asyncio
 import json
 import unittest
@@ -177,7 +178,7 @@ class LivingMemoryCompatToolsTest(unittest.TestCase):
         self.assertIn("未初始化", asyncio.run(memorize.call(None, content="用户喜欢苹果派")))
 
     def test_main_source_registers_alias_tools_without_default_spoofing(self):
-        source = Path("main.py").read_text(encoding="utf-8")
+        source = plugin_source_text()
 
         self.assertIn("build_livingmemory_compat_tools", source)
         self.assertIn("self.livingmemory_alias_tools_registered", source)
