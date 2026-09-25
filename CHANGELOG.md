@@ -1,10 +1,14 @@
 # Changelog
 
-## 未发布（v6 开发中）：多 Bot 通用化
+## v5.1.0 (2026-09-25)：多 Bot 通用化与「Bot 是一个人」
 
-Bot 不再只能是静态配置里的两个槽位。v6 起 Bot 存进 WaveMemory 自己的 `bot_profiles` 表，数量不限，在 9876「Bot 管理」页新增、编辑、停用、导入导出，保存即热生效。
+本版本包含两部分：多 Bot 通用化与插件化（内部代号 v6，见 `docs/roadmap-v6.md`），以及按 Bot 本人重划记忆边界（第二部分）。**升级前务必备份 `wave_memory.db`**，两部分的升级须知都要看。
 
-### 行为变化
+### 一、多 Bot 通用化
+
+Bot 不再只能是静态配置里的两个槽位。本版起 Bot 存进 WaveMemory 自己的 `bot_profiles` 表，数量不限，在 9876「Bot 管理」页新增、编辑、停用、导入导出，保存即热生效。
+
+#### 行为变化
 
 1. **Bot 注册表热重载**：保存 Bot 后原地刷新 ScopeResolver、MetaThinking、好感引擎、写入器的 Bot 关键词、身份安全快照与 WebUI 作用域选项，不需要重启 AstrBot。编辑带乐观锁（版本不一致返回 409），每次修改留历史（每个 Bot 保留 50 条）。
 2. **多身份绑定**：一个 Bot 可以有多个 QQ 账号、Cortico 部署名、B 站直播间。Runtime API 按 `bot_id` 或部署名（`scope.deployment` / `X-Cortico-Deployment`）解析 Bot，找不到直接返回 400，**不再默认落到羽书名下**；请求不带会话时用 Bot 绑定的直播间。
@@ -44,7 +48,7 @@ Bot 不再只能是静态配置里的两个槽位。v6 起 Bot 存进 WaveMemory
 
 25. **宿主端口**：新增 `domain/host_ports.py`，把核心对 AstrBot 的全部依赖面写成 Protocol：消息事件（7 个读取方法）、插件上下文（查 provider、登记/撤下工具）、工具管理器、LLM provider 的 `text_chat`、函数工具。`scripts/boot_check.py` 用真实 AstrBot 源码核对这些方法都在、全部内置工具满足 `HostTool`，AstrBot 升级改名时启动检查直接报出来；作用域解析与 LLM 降级链按端口标注类型。
 
-### 升级须知
+#### 升级须知
 
 - 首次启动自动把 `MetaThinking_Bot1/2`（以及任意 `MetaThinking_BotN`）迁进 `bot_profiles`：`db_id` 不变，会话前缀从该 Bot 最近的记忆里检测（线上为「羽书」「白真真」），v5 写死的人设片段按 db_id 补进 Profile。**历史数据一条不改。**
 - 迁移之后以数据库为准：**再改 AstrBot 静态配置里的 Bot 槽位不会生效**（升级用户需知晓），请到 9876「Bot 管理」页修改。
@@ -59,11 +63,11 @@ Bot 不再只能是静态配置里的两个槽位。v6 起 Bot 存进 WaveMemory
 
 ---
 
-## 未发布（2026-09-24）：Bot 是一个人
+### 二、Bot 是一个人
 
 按"羽书是一个人"重新划定记忆边界：只记得自己亲历的事，对同一个人在哪都认得，自己的状态跨场合连续，私聊里的事不在别处说。
 
-### 行为变化
+#### 行为变化
 
 1. **只记得自己亲历的事**：向量召回（含跨群）、FTS5、标签冷召回与目录映射全部按 `bot_id` 隔离。此前同一部署里的其他 Bot（如白真真）在任何群见过的消息都能被召回。无归属的历史旧行仍对所有 Bot 可见。
 2. **Bot 自身状态属于 Bot 本人**：心情只有一个，延续到所有群与私聊；关切、自我经历时间线、信念不再按群分裂；人格、信念与状态在私聊中同样注入。信念的依据仍在它形成的群里校验。
@@ -74,7 +78,7 @@ Bot 不再只能是静态配置里的两个槽位。v6 起 Bot 存进 WaveMemory
 7. **跨平台身份关联**：新增 `person_identity_links`（按 Bot 保存），由管理员在 WebUI 人物详情中确认同一个人在不同平台的账号；关联后态度汇总与印象时间线合并。模型不会自动关联身份。
 8. **原话证据**：印象时间线接口修复缺少 `import re` 导致的 503；按时间窗口推测的原话标记为 `source_quote_inferred` 并在界面标为"推测原话"。`scripts/backfill_person_timeline_evidence.py` 支持 `--db/--limit/--dry-run`，写库前自动备份。
 
-### 升级须知
+#### 升级须知
 
 - **升级前务必备份 `wave_memory.db`**。首次启动会在事务内重建 `scoped_soul_*` 与 `scoped_facts`/`scoped_fact_history`/`scoped_fact_reviews`，把 `visibility` 约束放宽为群聊或私聊；保留全部数据、索引与自增序号，已迁移的表会跳过。
 - **`cross_group_enabled` 含义调整**（升级用户需检查配置）：开启时同一 Bot 的各群记忆互通，并允许私聊召回对方本人的群发言；无论开关如何，不同 Bot 之间的记忆都不再互通。

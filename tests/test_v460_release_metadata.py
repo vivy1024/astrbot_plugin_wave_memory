@@ -6,12 +6,14 @@ class TestV463ReleaseMetadata:
         metadata = Path("metadata.yaml").read_text(encoding="utf-8")
         main = Path("main.py").read_text(encoding="utf-8")
 
-        assert "version: v5.0.0" in metadata
-        assert '"5.0.0"' in main
+        assert "version: v5.1.0" in metadata
+        assert '"5.1.0"' in main
 
     def test_changelog_has_v463_and_v460_release_notes(self):
         changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+        assert "## v5.1.0" in changelog
         assert "## v5.0.0" in changelog
+        assert "未发布" not in changelog.split("## v5.0.0", 1)[0]
         assert "## v4.7.2" in changelog
         assert "## v4.7.1" in changelog
         assert "## v4.7.0" in changelog
@@ -21,6 +23,7 @@ class TestV463ReleaseMetadata:
 
     def test_readme_badge_and_recent_releases_include_v463(self):
         readme = Path("README.md").read_text(encoding="utf-8")
-        assert "version-v5.0.0-blue.svg" in readme
+        assert "version-v5.1.0-blue.svg" in readme
+        assert "| **v5.1.0** |" in readme
         assert "| **v5.0.0** |" in readme
         assert "CHANGELOG.md" in readme

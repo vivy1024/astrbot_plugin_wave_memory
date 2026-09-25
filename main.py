@@ -102,7 +102,7 @@ from .app.maintenance import MaintenanceMixin
     "astrbot_plugin_wave_memory",
     "vivy1024",
     "群聊长期记忆插件。日常检索只依赖向量模型，本地 SQLite 毫秒级召回，不装 Neo4j/ES。记忆注入和黑话、风格、信念、好感、时间线一起进回复，通道和预算可单独调。适合长期陪聊群 Bot；不是只塞最近几条的轻量摘要。",
-    "5.0.0",
+    "5.1.0",
     "https://github.com/vivy1024/astrbot_plugin_wave_memory",
 )
 class WaveMemoryPlugin(BootstrapMixin, StartupMixin, IngressMixin, InjectionMixin, MaintenanceMixin, Star):
