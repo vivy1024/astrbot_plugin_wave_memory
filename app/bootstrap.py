@@ -552,6 +552,9 @@ class BootstrapMixin:
         self.runtime_refresh_projection = RuntimeRefreshProjection(
             callbacks={"memory": self._on_memory_projection_refresh}
         )
+        from ..services.derived_projections import FtsCjkProjection
+
+        self.fts_cjk_projection = FtsCjkProjection(self.db.db_path)
         self.write_gateway = ProductionWriteGateway(
             self.db.db_path,
             consumers={
@@ -559,6 +562,7 @@ class BootstrapMixin:
                 self.tag_index_projection.consumer_name: self.tag_index_projection,
                 self.cooccurrence_projection.consumer_name: self.cooccurrence_projection,
                 self.runtime_refresh_projection.consumer_name: self.runtime_refresh_projection,
+                self.fts_cjk_projection.consumer_name: self.fts_cjk_projection,
             },
         )
         # 三个关系变化上限从配置读取：schema 里一直有这三个键，
@@ -674,6 +678,7 @@ class BootstrapMixin:
             "maintenance.tag_audit.run": self._maintenance_run_tag_audit,
             "maintenance.tag_backfill.run": self._maintenance_run_tag_backfill,
             "maintenance.import.run": self._maintenance_run_import,
+            "maintenance.fts_cjk.rebuild": self._maintenance_rebuild_fts_cjk,
         }
         maintenance_handlers.update(self.data_governance_jobs.handlers())
         maintenance_handlers.update(self.scope_recovery_jobs)

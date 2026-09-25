@@ -683,9 +683,19 @@ async def memory_query():
             from ...services.injection.channels.fts5 import _keywords, _match_expr
         except ImportError:
             from services.injection.channels.fts5 import _keywords, _match_expr
-        words_expr = _match_expr(_keywords(q))
-        # 只匹配正文列：fts_memories 还索引了发言人昵称，不限定列时会把"叫这个名字的人说的任何话"也搜出来。
-        match_expr = f"content : ({words_expr})" if words_expr else ""
+        try:
+            from ...engine.db import fts_cjk
+        except ImportError:
+            from engine.db import fts_cjk
+        fts_table = "fts_memories"
+        if fts_cjk.is_ready(db.conn):
+            # 中文全文索引（两字片段）就绪后优先用它：「张羽」能命中「张羽师兄」。
+            fts_table = fts_cjk.TABLE
+            match_expr = fts_cjk.match_expr(_keywords(q))
+        else:
+            words_expr = _match_expr(_keywords(q))
+            # 只匹配正文列：fts_memories 还索引了发言人昵称，不限定列时会把"叫这个名字的人说的任何话"也搜出来。
+            match_expr = f"content : ({words_expr})" if words_expr else ""
         if not match_expr:
             return jsonify({"ok": False, "error": {"code": "query_too_short", "message": "query has no usable keywords (need 2+ characters)"}}), 400
     elif not uid:
@@ -695,9 +705,9 @@ async def memory_query():
                  .replace("sender_id", "m.sender_id").replace("visibility", "m.visibility") for clause in where_clauses]
     if match_expr:
         sql = f"""SELECT m.id, m.content, m.sender_id, m.sender_name, m.timestamp, m.importance
-                  FROM fts_memories JOIN memories AS m ON m.id = fts_memories.rowid
-                  WHERE fts_memories MATCH ? AND {' AND '.join(qualified)}
-                  ORDER BY bm25(fts_memories), m.timestamp DESC LIMIT ?"""
+                  FROM {fts_table} JOIN memories AS m ON m.id = {fts_table}.rowid
+                  WHERE {fts_table} MATCH ? AND {' AND '.join(qualified)}
+                  ORDER BY bm25({fts_table}), m.timestamp DESC LIMIT ?"""
         params = [match_expr, *params, limit]
     else:
         sql = f"""SELECT m.id, m.content, m.sender_id, m.sender_name, m.timestamp, m.importance

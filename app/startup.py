@@ -138,6 +138,15 @@ class StartupMixin:
         if self.enable_spike and self.db.get_tag_count() > 10 and not self.cooccurrence.forward:
             await self._queue_maintenance_repair("cooccurrence", reason="startup_empty")
 
+        # 中文全文索引：没回填完就排一个可续跑的回填任务（查询方在回填完成前继续用旧索引）。
+        try:
+            from ..engine.db import fts_cjk
+
+            if not fts_cjk.is_ready(self.db.conn) and self.db.get_memory_count() > 0:
+                await self._queue_maintenance_repair("fts_cjk", reason="startup_backfill")
+        except Exception as exc:
+            logger.warning(f"[WaveMemory] 中文全文索引回填排队失败: {exc}")
+
         # 初始化 EPA
         if self.epa:
             self._spawn(self._init_epa())

@@ -749,6 +749,50 @@ class MaintenanceMixin:
             "verified": True,
         }
 
+    async def _maintenance_rebuild_fts_cjk(self, run, request, runner):
+        """分批回填中文全文索引；可中断续跑（游标存在索引自己的状态表里）。"""
+        import sqlite3
+
+        from ..engine.db import fts_cjk
+
+        def _open():
+            connection = sqlite3.connect(self.db.db_path, timeout=30.0)
+            connection.execute("PRAGMA busy_timeout=10000")
+            fts_cjk.ensure_schema(connection)
+            connection.commit()
+            return connection
+
+        connection = await asyncio.to_thread(_open)
+        indexed = 0
+        try:
+            if bool((request.payload or {}).get("reset")):
+                await asyncio.to_thread(lambda: (fts_cjk.reset(connection), connection.commit()))
+            cursor = await asyncio.to_thread(fts_cjk.backfill_cursor, connection)
+            while True:
+                def _batch(after=cursor):
+                    result = fts_cjk.backfill_batch(connection, after_id=after, limit=2000)
+                    connection.commit()
+                    return result
+
+                last, count = await asyncio.to_thread(_batch)
+                if last == cursor:
+                    break
+                cursor, indexed = last, indexed + count
+                await self.write_gateway.jobs.update_progress(
+                    run.run_id,
+                    lease_owner=runner.lease_owner,
+                    lease_seconds=120.0,
+                    progress={"phase": "backfill", "indexed": indexed, "cursor": cursor},
+                    cursor={"phase": "backfill", "after_id": cursor},
+                )
+                await asyncio.sleep(0.05)  # 让出写锁给消息写入
+            await asyncio.to_thread(lambda: (fts_cjk.mark_ready(connection), connection.commit()))
+            state = await asyncio.to_thread(fts_cjk.status, connection)
+        finally:
+            connection.close()
+        logger.info(f"[WaveMemory] 中文全文索引回填完成: 本次 {indexed} 条, 共 {state.get('rows')} 条")
+        return {"kind": "fts_cjk", "indexed": indexed, **state, "verified": bool(state.get("ready"))}
+
     async def _queue_maintenance_repair(self, kind: str, *, reason: str) -> str:
         """Idempotently queue a recoverable repair instead of mutating derived state inline."""
         manifest = None

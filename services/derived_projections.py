@@ -11,10 +11,12 @@ from typing import Any
 import numpy as np
 
 try:
+    from ..engine.db import fts_cjk
     from ..engine.db.outbox_repo import OutboxEvent
     from ..engine.vector_index import IndexCapacityError
     from .memory_index_policy import MemoryIndexPolicy, evaluate_memory_eligibility
 except ImportError:  # pragma: no cover - repository tests import top-level packages
+    from engine.db import fts_cjk
     from engine.db.outbox_repo import OutboxEvent
     from engine.vector_index import IndexCapacityError
     from services.memory_index_policy import MemoryIndexPolicy, evaluate_memory_eligibility
@@ -524,3 +526,41 @@ class RuntimeRefreshProjection:
 
     async def save_barrier(self, *, db_watermark: int = 0) -> None:
         return
+
+
+class FtsCjkProjection:
+    """跟随记忆增删改维护中文全文索引 fts_memories_cjk（见 engine/db/fts_cjk.py）。"""
+
+    consumer_name = "fts_cjk"
+
+    def __init__(self, database_path: str) -> None:
+        self.database_path = str(database_path)
+        self._lock = asyncio.Lock()
+        self._connection: sqlite3.Connection | None = None
+        self.metrics = {"indexed": 0, "removed": 0, "errors": 0}
+
+    def _conn(self) -> sqlite3.Connection:
+        if self._connection is None:
+            connection = sqlite3.connect(self.database_path, timeout=30.0, check_same_thread=False)
+            connection.execute("PRAGMA busy_timeout=10000")
+            fts_cjk.ensure_schema_committed(connection)
+            self._connection = connection
+        return self._connection
+
+    def _sync(self, memory_id: int) -> str:
+        return fts_cjk.sync_memory_committed(self._conn(), memory_id)
+
+    async def __call__(self, event: OutboxEvent) -> None:
+        if event.aggregate_kind != "memory":
+            return
+        async with self._lock:
+            outcome = await asyncio.to_thread(self._sync, int(event.aggregate_id))
+        self.metrics[outcome] = self.metrics.get(outcome, 0) + 1
+
+    async def save_barrier(self, *, db_watermark: int = 0) -> None:
+        return None
+
+    def close(self) -> None:
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None

@@ -102,6 +102,27 @@ def _match_expr(words: list[str]) -> str:
     return " OR ".join(quoted)
 
 
+def _cjk_match_expr(connection: Any, words: list[str]) -> str:
+    """中文全文索引就绪时返回它的查询表达式，否则返回空串（调用方用旧索引）。
+
+    没装 jieba 时关键词是整段中文，太长的段拆成两字片段各自成词，避免要求整段原样出现。
+    """
+    try:
+        from engine.db import fts_cjk
+    except ImportError:  # pragma: no cover - package import path
+        from ....engine.db import fts_cjk
+    try:
+        if not fts_cjk.is_ready(connection):
+            return ""
+    except Exception:
+        return ""
+    expanded: list[str] = []
+    for word in words:
+        pieces = fts_cjk.tokenize(word)
+        expanded.extend(pieces if len(pieces) > 3 else [word])
+    return fts_cjk.match_expr(expanded)
+
+
 def _preview(text: str | None, limit: int = 160) -> str:
     compact = str(text or "").replace("\n", " ").strip()
     return compact if len(compact) <= limit else compact[: limit - 1] + "…"
@@ -340,20 +361,34 @@ class FTS5Channel:
             "COALESCE(m.provenance, '')" if "provenance" in columns else "''"
         )
         try:
-            rows = self.db.conn.execute(
-                f"""SELECT m.id, m.content, m.sender_id, m.sender_name, m.timestamp,
-                           m.importance, m.source, m.group_id, m.memory_type, {visibility_expr},
-                           {origin_expr}, {provenance_expr}
-                      FROM fts_memories
-                      JOIN memories AS m ON m.id = fts_memories.rowid
-                     WHERE fts_memories MATCH ? AND {predicate}
-                     ORDER BY rank LIMIT ?""",
-                (expr, *params, limit),
-            ).fetchall()
-            if not rows:
-                rows = self._scoped_like_search(
-                    words=words, limit=limit, scope=scope, columns=columns, grant_ids=grant_ids
-                )
+            cjk_expr = _cjk_match_expr(self.db.conn, words)
+            if cjk_expr:
+                # v6：中文全文索引就绪后只查它（按两字片段召回），不再退回全表 LIKE。
+                rows = self.db.conn.execute(
+                    f"""SELECT m.id, m.content, m.sender_id, m.sender_name, m.timestamp,
+                               m.importance, m.source, m.group_id, m.memory_type, {visibility_expr},
+                               {origin_expr}, {provenance_expr}
+                          FROM fts_memories_cjk
+                          JOIN memories AS m ON m.id = fts_memories_cjk.rowid
+                         WHERE fts_memories_cjk MATCH ? AND {predicate}
+                         ORDER BY rank LIMIT ?""",
+                    (cjk_expr, *params, limit),
+                ).fetchall()
+            else:
+                rows = self.db.conn.execute(
+                    f"""SELECT m.id, m.content, m.sender_id, m.sender_name, m.timestamp,
+                               m.importance, m.source, m.group_id, m.memory_type, {visibility_expr},
+                               {origin_expr}, {provenance_expr}
+                          FROM fts_memories
+                          JOIN memories AS m ON m.id = fts_memories.rowid
+                         WHERE fts_memories MATCH ? AND {predicate}
+                         ORDER BY rank LIMIT ?""",
+                    (expr, *params, limit),
+                ).fetchall()
+                if not rows:
+                    rows = self._scoped_like_search(
+                        words=words, limit=limit, scope=scope, columns=columns, grant_ids=grant_ids
+                    )
         except Exception:
             # Missing schema or an invalid FTS expression fails closed; never fall
             # back to an unfiltered historical read outside the shared predicate.
