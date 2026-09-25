@@ -53,7 +53,41 @@ _QUERY_PARAM_LIMITS = {
     "spike_max_hops": (int, 0, 16),
     "spike_firing_threshold": (float, 0.0, 1.0),
     "geodesic_alpha": (float, 0.0, 1.0),
+    # 打分：重要度权重（1 = 旧公式直接相乘）与访问加成上限（3 ≈ 不封顶）
+    "importance_weight": (float, 0.0, 1.0),
+    "access_boost_cap": (float, 1.0, 3.0),
 }
+
+# v5.1 打分默认值。旧公式「相似度×重要度×时间衰减×访问加成」里重要度（0.1~3）和访问加成
+# （不封顶）会压过相似度，而每次召回又给访问次数 +1、重要度 +0.01，形成「越被召回越被召回」：
+# 线上 40 条真实查询，旧公式前 5 名里 92% 是高访问记忆（纯相似度排序只有 19%），
+# 被召回最多的是「@某人」这类空消息。重要度限幅后按权重 0.25 参与、访问加成封顶 1.1：
+# 前 5 平均相似度 0.635 → 0.673，与纯相似度前 5 的重合 14% → 36%。
+DEFAULT_IMPORTANCE_WEIGHT = 0.25
+DEFAULT_ACCESS_BOOST_CAP = 1.1
+IMPORTANCE_RANGE = (0.3, 2.0)
+
+
+def memory_score(
+    similarity: float,
+    importance: float,
+    time_decay: float,
+    access_count: int,
+    *,
+    importance_weight: float = DEFAULT_IMPORTANCE_WEIGHT,
+    access_boost_cap: float = DEFAULT_ACCESS_BOOST_CAP,
+) -> tuple[float, float, float]:
+    """返回 (分数, 重要度系数, 访问加成)。importance_weight=1、access_boost_cap=3 时接近旧公式。"""
+    import math
+
+    low, high = IMPORTANCE_RANGE
+    clamped = min(high, max(low, float(importance if importance is not None else 1.0)))
+    if importance_weight >= 1.0:
+        importance_factor = float(importance if importance is not None else 1.0)  # 旧公式：不限幅
+    else:
+        importance_factor = 1.0 + float(importance_weight) * (clamped - 1.0)
+    access_boost = min(float(access_boost_cap), 1.0 + math.log2(1 + max(0, int(access_count or 0))) * 0.15)
+    return float(similarity) * importance_factor * float(time_decay) * access_boost, importance_factor, access_boost
 _DEBUG_SENSITIVE_KEY = re.compile(
     r"^(?:authorization|cookie|secret|password|passwd|token|api[_-]?key|credential|"
     r"embedding|vector|final_residual|path)$",
@@ -836,7 +870,8 @@ class QueryEngine:
 
         score_breakdown: dict[Any, dict[str, Any]] = {}
         now = time.time()
-        import math
+        importance_weight = float(call_options.params.get("importance_weight", DEFAULT_IMPORTANCE_WEIGHT))
+        access_boost_cap = float(call_options.params.get("access_boost_cap", DEFAULT_ACCESS_BOOST_CAP))
         for memory in memories:
             memory["_is_cross_group"] = recall_policy.is_cross_group(memory)
             similarity = 1.0 - distances.get(memory["id"], 1.0)
@@ -851,13 +886,20 @@ class QueryEngine:
             elif timestamp is None:
                 timestamp = now
             time_decay = 0.997 ** max(0, (now - timestamp) / 86400.0)
-            access_boost = 1.0 + math.log2(1 + (memory.get("access_count", 0) or 0)) * 0.15
             importance = memory.get("importance", 1.0)
-            memory["score"] = similarity * importance * time_decay * access_boost
+            memory["score"], importance_factor, access_boost = memory_score(
+                similarity,
+                importance,
+                time_decay,
+                memory.get("access_count", 0) or 0,
+                importance_weight=importance_weight,
+                access_boost_cap=access_boost_cap,
+            )
             score_breakdown[memory["id"]] = {
                 "memory_id": memory["id"],
                 "similarity": round(similarity, 4),
                 "importance": round(float(importance), 4),
+                "importance_factor": round(importance_factor, 4),
                 "time_decay": round(time_decay, 4),
                 "access_boost": round(access_boost, 4),
                 "score_before_geodesic": round(memory["score"], 4),
@@ -944,10 +986,13 @@ class QueryEngine:
             touch_ids = recall_policy.touchable_ids(memories)
             if touch_ids:
                 try:
+                    # 召回只记访问次数，不再抬重要度（旧版每次 +0.01，形成越召回越重要的正反馈）
                     if self.write_gateway is not None:
-                        await self.write_gateway.touch_memories(scope=resolved_scope, memory_ids=touch_ids)
+                        await self.write_gateway.touch_memories(
+                            scope=resolved_scope, memory_ids=touch_ids, importance_boost=0.0
+                        )
                     else:
-                        self.db.touch_memories(touch_ids)
+                        self.db.touch_memories(touch_ids, importance_boost=0.0)
                 except Exception:
                     logger.warning("[WaveMemory] Safe memory touch failed", exc_info=True)
         self._trace_record(collector, "final", {
@@ -1233,7 +1278,7 @@ class QueryEngine:
         for mem in memories:
             dist = all_candidates.get(mem["id"], 1.0)
             mem["similarity"] = 1.0 - dist
-            mem["score"] = mem["similarity"] * mem.get("importance", 1.0)
+            mem["score"] = mem["similarity"] * memory_score(1.0, mem.get("importance", 1.0), 1.0, 0)[1]
 
         if self.enable_geodesic and self.geodesic and energy_field:
             candidates_for_rerank = [
@@ -1269,9 +1314,10 @@ class QueryEngine:
                         await self.write_gateway.touch_memories(
                             scope=resolved_scope,
                             memory_ids=touch_ids,
+                            importance_boost=0.0,
                         )
                     else:
-                        self.db.touch_memories(touch_ids)
+                        self.db.touch_memories(touch_ids, importance_boost=0.0)
                 except Exception:
                     logger.warning("[WaveMemory] Safe memory touch failed", exc_info=True)
 

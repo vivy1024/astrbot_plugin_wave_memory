@@ -69,7 +69,8 @@ class _ColdDb:
             }
         ]
 
-    def touch_memories(self, ids):
+    def touch_memories(self, ids, importance_boost=0.01):
+        assert importance_boost == 0.0, "召回不应再抬重要度"
         self.touched.append(ids)
 
 
@@ -182,7 +183,8 @@ class _CrossGroupColdDb:
             rows.append(self._row(43, "g2", "跨群跨 Bot Catalog"))
         return rows
 
-    def touch_memories(self, ids):
+    def touch_memories(self, ids, importance_boost=0.01):
+        assert importance_boost == 0.0, "召回不应再抬重要度"
         self.touched.append(ids)
 
 
@@ -295,7 +297,8 @@ class _CrossGroupColdDb:
             rows.append(self._row(43, "g2", "跨群跨 Bot Catalog"))
         return rows
 
-    def touch_memories(self, ids):
+    def touch_memories(self, ids, importance_boost=0.01):
+        assert importance_boost == 0.0, "召回不应再抬重要度"
         self.touched.append(ids)
 
 

@@ -23,6 +23,7 @@ except ImportError:  # pragma: no cover - focused repository tests without AstrB
 
 from .db.connection import ConnectionManager
 from .db.memory_repo import MemoryRepo
+from .db.migrations.importance_touch_repair import repair_touch_inflated_importance
 from .db.migrations.memories_v2 import ensure_memories_v2_schema
 from .db.migrations.scoped_derived_knowledge import ensure_scoped_derived_knowledge_schema
 from .db.migrations.scoped_learning_projections import ensure_scoped_learning_projection_schema
@@ -70,6 +71,10 @@ class WaveMemoryDB:
             self._memory_repo = MemoryRepo(self._cm)
             # memories 表已经存在；在任何 FTS 建表/填充之前一次性完成纯增量 v2 迁移。
             ensure_memories_v2_schema(self._cm)
+            # v5.1：扣回旧版「每次召回重要度 +0.01」累加的部分（一次性，旧值备份在单独的表里）
+            repaired = repair_touch_inflated_importance(self._cm)
+            if repaired:
+                logger.info(f"[WaveMemory] 已扣回召回累加的重要度: {repaired} 条（旧值见 memory_importance_repair_v51）")
             self._tag_repo = TagRepo(self._cm)
             self._social_repo = SocialRepo(self._cm)
             self._knowledge_repo = KnowledgeRepo(self._cm)

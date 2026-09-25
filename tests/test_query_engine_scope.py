@@ -38,7 +38,8 @@ class _ScopedDb:
         # Simulates repository-side exact Bot/session filtering of HNSW IDs.
         return [{"id": 1, "group_id": "g1", "content": "本 Bot 本会话", "timestamp": 1, "importance": 1.0}]
 
-    def touch_memories(self, ids):
+    def touch_memories(self, ids, importance_boost=0.01):
+        assert importance_boost == 0.0, "召回不应再抬重要度"
         self.touched.append(ids)
 
     def get_memory_vectors(self, ids):
@@ -252,7 +253,8 @@ class QueryEngineScopeTest(unittest.TestCase):
             def __init__(self):
                 self.calls = []
 
-            async def touch_memories(self, *, scope, memory_ids):
+            async def touch_memories(self, *, scope, memory_ids, importance_boost=0.01):
+                assert importance_boost == 0.0, "召回不应再抬重要度"
                 self.calls.append((scope, memory_ids))
 
         scope = self._scope()

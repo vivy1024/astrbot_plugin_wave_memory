@@ -217,7 +217,8 @@ class SharedGrantRecallTest(unittest.TestCase):
                     )
                 return out
 
-            def touch_memories(self, ids):
+            def touch_memories(self, ids, importance_boost=0.01):
+                assert importance_boost == 0.0, "召回不应再抬重要度"
                 self.touched.append(list(ids))
 
             def get_memory_vectors(self, ids):
