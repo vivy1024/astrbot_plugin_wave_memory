@@ -31,7 +31,7 @@ export interface SystemPayload {
   plugin_version?: string
   memories?: { total?: number; with_vector?: number; with_tags?: number }
   tags?: { total?: number; structured?: number; type_distribution?: Record<string, number> }
-  coverage?: { vector_pct?: number; tag_pct?: number }
+  coverage?: { vector_pct?: number; tag_pct?: number; /** 应打已打（去掉按规则不提取的） */ tag_effective_pct?: number | null }
   cooccurrence?: { nodes?: number; edges?: number }
   db_size_mb?: number
   epa?: { initialized?: boolean; reason?: string }

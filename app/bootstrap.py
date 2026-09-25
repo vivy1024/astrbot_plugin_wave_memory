@@ -901,6 +901,7 @@ class BootstrapMixin:
         )
         get_container().runtime_context_preparer = self.runtime_context_preparer
         get_container().ingress_health = self.ingress_health
+        get_container().tag_worker_getter = lambda: getattr(self, "tag_worker", None)
         get_container().observation_ingestor = self.ingest_observation
 
     def _setup_service_registry(self) -> None:

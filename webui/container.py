@@ -71,6 +71,8 @@ class ServiceContainer:
         self.extension_reloader: Any = None
         # 入站消息接收/被拒统计（services.ingress_health.IngressHealth）。
         self.ingress_health: Any = None
+        # 当前 TagWorker（可能被服务注册表重启，所以存取值函数）；标签覆盖面板用。
+        self.tag_worker_getter: Any = None
 
         # ─── 认证 ───
         self.password: str = ""

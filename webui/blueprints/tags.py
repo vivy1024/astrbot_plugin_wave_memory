@@ -504,8 +504,119 @@ async def tag_quality():
     """Tag 质量概览：覆盖率、索引代次、提取能力与 RAG 降级状态。"""
     c = get_container()
     payload = build_tag_quality_payload(c.db.conn)
+    # 覆盖率口径以统一的覆盖率报告为准（正式 + 旧标签、只算活跃记忆、区分按规则不提取）
+    try:
+        report = await cached_tag_coverage(c)
+        counts = report["counts"]
+        payload.update({
+            "total_memories": report["active_memories"],
+            "tagged_memories": counts["tagged"],
+            "untagged_memories": report["active_memories"] - counts["tagged"],
+            "extractable_untagged_memories": counts["pending"] + counts["lost"] + counts["failed"],
+            "skipped_short_untagged_memories": counts["too_short"],
+            "coverage": report["coverage"],
+            "effective_coverage": report["effective_coverage"],
+        })
+    except Exception as exc:  # 覆盖率报告失败时保留旧口径
+        payload["coverage_report_error"] = str(exc)
     payload["runtime"] = build_tag_runtime_payload(c)
     return jsonify(payload)
+
+
+# ---------------------------------------------------------------- 标签覆盖面板
+
+_COVERAGE_CACHE_SECONDS = 60.0
+_coverage_lock = asyncio.Lock()
+
+
+def _tag_worker(c):
+    getter = getattr(c, "tag_worker_getter", None)
+    return getter() if callable(getter) else None
+
+
+def _coverage_report_sync(db_path: str, worker_status: dict | None) -> dict:
+    import sqlite3
+
+    from ...services.tag_coverage import build_tag_coverage
+
+    # 只读的独立连接：临时表不落在共享主连接上，也不挡写入
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30)
+    try:
+        return build_tag_coverage(conn, worker_status=worker_status)
+    finally:
+        conn.close()
+
+
+async def cached_tag_coverage(c, *, refresh: bool = False) -> dict:
+    """统一的标签覆盖率报告（线上约 1 秒，缓存 60 秒）。首页、维护页、标签页共用。"""
+    cached = getattr(c, "_tag_coverage_cache", None)
+    now = time.time()
+    if not refresh and cached and now - cached[0] < _COVERAGE_CACHE_SECONDS:
+        return cached[1]
+    async with _coverage_lock:
+        cached = getattr(c, "_tag_coverage_cache", None)
+        if not refresh and cached and time.time() - cached[0] < _COVERAGE_CACHE_SECONDS:
+            return cached[1]
+        worker = _tag_worker(c)
+        status = worker.status() if worker is not None and hasattr(worker, "status") else {"running": False}
+        report = await asyncio.to_thread(_coverage_report_sync, c.db.db_path, status)
+        c._tag_coverage_cache = (time.time(), report)
+        return report
+
+
+@tags_bp.route("/coverage", methods=["GET"])
+@require_auth
+async def tag_coverage():
+    """标签覆盖率：每类数量、按 Bot 拆分、样例、提取速度与积压预计耗时。"""
+    c = get_container()
+    try:
+        report = await cached_tag_coverage(c, refresh=request.args.get("refresh") in {"1", "true"})
+    except Exception as exc:
+        return jsonify(error_payload("coverage_failed", f"覆盖率统计失败: {exc}", retryable=True)), 500
+    return jsonify(report)
+
+
+@tags_bp.route("/coverage/requeue", methods=["POST"])
+@require_auth
+async def requeue_tag_category():
+    """把某一类（标签丢失 / 模型判空 / 失败）重新放回提取队列，并叫醒 TagWorker。"""
+    from ...services.tag_coverage import REQUEUEABLE, requeue_ids
+
+    c = get_container()
+    worker = _tag_worker(c)
+    if worker is None or not hasattr(worker, "requeue"):
+        return jsonify(error_payload("tag_worker_unavailable", "TagWorker 没有运行（检查标签提取开关与 LLM Provider）")), 409
+    body = await request.get_json(silent=True) or {}
+    category = str(body.get("category") or "")
+    if category not in REQUEUEABLE:
+        return jsonify(error_payload("invalid_category", f"category 只能是 {', '.join(REQUEUEABLE)}")), 400
+    limit = max(1, min(int(body.get("limit") or 5000), 20000))
+
+    def _collect():
+        import sqlite3
+
+        conn = sqlite3.connect(f"file:{c.db.db_path}?mode=ro", uri=True, timeout=30)
+        try:
+            return requeue_ids(conn, category, limit=limit)
+        finally:
+            conn.close()
+
+    ids = await asyncio.to_thread(_collect)
+    requeued = await asyncio.to_thread(worker.requeue, ids) if ids else 0
+    worker.wake()
+    c._tag_coverage_cache = None
+    return jsonify({"ok": True, "category": category, "selected": len(ids), "requeued": requeued})
+
+
+@tags_bp.route("/worker/wake", methods=["POST"])
+@require_auth
+async def wake_tag_worker():
+    c = get_container()
+    worker = _tag_worker(c)
+    if worker is None or not hasattr(worker, "wake"):
+        return jsonify(error_payload("tag_worker_unavailable", "TagWorker 没有运行")), 409
+    worker.wake()
+    return jsonify({"ok": True, "worker": worker.status()})
 
 
 @tags_bp.route("/audit/trigger", methods=["GET", "POST"])

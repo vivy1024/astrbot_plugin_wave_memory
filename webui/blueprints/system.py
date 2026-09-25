@@ -350,6 +350,16 @@ async def system_status():
     registry_bots = _registry_bots(c)
 
     untagged_count = count_untagged_memories(c.db.conn)
+    # 标签覆盖率与待办以统一的覆盖率报告为准（只算活跃记忆，正式 + 旧标签都算，区分按规则不提取）
+    tag_coverage = None
+    try:
+        from .tags import cached_tag_coverage
+
+        tag_coverage = await cached_tag_coverage(c)
+        tagged_memories = tag_coverage["counts"]["tagged"]
+        untagged_count = tag_coverage["backlog"]
+    except Exception:
+        tag_coverage = None
     pending_fewshot = 0
     try:
         pending_fewshot = c.db.conn.execute("SELECT COUNT(*) FROM few_shot_examples WHERE status = 'pending'").fetchone()[0]
@@ -371,7 +381,10 @@ async def system_status():
         "tags": {"total": total_tags, "structured": structured_tags, "type_distribution": {r[0]: r[1] for r in type_dist}},
         "coverage": {
             "vector_pct": round(with_vec / total_mem * 100, 1) if total_mem > 0 else 0,
-            "tag_pct": round(tagged_memories / total_mem * 100, 1) if total_mem > 0 else 0,
+            "tag_pct": round(tag_coverage["coverage"] * 100, 1) if tag_coverage else (
+                round(tagged_memories / total_mem * 100, 1) if total_mem > 0 else 0
+            ),
+            "tag_effective_pct": round(tag_coverage["effective_coverage"] * 100, 1) if tag_coverage else None,
         },
         "cooccurrence": {"nodes": cooc_nodes, "edges": cooc_edges},
         "db_size_mb": db_size_mb,

@@ -132,6 +132,7 @@ export interface TagQualityPayload {
   skipped_short_untagged_memories?: number
   orphan_memory_tag_refs?: number
   coverage: number
+  effective_coverage?: number
   runtime: TagRuntimePayload
 }
 
@@ -172,6 +173,49 @@ export function getTags({ limit = 25, offset = 0, type = '', search = '', sort =
 
 export function getTagQuality(signal?: AbortSignal): Promise<TagQualityPayload> {
   return fetchJson<TagQualityPayload>('/api/tags/quality', { signal })
+}
+
+/** 标签覆盖率的互斥分类（见 services/tag_coverage.py） */
+export type TagCoverageCategory = 'tagged' | 'too_short' | 'skipped' | 'failed' | 'lost' | 'pending' | 'not_eligible'
+export type TagRequeueCategory = 'lost' | 'skipped' | 'failed'
+
+export interface TagCoverageSample { id: number; preview: string; timestamp?: number | null; bot_id?: string; visibility?: string }
+
+export interface TagCoverageReport {
+  active_memories: number
+  counts: Record<TagCoverageCategory, number>
+  labels: Record<TagCoverageCategory, string>
+  /** 已标 / 活跃记忆 */
+  coverage: number
+  /** 已标 / 该打标签的（去掉太短、模型判空、不在范围） */
+  effective_coverage: number
+  backlog: number
+  failed_exhausted: number
+  by_bot: Record<string, Record<TagCoverageCategory, number>>
+  samples: Partial<Record<TagCoverageCategory, TagCoverageSample[]>>
+  throughput: { last_24h?: number; last_7d?: number }
+  worker: { running?: boolean; batch_size?: number; interval_seconds?: number; last_cycle_at?: number | null; last_cycle_count?: number; cycles?: number }
+  worker_capacity_per_hour: number
+  backlog_eta_hours: number | null
+  requeueable: TagRequeueCategory[]
+  min_content_length: number
+  elapsed_ms: number
+  generated_at: number
+}
+
+export function getTagCoverage(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<TagCoverageReport> {
+  return fetchJson<TagCoverageReport>(`/api/tags/coverage${options.refresh ? '?refresh=1' : ''}`, { signal: options.signal })
+}
+
+export function requeueTagCategory(category: TagRequeueCategory, limit = 5000) {
+  return fetchJson<{ ok: boolean; category: TagRequeueCategory; selected: number; requeued: number }>('/api/tags/coverage/requeue', {
+    method: 'POST',
+    body: JSON.stringify({ category, limit }),
+  })
+}
+
+export function wakeTagWorker() {
+  return fetchJson<{ ok: boolean }>('/api/tags/worker/wake', { method: 'POST' })
 }
 
 export function getAuditSuggestions(

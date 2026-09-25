@@ -8,13 +8,14 @@ function renderTags() {
   return render(<MemoryRouter><TagsPage /></MemoryRouter>)
 }
 
-const api = vi.hoisted(() => ({ getTags: vi.fn(), getTagQuality: vi.fn(), getScopeOptions: vi.fn() }))
+const api = vi.hoisted(() => ({ getTags: vi.fn(), getTagQuality: vi.fn(), getTagCoverage: vi.fn(), getScopeOptions: vi.fn() }))
 let isMobile = false
 
 vi.mock('@/api/tags', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/tags')>(),
   getTags: (...args: unknown[]) => api.getTags(...args),
   getTagQuality: (...args: unknown[]) => api.getTagQuality(...args),
+  getTagCoverage: (...args: unknown[]) => api.getTagCoverage(...args),
 }))
 
 vi.mock('@/api/options', () => ({ getScopeOptions: api.getScopeOptions, scopeOptionsFor: (payload: { bots: Array<{ db_id: string; name: string }>; }, kinds: string[]) => kinds.includes('bot') ? payload.bots.map((bot) => ({ value: bot.db_id, label: bot.name, kind: 'bot' as const })) : [] }))
@@ -29,6 +30,13 @@ describe('TagsPage', () => {
       available_types: ['person', 'topic'],
       readonly: true,
       capabilities: { mutation: { available: false, reason_code: 'mutation_disabled' } },
+    })
+    const counts = { tagged: 8, pending: 1, lost: 0, failed: 0, skipped: 0, too_short: 1, not_eligible: 0 }
+    api.getTagCoverage.mockReset().mockResolvedValue({
+      active_memories: 10, counts, labels: Object.fromEntries(Object.keys(counts).map((k) => [k, k])),
+      coverage: 0.8, effective_coverage: 0.8889, backlog: 1, failed_exhausted: 0, by_bot: {}, samples: {},
+      throughput: {}, worker: { running: true, batch_size: 100, interval_seconds: 300 }, worker_capacity_per_hour: 1200,
+      backlog_eta_hours: 0, requeueable: ['lost', 'skipped', 'failed'], min_content_length: 10, elapsed_ms: 3, generated_at: 1,
     })
     api.getScopeOptions.mockReset().mockResolvedValue({ bots: [], sessions: [], channels: [], generated_at: 1, source: { health: 'empty', reason_code: null } })
     api.getTagQuality.mockReset().mockResolvedValue({
@@ -55,7 +63,8 @@ describe('TagsPage', () => {
     renderTags()
 
     expect(await screen.findByText('共同记忆')).toBeVisible()
-    expect(screen.getByText('80%')).toBeVisible()
+    expect((await screen.findAllByText('80%'))[0]).toBeVisible()  // 整体覆盖
+    expect(screen.getByText('88.9%')).toBeVisible()  // 应打已打
     expect(screen.getAllByText('此目录只读').length).toBeGreaterThan(0)
     expect(screen.getByText('语义 RAG')).toBeVisible()
     expect(screen.getByText('42 个向量 · generation 7')).toBeVisible()

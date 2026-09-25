@@ -58,7 +58,7 @@ describe('DashboardPage 局部错误边界', () => {
     render(<MemoryRouter><DashboardPage /></MemoryRouter>)
 
     const action = await screen.findByRole('link', { name: '去处理' })
-    expect(action).toHaveAttribute('href', '/maintenance')
+    expect(action).toHaveAttribute('href', '/tags')
     expect(action).toHaveClass('w-auto')
     expect(action).not.toHaveClass('w-full')
   })

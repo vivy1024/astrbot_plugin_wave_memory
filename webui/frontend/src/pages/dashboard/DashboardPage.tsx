@@ -133,8 +133,8 @@ function NeedsAttentionCards({ system }: { system?: SystemPayload }) {
   const activeTodos = [
     ...(untagged > 0 ? [{
       title: '记忆标签待处理',
-      description: `当前群中有 ${untagged} 条记忆尚未完成结构化标签提取，可运行批量分析。`,
-      route: '/maintenance',
+      description: `${untagged} 条记忆等待提取标签（含标签丢失需要重新提取的），到标签页查看分类并处理。`,
+      route: '/tags',
       badge: '标签待处理',
       statusClass: 'border-l-4 border-l-violet-500/80 shadow-[0_0_15px_rgba(139,92,246,0.03)]',
     }] : []),
@@ -475,7 +475,7 @@ export function DashboardPage() {
     if (!system.data) return []
     return [
       { title: '记忆总量', value: formatNumber(system.data.memories?.total), description: `向量覆盖 ${system.data.coverage?.vector_pct ?? '未返回'}%`, icon: WavesIcon },
-      { title: '标签覆盖率', value: system.data.coverage?.tag_pct === undefined ? '未返回' : `${system.data.coverage.tag_pct}%`, description: `结构化标签 ${formatNumber(system.data.tags?.structured)}`, icon: TagsIcon },
+      { title: '标签覆盖率', value: system.data.coverage?.tag_effective_pct != null ? `${system.data.coverage.tag_effective_pct}%` : system.data.coverage?.tag_pct === undefined ? '未返回' : `${system.data.coverage.tag_pct}%`, description: system.data.coverage?.tag_effective_pct != null ? `应打已打；整体 ${system.data.coverage.tag_pct}%（含按规则不提取的短消息）` : `结构化标签 ${formatNumber(system.data.tags?.structured)}`, icon: TagsIcon },
       { title: '用户画像记录', value: formatNumber(system.data.lifecycle?.user_profiles), description: `有互动记录 ${formatNumber(system.data.lifecycle?.active_users)} 条`, icon: UsersIcon },
       { title: '数据库体积', value: formatStorage(system.data.db_size_mb), description: `共现 ${formatNumber(system.data.cooccurrence?.nodes)} 节点 / ${formatNumber(system.data.cooccurrence?.edges)} 边`, icon: DatabaseIcon },
     ]

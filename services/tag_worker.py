@@ -78,23 +78,63 @@ class TagWorker:
         if self._task and not self._task.done():
             self._task.cancel()
 
+    # ------------------------------------------------------------------ 9876 标签覆盖面板
+
+    def wake(self) -> None:
+        """打断本轮休眠，立刻取下一批（面板上「立即处理一批」）。"""
+        event = getattr(self, "_wake_event", None)
+        if event is not None:
+            event.set()
+
+    def status(self) -> dict:
+        return {
+            "running": bool(self._running and self._task is not None and not self._task.done()),
+            "batch_size": self.batch_size,
+            "interval_seconds": self.wake_interval,
+            "last_cycle_at": getattr(self, "_last_cycle_at", None),
+            "last_cycle_count": getattr(self, "_last_cycle_count", 0),
+            "cycles": getattr(self, "_cycles", 0),
+        }
+
+    def requeue(self, memory_ids: list[int]) -> int:
+        """清掉这些记忆的提取状态，让它们重新进入待提取队列（标签丢失、模型判空、失败的重试）。"""
+        ids = [int(i) for i in memory_ids if i is not None]
+        removed = 0
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            cursor = self.db.conn.execute(
+                f"DELETE FROM tag_extraction_status WHERE memory_id IN ({placeholders})", chunk
+            )
+            removed += int(cursor.rowcount or 0)
+        self.db.conn.commit()
+        logger.info(f"[WaveMemory] TagWorker 重新排队 {removed} 条记忆")
+        return removed
+
     async def _loop(self):
         # 首次等 60s 让系统稳定
         await asyncio.sleep(60)
+        self._wake_event = asyncio.Event()
         while self._running:
             try:
                 batch = self._fetch_untagged_batch()
+                self._last_cycle_at = time.time()
+                self._last_cycle_count = len(batch)
+                self._cycles = getattr(self, "_cycles", 0) + 1
                 if batch:
                     await self._process_batch(batch)
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.warning(f"[WaveMemory] TagWorker error: {e}")
-            # 固定间隔休眠
+            # 固定间隔休眠；面板上「立即处理一批」会提前叫醒
             try:
-                await asyncio.sleep(self.wake_interval)
+                await asyncio.wait_for(self._wake_event.wait(), timeout=self.wake_interval)
+            except asyncio.TimeoutError:
+                pass
             except asyncio.CancelledError:
                 break
+            self._wake_event.clear()
         logger.info("[WaveMemory] TagWorker stopped")
 
     def _fetch_untagged_batch(self) -> list[TagWorkItem]:

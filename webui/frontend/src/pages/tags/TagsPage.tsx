@@ -10,11 +10,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ScopedTagGovernancePanel } from '@/components/tag/ScopedTagGovernancePanel'
+import { TagCoveragePanel } from '@/components/tag/TagCoveragePanel'
 import { RefreshCwIcon, ShieldCheckIcon, TagsIcon } from 'lucide-react'
-
-function formatPercent(value: number): string {
-  return `${(Math.max(0, Math.min(1, value || 0)) * 100).toFixed(1).replace(/\.0$/, '')}%`
-}
 
 const countFormatter = new Intl.NumberFormat('zh-CN')
 
@@ -154,11 +151,11 @@ export function TagsPage() {
 
     <Alert><ShieldCheckIcon aria-hidden="true" /><AlertTitle>只读安全边界</AlertTitle><AlertDescription>本页不会用裸编号去重命名、改类型或删除标签。需要写入的能力必须通过当前群的正式命令授权。</AlertDescription></Alert>
 
-    <section aria-label="标签质量概览" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <TagCoveragePanel />
+
+    <section aria-label="标签质量概览" className="grid gap-3 sm:grid-cols-2">
       <Metric label="标签总数" value={quality ? formatCount(quality.total_tags) : '—'} detail="当前正式标签记录" />
-      <Metric label="记忆覆盖率" value={quality ? formatPercent(quality.coverage) : '—'} detail={quality ? `${formatCount(quality.tagged_memories)} / ${formatCount(quality.total_memories)} 条真实记忆` : '等待真实质量接口'} />
-      <Metric label="可提取未标注" value={quality ? formatCount(quality.extractable_untagged_memories ?? 0) : '—'} detail={`短文本跳过 ${quality ? formatCount(quality.skipped_short_untagged_memories ?? 0) : '—'} 条`} />
-      <Metric label="孤立引用" value={quality ? formatCount(quality.orphan_memory_tag_refs ?? 0) : '—'} detail="仅诊断，不在本页直接清理" />
+      <Metric label="孤立引用" value={quality ? formatCount(quality.orphan_memory_tag_refs ?? 0) : '—'} detail="旧标签表里指向已删除记忆的关联，仅诊断" />
     </section>
 
     <Card className="border-border/60">
