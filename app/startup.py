@@ -564,7 +564,15 @@ class StartupMixin:
         # 高频互动者缓存预热 (US-2.3) — 异步执行，不阻塞启动
         self._spawn(self._async_cache_warmup(), owner="cache")
 
-        logger.info("[WaveMemory] Fully initialized")
+        try:
+            from ..utils.build_info import build_info
+            build = build_info()
+            logger.info(
+                f"[WaveMemory] Fully initialized: {build.get('version') or '?'} "
+                f"{(build.get('commit') or '')[:10]} ({build.get('branch') or '-'}, {build.get('source')})"
+            )
+        except Exception:
+            logger.info("[WaveMemory] Fully initialized")
 
     async def _terminate_once(self):
         """插件卸载时清理 — 各资源独立 try-except。"""

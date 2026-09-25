@@ -432,7 +432,12 @@ async def health_check():
     services["cooccurrence"] = {"status": "ok" if c.cooccurrence else "unavailable"}
 
     overall = "healthy" if all(s.get("status") == "ok" for s in services.values()) else "degraded"
-    return jsonify({"status": overall, "services": services})
+    try:
+        from ...utils.build_info import build_info
+        build = build_info()
+    except Exception:
+        build = {}
+    return jsonify({"status": overall, "services": services, "build": build})
 
 
 @system_bp.route("/metrics", methods=["GET"])

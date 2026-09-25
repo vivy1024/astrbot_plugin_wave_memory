@@ -185,9 +185,15 @@ async def capabilities():
         profile = bots.get(bot_id)
     tools = registry.describe(profile=profile, runtime_only=True) if registry is not None else []
     channels = [getattr(ch, "name", "") for ch in (getattr(container, "injection_channels", None) or [])]
+    try:
+        from ...utils.build_info import build_info
+        build = build_info()
+    except Exception:
+        build = {}
     return jsonify({
         "ok": True,
         "protocol_version": "1.1",
+        "build": build,
         "capabilities": {
             "book_lore_search": True,
             "book_lore_graph": True,

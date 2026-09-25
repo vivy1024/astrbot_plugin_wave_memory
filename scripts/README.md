@@ -11,6 +11,9 @@ v6 按「还在用 / 已执行完毕」分了类。已执行完毕的脚本没�
 
 | 脚本 | 用途 |
 |---|---|
+| `deploy_to_container.ps1` | 把一个已提交版本部署进 AstrBot 容器：单测 → 卷外数据库快照 → 代码备份 → 按清单替换代码 → 重启并核对启动日志里的提交号；`-DryRun` 预览，`-Rollback` 恢复最近一份代码备份，首次部署加 `-PruneUnknown` 清掉 v5 遗留模块 |
+| `_deploy_apply.py` | 部署脚本在容器里调用的套用步骤（只动代码文件，不碰 `.git`、`data/`、`*.db`、`*.tar`） |
+| `boot_check.py` | 用真实 AstrBot + 临时空数据目录完整启动一遍插件并走一遍 Runtime API（抓单测漏掉的导入错误） |
 | `db_health_check.py` | 运行时 SQLite 健康检查 |
 | `db_inventory.py` | 列出运行时数据库与恢复相关的数据文件 |
 | `export_runtime_data.py` | 导出运行时数据副本，供备份与恢复检查 |

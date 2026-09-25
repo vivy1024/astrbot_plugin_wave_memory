@@ -36,6 +36,8 @@ Bot 不再只能是静态配置里的两个槽位。v6 起 Bot 存进 WaveMemory
 
 21. **每个 Bot 的书设语料**：Bot Profile 新增 `persona.lore_corpus`（9876「Bot 管理」→ 书设语料）。留空用部署默认语料；`none` 表示这个 Bot 不读书设；填其他语料 id 时须与部署加载的一致，否则书设通道返回 `corpus_not_loaded:<id>`，不会把别的世界观当成自己的设定。书设注入通道与纠错自省同时遵守。**修复**：纠错自省从 v5 起没拿到 CatalogScope，检索书设参考一直是空的，现在按 Bot 的语料检索。
 
+22. **部署与版本可查**：新增 `scripts/deploy_to_container.ps1`，把一个已提交版本部署进 AstrBot 容器——本地单测、卷外数据库快照、容器内代码备份（宿主机 `AstrBot-master/data/backups/wavememory_code`，保留 5 份）、按部署清单替换代码（只动代码文件；上一版有、这一版没有的文件删除）、重启后核对启动日志里的提交号；支持 `-DryRun`、`-Rollback`。部署时写 `_deploy_version.json`，`/api/health` 与 Runtime `/capabilities` 新增 `build`（版本、提交、分支、部署时间），启动日志 `Fully initialized` 带提交号。
+
 ### 升级须知
 
 - 首次启动自动把 `MetaThinking_Bot1/2`（以及任意 `MetaThinking_BotN`）迁进 `bot_profiles`：`db_id` 不变，会话前缀从该 Bot 最近的记忆里检测（线上为「羽书」「白真真」），v5 写死的人设片段按 db_id 补进 Profile。**历史数据一条不改。**
