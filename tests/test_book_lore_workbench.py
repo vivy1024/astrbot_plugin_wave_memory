@@ -196,3 +196,17 @@ def test_book_lore_channel_adds_note_hit_and_skips_personal_notes(tmp_path):
     assert "第961章 绝望中的希望：张羽看着加密信息。" in result.text  # 去掉了重复的标题行
     assert "白真真" not in result.text
     assert result.items[0]["note_id"] == "note_ch961"
+
+
+def test_only_chapters_after_latest_note_count_as_new(tmp_path):
+    """早期章节由 GraphRAG 摘要覆盖、没有逐章笔记：不算新章节，从原文导入时默认也不导。"""
+    wb = _workbench(tmp_path)
+    asyncio.run(wb.save_notes([{"id": "note_ch11", "title": "第11章 仙帝登极", "content": "已有", "arc": "arc05", "category": "章节事件"}]))
+    novel = tmp_path / "src" / "novel.txt"
+    novel.write_text(NOVEL + "\n第12章 新的开始\n" + "新内容。" * 5 + "\n" + ("填充" * 30000), encoding="utf-8")
+    source = asyncio.run(wb.overview())["sources"][0]
+    assert source["new_chapters"] == 1 and source["new_range"] == [12, 12] and source["earlier_without_notes"] == 1
+    result = asyncio.run(wb.import_chapters(path=str(novel)))
+    assert result["chapters"] == [12] and result["arc"] == "arc05"
+    # 指定章号仍可补早期章节
+    assert asyncio.run(wb.import_chapters(path=str(novel), numbers=[2]))["chapters"] == [2]

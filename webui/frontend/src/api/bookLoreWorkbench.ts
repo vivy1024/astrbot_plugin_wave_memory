@@ -14,6 +14,8 @@ export interface WorkbenchSource {
   latest_title: string
   new_chapters: number
   new_range: [number, number] | null
+  /** 早于库里最新章、没有逐章笔记的章节（由 GraphRAG 社区摘要覆盖，默认不导入） */
+  earlier_without_notes?: number
 }
 
 export interface WorkbenchEdit { id: number; at: number; action: string; target: string; actor: string; detail: Record<string, unknown> }

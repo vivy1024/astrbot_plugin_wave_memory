@@ -60,7 +60,7 @@ describe('BookLoreWorkbenchPage', () => {
   it('原文里的新章节需要确认后导入', async () => {
     const user = userEvent.setup()
     renderPage()
-    expect(await screen.findByText(/4 章未入库（第 962–965 章）/)).toBeVisible()
+    expect(await screen.findByText(/4 章新章节（第 962–965 章）/)).toBeVisible()
     await user.click(screen.getByRole('button', { name: /导入新章节/ }))
     expect(api.importChapters).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: '确认导入' }))

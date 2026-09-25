@@ -187,7 +187,11 @@ class BookLoreWorkbench:
                     continue
                 if len(numbers) < 3:
                     continue
-                missing = [n for n in numbers if n not in known]
+                # 「新章节」只算比库里最新一章更靠后的。早期章节由 GraphRAG 社区摘要覆盖，没有逐章笔记，
+                # 不能当成未入库（线上第 1–900 章就是这种情况，一键导入会重复收录并白耗向量调用）。
+                latest_known = max(known) if known else 0
+                missing = [n for n in numbers if n > latest_known]
+                earlier_gaps = [n for n in numbers if n <= latest_known and n not in known]
                 found.append({
                     "path": str(path),
                     "name": path.name,
@@ -198,6 +202,7 @@ class BookLoreWorkbench:
                     "latest_title": latest_title,
                     "new_chapters": len(missing),
                     "new_range": [min(missing), max(missing)] if missing else None,
+                    "earlier_without_notes": len(earlier_gaps),
                 })
         return found
 
@@ -314,9 +319,15 @@ class BookLoreWorkbench:
             raise BookLoreWriteError("no_chapters", "没有找到「第N章」开头的章节")
         known = await asyncio.to_thread(self.writer.chapter_numbers)
         wanted = set(int(n) for n in numbers) if numbers else None
+        # 从原文文件导入且没指定章号时，只取比库里最新一章更新的（与扫描结果一致）；
+        # 粘贴的文本是用户挑好的，库里没有的都导入。
+        latest_known = max(known) if known else 0
+        newer_only = bool(path) and wanted is None and not overwrite
         selected = [
             c for c in chapters
-            if (wanted is None or c["number"] in wanted) and (overwrite or c["number"] not in known)
+            if (wanted is None or c["number"] in wanted)
+            and (overwrite or c["number"] not in known)
+            and (not newer_only or c["number"] > latest_known)
         ]
         if len(selected) > MAX_IMPORT_CHAPTERS:
             raise BookLoreWriteError("too_many_chapters", f"一次最多导入 {MAX_IMPORT_CHAPTERS} 章，请分批")

@@ -192,7 +192,8 @@ function Sources({ overview, onChanged }: { overview: WorkbenchOverview; onChang
           <div key={source.path} className="flex flex-wrap items-center gap-2 rounded-md border p-3 text-sm">
             <span className="font-medium">{source.name}</span>
             <span className="text-xs text-muted-foreground">{number.format(source.chapters)} 章 · 最新 {source.latest_title} · {(source.size / 1024 / 1024).toFixed(1)} MB · 修改于 {when(source.modified_at)}</span>
-            {source.new_chapters ? <Badge>{source.new_chapters} 章未入库（第 {source.new_range?.[0]}–{source.new_range?.[1]} 章）</Badge> : <Badge variant="secondary">已全部入库</Badge>}
+            {source.new_chapters ? <Badge>{source.new_chapters} 章新章节（第 {source.new_range?.[0]}–{source.new_range?.[1]} 章）</Badge> : <Badge variant="secondary">没有新章节</Badge>}
+            {source.earlier_without_notes ? <span className="text-xs text-muted-foreground">另有 {number.format(source.earlier_without_notes)} 章早于库里最新章、没有逐章笔记（由 GraphRAG 社区摘要覆盖，不导入）</span> : null}
             {source.new_chapters ? (
               <div className="ml-auto flex items-center gap-2">
                 {confirming === source.path ? (
