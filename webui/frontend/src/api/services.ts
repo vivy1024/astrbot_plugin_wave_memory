@@ -36,7 +36,14 @@ export interface ServicesPayload {
   services: ServiceDto[]
   services_available: boolean
   tools: ToolDto[]
-  tool_registry: { registered: number; built: number; build_errors: Record<string, string>; extension_errors: Record<string, string> } | null
+  tool_registry: {
+    registered: number
+    built: number
+    build_errors: Record<string, string>
+    extension_errors: Record<string, string>
+    /** 扩展文件 → 它登记的工具 */
+    extensions?: Record<string, string[]>
+  } | null
   channels: string[]
 }
 
@@ -46,6 +53,19 @@ export function getServices(signal?: AbortSignal) {
 
 export function controlService(name: string, action: 'start' | 'stop' | 'restart') {
   return fetchJson<{ ok: boolean; item: ServiceDto }>(`/api/services/${encodeURIComponent(name)}/${action}`, { method: 'POST' })
+}
+
+export interface ExtensionReloadResult {
+  ok: boolean
+  loaded: string[]
+  errors: Record<string, string>
+  tools: { removed: string[]; added: string[] }
+  channels: { removed: string[]; added: string[] }
+}
+
+/** 重新加载 <plugin_data>/extensions/*.py，扩展的工具与通道立即替换，不重启 AstrBot。 */
+export function reloadExtensions() {
+  return fetchJson<ExtensionReloadResult>('/api/extensions/reload', { method: 'POST' })
 }
 
 export function setToolEnabled(name: string, enabled: boolean) {

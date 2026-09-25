@@ -182,6 +182,7 @@ class StartupMixin:
         from ..webui.container import get_container
 
         get_container().tool_registry = self.tool_registry
+        get_container().extension_reloader = self.reload_extensions
 
         if llm_tools:
             self.context.add_llm_tools(*llm_tools)
@@ -682,6 +683,50 @@ class StartupMixin:
             logger.debug(f"[WaveMemory] db close error: {e}")
 
         logger.info("[WaveMemory] Shutdown complete")
+
+    def reload_extensions(self) -> dict:
+        """重新加载 ``<plugin_data>/extensions/*.py``，不重启 AstrBot。
+
+        先卸下扩展登记的工具（同时从 AstrBot 的工具列表撤下）与通道，重新执行扩展文件，
+        再只实例化扩展的部分；内置工具与通道、9876 的工具开关和外部通道停用状态都不动。
+        """
+        tools = getattr(self, "tool_registry", None)
+        if tools is None:
+            raise RuntimeError("工具注册表未就绪")
+        channels = self._channel_registry()
+        removed_tools = tools.unload_extensions()
+        manager = self.context.get_llm_tool_manager() if hasattr(self.context, "get_llm_tool_manager") else None
+        for name in removed_tools:
+            try:
+                if manager is not None:
+                    manager.remove_func(name)
+            except Exception as exc:
+                logger.debug(f"[WaveMemory] 撤下扩展工具 {name} 失败: {exc}")
+        removed_channels = channels.unload_extensions()
+        loaded = tools.load_extensions(
+            os.path.join(self.data_dir, "extensions"),
+            extra_registries={"channel_registry": channels},
+        )
+        instances = tools.build_extensions()
+        if instances:
+            self.context.add_llm_tools(*instances)
+        added_channels: list[str] = []
+        if getattr(self, "injection_trace_store", None) is not None:
+            # 注入编排已就绪才实例化扩展通道（与启动时一致）
+            added_channels = channels.build_extensions(self)
+            self.injection_shadow_channels = channels.instances()
+            from ..webui.container import get_container
+
+            get_container().injection_channels = list(self.injection_shadow_channels)
+        status = tools.status()
+        result = {
+            "loaded": loaded,
+            "errors": status.get("extension_errors", {}),
+            "tools": {"removed": removed_tools, "added": [str(getattr(t, "name", "")) for t in instances]},
+            "channels": {"removed": removed_channels, "added": added_channels},
+        }
+        logger.info(f"[WaveMemory] 扩展已重载: {result}")
+        return result
 
     async def _init_epa(self):
         """EPA 初始化（在线程池中执行，避免阻塞事件循环）。"""

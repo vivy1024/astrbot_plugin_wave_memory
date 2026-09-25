@@ -106,6 +106,15 @@ class FakeContext:
     def add_llm_tools(self, *tools):
         self.tools.extend(tools)
 
+    def get_llm_tool_manager(self):
+        def remove_func(name):
+            for i, tool in enumerate(self.tools):
+                if tool.name == name:
+                    self.tools.pop(i)
+                    break
+
+        return SimpleNamespace(remove_func=remove_func)
+
     def get_provider_by_id(self, _id):
         return None
 
@@ -135,6 +144,56 @@ def check(label, ok, detail=""):
     print(f"[{'OK' if ok else 'FAIL'}] {label} {detail}")
     if not ok:
         raise SystemExit(1)
+
+
+EXTENSION = """
+from astrbot_plugin_wave_memory.services.tool_registry import ToolSpec
+from astrbot_plugin_wave_memory.services.injection.channel_registry import ChannelSpec
+from astrbot_plugin_wave_memory.services.config.channel_config import ChannelConfig
+from astrbot_plugin_wave_memory.services.injection.channel_base import InjectionResult
+
+
+class Tool:
+    name = "boot_ext_tool"
+    description = "boot check extension"
+    parameters = {"type": "object", "properties": {}}
+
+    async def call(self, context, **kwargs):
+        return "VERSION"
+
+
+class Channel:
+    name = "boot_ext_channel"
+
+    async def build(self, ctx):
+        return InjectionResult.empty(self.name, reason="boot check")
+
+
+def register(tools, channel_registry=None, **_):
+    tools.register(ToolSpec("boot_ext_tool", lambda deps: Tool()))
+    channel_registry.register(ChannelSpec(
+        "boot_ext_channel", lambda deps, built: Channel(),
+        default_config=ChannelConfig(name="boot_ext_channel", enabled=True, priority=90),
+    ))
+"""
+
+
+async def _check_extension_reload(plugin, ctx, loop, scope):
+    ext_dir = os.path.join(plugin.data_dir, "extensions")
+    os.makedirs(ext_dir, exist_ok=True)
+    for version in ("v1", "v2"):
+        with open(os.path.join(ext_dir, "boot_ext.py"), "w", encoding="utf-8") as f:
+            f.write(EXTENSION.replace("VERSION", version))
+        result = await loop.run_in_executor(None, _http, "/api/extensions/reload", {})
+        called = await loop.run_in_executor(None, _http, "/api/runtime/v1/tools/boot_ext_tool", {"scope": scope, "arguments": {}})
+        host_copies = [t for t in ctx.tools if t.name == "boot_ext_tool"]
+        names = [getattr(ch, "name", "") for ch in plugin.injection_shadow_channels]
+        check(
+            f"extension reload {version}",
+            result.get("ok") and called.get("result") == version and len(host_copies) == 1
+            and names.count("boot_ext_channel") == 1 and len(names) == 13,
+            f"{result.get('tools')} {result.get('channels')} -> {called.get('result')}",
+        )
 
 
 async def run():
@@ -168,6 +227,7 @@ async def run():
         check("context/prepare", prep.get("ok") is True and "book_lore" not in prep["channels"], prep.get("trace_id", ""))
         tool = await loop.run_in_executor(None, _http, "/api/runtime/v1/tools/wave_memory_facts", {"scope": scope, "arguments": {"query": "尖塔"}})
         check("tool call", tool.get("ok") is True)
+        await _check_extension_reload(plugin, ctx, loop, scope)
         for path in ("/api/bots", "/api/config/inventory", "/api/services", "/api/health"):
             try:
                 await loop.run_in_executor(None, _http, path)

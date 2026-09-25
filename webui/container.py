@@ -67,6 +67,8 @@ class ServiceContainer:
         self.observation_ingestor: Any = None
         # 后台服务注册表（services.service_registry.ServiceRegistry）：9876「服务与扩展」页用。
         self.service_registry: Any = None
+        # 扩展热重载入口（WaveMemoryPlugin.reload_extensions）。
+        self.extension_reloader: Any = None
 
         # ─── 认证 ───
         self.password: str = ""

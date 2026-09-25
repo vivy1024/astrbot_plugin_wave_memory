@@ -38,6 +38,9 @@ class ChannelRegistry:
         self._instances: dict[str, Any] = {}
         self._disabled_external: set[str] = set()
         self._build_errors: dict[str, str] = {}
+        # 通道名 → 来源（builtin 或扩展文件名），由 ToolRegistry.load_extensions 在加载期间设置
+        self._origins: dict[str, str] = {}
+        self._loading_origin: str | None = None
 
     def register(self, spec: ChannelSpec) -> None:
         if spec.name in self._specs:
@@ -45,6 +48,7 @@ class ChannelRegistry:
         if spec.name not in KNOWN_CHANNELS and spec.default_config is None:
             raise ChannelRegistryError(f"external channel {spec.name!r} needs a default_config")
         self._specs[spec.name] = spec
+        self._origins[spec.name] = self._loading_origin or "builtin"
 
     def register_many(self, specs: list[ChannelSpec]) -> None:
         for spec in specs:
@@ -67,6 +71,37 @@ class ChannelRegistry:
             built[spec.name] = channel
         self._instances = built
         return list(built.values())
+
+    def unload_extensions(self) -> list[str]:
+        """卸载扩展登记的通道（实例与登记都去掉）；停用状态按名字保留，重载后仍停用。"""
+        names = [name for name, origin in self._origins.items() if origin != "builtin"]
+        for name in names:
+            self._specs.pop(name, None)
+            self._instances.pop(name, None)
+            self._origins.pop(name, None)
+            self._build_errors.pop(name, None)
+        return names
+
+    def build_extensions(self, deps: Any) -> list[str]:
+        """只实例化扩展登记、尚未实例化的通道，接在已有通道后面。"""
+        added: list[str] = []
+        for name, spec in list(self._specs.items()):
+            if self._origins.get(name, "builtin") == "builtin" or name in self._instances:
+                continue
+            try:
+                channel = spec.factory(deps, dict(self._instances))
+            except Exception as exc:
+                self._build_errors[name] = f"{type(exc).__name__}: {exc}"
+                logger.warning("[WaveMemory] 注入通道 %s 构造失败: %s", name, exc)
+                continue
+            if channel is not None:
+                self._instances[name] = channel
+                added.append(name)
+        return added
+
+    def instances(self) -> list[Any]:
+        """全部已实例化的通道（含停用的外部通道，停用由配置层过滤），按登记顺序。"""
+        return list(self._instances.values())
 
     def channels(self) -> list[Any]:
         return [ch for name, ch in self._instances.items() if name not in self._disabled_external]

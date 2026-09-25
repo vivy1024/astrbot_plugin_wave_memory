@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
-import { PlayIcon, RefreshCwIcon, RotateCwIcon, SquareIcon } from 'lucide-react'
+import { PackageIcon, PlayIcon, RefreshCwIcon, RotateCwIcon, SquareIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { isRequestCancelled } from '@/api/client'
-import { controlService, getServices, setToolEnabled, type ServiceDto, type ServicesPayload } from '@/api/services'
+import { controlService, getServices, reloadExtensions, setToolEnabled, type ServiceDto, type ServicesPayload } from '@/api/services'
 import { QueryState } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -65,10 +65,30 @@ export function ServicesPage() {
     }
   }
 
+  async function reload() {
+    setBusy('extensions:reload')
+    try {
+      const result = await reloadExtensions()
+      const failed = Object.keys(result.errors)
+      const summary = `扩展 ${result.loaded.length} 个 · 工具 ${result.tools.added.length} · 通道 ${result.channels.added.length}`
+      if (failed.length) toast.error(`${summary}；加载失败：${failed.join('、')}`)
+      else toast.success(`已重新加载：${summary}`)
+      await load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const extensions = Object.entries(payload?.tool_registry?.extensions ?? {})
   const buildErrors = payload?.tool_registry ? { ...payload.tool_registry.build_errors, ...payload.tool_registry.extension_errors } : {}
   return (
     <div className="flex flex-col gap-4">
-      <div><Button type="button" variant="outline" onClick={() => void load()}><RefreshCwIcon className="size-4" />刷新</Button></div>
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" onClick={() => void load()}><RefreshCwIcon className="size-4" />刷新</Button>
+        <Button type="button" variant="outline" disabled={busy !== null} onClick={() => void reload()}><PackageIcon className="size-4" />重新加载扩展</Button>
+      </div>
       {Object.keys(buildErrors).length ? (
         <Alert variant="destructive">
           <AlertTitle>有工具或扩展没有加载成功</AlertTitle>
@@ -127,6 +147,17 @@ export function ServicesPage() {
                 </div>
               </div>
             ))}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>扩展</CardTitle>
+            <CardDescription>放在插件数据目录 <span className="font-mono">extensions/</span> 下的 .py 文件。改完点「重新加载扩展」，扩展的工具与通道立即替换；内置工具、工具开关与通道停用状态不受影响。</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-1 text-sm">
+            {extensions.length ? extensions.map(([file, tools]) => (
+              <div key={file} className="flex flex-wrap items-center gap-2"><span className="font-mono">{file}</span>{tools.map((tool) => <Badge key={tool} variant="outline" className="font-mono">{tool}</Badge>)}</div>
+            )) : <span className="text-muted-foreground">没有加载扩展</span>}
           </CardContent>
         </Card>
         <Card>

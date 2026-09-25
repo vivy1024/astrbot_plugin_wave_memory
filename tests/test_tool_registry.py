@@ -161,3 +161,63 @@ def test_extensions_register_tools(tmp_path):
     assert "broken.py" in registry.status()["extension_errors"]
     registry.build(None, capability_enabled=lambda c, d: True)
     assert asyncio.run(registry.invoke("hello_tool", scope=_scope())) == "hello"
+
+
+def _write_ext(ext, reply, *, channel=True):
+    body = (
+        "from services.tool_registry import ToolSpec\n"
+        "from services.injection.channel_registry import ChannelSpec\n"
+        "from services.config.channel_config import ChannelConfig\n"
+        "class T:\n"
+        "    name = 'hello_tool'\n"
+        "    description = 'hi'\n"
+        "    parameters = {'type': 'object', 'properties': {}}\n"
+        "    async def call(self, context, **kw):\n"
+        f"        return {reply!r}\n"
+        "class C:\n"
+        "    name = 'ext_channel'\n"
+        "def register(tools, channel_registry=None, **registries):\n"
+        "    tools.register(ToolSpec('hello_tool', lambda d: T()))\n"
+    )
+    if channel:
+        body += "    channel_registry.register(ChannelSpec('ext_channel', lambda d, b: C(), default_config=ChannelConfig(name='ext_channel', enabled=True, priority=50)))\n"
+    (ext / "hello.py").write_text(body, encoding="utf-8")
+
+
+def test_extension_hot_reload_replaces_only_extension_tools_and_channels(tmp_path):
+    from services.injection.channel_registry import ChannelRegistry, ChannelSpec
+
+    ext = tmp_path / "extensions"
+    ext.mkdir()
+    _write_ext(ext, "v1")
+    tools = ToolRegistry()
+    tools.register(ToolSpec("builtin_tool", lambda d: SimpleNamespace(name="builtin_tool")))
+    channels = ChannelRegistry()
+    channels.register(ChannelSpec("safety", lambda d, b: SimpleNamespace(name="safety")))
+    tools.load_extensions(ext, extra_registries={"channel_registry": channels})
+    tools.build(None, capability_enabled=lambda c, d: True)
+    channels.build(None)
+    builtin_instance = tools.get("builtin_tool").instance
+    tools.set_enabled("builtin_tool", False)
+    channels.set_external_enabled("ext_channel", False)
+    assert tools.extensions() == {"hello.py": ["hello_tool"]}
+    assert asyncio.run(tools.invoke("hello_tool", scope=_scope())) == "v1"
+
+    _write_ext(ext, "v2", channel=False)
+    assert tools.unload_extensions() == ["hello_tool"]
+    assert channels.unload_extensions() == ["ext_channel"]
+    tools.load_extensions(ext, extra_registries={"channel_registry": channels})
+    added = tools.build_extensions()
+    assert [t.name for t in added] == ["hello_tool"]
+    assert asyncio.run(tools.invoke("hello_tool", scope=_scope())) == "v2"
+    assert channels.build_extensions(None) == []
+    assert [c.name for c in channels.instances()] == ["safety"]
+    # 内置工具实例与 9876 开关不受影响
+    assert tools.get("builtin_tool").instance is builtin_instance and not tools.get("builtin_tool").enabled
+
+    _write_ext(ext, "v3")
+    tools.unload_extensions()
+    channels.unload_extensions()
+    tools.load_extensions(ext, extra_registries={"channel_registry": channels})
+    assert channels.build_extensions(None) == ["ext_channel"]
+    assert "ext_channel" not in [c.name for c in channels.channels()]  # 停用状态按名字保留

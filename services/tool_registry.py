@@ -80,6 +80,11 @@ class ToolRegistry:
         self._records: dict[str, ToolRecord] = {}
         self._build_errors: dict[str, str] = {}
         self._extension_errors: dict[str, str] = {}
+        # spec key → 来源（builtin 或扩展文件名）；扩展热重载只卸载扩展登记的工具
+        self._origins: dict[str, str] = {}
+        self._loading_origin: str | None = None
+        self._deps: Any = None
+        self._capability_enabled: Callable[[str, bool], bool] | None = None
 
     # ------------------------------------------------------------------ 登记
 
@@ -87,6 +92,7 @@ class ToolRegistry:
         if spec.key in self._specs:
             raise ToolRegistryError("duplicate_tool", f"tool spec {spec.key!r} already registered")
         self._specs[spec.key] = spec
+        self._origins[spec.key] = self._loading_origin or "builtin"
 
     def register_many(self, specs: Iterable[ToolSpec]) -> None:
         for spec in specs:
@@ -102,25 +108,33 @@ class ToolRegistry:
         """按能力开关实例化全部工具，返回可交给 AstrBot 的实例列表。"""
         self._records.clear()
         self._build_errors.clear()
+        self._deps = deps
+        self._capability_enabled = capability_enabled
         instances: list[Any] = []
         for spec in self._specs.values():
-            if not capability_enabled(spec.capability, spec.capability_default):
+            instances.extend(self._build_spec(spec))
+        return instances
+
+    def _build_spec(self, spec: ToolSpec) -> list[Any]:
+        capability_enabled = self._capability_enabled or (lambda _name, default: default)
+        if not capability_enabled(spec.capability, spec.capability_default):
+            return []
+        try:
+            produced = spec.factory(self._deps)
+        except Exception as exc:  # 单个工具构造失败不影响其他工具
+            self._build_errors[spec.key] = f"{type(exc).__name__}: {exc}"
+            logger.warning("[WaveMemory] 工具 %s 构造失败: %s", spec.key, exc)
+            return []
+        instances: list[Any] = []
+        for instance in produced if isinstance(produced, (list, tuple)) else [produced]:
+            if instance is None:
                 continue
-            try:
-                produced = spec.factory(deps)
-            except Exception as exc:  # 单个工具构造失败不影响其他工具
-                self._build_errors[spec.key] = f"{type(exc).__name__}: {exc}"
-                logger.warning("[WaveMemory] 工具 %s 构造失败: %s", spec.key, exc)
+            name = str(getattr(instance, "name", "") or spec.key)
+            if name in self._records:
+                self._build_errors[spec.key] = f"duplicate tool name {name!r}"
                 continue
-            for instance in produced if isinstance(produced, (list, tuple)) else [produced]:
-                if instance is None:
-                    continue
-                name = str(getattr(instance, "name", "") or spec.key)
-                if name in self._records:
-                    self._build_errors[spec.key] = f"duplicate tool name {name!r}"
-                    continue
-                self._records[name] = ToolRecord(spec=spec, instance=instance, name=name)
-                instances.append(instance)
+            self._records[name] = ToolRecord(spec=spec, instance=instance, name=name)
+            instances.append(instance)
         return instances
 
     def records(self) -> list[ToolRecord]:
@@ -211,36 +225,81 @@ class ToolRegistry:
             "built": len(self._records),
             "build_errors": dict(self._build_errors),
             "extension_errors": dict(self._extension_errors),
+            "extensions": self.extensions(),
         }
+
+    def extensions(self) -> dict[str, list[str]]:
+        """扩展文件 → 它登记的工具 key。"""
+        out: dict[str, list[str]] = {}
+        for key, origin in self._origins.items():
+            if origin != "builtin":
+                out.setdefault(origin, []).append(key)
+        return out
 
     # ------------------------------------------------------------------ 扩展
 
+    def unload_extensions(self) -> list[str]:
+        """卸载扩展登记的工具，返回已实例化、需要从宿主撤下的工具名。内置工具不动。"""
+        keys = {key for key, origin in self._origins.items() if origin != "builtin"}
+        names = [name for name, record in self._records.items() if record.spec.key in keys]
+        for name in names:
+            self._records.pop(name, None)
+        for key in keys:
+            self._specs.pop(key, None)
+            self._origins.pop(key, None)
+            self._build_errors.pop(key, None)
+        self._extension_errors.clear()
+        return names
+
+    def build_extensions(self) -> list[Any]:
+        """只实例化扩展登记的工具（热重载后调用；沿用首次 build 的依赖与能力开关）。"""
+        instances: list[Any] = []
+        for key, spec in list(self._specs.items()):
+            if self._origins.get(key, "builtin") != "builtin":
+                instances.extend(self._build_spec(spec))
+        return instances
+
     def load_extensions(self, directory: str | Path, *, extra_registries: Mapping[str, Any] | None = None) -> list[str]:
-        """加载 ``directory/*.py`` 中的 ``register(tool_registry, **registries)``。"""
+        """加载 ``directory/*.py`` 中的 ``register(tool_registry, **registries)``。
+
+        每次都重新执行模块文件（不进 ``sys.modules``），所以热重载能拿到改过的代码。
+        """
         loaded: list[str] = []
         root = Path(directory)
         if not root.is_dir():
             return loaded
+        registries = dict(extra_registries or {})
         for path in sorted(root.glob("*.py")):
             if path.name.startswith("_"):
                 continue
+            self._set_loading_origin(path.name, registries)
             try:
                 spec = importlib.util.spec_from_file_location(f"wave_memory_ext_{path.stem}", path)
                 if spec is None or spec.loader is None:
                     raise ImportError("cannot load module spec")
                 module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
+                # 直接从源码编译，不走 __pycache__：pyc 按秒记源文件修改时间，
+                # 同一秒内改过的扩展会读到旧字节码，热重载拿不到新代码。
+                exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), module.__dict__)
                 register = getattr(module, "register", None)
                 if not callable(register):
                     raise AttributeError("extension has no register(tool_registry, ...) function")
-                register(self, **dict(extra_registries or {}))
+                register(self, **registries)
                 loaded.append(path.name)
             except Exception as exc:
                 self._extension_errors[path.name] = f"{type(exc).__name__}: {exc}"
                 logger.warning("[WaveMemory] 扩展 %s 加载失败: %s", path.name, exc)
+            finally:
+                self._set_loading_origin(None, registries)
         if loaded:
             logger.info("[WaveMemory] 已加载扩展: %s", ", ".join(loaded))
         return loaded
+
+    def _set_loading_origin(self, origin: str | None, registries: Mapping[str, Any]) -> None:
+        self._loading_origin = origin
+        for other in registries.values():
+            if hasattr(other, "_loading_origin"):
+                other._loading_origin = origin
 
 
 __all__ = ["ToolRecord", "ToolRegistry", "ToolRegistryError", "ToolSpec", "runtime_tool_context"]

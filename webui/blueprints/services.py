@@ -93,4 +93,18 @@ async def set_tool_enabled(name: str):
     return jsonify({"ok": True, "name": record.name, "enabled": record.enabled})
 
 
+@services_bp.route("/extensions/reload", methods=["POST"])
+@require_auth
+async def reload_extensions():
+    """重新加载 <plugin_data>/extensions/*.py，扩展的工具与通道立即替换，不重启 AstrBot。"""
+    reloader = getattr(_container(), "extension_reloader", None)
+    if reloader is None:
+        return jsonify(error_payload("reloader_unavailable", "扩展加载器未就绪", retryable=True)), 503
+    try:
+        result = reloader()
+    except Exception as exc:
+        return jsonify(error_payload("extension_reload_failed", f"重载失败: {exc}")), 500
+    return jsonify({"ok": True, **result})
+
+
 __all__ = ["services_bp"]
