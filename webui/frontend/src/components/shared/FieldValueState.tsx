@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { Field } from '@/components/ui/field'
 import { cn } from '@/lib/utils'
 
-export type ApplyMode = 'hot' | 'restart' | 'next-run' | 'unknown'
+export type ApplyMode = 'hot' | 'restart' | 'next-run' | 'service' | 'unknown'
 
 export interface FieldValueStateProps {
   label: string
@@ -34,6 +34,8 @@ const APPLY_LABELS: Record<ApplyMode, string> = {
   // next_run 表示「不需要重启，保存后由运行时下次读取路径生效」。
   // 原文案“下次生效”容易被读成“下次重启才生效”，与事实不符。
   'next-run': '保存即生效',
+  // 保存后只重建对应的后台服务（做梦、记忆淘汰等），不重启 AstrBot。
+  service: '重建服务生效',
   unknown: '未知生效',
 }
 
@@ -42,6 +44,7 @@ const APPLY_PENDING_HINTS: Record<ApplyMode, string> = {
   hot: '需要应用热参数',
   restart: '需要重启 AstrBot',
   'next-run': '会在运行时下次读取配置时生效',
+  service: '保存后会重建对应的后台服务',
   unknown: '需要确认生效方式',
 }
 

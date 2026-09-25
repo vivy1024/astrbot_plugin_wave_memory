@@ -69,3 +69,65 @@ def test_missing_and_core_services_are_refused():
         assert registry.describe("eviction")["created"] is False
 
     asyncio.run(scenario())
+
+
+def test_reconfigure_rebuilds_creates_and_disables_by_config():
+    async def scenario():
+        supervisor = TaskSupervisor()
+        holder = {"instance": None}
+        config = {"enabled": True, "interval": 6}
+        built = []
+
+        def factory():
+            holder["instance"] = None
+            if config["enabled"]:
+                holder["instance"] = _LoopService()
+                built.append(config["interval"])
+            return holder["instance"]
+
+        registry = ServiceRegistry(supervisor)
+        registry.register(ServiceSpec(
+            "dream", "做梦", lambda: holder["instance"], owner="dream",
+            factory=factory, config_keys=("Lifecycle_Settings.enable_dream", "Eviction_Settings."),
+        ))
+        registry.register(ServiceSpec("writer", "写入器", lambda: None, owner="w"))
+        assert registry.affected_by(["Lifecycle_Settings.enable_dream", "Other.x"]) == {"dream": ["Lifecycle_Settings.enable_dream"]}
+        assert registry.affected_by(["Eviction_Settings.interval_hours"]) == {"dream": ["Eviction_Settings.interval_hours"]}
+        assert registry.affected_by(["Eviction_SettingsX.a"]) == {}
+        assert registry.rebuildable() == {"dream": ("Lifecycle_Settings.enable_dream", "Eviction_Settings.")}
+
+        created = await registry.reconfigure("dream")
+        assert created["action"] == "created" and created["running"] is True
+        first = holder["instance"]
+        config["interval"] = 3
+        rebuilt = await registry.reconfigure("dream")
+        assert rebuilt["action"] == "rebuilt" and first.stops == 1 and holder["instance"] is not first
+        assert built == [6, 3]
+        config["enabled"] = False
+        second = holder["instance"]
+        disabled = await registry.reconfigure("dream")
+        assert disabled["action"] == "disabled" and disabled["created"] is False and second.stops == 1
+        with pytest.raises(ServiceRegistryError) as err:
+            await registry.reconfigure("writer")
+        assert err.value.code == "service_not_rebuildable"
+        await asyncio.sleep(0)
+
+    asyncio.run(scenario())
+
+
+def test_settings_state_marks_service_fields():
+    from services.config.settings_state import build_settings_schema
+
+    schema = {"Lifecycle_Settings": {"type": "object", "items": {
+        "enable_dream": {"type": "bool", "default": True},
+        "mood_duration_hours": {"type": "string", "default": "2.0"},
+        "x": {"type": "bool", "default": True, "restart_required": True},
+    }}}
+    payload = build_settings_schema(
+        schema, {"Lifecycle_Settings": {"enable_dream": True, "mood_duration_hours": "2.0", "x": True}}, {},
+        service_for=lambda path: "dream" if path in {"Lifecycle_Settings.enable_dream", "Lifecycle_Settings.x"} else None,
+    )
+    items = {item["key"]: item for item in payload["groups"][0]["items"]}
+    assert (items["enable_dream"]["apply_mode"], items["enable_dream"]["service"]) == ("service", "dream")
+    assert (items["mood_duration_hours"]["apply_mode"], items["mood_duration_hours"]["service"]) == ("next_run", None)
+    assert items["x"]["apply_mode"] == "restart"  # 标了需重启的仍需重启

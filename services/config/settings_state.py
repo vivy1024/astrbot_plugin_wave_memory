@@ -48,8 +48,12 @@ def build_field_state(
     hot_key: str | None = None,
     hot_config: Any = None,
     effective_since: Any = None,
+    service: str | None = None,
 ) -> dict[str, Any]:
-    """构造单字段状态，并保留缺键/None/False 的区别。"""
+    """构造单字段状态，并保留缺键/None/False 的区别。
+
+    ``service``：保存后只重建这个后台服务即生效（ServiceSpec.factory），生效方式记为 ``service``。
+    """
     default = meta.get("default")
     saved_present, saved_raw = _raw(saved_config, group_key, item_key)
     effective_present, effective_raw = _raw(effective_config, group_key, item_key)
@@ -66,6 +70,8 @@ def build_field_state(
         if callable(getter):
             effective_value = getter(hot_key, effective_value)
             effective_source = "runtime_hot_config"
+    elif service and not restart_required:
+        apply_mode = "service"
 
     error = None
     if meta.get("type") == "bool" and (not saved_present or saved_raw is None):
@@ -90,6 +96,7 @@ def build_field_state(
         "effective_since": effective_since,
         "restart_required": restart_required,
         "restart_requirement": "required" if restart_required else "not_required",
+        "service": service if apply_mode == "service" else None,
         "error": error,
     }
 
@@ -102,8 +109,12 @@ def build_settings_schema(
     hot_key_map: Mapping[tuple[str, str], str] | None = None,
     hot_config: Any = None,
     effective_since_by_key: Mapping[str, Any] | None = None,
+    service_for: Any = None,
 ) -> dict[str, Any]:
-    """将 AstrBot schema 转换成 Settings 页可编辑且可解释的 DTO。"""
+    """将 AstrBot schema 转换成 Settings 页可编辑且可解释的 DTO。
+
+    ``service_for(path)`` 返回保存后会被重建的后台服务名（没有则 None）。
+    """
     hot_key_map = hot_key_map or {}
     effective_since_by_key = effective_since_by_key or {}
     groups: list[dict[str, Any]] = []
@@ -135,6 +146,7 @@ def build_settings_schema(
                     hot_key=hot_key,
                     hot_config=hot_config,
                     effective_since=effective_since_by_key.get(hot_key or f"{key}.{sub_key}"),
+                    service=service_for(f"{key}.{sub_key}") if callable(service_for) else None,
                 )
                 item = {
                     "key": sub_key,

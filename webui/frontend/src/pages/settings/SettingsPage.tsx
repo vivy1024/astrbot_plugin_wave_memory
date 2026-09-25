@@ -368,12 +368,12 @@ export function SettingsPage() {
         : []
       if (!matchesSearch(meta, group.key, group, allItems, term)) return null
       if (searching) return group
-      const mode = activeTab === 'restart' ? 'restart' : activeTab === 'static' ? 'next_run' : null
+      const modes = activeTab === 'restart' ? ['restart'] : activeTab === 'static' ? ['next_run', 'service'] : null
       if (group.kind === 'object') {
-        const items = allItems.filter((item) => !mode || item.apply_mode === mode)
+        const items = allItems.filter((item) => !modes || modes.includes(item.apply_mode ?? ''))
         return items.length ? { ...group, items } : null
       }
-      return !mode || group.apply_mode === mode ? group : null
+      return !modes || modes.includes(group.apply_mode ?? '') ? group : null
     }).filter((group): group is ConfigGroup => group !== null).map((group) => {
       const meta = groupMeta(group.key)
       const itemCount = group.kind === 'object' ? (group.items?.length ?? 0) : 1

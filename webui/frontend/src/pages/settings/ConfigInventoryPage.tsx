@@ -18,7 +18,7 @@ const LAYER_LABELS: Record<ConfigLayer, string> = {
   bot: 'Bot Profile',
   override: '9876 覆盖',
 }
-const APPLY_LABELS: Record<string, string> = { hot: '立即生效', next_run: '下次运行', restart: '需重启', unknown: '未知' }
+const APPLY_LABELS: Record<string, string> = { hot: '立即生效', next_run: '下次运行', service: '重建服务', restart: '需重启', unknown: '未知' }
 
 function show(value: unknown): string {
   if (value === null || value === undefined) return '—'

@@ -196,6 +196,25 @@ async def _check_extension_reload(plugin, ctx, loop, scope):
         )
 
 
+async def _check_service_reconfigure(plugin, loop):
+    old_dream = plugin.dream_service
+    saved = await loop.run_in_executor(None, _http, "/api/config/full", {"Lifecycle_Settings": {"dream_interval_hours": "3.0"}})
+    service = (saved.get("apply_modes") or {}).get("service", {})
+    check(
+        "static config rebuilds dream only",
+        saved.get("ok") and service.get("dream", {}).get("action") == "rebuilt"
+        and plugin.dream_service is not old_dream and plugin.dream_interval_hours == 3.0
+        and list(service) == ["dream"],
+        saved.get("message", ""),
+    )
+    saved = await loop.run_in_executor(None, _http, "/api/config/full", {"Eviction_Settings": {"enabled": False}})
+    service = (saved.get("apply_modes") or {}).get("service", {})
+    check("static config disables eviction", service.get("eviction", {}).get("action") == "disabled" and plugin.eviction_service is None)
+    saved = await loop.run_in_executor(None, _http, "/api/config/full", {"Eviction_Settings": {"enabled": True}})
+    service = (saved.get("apply_modes") or {}).get("service", {})
+    check("static config re-creates eviction", service.get("eviction", {}).get("action") == "created" and plugin.eviction_service is not None)
+
+
 async def run():
     main = importlib.import_module("astrbot_plugin_wave_memory.main")
     from astrbot_plugin_wave_memory.domain.bot_profile import BotProfile
@@ -228,6 +247,7 @@ async def run():
         tool = await loop.run_in_executor(None, _http, "/api/runtime/v1/tools/wave_memory_facts", {"scope": scope, "arguments": {"query": "尖塔"}})
         check("tool call", tool.get("ok") is True)
         await _check_extension_reload(plugin, ctx, loop, scope)
+        await _check_service_reconfigure(plugin, loop)
         for path in ("/api/bots", "/api/config/inventory", "/api/services", "/api/health"):
             try:
                 await loop.run_in_executor(None, _http, path)

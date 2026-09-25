@@ -7,7 +7,8 @@ export interface ProviderPayload {
   [key: string]: unknown
 }
 
-export type ConfigApplyMode = 'hot' | 'restart' | 'next_run' | 'unknown'
+/** service：保存后只重建对应后台服务即生效（做梦、记忆淘汰等），不用重启 AstrBot */
+export type ConfigApplyMode = 'hot' | 'restart' | 'next_run' | 'service' | 'unknown'
 
 export interface ConfigValueState {
   min?: number
@@ -104,7 +105,12 @@ export interface FullConfigResponse {
   error?: string
   restart_required?: boolean
   restart_fields?: string[]
-  apply_modes?: { hot: string[]; restart: string[]; next_run: string[] }
+  apply_modes?: {
+    hot: string[]
+    restart: string[]
+    next_run: string[]
+    service?: Record<string, { action: 'rebuilt' | 'created' | 'disabled' | 'failed' | string; fields: string[]; error?: string }>
+  }
   effective_since?: Record<string, string | number | null>
   schema?: ConfigSchemaPayload
 }

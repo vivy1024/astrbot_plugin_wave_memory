@@ -285,19 +285,8 @@ class StartupMixin:
             self.consolidation = None
 
         # 记忆淘汰服务
-        eviction_cfg = self.config.get("Eviction_Settings", {})
-        if eviction_cfg.get("enabled", True):
-            self.eviction_service = EvictionService(
-                db=self.db,
-                memory_index=self.memory_index,
-                noise_ttl_days=int(eviction_cfg.get("noise_ttl_days", 7)),
-                chat_stale_days=self.memory_index_policy.chat_hot_days,
-                eviction_interval_hours=float(eviction_cfg.get("interval_hours", 6.0)),
-                write_gateway=self.write_gateway,
-            )
+        if self._create_eviction_service() is not None:
             self.eviction_service.start(self.task_supervisor)
-        else:
-            self.eviction_service = None
 
         # 黑话系统 (US-4.1~4.5)：memory_only/compat_only 强制关闭，避免黑话学习/注入越过纯记忆边界。
         jargon_cfg = self.config.get("Jargon_Settings", {})
@@ -379,19 +368,8 @@ class StartupMixin:
             self.meta_thinking = None
 
         # 启动做梦系统
-        if self.enable_dream:
-            self.dream_service = DreamService(
-                db=self.db,
-                memory_index=self.memory_index,
-                dream_interval_hours=self.dream_interval_hours,
-                recent_seeds=self.dream_recent_seeds,
-                recent_k=self.dream_recent_k,
-                mid_seeds=self.dream_mid_seeds,
-                mid_k=self.dream_mid_k,
-            )
+        if self._create_dream_service() is not None:
             self.dream_service.start(self.task_supervisor)
-        else:
-            self.dream_service = None
 
         # 自主学习系统（对有经历通道的 bot 生效）
         # 找到没有 exclude_sources 的 bot（即经历所有者）
@@ -727,6 +705,45 @@ class StartupMixin:
         }
         logger.info(f"[WaveMemory] 扩展已重载: {result}")
         return result
+
+    # 可按配置重建的后台服务：启动时与 9876 保存相关静态配置后共用（ServiceSpec.factory），
+    # 每次都从当前 self.config 读参数，只创建不启动。
+    def _create_eviction_service(self):
+        eviction_cfg = self.config.get("Eviction_Settings", {}) or {}
+        self.eviction_service = None
+        if _parse_bool_config_value(eviction_cfg.get("enabled"), True):
+            self.eviction_service = EvictionService(
+                db=self.db,
+                memory_index=self.memory_index,
+                noise_ttl_days=int(eviction_cfg.get("noise_ttl_days", 7)),
+                chat_stale_days=self.memory_index_policy.chat_hot_days,
+                eviction_interval_hours=float(eviction_cfg.get("interval_hours", 6.0)),
+                write_gateway=self.write_gateway,
+            )
+        return self.eviction_service
+
+    def _create_dream_service(self):
+        lifecycle_cfg = self.config.get("Lifecycle_Settings", {}) or {}
+        self.enable_dream = runtime_capability_enabled(
+            self.runtime_mode, "dream", _parse_bool_config_value(lifecycle_cfg.get("enable_dream"), True)
+        )
+        self.dream_interval_hours = float(lifecycle_cfg.get("dream_interval_hours", "6.0"))
+        self.dream_recent_seeds = int(lifecycle_cfg.get("dream_recent_seeds", 3))
+        self.dream_recent_k = int(lifecycle_cfg.get("dream_recent_k", 5))
+        self.dream_mid_seeds = int(lifecycle_cfg.get("dream_mid_seeds", 2))
+        self.dream_mid_k = int(lifecycle_cfg.get("dream_mid_k", 3))
+        self.dream_service = None
+        if self.enable_dream:
+            self.dream_service = DreamService(
+                db=self.db,
+                memory_index=self.memory_index,
+                dream_interval_hours=self.dream_interval_hours,
+                recent_seeds=self.dream_recent_seeds,
+                recent_k=self.dream_recent_k,
+                mid_seeds=self.dream_mid_seeds,
+                mid_k=self.dream_mid_k,
+            )
+        return self.dream_service
 
     async def _init_epa(self):
         """EPA 初始化（在线程池中执行，避免阻塞事件循环）。"""

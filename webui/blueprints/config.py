@@ -70,7 +70,41 @@ def _build_settings_payload(container, schema: Mapping | None = None) -> dict:
         hot_key_map=_CONFIG_TO_HOT_MAP,
         hot_config=HotConfig(),
         effective_since_by_key=_settings_effective_since(container),
+        service_for=_service_for(container),
     )
+
+
+def _service_for(container):
+    """配置路径 → 保存后会被重建的后台服务名（服务注册表未就绪时返回 None）。"""
+    services = getattr(container, "service_registry", None)
+    rebuildable = getattr(services, "rebuildable", None)
+    if not callable(rebuildable):
+        return None
+    mapping = rebuildable()
+
+    def lookup(path: str):
+        for name, keys in mapping.items():
+            if any(path == key or (key.endswith(".") and path.startswith(key)) for key in keys):
+                return name
+        return None
+
+    return lookup
+
+
+async def _reconfigure_services(container, changed_fields: list[str]) -> dict[str, dict]:
+    """只重建受这次改动影响、且支持按配置重建的后台服务。"""
+    services = getattr(container, "service_registry", None)
+    affected_by = getattr(services, "affected_by", None)
+    if not callable(affected_by):
+        return {}
+    results: dict[str, dict] = {}
+    for name, paths in affected_by(changed_fields).items():
+        try:
+            item = await services.reconfigure(name)
+            results[name] = {"action": item.get("action"), "fields": paths, "title": item.get("title") or name}
+        except Exception as exc:
+            results[name] = {"action": "failed", "fields": paths, "error": str(exc)}
+    return results
 
 
 def _restore_config(cfg, snapshot: Mapping) -> None:
@@ -519,8 +553,24 @@ async def update_config_full():
         for key in hot_updates:
             effective_since[key] = now
 
+    # 做梦、记忆淘汰等服务：相关静态配置改了就只重建这个服务，不用重启 AstrBot
+    service_results = await _reconfigure_services(c, [path for path in changed_fields if path not in restart_fields])
+    service_fields = {
+        path for result in service_results.values() if result["action"] != "failed" for path in result["fields"]
+    }
+    if service_fields:
+        snapshot = getattr(c, "settings_effective_config_snapshot", None)
+        now = time.time()
+        for path in service_fields:
+            section, _, field = path.partition(".")
+            if isinstance(snapshot, dict) and field:
+                group = snapshot.setdefault(section, {})
+                if isinstance(group, dict):
+                    group[field] = copy.deepcopy((cfg.get(section) or {}).get(field))
+            effective_since[path] = now
+
     restart_required = bool(restart_fields)
-    pending_fields = [path for path in changed_fields if path not in restart_fields and path not in {
+    pending_fields = [path for path in changed_fields if path not in restart_fields and path not in service_fields and path not in {
         f"{section}.{field}" for hot_key, (section, field) in _HOT_TO_CONFIG_MAP.items() if hot_key in hot_updates
     }]
     message = "配置已保存。"
@@ -530,6 +580,11 @@ async def update_config_full():
         message += " 其余非热字段将在下次运行路径读取时生效，当前未冒充已生效。"
     if hot_updates:
         message += " 已完成热配置回读。"
+    if service_results:
+        labels = {"rebuilt": "已按新配置重建", "created": "已创建并启动", "disabled": "已按配置停止", "failed": "重建失败"}
+        message += " " + "；".join(
+            f"{r.get('title') or name}{labels.get(r['action'], r['action'])}" for name, r in service_results.items()
+        ) + "。"
 
     return jsonify({
         "ok": True,
@@ -543,6 +598,7 @@ async def update_config_full():
             "hot": list(hot_updates),
             "restart": restart_fields,
             "next_run": pending_fields,
+            "service": service_results,
         },
         "effective_since": dict(effective_since),
         "message": message,

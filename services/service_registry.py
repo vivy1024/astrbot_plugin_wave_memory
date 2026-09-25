@@ -31,6 +31,14 @@ class ServiceSpec:
     description: str = ""
     # 核心服务（写入器等）不允许从页面停掉
     stoppable: bool = True
+    # 按当前静态配置重新创建实例（赋给插件属性并返回；配置里关着时返回 None）。
+    # 有它的服务在 9876 保存相关静态配置后只重建这一个服务，不用重启 AstrBot。
+    factory: Callable[[], Any] | None = None
+    # 影响这个服务的静态配置路径（``分组.字段``；以 ``.`` 结尾表示整个分组）
+    config_keys: tuple[str, ...] = ()
+
+    def affected_by(self, path: str) -> bool:
+        return any(path == key or (key.endswith(".") and path.startswith(key)) for key in self.config_keys)
 
 
 class _GenerationSupervisor:
@@ -76,7 +84,8 @@ class ServiceRegistry:
         if instance is None:
             raise ServiceRegistryError(
                 "service_not_created",
-                f"{spec.title} 没有创建（静态配置里关着，或依赖不满足）；需要在 AstrBot 配置里打开后重启一次",
+                f"{spec.title} 没有创建（静态配置里关着，或依赖不满足）；"
+                + ("在 9876 设置页打开后保存即可创建" if spec.factory is not None else "需要在 AstrBot 配置里打开后重启一次"),
             )
         return instance
 
@@ -132,6 +141,55 @@ class ServiceRegistry:
     async def restart(self, name: str) -> dict[str, Any]:
         await self.stop(name)
         return await self.start(name)
+
+    def affected_by(self, changed_fields: list[str] | tuple[str, ...]) -> dict[str, list[str]]:
+        """可重建的服务 → 本次改动里影响它的配置路径。"""
+        out: dict[str, list[str]] = {}
+        for spec in self._specs.values():
+            if spec.factory is None:
+                continue
+            hits = [path for path in changed_fields if spec.affected_by(path)]
+            if hits:
+                out[spec.name] = hits
+        return out
+
+    def rebuildable(self) -> dict[str, tuple[str, ...]]:
+        return {spec.name: spec.config_keys for spec in self._specs.values() if spec.factory is not None}
+
+    async def reconfigure(self, name: str) -> dict[str, Any]:
+        """按当前静态配置重建服务：停掉旧实例 → 工厂建新实例 → 启动。配置关掉时只停不建。"""
+        spec = self._spec(name)
+        if spec.factory is None:
+            raise ServiceRegistryError("service_not_rebuildable", f"{spec.title} 不支持按配置重建，需要重启 AstrBot")
+        old = spec.get()
+        if old is not None and self._running(old) is not False:
+            try:
+                result = old.stop()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:
+                self._record(name, "reconfigure", False, f"stop: {exc}")
+                raise
+        try:
+            instance = spec.factory()
+        except Exception as exc:
+            self._record(name, "reconfigure", False, f"create: {exc}")
+            raise
+        if instance is None:
+            self._record(name, "reconfigure", True, "disabled")
+            logger.info("[WaveMemory] 后台服务按配置关闭: %s", name)
+            return {**self.describe(name), "action": "disabled"}
+        generation = self._generation.get(name, 0) + 1
+        self._generation[name] = generation
+        try:
+            instance.start(_GenerationSupervisor(self._supervisor, generation))
+        except Exception as exc:
+            self._record(name, "reconfigure", False, f"start: {exc}")
+            raise
+        action = "rebuilt" if old is not None else "created"
+        self._record(name, "reconfigure", True, f"{action} g{generation}")
+        logger.info("[WaveMemory] 后台服务按新配置%s: %s (g%s)", "重建" if old is not None else "创建", name, generation)
+        return {**self.describe(name), "action": action}
 
     def describe(self, name: str) -> dict[str, Any]:
         spec = self._spec(name)
