@@ -42,6 +42,8 @@ Bot 不再只能是静态配置里的两个槽位。v6 起 Bot 存进 WaveMemory
 
 24. **静态配置只重建受影响的服务**：在 9876 设置页保存做梦（`Lifecycle_Settings.enable_dream`、`dream_*`）或记忆淘汰（`Eviction_Settings.*`）相关的静态配置后，只停掉并按新配置重建这一个后台服务（关掉时只停不建、打开时创建并启动），不用重启 AstrBot；保存结果的 `apply_modes.service` 列出每个服务的动作。这些字段在设置页与「配置来源」页的生效方式显示为「重建服务」。此前它们标成"保存即生效"，实际要重启才生效。其余服务依赖较多，仍按原方式生效。
 
+25. **宿主端口**：新增 `domain/host_ports.py`，把核心对 AstrBot 的全部依赖面写成 Protocol：消息事件（7 个读取方法）、插件上下文（查 provider、登记/撤下工具）、工具管理器、LLM provider 的 `text_chat`、函数工具。`scripts/boot_check.py` 用真实 AstrBot 源码核对这些方法都在、全部内置工具满足 `HostTool`，AstrBot 升级改名时启动检查直接报出来；作用域解析与 LLM 降级链按端口标注类型。
+
 ### 升级须知
 
 - 首次启动自动把 `MetaThinking_Bot1/2`（以及任意 `MetaThinking_BotN`）迁进 `bot_profiles`：`db_id` 不变，会话前缀从该 Bot 最近的记忆里检测（线上为「羽书」「白真真」），v5 写死的人设片段按 db_id 补进 Profile。**历史数据一条不改。**

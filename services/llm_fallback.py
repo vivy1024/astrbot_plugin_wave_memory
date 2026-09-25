@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:  # 只用于标注宿主依赖面，运行时不导入
+    from ..domain.host_ports import HostContext
 
 logger = logging.getLogger("wavememory")
 
@@ -90,7 +93,7 @@ class LLMFallbackClient:
     支持 provider_id fallback 链：按顺序尝试，第一个成功即返回。
     """
 
-    def __init__(self, context, provider_ids: list[str] = None, *,
+    def __init__(self, context: HostContext, provider_ids: list[str] = None, *,
                  log_prefix: str = "[WaveMemory]", **kwargs):
         self.context = context
         self.provider_ids = [p for p in (provider_ids or []) if p]

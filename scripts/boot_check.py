@@ -215,10 +215,28 @@ async def _check_service_reconfigure(plugin, loop):
     check("static config re-creates eviction", service.get("eviction", {}).get("action") == "created" and plugin.eviction_service is not None)
 
 
+def _check_host_ports():
+    """真实 AstrBot 的类是否还提供 domain/host_ports.py 里声明的方法（AstrBot 升级改名时报出来）。"""
+    from astrbot.core.platform.astr_message_event import AstrMessageEvent
+    from astrbot.core.provider.func_tool_manager import FunctionToolManager
+    from astrbot.core.provider.provider import Provider
+    from astrbot.core.star.context import Context
+    from astrbot_plugin_wave_memory.domain.host_ports import missing_members
+
+    missing = {
+        port: gaps
+        for port, cls in (("HostMessageEvent", AstrMessageEvent), ("HostContext", Context),
+                          ("HostToolManager", FunctionToolManager), ("HostLLMProvider", Provider))
+        if (gaps := missing_members(cls, port))
+    }
+    check("host ports match AstrBot", not missing, str(missing) if missing else "")
+
+
 async def run():
     main = importlib.import_module("astrbot_plugin_wave_memory.main")
     from astrbot_plugin_wave_memory.domain.bot_profile import BotProfile
 
+    _check_host_ports()
     ctx = FakeContext()
     plugin = main.WaveMemoryPlugin(ctx, CONFIG)
     await plugin.initialize()
@@ -226,6 +244,9 @@ async def run():
     try:
         check("bots migrated", {p.db_id for p in plugin.bot_registry.all()} == {"yushu", "baizz"}, plugin.bot_registry.source)
         check("tools registered", len(ctx.tools) >= 10, str(len(ctx.tools)))
+        from astrbot_plugin_wave_memory.domain.host_ports import HostTool
+        not_tools = [getattr(t, "name", t) for t in ctx.tools if not isinstance(t, HostTool)]
+        check("tools satisfy HostTool", not not_tools, str(not_tools) if not_tools else "")
         check("channels built", len(plugin.injection_shadow_channels) == 12)
         check("services registered", len(plugin.service_registry.status()) >= 5)
         plugin.bot_registry.save(BotProfile.from_dict({"db_id": "bot_c", "name": "丙", "qq_id": "30003"}), expected_version=0)

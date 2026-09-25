@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # 只用于标注宿主依赖面，运行时不导入
+    from ..domain.host_ports import HostMessageEvent
 
 try:  # package import in AstrBot runtime
     from ..domain.scope import RuntimeScope, ScopeValidationError, SessionRef
@@ -101,7 +104,7 @@ class ScopeResolver:
     def bindings(self) -> tuple[BotIdentityBinding, ...]:
         return tuple(self._bindings.values())
 
-    def resolve_event(self, event: Any) -> ResolvedEventContext:
+    def resolve_event(self, event: HostMessageEvent) -> ResolvedEventContext:
         self_id = _event_string(event, "get_self_id", "unknown_bot_self_id")
         binding = self._bindings.get(self_id)
         if not self_id or binding is None:
