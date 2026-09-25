@@ -7,18 +7,17 @@
 
 | 编号 | 状态 | 说明 |
 |---|---|---|
-| P0 | 部分 | 卷外备份已做（F 盘快照）；端口/令牌按家庭局域网威胁模型暂缓；统一部署脚本未做 |
+| P0 | 大部分 | 卷外备份（F 盘快照）；`scripts/deploy_to_container.ps1` 统一部署（快照、代码备份、按清单替换、核对提交号、回滚），`/api/health` 带版本；端口/令牌按家庭局域网威胁模型暂缓 |
 | P1 | 完成 | bot_profiles 表 + 热重载注册表 + Bot 管理页；生产代码不再写死角色 |
-| P2 | 大部分 | 配置来源总览、热参数落库、写死常量改热参数；静态配置瘦身与 schema_version 迁移未做 |
-| P3 | 大部分 | 工具/通道注册表、extensions/ 外部扩展；main.py 仍约 3760 行，宿主适配接口未定义 |
-| P4 | 大部分 | 后台服务单独启停、工具开关、Bot 热加；「只重启受影响服务」与扩展热重载未做 |
+| P2 | 完成 | 配置来源总览、热参数落库、写死常量改热参数；做梦/记忆淘汰的静态配置保存后只重建该服务。静态配置瘦身核查：schema 里没有代码不读的字段，v6 没有改名的 key，不做 schema_version 框架 |
+| P3 | 完成 | 工具/通道注册表、extensions/ 外部扩展；main.py 拆成 app/ mixin（164 行）；宿主端口 `domain/host_ports.py`，boot_check 对真实 AstrBot 核对 |
+| P4 | 完成 | 后台服务单独启停、工具开关、Bot 热加、扩展热重载、静态配置只重建受影响服务（做梦、记忆淘汰；其余服务依赖多，仍需重启） |
 | P5 | 完成 | 注入走完整编排器、写入走统一流程、工具经 Runtime 调用；Cortico 侧同步与工具代理 |
 | P6 | 完成 | Bot 管理、配置来源、服务与扩展页；观测台按来源筛选；探索页仍内嵌旧版（有用，保留） |
 | P7 | 完成 | 迁移代码移到 services/migrations_archive/、scripts 分类、CI |
-| P8 | 部分 | 备份修复、outbox 历史清理、memories/query 改 FTS5；FTS5 中文分词召回问题待解决，书设按 Bot 语料未做 |
+| P8 | 完成 | 备份修复、outbox 历史清理、memories/query 改 FTS5；中文两字切词索引 `fts_memories_cjk`（「张羽」113 → 2696 条）；书设按 Bot 语料（`persona.lore_corpus`） |
 
-新发现待办：`fts_memories` 用 unicode61 分词，中文连续字串整体成一个词，「张羽」只召回到含该词的 2710 条里的 146 条；
-需要改为分词后的影子列或 trigram 方案，并做一次全量重建。
+未做：部署到容器（需要确认后执行 `deploy_to_container.ps1`，首次加 `-PruneUnknown`）。
 
 ## 总览
 
