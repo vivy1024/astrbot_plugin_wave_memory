@@ -50,6 +50,7 @@ _OPTIONAL = (
     ("runtime", "runtime_bp"),
     ("bots", "bots_bp"),
     ("services", "services_bp"),
+    ("book_lore_workbench", "book_lore_workbench_bp"),
 )
 
 _NAMES = [n for _, n in _CORE] + [n for _, n in _OPTIONAL]

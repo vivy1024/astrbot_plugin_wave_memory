@@ -902,7 +902,27 @@ class BootstrapMixin:
         get_container().runtime_context_preparer = self.runtime_context_preparer
         get_container().ingress_health = self.ingress_health
         get_container().tag_worker_getter = lambda: getattr(self, "tag_worker", None)
+        get_container().book_lore_workbench = self._build_book_lore_workbench()
         get_container().observation_ingestor = self.ingest_observation
+
+    def _build_book_lore_workbench(self):
+        """书设工作台：书设库与书设向量索引都加载了才提供。原文只从插件数据目录与 novel_docs 读。"""
+        if not getattr(self, "book_lore_index", None) or not os.path.isfile(getattr(self, "lore_db_path", "") or ""):
+            return None
+        try:
+            from ..services.book_lore_workbench import BookLoreWorkbench
+
+            data_root = os.path.dirname(os.path.dirname(self.data_dir))  # <AstrBot>/data
+            return BookLoreWorkbench(
+                lore_db_path=self.lore_db_path,
+                index=self.book_lore_index,
+                embedding_service=self.embedding_service,
+                source_roots=[self.data_dir, os.path.join(os.path.dirname(data_root), "novel_docs")],
+                dimension=self.dimension,
+            )
+        except Exception as exc:
+            logger.warning(f"[WaveMemory] 书设工作台初始化失败: {exc}")
+            return None
 
     def _setup_service_registry(self) -> None:
         """登记可在 9876 上单独启停的后台服务（getter 每次读当前实例，热插拔后也准确）。"""

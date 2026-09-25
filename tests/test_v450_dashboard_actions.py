@@ -11,7 +11,7 @@ class TestStage5DashboardActions:
             "/knowledge/style-examples",
             "/knowledge/facts",
             "/people",
-            "/maintenance",
+            "/tags",  # v5.1：标签待办跳到标签页的覆盖面板（此前是 /maintenance）
             "/observatory",
         ):
             assert marker in page

@@ -141,6 +141,24 @@ class ExternalBookLoreStore:
         by_id = {str(row["id"]): self._row_dict(row) for row in rows}
         return [by_id[str(item)] for item in normalized if str(item) in by_id]
 
+    def notes_by_ids(self, ids: Sequence[Any], *, scope: CatalogScope) -> list[dict[str, Any]]:
+        """按 id 取笔记（章节事件、人物、世界观等），顺序同 ids。"""
+        normalized = list(dict.fromkeys(str(item) for item in ids))
+        if not normalized:
+            self._require_scope(scope)
+            return []
+        with self.connect(scope=scope) as conn:
+            columns = self._columns(conn, BOOK_LORE_TABLES["notes"])
+            self._require_columns("book_notes", columns, ("id", "title", "content"))
+            category = "category" if "category" in columns else "'' AS category"
+            placeholders = ",".join("?" for _ in normalized)
+            rows = conn.execute(
+                f"SELECT id, title, content, {category} FROM book_notes WHERE id IN ({placeholders})",
+                tuple(normalized),
+            ).fetchall()
+        by_id = {str(row["id"]): self._row_dict(row) for row in rows}
+        return [by_id[item] for item in normalized if item in by_id]
+
     def sample_communities(
         self,
         *,

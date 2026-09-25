@@ -232,11 +232,46 @@ def _check_host_ports():
     check("host ports match AstrBot", not missing, str(missing) if missing else "")
 
 
+def _seed_book_lore():
+    """临时数据目录里放一个最小书设库，书设工作台才会加载。"""
+    import sqlite3
+
+    plugin_dir = os.path.join(DATA, "plugin_data", "astrbot_plugin_wave_memory")
+    os.makedirs(plugin_dir, exist_ok=True)
+    conn = sqlite3.connect(os.path.join(plugin_dir, "book_lore.db"))
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS book_notes (id TEXT PRIMARY KEY, book_name TEXT NOT NULL, arc TEXT DEFAULT '', category TEXT DEFAULT '',
+            title TEXT NOT NULL, content TEXT, source_file TEXT DEFAULT '', vector BLOB);
+        CREATE TABLE IF NOT EXISTS book_entities (id TEXT PRIMARY KEY, title TEXT, type TEXT, description TEXT, frequency INT, degree INT, book_name TEXT, vector BLOB);
+        CREATE TABLE IF NOT EXISTS book_communities (id TEXT PRIMARY KEY, title TEXT, summary TEXT, full_content TEXT, level INT, rank REAL, book_name TEXT, vector BLOB);
+        CREATE TABLE IF NOT EXISTS book_relations (id TEXT PRIMARY KEY, source_title TEXT, target_title TEXT, description TEXT, weight REAL, book_name TEXT);
+        INSERT OR REPLACE INTO book_notes VALUES ('note_ch1', '没钱修什么仙', 'arc01', '章节事件', '第1章 开局欠债', '张羽欠了三百灵石', '', NULL);
+    """)
+    conn.commit()
+    conn.close()
+
+
+async def _check_book_lore_workbench(loop):
+    overview = await loop.run_in_executor(None, _http, "/api/book-lore/workbench/overview")
+    check("book lore workbench overview", overview["counts"]["notes"]["rows"] == 1 and overview["latest_chapter"] == 1,
+          f"not_indexed={overview['notes_not_indexed']}")
+    saved = await loop.run_in_executor(None, _http, "/api/book-lore/workbench/notes",
+                                       {"item": {"title": "安监局", "content": "修仙界的安全监管", "category": "世界观"}})
+    # 启动检查的替身上下文没有 embedding provider：笔记照常入库，向量留到补齐
+    check("book lore workbench save", saved["ok"] and saved["pending_vectors"] == 1, str(saved.get("saved")))
+    preview = await loop.run_in_executor(None, _http, "/api/book-lore/workbench/chapters/preview",
+                                         {"text": "第1章 开局欠债\n正文\n第2章 打工还债\n正文"})
+    check("book lore workbench preview", [c["exists"] for c in preview["chapters"]] == [True, False])
+    synced = await loop.run_in_executor(None, _http, "/api/book-lore/workbench/sync-index", {})
+    check("book lore workbench sync (no embedding)", synced["ok"] and synced["failed"] == synced["missing"], str(synced))
+
+
 async def run():
     main = importlib.import_module("astrbot_plugin_wave_memory.main")
     from astrbot_plugin_wave_memory.domain.bot_profile import BotProfile
 
     _check_host_ports()
+    _seed_book_lore()
     ctx = FakeContext()
     plugin = main.WaveMemoryPlugin(ctx, CONFIG)
     await plugin.initialize()
@@ -269,6 +304,7 @@ async def run():
         check("tool call", tool.get("ok") is True)
         await _check_extension_reload(plugin, ctx, loop, scope)
         await _check_service_reconfigure(plugin, loop)
+        await _check_book_lore_workbench(loop)
         for path in ("/api/bots", "/api/config/inventory", "/api/services", "/api/health"):
             try:
                 await loop.run_in_executor(None, _http, path)

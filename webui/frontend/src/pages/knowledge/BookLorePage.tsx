@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { EyeIcon, RefreshCwIcon } from 'lucide-react'
+import { Link } from 'react-router-dom'
 
 import {
   getBookLoreItems,
@@ -143,7 +144,7 @@ export function BookLorePage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <header className="max-w-2xl">
           <h1 className="text-xl font-bold tracking-tight">BookLore 世界观知识库</h1>
-          <p className="text-xs text-muted-foreground">只读浏览实体、社区、关系与笔记。书设是独立 Catalog，直接查询，不经学习投影。</p>
+          <p className="text-xs text-muted-foreground">只读浏览实体、社区、关系与笔记。书设是独立 Catalog，直接查询，不经学习投影。导入新章节、编辑笔记请到 <Link className="underline" to="/knowledge/book-lore/workbench">书设工作台</Link>。</p>
         </header>
         <div className="flex flex-wrap gap-2 text-xs">
           {RESOURCES.map((item) => <SummaryTile key={item.value} label={item.label} value={summary?.counts[item.value]} help={item.help} />)}

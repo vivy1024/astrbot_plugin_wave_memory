@@ -73,6 +73,8 @@ class ServiceContainer:
         self.ingress_health: Any = None
         # 当前 TagWorker（可能被服务注册表重启，所以存取值函数）；标签覆盖面板用。
         self.tag_worker_getter: Any = None
+        # 书设工作台（services.book_lore_workbench.BookLoreWorkbench）；书设没加载时为 None。
+        self.book_lore_workbench: Any = None
 
         # ─── 认证 ───
         self.password: str = ""

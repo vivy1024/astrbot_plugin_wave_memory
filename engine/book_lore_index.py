@@ -372,13 +372,22 @@ class BookLoreIndex:
 
     def search_notes(self, query_vector: np.ndarray, k: int = 5) -> List[Tuple[str, float]]:
         """搜索最相关的笔记。"""
-        if self.notes_index.get_current_count() == 0:
+        # get_current_count() 含已标记删除的元素；工作台删改过笔记后，k 超过存活数量
+        # hnswlib 会报 "Cannot return the results in a contiguous 2D array"。
+        live = len(self._notes_id_map)
+        if live == 0:
             return []
-        k = min(k, self.notes_index.get_current_count())
+        k = min(k, live)
+        query = query_vector.astype(np.float32).reshape(1, -1)
         with self._lock:
-            labels, distances = self.notes_index.knn_query(
-                query_vector.astype(np.float32).reshape(1, -1), k=k
-            )
+            while True:
+                try:
+                    labels, distances = self.notes_index.knn_query(query, k=k)
+                    break
+                except RuntimeError:
+                    if k <= 1:
+                        return []
+                    k = max(1, k // 2)
         results = []
         for int_id, dist in zip(labels[0].tolist(), distances[0].tolist()):
             nid = self._notes_id_map.get(int_id, "")
@@ -389,6 +398,60 @@ class BookLoreIndex:
     @property
     def notes_count(self) -> int:
         return self.notes_index.get_current_count()
+
+    # ─── 书设工作台：笔记的增量更新 ─────────────────────────────────────────
+
+    def note_ids(self) -> set[str]:
+        """已在笔记索引里（未删除）的笔记 id。"""
+        with self._lock:
+            return set(self._notes_id_map.values())
+
+    def remove_notes(self, note_ids: List[str]) -> int:
+        """从笔记索引里删掉这些笔记（hnswlib 标记删除，检索不再返回）。"""
+        targets = set(note_ids)
+        removed = 0
+        with self._lock:
+            for int_id, nid in list(self._notes_id_map.items()):
+                if nid in targets:
+                    try:
+                        self.notes_index.mark_deleted(int_id)
+                    except RuntimeError:
+                        pass  # 已经标记过
+                    del self._notes_id_map[int_id]
+                    removed += 1
+        return removed
+
+    def upsert_notes(self, note_ids: List[str], vectors: np.ndarray) -> None:
+        """新增或替换笔记向量：同 id 的旧向量先标记删除，再写入新向量。"""
+        if not note_ids:
+            return
+        self.remove_notes(list(note_ids))
+        self.add_notes_batch(list(note_ids), np.asarray(vectors, dtype=np.float32))
+
+    def save_notes(self) -> None:
+        """只保存笔记索引与 id 映射（实体、社区索引几十 MB，工作台每次改动不必重写）。"""
+        with self._lock:
+            if self.notes_index.get_current_count() > 0:
+                self.notes_index.save_index(self.notes_index_path)
+        self._save_id_maps()
+
+    def _save_id_maps(self) -> None:
+        import json
+
+        map_path = os.path.join(self.data_dir, "book_lore_id_maps.json")
+        with self._lock:
+            payload = {
+                "entity_map": {str(k): v for k, v in self._entity_id_map.items()},
+                "entity_counter": self._entity_int_counter,
+                "community_map": {str(k): v for k, v in self._community_id_map.items()},
+                "community_counter": self._community_int_counter,
+                "notes_map": {str(k): v for k, v in self._notes_id_map.items()},
+                "notes_counter": self._notes_int_counter,
+            }
+        partial = map_path + ".partial"
+        with open(partial, "w") as f:
+            json.dump(payload, f)
+        os.replace(partial, map_path)  # 写一半断电也不会留下坏的映射文件
 
     # ─── 持久化 ───────────────────────────────────────────────────────────────
 

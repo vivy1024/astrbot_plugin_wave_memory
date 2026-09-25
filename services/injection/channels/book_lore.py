@@ -61,6 +61,22 @@ def _channel_cfg(ctx: Any) -> Mapping[str, Any]:
     return _mapping(_mapping(config.get("channels", {})).get("book_lore", {}))
 
 
+# 除社区摘要外，按相似度再取几条书设笔记（章节事件、人物、世界观……）。社区摘要来自 6 月的
+# GraphRAG 快照，之后的新章节只在笔记里，不查笔记的话最新剧情永远进不了对话。
+NOTES_TOP_K = 1
+# 不当作世界观书设注入的笔记类别（白真真的个人经历走她自己的记忆通道）
+PERSONAL_NOTE_CATEGORIES = frozenset({"白真真经历"})
+
+
+def _note_text(row: Mapping[str, Any]) -> str:
+    """章节笔记正文开头重复了「【标题】」和标题行，去掉后再截断。"""
+    title = str(row.get("title") or "").strip()
+    lines = str(row.get("content") or "").splitlines()
+    while lines and lines[0].strip() in {"", title, f"【{title}】"}:
+        lines.pop(0)
+    return " ".join(line.strip() for line in lines if line.strip())
+
+
 def _preview(text: str | None, limit: int = 160) -> str:
     compact = str(text or "").replace("\n", " ").strip()
     return compact if len(compact) <= limit else compact[: limit - 1] + "…"
@@ -171,6 +187,9 @@ class BookLoreChannel:
                         continue
                     selected.append(item)
 
+            if hasattr(self.book_lore_index, "search_notes"):
+                selected.extend(self._select_notes(vector, catalog_scope, min_score, filtered))
+
             if not selected:
                 result = InjectionResult.empty(
                     self.name,
@@ -196,6 +215,32 @@ class BookLoreChannel:
             result.latency_ms = self._latency_ms(started)
             return result
 
+    def _select_notes(self, vector: Any, catalog_scope: Any, min_score: float, filtered: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        hits = self.book_lore_index.search_notes(vector, k=max(4, NOTES_TOP_K * 4)) or []
+        if not hits:
+            return []
+        store = self.lore_store or ExternalBookLoreStore(self.lore_db_path)
+        if not hasattr(store, "notes_by_ids"):
+            return []
+        rows = {str(row.get("id")): row for row in store.notes_by_ids([nid for nid, _ in hits], scope=catalog_scope)}
+        picked: list[dict[str, Any]] = []
+        for note_id, score in hits:
+            if len(picked) >= NOTES_TOP_K:
+                break
+            score = float(score or 0.0)
+            row = rows.get(str(note_id))
+            if row is None or str(row.get("category") or "") in PERSONAL_NOTE_CATEGORIES:
+                continue
+            if score < min_score:
+                filtered.append({"note_id": note_id, "score": score, "filter_reason": "min_score", "filter_channel": "book_lore"})
+                continue
+            item = {"note_id": note_id, "score": score, "title": row.get("title") or "", "summary": _note_text(row)}
+            if is_identity_contamination(f"{item['title']} {item['summary']}"):
+                filtered.append({**item, "filter_reason": "identity_contamination", "filter_channel": "book_lore"})
+                continue
+            picked.append(item)
+        return picked
+
     def _profile(self, ctx: Any) -> Any:
         if self.profile_lookup is None:
             return None
@@ -208,6 +253,7 @@ class BookLoreChannel:
     def _audit_item(item: Mapping[str, Any]) -> dict[str, Any]:
         return {
             "community_id": item.get("community_id"),
+            "note_id": item.get("note_id"),
             "title": item.get("title", ""),
             "score": item.get("score"),
             "preview": _preview(item.get("summary", "")),

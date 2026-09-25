@@ -2,7 +2,7 @@ import { lazy, type ComponentType } from 'react'
 import {
   ActivityIcon,
   BookHeartIcon,
-  BookOpenIcon,
+  BookOpenIcon, NotebookPenIcon,
   BotIcon,
   ServerCogIcon,
   BrainCircuitIcon,
@@ -36,6 +36,7 @@ const BeliefsPage = lazy(() => import('@/pages/beliefs/BeliefsPage').then((m) =>
 const JargonPage = lazy(() => import('@/pages/jargon/JargonPage').then((m) => ({ default: m.JargonPage })))
 const SoulPage = lazy(() => import('@/pages/soul/SoulPage').then((m) => ({ default: m.SoulPage })))
 const BookLorePage = lazy(() => import('@/pages/knowledge/BookLorePage').then((m) => ({ default: m.BookLorePage })))
+const BookLoreWorkbenchPage = lazy(() => import('@/pages/knowledge/BookLoreWorkbenchPage').then((m) => ({ default: m.BookLoreWorkbenchPage })))
 const ExperiencesPage = lazy(() => import('@/pages/knowledge/ExperiencesPage').then((m) => ({ default: m.ExperiencesPage })))
 const FewShotPage = lazy(() => import('@/pages/knowledge/FewShotPage').then((m) => ({ default: m.FewShotPage })))
 const FactsPage = lazy(() => import('@/pages/knowledge/FactsPage').then((m) => ({ default: m.FactsPage })))
@@ -75,6 +76,7 @@ export const appRoutes: AppRoute[] = [
   { path: '/facts', title: '事实', description: '人物/事物关系、证据与人工审核', group: 'cognition', icon: GitBranchIcon, element: FactsPage },
   { path: '/soul', title: '心智状态', description: 'Bot 自己的心情、关切、作息与时间线', group: 'cognition', icon: HeartIcon, element: SoulPage },
   { path: '/knowledge/book-lore', title: '书设定', description: '独立只读语料、解析与本地化', group: 'knowledge', icon: BookOpenIcon, element: BookLorePage },
+  { path: '/knowledge/book-lore/workbench', title: '书设工作台', description: '新章节导入、笔记编辑、检索索引补齐，保存即生效', group: 'knowledge', icon: NotebookPenIcon, element: BookLoreWorkbenchPage },
   { path: '/knowledge/experiences', title: '经历片段', description: '对话沉淀的个人经历与重要事件', group: 'knowledge', icon: SparklesIcon, element: ExperiencesPage },
   { path: '/knowledge/style-examples', title: '风格样例', description: '已通过审核的正式回复范例', group: 'knowledge', icon: BrainCircuitIcon, element: FewShotPage },
   { path: '/people', title: '人物与关系', description: '按 Bot、群和用户查看画像与好感', group: 'knowledge', icon: UsersIcon, element: PeoplePage },
