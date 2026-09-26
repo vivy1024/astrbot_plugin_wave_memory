@@ -1199,6 +1199,34 @@ class QueryEngine:
             fused /= fused_norm
         return fused.astype(np.float32), energy_field
 
+    def _stored_context_vectors(self, texts: list[str], scope: RuntimeScope | None) -> dict[str, np.ndarray]:
+        """当前会话最近记忆里与 ``texts`` 原文相同的行已有向量，按原文取回（同文取最新一条）。"""
+        if not texts or not isinstance(scope, RuntimeScope) or scope.session is None:
+            return {}
+        wanted = set(texts)
+        try:
+            rows = self.db.conn.execute(
+                """SELECT content, vector FROM memories
+                    WHERE bot_id=? AND session_id=? AND visibility=? AND vector IS NOT NULL
+                    ORDER BY id DESC LIMIT ?""",
+                (scope.bot_id, scope.session.id, scope.visibility, max(32, len(wanted) * 4)),
+            ).fetchall()
+        except Exception as error:
+            logger.debug(f"[WaveMemory] 读取上下文已存向量失败，改为全部现算: {error!r}")
+            return {}
+        found: dict[str, np.ndarray] = {}
+        for content, raw in rows:
+            if content not in wanted or content in found:
+                continue
+            if isinstance(raw, memoryview):
+                raw = raw.tobytes()
+            if not isinstance(raw, bytes) or not raw or len(raw) % 4:
+                continue
+            vector = np.frombuffer(raw, dtype=np.float32)
+            if np.isfinite(vector).all():
+                found[content] = vector
+        return found
+
     async def shotgun_query(
         self,
         text: str,
@@ -1218,9 +1246,20 @@ class QueryEngine:
         is_private = resolved_scope.visibility == "private"
         start = time.time()
 
-        query_vec = await self.embedding.get_embedding(text)
+        # 上下文消息入库时已经向量化过，直接用库里的向量；其余与当前消息合并成一次远端调用
+        context_texts = [str(item) for item in (context_messages or ()) if str(item or "").strip()]
+        if is_private:
+            context_texts = []
+        stored_vectors = self._stored_context_vectors(context_texts, resolved_scope)
+        missing_texts = [item for item in dict.fromkeys(context_texts) if item not in stored_vectors]
+        if missing_texts:
+            fetched = await self.embedding.get_embeddings([text, *missing_texts])
+        else:
+            fetched = [await self.embedding.get_embedding(text)]
+        query_vec = fetched[0] if fetched else None
         if query_vec is None:
             return []
+        fetched_vectors = dict(zip(missing_texts, fetched[1:]))
 
         if is_private:
             search_vec, energy_field = query_vec, {}
@@ -1229,12 +1268,15 @@ class QueryEngine:
         main_results = self.memory_index.search(search_vec, k=top_k * 3)
 
         segment_results = []
-        if context_messages and not is_private:
+        if context_texts:
             segmenter = ContextSegmenter(
                 similarity_threshold=float(self.config.get("shotgun_similarity_threshold", 0.70)),
                 max_segments=int(self.config.get("shotgun_max_segments", 3)),
             )
-            ctx_vecs = await self.embedding.get_embeddings(context_messages)
+            ctx_vecs = [
+                vector for vector in (stored_vectors.get(item, fetched_vectors.get(item)) for item in context_texts)
+                if vector is not None and vector.size == query_vec.size
+            ]
             if ctx_vecs:
                 segment_vecs = segmenter.segment(ctx_vecs)
                 for seg_vec in segment_vecs:

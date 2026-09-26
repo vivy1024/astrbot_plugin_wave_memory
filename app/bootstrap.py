@@ -245,6 +245,7 @@ class BootstrapMixin:
 
         self.injection_trace_retention_days = _trace_int("retention_days", 14, 1)
         self.injection_trace_max_rows = _trace_int("max_rows", 5000, 100)
+        self.injection_trace_payload_retention_days = _trace_int("payload_retention_days", 3, 1)
         self.injection_trace_max_preview_chars = _trace_int("max_preview_chars", 1200, 120)
         try:
             from ..services.config.channel_config import build_channel_config_from_plugin_config
@@ -830,6 +831,7 @@ class BootstrapMixin:
                 retention_days=getattr(self, "injection_trace_retention_days", 14),
                 max_rows=getattr(self, "injection_trace_max_rows", 5000),
                 cleanup_on_record=True,
+                payload_retention_days=getattr(self, "injection_trace_payload_retention_days", 3),
             )
             self.injection_trace_store.ensure_schema()
             # 通道定义在 services/injection/channel_registry.py（外部扩展经 extensions/ 登记）。

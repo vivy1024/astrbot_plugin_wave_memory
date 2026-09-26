@@ -440,6 +440,10 @@ async def health_check():
 
     # Embedding
     services["embedding"] = {"status": "ok" if c.embedding_service else "unavailable"}
+    embedding_stats = getattr(c.embedding_service, "stats", None)
+    if isinstance(embedding_stats, dict):
+        # 命中缓存 / 合并到并发请求 / 真正调用远端的次数，用来确认同一句话没有被重复向量化
+        services["embedding"]["stats"] = dict(embedding_stats)
 
     # Memory Index
     count = getattr(c.memory_index, "count", 0)

@@ -67,12 +67,17 @@ class InjectionTraceStore:
         retention_days: int | float | None = 14,
         max_rows: int | None = 5000,
         cleanup_on_record: bool = False,
+        payload_retention_days: int | float | None = None,
         now_provider: Callable[[], float] | None = None,
     ):
         self.conn = conn
         self.max_preview_chars = max(20, int(max_preview_chars))
         self.retention_seconds = None if retention_days is None else max(0.0, float(retention_days) * 86400)
         self.max_rows = None if max_rows is None else max(0, int(max_rows))
+        # 完整请求载荷（单条约 50 KB）只留最近几天，更早的 trace 保留通道明细与摘要
+        self.payload_retention_seconds = (
+            None if payload_retention_days is None else max(0.0, float(payload_retention_days) * 86400)
+        )
         self.cleanup_on_record = bool(cleanup_on_record)
         self._now_provider = now_provider or time.time
 
@@ -236,7 +241,12 @@ class InjectionTraceStore:
             )
         self.conn.commit()
         if self.cleanup_on_record:
-            self.cleanup(now=self._now_provider(), retention_seconds=self.retention_seconds, max_rows=self.max_rows)
+            self.cleanup(
+                now=self._now_provider(),
+                retention_seconds=self.retention_seconds,
+                max_rows=self.max_rows,
+                payload_retention_seconds=self.payload_retention_seconds,
+            )
         return trace_id
 
     def safe_record(self, trace: dict[str, Any], channels: Iterable[InjectionResult | dict[str, Any]]) -> bool:
@@ -458,7 +468,22 @@ class InjectionTraceStore:
             f"SELECT COUNT(*) FROM injection_traces WHERE {where}", params
         ).fetchone()[0])
 
-    def cleanup(self, *, now: float | None = None, retention_seconds: float | None = 14 * 86400, max_rows: int | None = None) -> int:
+    def cleanup(
+        self,
+        *,
+        now: float | None = None,
+        retention_seconds: float | None = 14 * 86400,
+        max_rows: int | None = None,
+        payload_retention_seconds: float | None = None,
+    ) -> int:
+        if payload_retention_seconds is not None and payload_retention_seconds >= 0:
+            payload_cutoff = float(now if now is not None else time.time()) - float(payload_retention_seconds)
+            stripped = self.conn.execute(
+                "UPDATE injection_traces SET payload_json=NULL WHERE timestamp < ? AND payload_json IS NOT NULL",
+                (payload_cutoff,),
+            )
+            if getattr(stripped, "rowcount", 0):
+                self.conn.commit()
         delete_ids: list[str] = []
         if retention_seconds is not None and retention_seconds >= 0:
             cutoff = float(now if now is not None else time.time()) - float(retention_seconds)

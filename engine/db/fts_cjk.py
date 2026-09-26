@@ -28,8 +28,13 @@ _CJK = r"㐀-䶿一-鿿豈-﫿぀-ヿ가-힯"
 _TOKEN_RE = re.compile(rf"[{_CJK}]+|[A-Za-z0-9_]+")
 _CJK_RE = re.compile(rf"^[{_CJK}]+$")
 
+# 查询只取 rowid 再回 memories 取正文，索引里不必再存一份切好的词：SQLite 3.43+ 用
+# contentless_delete 表（仍支持按 rowid 删除），线上省掉约 140 MB 的 _content 副本。
+_CONTENTLESS = sqlite3.sqlite_version_info >= (3, 43, 0)
+_OPTIONS = "tokens, content='', contentless_delete=1, tokenize='unicode61'" if _CONTENTLESS else "tokens, tokenize='unicode61'"
+
 _SCHEMA = f"""
-CREATE VIRTUAL TABLE IF NOT EXISTS {TABLE} USING fts5(tokens, tokenize='unicode61');
+CREATE VIRTUAL TABLE IF NOT EXISTS {TABLE} USING fts5({_OPTIONS});
 CREATE TABLE IF NOT EXISTS {STATE_TABLE} (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 

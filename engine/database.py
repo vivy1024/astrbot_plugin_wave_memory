@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover - focused repository tests without AstrB
 from .db.connection import ConnectionManager
 from .db.memory_repo import MemoryRepo
 from .db.migrations.importance_touch_repair import repair_touch_inflated_importance
+from .db.migrations.tag_status_repair import repair_done_without_tags
 from .db.migrations.memories_v2 import ensure_memories_v2_schema
 from .db.migrations.scoped_derived_knowledge import ensure_scoped_derived_knowledge_schema
 from .db.migrations.scoped_learning_projections import ensure_scoped_learning_projection_schema
@@ -92,6 +93,10 @@ class WaveMemoryDB:
             ensure_bot_jargon_schema(self._cm)
             ensure_person_timeline_schema(self._cm)
             ensure_scoped_learning_projection_schema(self._cm)
+            # v5.1：标签全被准入拒掉的提取曾记为 done，改记 skipped（一次性，旧状态备份在单独的表里）
+            retagged = repair_done_without_tags(self._cm)
+            if retagged:
+                logger.info(f"[WaveMemory] 已把无标签的 done 提取状态改为 skipped: {retagged} 条（见 tag_status_repair_v51）")
             # Shared-memory grants: read authorization only; never physical fanout.
             ensure_shared_memory_grants_schema(self._cm)
             self._shared_memory_grants = SharedMemoryGrantRepository(self._cm)
@@ -592,6 +597,13 @@ class WaveMemoryDB:
 
     def _setup_fts5(self):
         try:
+            # v5.1：旧触发器对 memories 的任何 UPDATE（访问计数、版本号、向量回填……）都删掉再重写
+            # 这一行全文索引；只在索引列变化时才需要，换成 UPDATE OF 版本。
+            legacy_au = self.conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='fts_memories_au'"
+            ).fetchone()
+            if legacy_au and "UPDATE OF" not in str(legacy_au[0] or "").upper():
+                self.conn.execute("DROP TRIGGER fts_memories_au")
             self.conn.executescript("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS fts_memories USING fts5(
                     content, sender_name, group_id,
@@ -605,7 +617,7 @@ class WaveMemoryDB:
                     INSERT INTO fts_memories(fts_memories, rowid, content, sender_name, group_id)
                     VALUES ('delete', old.id, old.content, old.sender_name, old.group_id);
                 END;
-                CREATE TRIGGER IF NOT EXISTS fts_memories_au AFTER UPDATE ON memories BEGIN
+                CREATE TRIGGER IF NOT EXISTS fts_memories_au AFTER UPDATE OF content, sender_name, group_id ON memories BEGIN
                     INSERT INTO fts_memories(fts_memories, rowid, content, sender_name, group_id)
                     VALUES ('delete', old.id, old.content, old.sender_name, old.group_id);
                     INSERT INTO fts_memories(rowid, content, sender_name, group_id)

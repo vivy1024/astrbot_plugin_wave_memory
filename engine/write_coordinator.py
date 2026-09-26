@@ -243,13 +243,13 @@ class WriteCoordinator:
     ) -> dict[str, int]:
         """分批清理过期的 outbox 历史；每批一个短事务，批与批之间让出写线程给消息写入。"""
         before = time.time() - max(1.0, float(retention_days)) * 86400
-        totals = {"events": 0, "deliveries": 0, "operations": 0, "batches": 0}
+        totals = {"events": 0, "deliveries": 0, "operations": 0, "projections": 0, "batches": 0}
         for _ in range(max(1, int(max_batches))):
             result = await self.transaction(
                 lambda connection: OutboxRepository.prune_history(connection, before=before, limit=batch)
             )
             totals["batches"] += 1
-            for key in ("events", "deliveries", "operations"):
+            for key in ("events", "deliveries", "operations", "projections"):
                 totals[key] += int(result.get(key, 0))
             if not any(result.values()):
                 break

@@ -454,8 +454,9 @@ def _apply_tag_extraction_handler(connection, command: DomainCommand, now: float
         entities.append(EntityChange("scoped_tag", str(tag_id), 1, "upserted"))
 
     status = str(payload.get("status") or ("done" if tag_ids else "skipped"))
-    # All candidates rejected by admission still counts as a completed extraction.
-    if not tag_ids and rejected and not str(payload.get("status") or "").strip():
+    # 调用方按准入前有没有标签传 status；候选全被准入拒掉时没有标签可挂，按 skipped 记，
+    # 否则覆盖率会把它算成「标签丢失」，重新提取也只会再被拒一遍。
+    if status == "done" and not tag_ids:
         status = "skipped"
     error = payload.get("error")
     connection.execute(

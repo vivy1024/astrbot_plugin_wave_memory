@@ -133,7 +133,7 @@ class OutboxRepository:
 
     @staticmethod
     def prune_history(connection: sqlite3.Connection, *, before: float, limit: int = 5000) -> dict[str, int]:
-        """删除早于 ``before`` 的已归档 outbox 事件、其已完成投递，以及不再被引用的已提交写操作。
+        """删除早于 ``before`` 的已归档 outbox 事件、其已完成投递、不再被引用的已提交写操作和投影水位。
 
         这三张表只追加不清理，线上库里三者合计约 0.9 GB（占全库两成多）。只删已经全部
         投递完成的事件；写操作只删已提交、且没有 outbox 事件引用的行，并始终保留
@@ -174,7 +174,29 @@ class OutboxRepository:
                     LIMIT ?)""",
             (float(before), limit),
         ).rowcount or 0
-        return {"events": int(events), "deliveries": int(deliveries), "operations": int(operations)}
+        # 投影水位只用来跳过同一聚合的乱序旧事件；早于保留期、且该聚合在此消费者上已没有
+        # 未完成投递的行不会再被用到（新事件版本一定更高，缺行时按「未应用」处理结果相同）。
+        projections = connection.execute(
+            # 未完成投递很少，先物化成一张小表；state 写成两段范围才能走 (state, ...) 索引
+            # （WITH 放在子查询里：语句以 WITH 开头时 sqlite3 模块拿不到 rowcount）
+            """DELETE FROM derived_projection_state WHERE rowid IN (
+                   WITH pending(consumer_name, aggregate_kind, aggregate_id) AS MATERIALIZED (
+                       SELECT DISTINCT d.consumer_name, o.aggregate_kind, o.aggregate_id
+                         FROM outbox_deliveries d JOIN domain_outbox o ON o.event_id = d.event_id
+                        WHERE d.state < 'completed' OR d.state > 'completed')
+                   SELECT p.rowid FROM derived_projection_state p
+                    WHERE p.updated_at < ?
+                      AND NOT EXISTS (
+                          SELECT 1 FROM pending q
+                           WHERE q.consumer_name = p.consumer_name
+                             AND q.aggregate_kind = p.aggregate_kind AND q.aggregate_id = p.aggregate_id)
+                    LIMIT ?)""",
+            (float(before), limit),
+        ).rowcount or 0
+        return {
+            "events": int(events), "deliveries": int(deliveries),
+            "operations": int(operations), "projections": int(projections),
+        }
 
     @staticmethod
     def next_write_sequence(connection: sqlite3.Connection) -> int:

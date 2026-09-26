@@ -40,7 +40,8 @@ class EvictionService:
         self._task: Optional[asyncio.Task] = None
         self._running = False
         self._stats = {"noise_deleted": 0, "chat_evicted": 0}
-        self.outbox_retention_days = 30.0
+        # 写操作日志与 outbox 事件每天约 30 MB，投递完成后只留 7 天用于排查与幂等重放
+        self.outbox_retention_days = 7.0
 
     def start(self, supervisor=None):
         self._running = True
@@ -72,13 +73,13 @@ class EvictionService:
             await asyncio.sleep(self.interval)
 
     async def prune_outbox_history(self) -> dict | None:
-        """顺带清理 30 天前已投递完成的 outbox 历史（写入口的只追加日志，会无限增长）。"""
+        """顺带清理 7 天前已投递完成的 outbox 历史与投影水位（写入口的只追加日志，会无限增长）。"""
         coordinator = getattr(self.write_gateway, "coordinator", None)
         prune = getattr(coordinator, "prune_outbox_history", None)
         if not callable(prune):
             return None
         result = await prune(retention_days=self.outbox_retention_days)
-        if any(result.get(key) for key in ("events", "deliveries", "operations")):
+        if any(result.get(key) for key in ("events", "deliveries", "operations", "projections")):
             logger.info("[EvictionService] outbox 历史清理: %s", result)
         self._stats["outbox_pruned"] = self._stats.get("outbox_pruned", 0) + int(result.get("events", 0))
         return result

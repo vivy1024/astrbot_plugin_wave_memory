@@ -426,9 +426,10 @@ class TagWorker:
                 if tags:
                     saved_count = await self._save_tags(item, tags)
                     tag_count += saved_count
-                    self._record_status(item.memory_id, "done", now)
+                    # 标签可能全被准入拒掉；没挂上任何标签就记 skipped，而不是「done 但无标签」。
+                    self._record_status(item.memory_id, "done" if saved_count else "skipped", now)
                     # 未注入协调入口的兼容测试路径仍保持原有事务语义。
-                    if item.scope is not None:
+                    if saved_count and item.scope is not None:
                         self._maybe_upgrade_source(item, tags)
                 else:
                     self._record_status(item.memory_id, "skipped", now)

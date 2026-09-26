@@ -175,10 +175,10 @@ CREATE INDEX IF NOT EXISTS idx_scoped_jargon_scope_status
     ON scoped_jargon (bot_id, session_id, visibility, status, updated_at);
 CREATE INDEX IF NOT EXISTS idx_scoped_facts_scope_subject
     ON scoped_facts (bot_id, session_id, visibility, subject, updated_at);
-CREATE INDEX IF NOT EXISTS idx_scoped_tags_scope_name
-    ON scoped_tags (bot_id, session_id, visibility, name);
-CREATE INDEX IF NOT EXISTS idx_scoped_memory_tags_scope_memory
-    ON scoped_memory_tags (bot_id, session_id, visibility, memory_id);
+-- v5.1：scoped_tags 的 UNIQUE(bot_id, session_id, visibility, name) 与 scoped_memory_tags 的主键
+-- (bot_id, session_id, visibility, memory_id, tag_id) 已覆盖这两组前缀，单独的索引只是重复存储
+DROP INDEX IF EXISTS idx_scoped_tags_scope_name;
+DROP INDEX IF EXISTS idx_scoped_memory_tags_scope_memory;
 CREATE INDEX IF NOT EXISTS idx_scoped_memory_tags_scope_tag
     ON scoped_memory_tags (bot_id, session_id, visibility, tag_id, memory_id);
 CREATE INDEX IF NOT EXISTS idx_scoped_memory_tags_tag

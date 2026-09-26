@@ -187,6 +187,23 @@ class InjectionTraceStoreTest(unittest.TestCase):
         self.assertIsNone(store.get("old"))
         self.assertIsNone(store.get("new-0"))
 
+    def test_old_trace_payload_is_stripped_but_trace_kept(self):
+        from services.injection.channel_base import InjectionResult
+
+        now = 900000.0
+        store, conn = self._store(
+            retention_days=14, payload_retention_days=3, cleanup_on_record=True, now_provider=lambda: now,
+        )
+        store.record({"trace_id": "old", "timestamp": now - 5 * 86400, "mode": "full", "message": "old", "status": "ok"}, [InjectionResult.hit("memory", "m")])
+        store.record({"trace_id": "new", "timestamp": now - 60, "mode": "full", "message": "new", "status": "ok"}, [InjectionResult.hit("memory", "m")])
+
+        payloads = dict(conn.execute("SELECT trace_id, payload_json FROM injection_traces").fetchall())
+        self.assertIsNone(payloads["old"])
+        self.assertTrue(payloads["new"])
+        old = store.get("old")
+        self.assertIsNotNone(old)
+        self.assertEqual([item["channel"] for item in old["channels"]], ["memory"])
+
     def test_cleanup_removes_old_rows_and_enforces_max_rows(self):
         from services.injection.channel_base import InjectionResult
 
