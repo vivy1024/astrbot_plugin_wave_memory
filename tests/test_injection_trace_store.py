@@ -204,6 +204,19 @@ class InjectionTraceStoreTest(unittest.TestCase):
         self.assertIsNotNone(old)
         self.assertEqual([item["channel"] for item in old["channels"]], ["memory"])
 
+    def test_payload_cleanup_never_leaves_write_transaction_open(self):
+        from services.injection.channel_base import InjectionResult
+
+        now = 900000.0
+        store, conn = self._store(
+            retention_days=14, payload_retention_days=3, cleanup_on_record=True, now_provider=lambda: now,
+        )
+        # 没有可去载荷、也没有可删的 trace：清理不能留下未提交的写事务（会一直占着写锁）
+        store.record({"trace_id": "new", "timestamp": now - 60, "mode": "full", "message": "m", "status": "ok"}, [InjectionResult.hit("memory", "m")])
+        self.assertFalse(conn.in_transaction)
+        store.cleanup(now=now, retention_seconds=14 * 86400, payload_retention_seconds=3 * 86400)
+        self.assertFalse(conn.in_transaction)
+
     def test_cleanup_removes_old_rows_and_enforces_max_rows(self):
         from services.injection.channel_base import InjectionResult
 

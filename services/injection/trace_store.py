@@ -478,12 +478,13 @@ class InjectionTraceStore:
     ) -> int:
         if payload_retention_seconds is not None and payload_retention_seconds >= 0:
             payload_cutoff = float(now if now is not None else time.time()) - float(payload_retention_seconds)
-            stripped = self.conn.execute(
+            self.conn.execute(
                 "UPDATE injection_traces SET payload_json=NULL WHERE timestamp < ? AND payload_json IS NOT NULL",
                 (payload_cutoff,),
             )
-            if getattr(stripped, "rowcount", 0):
-                self.conn.commit()
+            # 必须无条件提交：没改到行时 sqlite3 也已隐式开启事务并拿着写锁，不提交会一直锁到
+            # 下一次有人在这条连接上提交（线上表现为每次注入后写入协调器都拿不到锁）。
+            self.conn.commit()
         delete_ids: list[str] = []
         if retention_seconds is not None and retention_seconds >= 0:
             cutoff = float(now if now is not None else time.time()) - float(retention_seconds)
