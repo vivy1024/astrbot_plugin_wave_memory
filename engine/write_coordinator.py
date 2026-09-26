@@ -162,7 +162,7 @@ class WriteCoordinator:
                         if connection.in_transaction:
                             raise RuntimeError("writer connection already in transaction")
                         if transactional:
-                            connection.execute("BEGIN IMMEDIATE")
+                            self._begin_immediate(connection)
                         result = function(connection)
                         if transactional:
                             connection.commit()
@@ -198,6 +198,25 @@ class WriteCoordinator:
         finally:
             if connection is not None:
                 connection.close()
+
+    # 拿写锁时等满 busy_timeout（10 秒）仍被占用，再重试这么多次。BEGIN 失败时事务函数还没执行，
+    # 重试是安全的；否则整条命令失败，维护任务会整体重跑（共现图曾因此在启动后连跑 4 次）。
+    BEGIN_LOCK_RETRIES = 2
+
+    def _begin_immediate(self, connection: sqlite3.Connection) -> None:
+        for attempt in range(self.BEGIN_LOCK_RETRIES + 1):
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                return
+            except sqlite3.OperationalError as error:
+                message = str(error).lower()
+                if attempt >= self.BEGIN_LOCK_RETRIES or ("locked" not in message and "busy" not in message):
+                    raise
+                logger.warning(
+                    "[WriteCoordinator] 写锁被占用超过 busy_timeout，重试 BEGIN（%s/%s）",
+                    attempt + 1,
+                    self.BEGIN_LOCK_RETRIES,
+                )
 
     def _enqueue(
         self,

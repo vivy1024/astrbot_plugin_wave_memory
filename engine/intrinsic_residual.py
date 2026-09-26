@@ -148,11 +148,13 @@ class IntrinsicResidualCalculator:
     def persist(self, residuals: dict[int, float]):
         """批量持久化残差到数据库。"""
         now = time.time()
-        for tag_id, energy in residuals.items():
-            self.db.conn.execute("""
-                INSERT OR REPLACE INTO tag_intrinsic_residuals (tag_id, residual_energy, computed_at)
-                VALUES (?, ?, ?)
-            """, (tag_id, energy, now))
+        # 一次批量写入再提交：逐条 execute 时每条都要重新抢 GIL，后台有计算线程时写事务会被拖长到
+        # 超过写入协调器的 busy_timeout，其他写入随之报 database is locked。
+        self.db.conn.executemany(
+            """INSERT OR REPLACE INTO tag_intrinsic_residuals (tag_id, residual_energy, computed_at)
+               VALUES (?, ?, ?)""",
+            [(tag_id, energy, now) for tag_id, energy in residuals.items()],
+        )
         self.db.conn.commit()
         logger.info(f"[WaveMemory] IntrinsicResidual persisted: {len(residuals)} tags")
 

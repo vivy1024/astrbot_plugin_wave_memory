@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import json
+import os
+import sys
 import time
 from collections import defaultdict
+from dataclasses import asdict, is_dataclass
 from itertools import groupby
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 try:
     from astrbot.api import logger
@@ -15,9 +19,11 @@ except ImportError:  # pragma: no cover - focused repository tests without AstrB
     import logging
     logger = logging.getLogger(__name__)
 
-from .database import WaveMemoryDB
 from .db.scoped_tag_projection import effective_tag_rows
 from .semantic_gain import bell_gain, SemanticGainConfig
+
+if TYPE_CHECKING:  # 子进程构建只导入本模块，不拖进整个数据库层
+    from .database import WaveMemoryDB
 
 
 # Canonical rebuild-frequency policy for the derived cooccurrence projection.
@@ -33,6 +39,11 @@ DEFAULT_REBUILD_COOLDOWN_SEC = 1800.0
 # so peak memory grew with the widest tag co-occurrence rather than the retained
 # graph.  Keeping the strongest edges preserves routing behaviour under a bound.
 DEFAULT_MAX_NEIGHBORS_PER_TAG = 64
+
+# 常驻图落盘格式版本；只存裁剪后的正向图（线上几百个节点、几千条边），反向图加载时推导。
+SNAPSHOT_VERSION = 1
+# 子进程构建超时；超时或失败时退回进程内线程构建。
+SUBPROCESS_TIMEOUT_SEC = 600.0
 
 
 def ordinal_potential(position: int, max_position: int) -> float:
@@ -171,33 +182,82 @@ class DirectedCooccurrence:
             else:
                 del new_forward[src]
 
-        # backward 必须与裁剪后的 forward 保持一致，否则反向锚定会读到已被
-        # 丢弃的边，并让常驻内存重新按未裁剪的宽度增长。
-        rebuilt_backward: dict[int, dict[int, float]] = {}
-        for src, neighbors in new_forward.items():
-            for tgt, weight in neighbors.items():
-                rebuilt_backward.setdefault(tgt, {})[src] = weight
-        for tgt in list(rebuilt_backward.keys()):
-            inbound = rebuilt_backward[tgt]
-            if len(inbound) > bound:
-                rebuilt_backward[tgt] = dict(
-                    sorted(inbound.items(), key=lambda item: (-item[1], item[0]))[:bound]
-                )
-        new_backward = rebuilt_backward
-
-        # 原子切换
-        self.forward = new_forward
-        self.backward = new_backward
-        if has_scoped:
-            count_row = self.db.conn.execute("SELECT COUNT(*) FROM scoped_tags").fetchone()
-            self._tag_count = int(count_row[0]) if count_row else 0
-        else:
-            self._tag_count = self.db.get_tag_count()
+        # 原子切换（backward 由裁剪后的 forward 推导）
+        self.publish(new_forward, self._current_tag_count(bool(has_scoped)))
 
         logger.info(
             f"[WaveMemory] DirectedCooccurrence rebuilt: "
             f"{len(self.forward)} nodes, {sum(len(v) for v in self.forward.values())} directed edges"
         )
+
+    def _current_tag_count(self, has_scoped: bool) -> int:
+        if has_scoped:
+            count_row = self.db.conn.execute("SELECT COUNT(*) FROM scoped_tags").fetchone()
+            return int(count_row[0]) if count_row else 0
+        return int(self.db.get_tag_count())
+
+    @staticmethod
+    def backward_from_forward(forward: dict[int, dict[int, float]], bound: int) -> dict[int, dict[int, float]]:
+        """backward 必须与裁剪后的 forward 保持一致，否则反向锚定会读到已被丢弃的边，
+        并让常驻内存重新按未裁剪的宽度增长。"""
+        backward: dict[int, dict[int, float]] = {}
+        for src, neighbors in forward.items():
+            for tgt, weight in neighbors.items():
+                backward.setdefault(tgt, {})[src] = weight
+        for tgt in list(backward.keys()):
+            inbound = backward[tgt]
+            if len(inbound) > bound:
+                backward[tgt] = dict(sorted(inbound.items(), key=lambda item: (-item[1], item[0]))[:bound])
+        return backward
+
+    def publish(self, forward: dict[int, dict[int, float]], tag_count: int) -> None:
+        """换上一份已裁剪的正向图（重建、子进程构建、落盘加载共用）。"""
+        self.forward = forward
+        self.backward = self.backward_from_forward(forward, self.max_neighbors_per_tag)
+        self._tag_count = int(tag_count)
+
+    # ─── 落盘 ───
+
+    def save_snapshot(self, path: str, *, built_at: float | None = None) -> None:
+        """原子写入常驻图，重启后直接加载，不必再全量重建。"""
+        payload = {
+            "version": SNAPSHOT_VERSION,
+            "built_at": float(built_at if built_at is not None else time.time()),
+            "tag_count": int(self._tag_count),
+            "max_neighbors_per_tag": int(self.max_neighbors_per_tag),
+            "forward": {
+                str(src): {str(tgt): float(weight) for tgt, weight in neighbors.items()}
+                for src, neighbors in self.forward.items()
+            },
+        }
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+        os.replace(tmp, path)
+
+    def load_snapshot(self, path: str) -> float | None:
+        """加载落盘的常驻图，返回其构建时间；文件缺失、损坏或为空时返回 None 且不改动当前图。"""
+        try:
+            with open(path, encoding="utf-8") as handle:
+                payload = json.load(handle)
+            if int(payload.get("version", 0)) != SNAPSHOT_VERSION:
+                return None
+            bound = self.max_neighbors_per_tag
+            forward: dict[int, dict[int, float]] = {}
+            for src, neighbors in dict(payload.get("forward") or {}).items():
+                edges = {int(tgt): float(weight) for tgt, weight in dict(neighbors).items()}
+                if len(edges) > bound:  # 上限调小后按新上限裁剪
+                    edges = dict(sorted(edges.items(), key=lambda item: (-item[1], item[0]))[:bound])
+                if edges:
+                    forward[int(src)] = edges
+            if not forward:
+                return None
+            self.publish(forward, int(payload.get("tag_count", 0)))
+            return float(payload.get("built_at", 0.0))
+        except (OSError, ValueError, TypeError, AttributeError) as error:
+            if not isinstance(error, FileNotFoundError):
+                logger.warning(f"[WaveMemory] 共现图快照无法加载，将重建: {error!r}")
+            return None
 
     def get_neighbors(self, tag_id: int, max_neighbors: int = 20) -> list[tuple[int, float]]:
         """获取某个 Tag 的有向出边邻居，按权重降序。"""
@@ -362,8 +422,15 @@ class CooccurrenceScheduler:
         cooldown_sec: float = DEFAULT_REBUILD_COOLDOWN_SEC,
         on_rebuild_complete=None,
         rebuild_lock: asyncio.Lock | None = None,
+        *,
+        snapshot_path: str | None = None,
+        build_in_subprocess: bool = False,
     ):
         self.cooccurrence = cooccurrence
+        # 重建完成后落盘，重启时加载，不必再全量重建
+        self.snapshot_path = snapshot_path
+        # 全量构建放到子进程，不占插件进程的 GIL（不满足条件时退回线程）
+        self.build_in_subprocess = bool(build_in_subprocess)
         self.threshold_pct = max(float(threshold_pct), 0.0)
         self.cooldown_sec = max(float(cooldown_sec), 0.0)
         self.on_rebuild_complete = on_rebuild_complete
@@ -394,6 +461,92 @@ class CooccurrenceScheduler:
             setattr(cooccurrence, "_cooccurrence_scheduler", self)
         except Exception:
             pass
+
+    def load_snapshot(self) -> float | None:
+        """启动时加载落盘的常驻图；成功时把它当作刚完成的重建（冷却期从现在算起）。"""
+        if not self.snapshot_path:
+            return None
+        built_at = self.cooccurrence.load_snapshot(self.snapshot_path)
+        if built_at is None:
+            return None
+        self._last_rebuild_ts = time.time()
+        self._metrics["last_rebuild"] = {"status": "loaded_snapshot", "built_at": built_at}
+        logger.info(
+            "[WaveMemory] 共现图从快照加载: %s 个节点、%s 条边（构建于 %s）",
+            self.cooccurrence.node_count,
+            self.cooccurrence.edge_count,
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(built_at)),
+        )
+        return built_at
+
+    def _subprocess_request(self) -> dict | None:
+        """能交给子进程构建时返回请求体：需要真实数据库文件，语义增益须来自 tag_pair_similarity 表。"""
+        if not self.build_in_subprocess:
+            return None
+        live = self.cooccurrence
+        db_path = getattr(getattr(live, "db", None), "db_path", None)
+        if not isinstance(db_path, str) or db_path == ":memory:" or not os.path.isfile(db_path):
+            return None
+        pair_sim = getattr(live, "pair_sim_service", None)
+        if pair_sim is not None and not getattr(pair_sim, "table_backed", False):
+            return None
+        gain = getattr(live, "semantic_gain_config", None)
+        return {
+            "db_path": db_path,
+            "max_neighbors_per_tag": int(getattr(live, "max_neighbors_per_tag", DEFAULT_MAX_NEIGHBORS_PER_TAG)),
+            "residual_map": [[int(k), float(v)] for k, v in dict(getattr(live, "residual_map", None) or {}).items()],
+            "semantic_gain": asdict(gain) if is_dataclass(gain) else {},
+            "pair_similarity": pair_sim is not None,
+        }
+
+    async def _build_in_subprocess(self, request: dict, new_matrix) -> None:
+        worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cooccurrence_worker.py")
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, worker,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(json.dumps(request).encode("utf-8")), timeout=SUBPROCESS_TIMEOUT_SEC
+            )
+        except BaseException:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+            raise
+        if process.returncode != 0:
+            tail = stderr.decode("utf-8", "replace").strip().splitlines()[-3:]
+            raise RuntimeError(f"cooccurrence worker exit={process.returncode}: {' | '.join(tail)}")
+        result = json.loads(stdout.decode("utf-8"))
+        forward = {
+            int(src): {int(tgt): float(weight) for tgt, weight in neighbors}
+            for src, neighbors in result.get("forward") or []
+        }
+        new_matrix.publish(forward, int(result.get("tag_count") or 0))
+        logger.info(
+            "[WaveMemory] 共现图在子进程构建完成: %s 个节点、%s 条边，%.1fs",
+            new_matrix.node_count, new_matrix.edge_count, float(result.get("elapsed_sec") or 0.0),
+        )
+
+    async def _build_replacement(self, new_matrix) -> None:
+        request = self._subprocess_request()
+        if request is not None:
+            try:
+                await self._build_in_subprocess(request, new_matrix)
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.warning(f"[WaveMemory] 共现图子进程构建失败，改在线程里构建: {error!r}")
+        await asyncio.to_thread(new_matrix.rebuild)
+
+    async def _save_snapshot(self) -> None:
+        if not self.snapshot_path:
+            return
+        try:
+            await asyncio.to_thread(self.cooccurrence.save_snapshot, self.snapshot_path)
+        except Exception as error:
+            logger.warning(f"[WaveMemory] 共现图快照写入失败（不影响使用，下次启动会重建）: {error!r}")
 
     def set_rebuild_lock(self, rebuild_lock: asyncio.Lock) -> None:
         """Bind the projection/maintenance barrier before work is scheduled."""
@@ -540,7 +693,7 @@ class CooccurrenceScheduler:
                         DEFAULT_MAX_NEIGHBORS_PER_TAG,
                     ),
                 )
-                await asyncio.to_thread(new_matrix.rebuild)
+                await self._build_replacement(new_matrix)
                 # Publish only a fully rebuilt matrix; readers never observe its
                 # partially constructed local dictionaries.
                 self.cooccurrence.forward = new_matrix.forward
@@ -566,6 +719,7 @@ class CooccurrenceScheduler:
                 )
                 gc.collect()
 
+            await self._save_snapshot()
             if self.on_rebuild_complete:
                 try:
                     result = self.on_rebuild_complete()

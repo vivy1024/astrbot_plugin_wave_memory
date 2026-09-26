@@ -17,6 +17,9 @@ class PairSimilarityService:
     优化：内存使用受限大小的懒加载缓存，防200万条大表撑爆内存。
     """
 
+    # 相似度只来自 tag_pair_similarity 表（缺失即 0）：共现图子进程构建可以直接读同一张表
+    table_backed = True
+
     def __init__(self, db, refresh_interval: float = 1800.0):
         """
         Args:

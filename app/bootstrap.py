@@ -466,7 +466,21 @@ class BootstrapMixin:
             threshold_pct=DEFAULT_REBUILD_THRESHOLD_PCT,
             cooldown_sec=DEFAULT_REBUILD_COOLDOWN_SEC,
             on_rebuild_complete=self._on_cooccurrence_rebuilt,
+            snapshot_path=os.path.join(self.data_dir, "cooccurrence_graph.json"),
+            build_in_subprocess=True,
         )
+        # 共现图只在内存里，以前每次重启都全量重建（线上单次 15–50 秒，期间注入被拖慢）。
+        # 有快照就直接加载；快照之后新增的标签关联计入待处理变更，按正常阈值与冷却期再重建。
+        snapshot_built_at = self.cooccurrence_scheduler.load_snapshot()
+        if snapshot_built_at is not None:
+            try:
+                changed = int(self.db.conn.execute(
+                    "SELECT COUNT(*) FROM scoped_memory_tags WHERE created_at > ?", (snapshot_built_at,)
+                ).fetchone()[0])
+            except Exception:
+                changed = 0
+            if changed:
+                self.cooccurrence_scheduler.notify_tag_change(changed, reason="since_snapshot")
 
         # 脉冲传播
         self.spike_router = SpikeRouter(
