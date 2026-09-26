@@ -234,6 +234,9 @@ class QueryDebugCollector:
         })
 
 
+CONTEXT_VECTOR_WINDOW = 5000
+
+
 class QueryEngine:
     """记忆查询管线 V2：EPA → 残差金字塔 → 脉冲传播 → 向量融合 → 检索 → 测地线重排。"""
 
@@ -1199,17 +1202,21 @@ class QueryEngine:
             fused /= fused_norm
         return fused.astype(np.float32), energy_field
 
+    # 上下文消息就是会话里最近几条记忆；在全表最近这么多行里找不到的（冷清的会话）改为现算
     def _stored_context_vectors(self, texts: list[str], scope: RuntimeScope | None) -> dict[str, np.ndarray]:
         """当前会话最近记忆里与 ``texts`` 原文相同的行已有向量，按原文取回（同文取最新一条）。"""
         if not texts or not isinstance(scope, RuntimeScope) or scope.session is None:
             return {}
         wanted = set(texts)
         try:
+            # 只扫全表最近 CONTEXT_VECTOR_WINDOW 行（主键范围）：按作用域索引取「最新 N 条」要把整个
+            # 会话的行读出来排序，线上活跃群一次 500 ms，还是在事件循环上同步执行。
             rows = self.db.conn.execute(
-                """SELECT content, vector FROM memories
-                    WHERE bot_id=? AND session_id=? AND visibility=? AND vector IS NOT NULL
+                """SELECT content, vector FROM memories NOT INDEXED
+                    WHERE id > (SELECT COALESCE(MAX(id), 0) FROM memories) - ?
+                      AND bot_id=? AND session_id=? AND visibility=? AND vector IS NOT NULL
                     ORDER BY id DESC LIMIT ?""",
-                (scope.bot_id, scope.session.id, scope.visibility, max(32, len(wanted) * 4)),
+                (CONTEXT_VECTOR_WINDOW, scope.bot_id, scope.session.id, scope.visibility, max(32, len(wanted) * 4)),
             ).fetchall()
         except Exception as error:
             logger.debug(f"[WaveMemory] 读取上下文已存向量失败，改为全部现算: {error!r}")

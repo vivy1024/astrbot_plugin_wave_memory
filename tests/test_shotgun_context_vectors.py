@@ -104,3 +104,15 @@ def test_shotgun_with_all_context_stored_calls_embedding_once_for_query():
     engine, embedding = _engine(rows)
     asyncio.run(engine.shotgun_query("现在这句", context_messages=["上一句"], scope=_scope()))
     assert embedding.batches == [["现在这句"]]
+
+
+def test_stored_context_vectors_only_scan_recent_window(monkeypatch):
+    import engine.query_engine as qe
+
+    rows = [
+        (1, "bot-a", "qq:group:g1", "group", "很久以前", _vec(1.0, 0.0, 0.0)),
+        (10, "bot-a", "qq:group:g1", "group", "刚才", _vec(0.0, 1.0, 0.0)),
+    ]
+    engine, _ = _engine(rows)
+    monkeypatch.setattr(qe, "CONTEXT_VECTOR_WINDOW", 5)
+    assert set(engine._stored_context_vectors(["很久以前", "刚才"], _scope())) == {"刚才"}
