@@ -69,7 +69,7 @@ export function TagGraphControls({
             required
             onValueChange={(value) => onScopeChange({ sessionId: value })}
           />
-          <span className="pb-2 text-[10px] text-muted-foreground">只读 · 当前群</span>
+          <span className="pb-2 text-xs text-muted-foreground">只读 · 当前群</span>
         </div>
 
         {/* 第二行：图层与脉冲 */}

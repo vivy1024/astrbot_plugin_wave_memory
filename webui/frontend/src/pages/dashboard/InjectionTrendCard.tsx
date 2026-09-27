@@ -97,35 +97,35 @@ export function InjectionTrendCard({ metrics, range, onRangeChange, loading }: I
       {/* 全新的“副大盘仪表盘”：拒绝截断、直观、精美、满载科技霓虹感 */}
       <div className="px-6 pb-2 grid grid-cols-2 md:grid-cols-4 gap-4 border-b border-border/30">
         <div className="flex flex-col gap-1 py-2">
-          <span className="text-[10px] text-muted-foreground/80 font-medium">窗口累计 Token ({rangeLabels[range] || range})</span>
+          <span className="text-xs text-muted-foreground/80 font-medium">窗口累计 Token ({rangeLabels[range] || range})</span>
           <span className="text-xl md:text-2xl font-bold font-mono tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-primary via-violet-400 to-indigo-400">
             {formatNumber(totalTokensSum)}
           </span>
-          <span className="text-[10px] text-muted-foreground">共 {formatNumber(sampleCount)} 次注入样本</span>
+          <span className="text-xs text-muted-foreground">共 {formatNumber(sampleCount)} 次注入样本</span>
         </div>
 
         <div className="flex flex-col gap-1 py-2 pl-2 border-l border-border/20">
-          <span className="text-[10px] text-muted-foreground/80 font-medium">单次均值</span>
+          <span className="text-xs text-muted-foreground/80 font-medium">单次均值</span>
           <span className="text-lg md:text-xl font-bold font-mono tracking-tight text-foreground/90">
             {formatNumber(avgTokensPerSample)}
           </span>
-          <span className="text-[10px] text-muted-foreground">P95 峰值 {formatNumber(p95TokensPerSample)}</span>
+          <span className="text-xs text-muted-foreground">P95 峰值 {formatNumber(p95TokensPerSample)}</span>
         </div>
 
         <div className="flex flex-col gap-1 py-2 pl-2 border-l border-border/20">
-          <span className="text-[10px] text-muted-foreground/80 font-medium">日均 token</span>
+          <span className="text-xs text-muted-foreground/80 font-medium">日均 token</span>
           <span className="text-lg md:text-xl font-bold font-mono tracking-tight text-foreground/90">
             {formatNumber(avgTokensPerDay)}
           </span>
-          <span className="text-[10px] text-muted-foreground">基于当前时间跨度算</span>
+          <span className="text-xs text-muted-foreground">基于当前时间跨度算</span>
         </div>
 
         <div className="flex flex-col gap-1 py-2 pl-2 border-l border-border/20">
-          <span className="text-[10px] text-muted-foreground/80 font-medium">单次最高值</span>
+          <span className="text-xs text-muted-foreground/80 font-medium">单次最高值</span>
           <span className="text-lg md:text-xl font-bold font-mono tracking-tight text-foreground/90">
             {formatNumber(maxTokensPerSample)}
           </span>
-          <span className="text-[10px] text-muted-foreground">所选窗口内实测最大值</span>
+          <span className="text-xs text-muted-foreground">所选窗口内实测最大值</span>
         </div>
       </div>
 
@@ -153,8 +153,8 @@ export function InjectionTrendCard({ metrics, range, onRangeChange, loading }: I
                 </linearGradient>
               </defs>
               <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.15} stroke="var(--border)" />
-              <XAxis dataKey="bucket_ts" tickFormatter={formatBucket} tickLine={false} axisLine={false} minTickGap={32} className="text-[10px] font-mono" />
-              <YAxis tickLine={false} axisLine={false} width={48} allowDataOverflow={false} domain={[0, 'auto']} className="text-[10px] font-mono" />
+              <XAxis dataKey="bucket_ts" tickFormatter={formatBucket} tickLine={false} axisLine={false} minTickGap={32} className="text-xs font-mono" />
+              <YAxis tickLine={false} axisLine={false} width={48} allowDataOverflow={false} domain={[0, 'auto']} className="text-xs font-mono" />
               <ChartTooltip content={<ChartTooltipContent className="backdrop-blur-md bg-background/90 border-border/80" />} />
               <Area dataKey="total_tokens" type="monotone" stroke="var(--chart-1)" strokeWidth={2.5} fillOpacity={1} fill="url(#colorTotal)" />
               <Area dataKey="memories_tokens" type="monotone" stroke="var(--chart-2)" strokeWidth={2} fillOpacity={1} fill="url(#colorMemories)" />

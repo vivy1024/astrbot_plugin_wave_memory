@@ -62,7 +62,7 @@ export function RelationshipRadarCard({ values }: { values: RelationshipItem['va
     <div className="rounded-lg border bg-muted/10 p-3.5">
       <div className="mb-1 flex items-center justify-between gap-2">
         <span className="text-xs font-semibold">五维关系快照</span>
-        <span className="text-[10px] text-muted-foreground">轴按各维度范围归一化到 0–100</span>
+        <span className="text-xs text-muted-foreground">轴按各维度范围归一化到 0–100</span>
       </div>
       <ChartContainer config={radarChartConfig} className="mx-auto aspect-square max-h-60 w-full">
         <RadarChart data={points} cx="50%" cy="50%" outerRadius="68%">

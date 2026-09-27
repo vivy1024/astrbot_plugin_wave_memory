@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { useHidePageScopeSelectors } from '@/app/global-scope'
 import { ScopeSelect } from './ScopeSelect'
 import type { ScopeOption } from './types'
 
@@ -43,6 +44,7 @@ export function ScopeFilterBar({
   children,
   actions,
 }: ScopeFilterBarProps) {
+  const hideScope = useHidePageScopeSelectors()
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
     onSubmit?.(e)
@@ -52,6 +54,8 @@ export function ScopeFilterBar({
     <Card className="border-border/60">
       <CardContent className="p-4">
         <form className="flex flex-wrap items-end gap-2" onSubmit={handleSubmit}>
+          {hideScope ? null : (
+            <>
           <ScopeSelect
             className="w-48 shrink-0 [&_[data-slot=field-label]]:sr-only"
             value={botId || undefined}
@@ -69,6 +73,8 @@ export function ScopeFilterBar({
             disabled={!botId}
             onValueChange={(val) => onSessionChange(val)}
           />
+            </>
+          )}
           {children}
           {onSearchChange !== undefined ? (
             <Field className="min-w-52 flex-1 gap-0 [&_[data-slot=field-label]]:sr-only">

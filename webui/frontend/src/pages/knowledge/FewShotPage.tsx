@@ -1,3 +1,4 @@
+import { useHidePageScopeSelectors } from '@/app/global-scope'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { EyeIcon, RefreshCwIcon } from 'lucide-react'
 
@@ -36,10 +37,11 @@ function FewShotDetail({ item }: { item: ApprovedFewShot }) {
 }
 
 function SummaryTile({ label, value, tone }: { label: string; value: string | number; tone?: string }) {
-  return <div className="min-w-[5rem] rounded-lg border bg-muted/20 px-2.5 py-1.5 text-center"><div className="text-[11px] text-muted-foreground">{label}</div><div className={`text-base font-semibold leading-5 ${tone ?? ''}`}>{value}</div></div>
+  return <div className="min-w-[5rem] rounded-lg border bg-muted/20 px-2.5 py-1.5 text-center"><div className="text-xs text-muted-foreground">{label}</div><div className={`text-base font-semibold leading-5 ${tone ?? ''}`}>{value}</div></div>
 }
 
 export function FewShotPage() {
+  const hidePageScope = useHidePageScopeSelectors()
   const pagination = usePaginationSearchParams()
   const botId = pagination.searchParams.get('bot_id') ?? ''
   const sessionId = pagination.searchParams.get('session_id') ?? ''
@@ -82,10 +84,14 @@ export function FewShotPage() {
     </div>
 
     <Card className="overflow-hidden border-border/60"><CardContent className="p-0">
-      <div className="grid items-center gap-2 border-b bg-muted/10 px-4 py-3 lg:grid-cols-[auto_minmax(10rem,0.75fr)_minmax(12rem,1fr)_minmax(20rem,1.4fr)]">
-        <div className="pr-1 text-xs"><div className="font-medium">当前群</div><div className="text-muted-foreground">Bot 和群</div></div>
-        <ScopeSelect className="[&_[data-slot=field-label]]:sr-only" value={botId || undefined} loadOptions={loadBots} label="Bot" placeholder="选择 Bot" required onValueChange={(value) => pagination.setFilters({ bot_id: value, session_id: null })} />
-        <ScopeSelect className="[&_[data-slot=field-label]]:sr-only" value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" placeholder="选择群" disabled={!botId} required onValueChange={(value) => pagination.setFilters({ session_id: value })} />
+      <div className={hidePageScope ? 'grid items-center gap-2 border-b bg-muted/10 px-4 py-3' : 'grid items-center gap-2 border-b bg-muted/10 px-4 py-3 lg:grid-cols-[auto_minmax(10rem,0.75fr)_minmax(12rem,1fr)_minmax(20rem,1.4fr)]'}>
+        {hidePageScope ? null : (
+          <>
+            <div className="pr-1 text-xs"><div className="font-medium">当前群</div><div className="text-muted-foreground">Bot 和群</div></div>
+            <ScopeSelect className="[&_[data-slot=field-label]]:sr-only" value={botId || undefined} loadOptions={loadBots} label="Bot" placeholder="选择 Bot" required onValueChange={(value) => pagination.setFilters({ bot_id: value, session_id: null })} />
+            <ScopeSelect className="[&_[data-slot=field-label]]:sr-only" value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" placeholder="选择群" disabled={!botId} required onValueChange={(value) => pagination.setFilters({ session_id: value })} />
+          </>
+        )}
         <form className="flex min-w-0 flex-wrap items-center gap-2" onSubmit={submitSearch}>
           <InputWithIcon value={searchDraft} onValueChange={(v) => setSearchDraft(v)} placeholder="搜索范例内容、风格特征" containerClassName="min-w-48 flex-1" />
           <Button type="submit" size="sm" className="h-8" disabled={loading || !botId || !sessionId}>搜索</Button>

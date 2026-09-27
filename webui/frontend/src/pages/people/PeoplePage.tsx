@@ -1,3 +1,4 @@
+import { useHidePageScopeSelectors } from '@/app/global-scope'
 import { useCallback, useEffect, useState, useMemo, useRef, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { humanizeApiError } from '@/lib/reason-label'
@@ -55,7 +56,7 @@ function defaultSortOrder(sortBy: 'name' | 'interactions' | 'affinity'): 'asc' |
 }
 
 function SummaryTile({ label, value, tone }: { label: string; value: string | number; tone?: string }) {
-  return <div className="min-w-[4.75rem] rounded-lg border bg-muted/20 px-3 py-1.5 text-center text-xs"><div className="text-[10px] text-muted-foreground">{label}</div><div className={`font-semibold ${tone ?? ''}`}>{value}</div></div>
+  return <div className="min-w-[4.75rem] rounded-lg border bg-muted/20 px-3 py-1.5 text-center text-xs"><div className="text-xs text-muted-foreground">{label}</div><div className={`font-semibold ${tone ?? ''}`}>{value}</div></div>
 }
 
 function HistoricalAuditPanel({
@@ -128,17 +129,17 @@ function HistoricalAuditPanel({
             {(data?.items ?? []).slice(0, 5).map((item) => (
               <div key={`${item.id}-${item.legacy_event_id}`} className="rounded border bg-background/70 px-2 py-1.5">
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <Badge variant="outline" className="font-mono text-[10px]">{item.event_type}</Badge>
-                  <Badge variant="secondary" className="font-mono text-[10px]">{item.dimension}</Badge>
-                  <span className="font-mono text-[10px] text-muted-foreground">
+                  <Badge variant="outline" className="font-mono text-xs">{item.event_type}</Badge>
+                  <Badge variant="secondary" className="font-mono text-xs">{item.dimension}</Badge>
+                  <span className="font-mono text-xs text-muted-foreground">
                     {typeof item.delta === 'number' ? formatSignedDisplayNumber(item.delta) : String(item.delta ?? '')}
                   </span>
                 </div>
-                <p className="mt-1 text-[11px] text-muted-foreground">{item.reason || '无原因'}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{item.reason || '无原因'}</p>
               </div>
             ))}
           </div>
-          <p className="text-[10px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             来自本群历史关系事件；仅审计展示，不参与好感计算。
           </p>
         </div>
@@ -232,19 +233,19 @@ function ImpressionTimelinePanel({ query, userId }: { query: { bot_id: string; s
   return (
     <div className="mt-3 border-t border-amber-500/20 pt-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[10px] text-muted-foreground">印象时间线（新在上，只读 · 全量分页）</p>
+        <p className="text-xs text-muted-foreground">印象时间线（新在上，只读 · 全量分页）</p>
         <div className="flex flex-wrap items-center gap-1.5">
-          <select aria-label="印象类型筛选" value={kind} onChange={(event) => setKind(event.target.value as typeof kind)} className="h-6 rounded-md border bg-background px-1.5 text-[11px]">
+          <select aria-label="印象类型筛选" value={kind} onChange={(event) => setKind(event.target.value as typeof kind)} className="h-6 rounded-md border bg-background px-1.5 text-xs">
             <option value="">全部类型</option>
             <option value="impression">印象</option>
             <option value="affinity">好感</option>
             <option value="person_fact">人物事实</option>
           </select>
           <form className="flex items-center gap-1" onSubmit={(event) => { event.preventDefault(); setSearch(searchDraft.trim()) }}>
-            <Input aria-label="搜索印象时间线" className="h-6 w-28 text-[11px]" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="搜索…" />
-            <Button type="submit" size="sm" variant="outline" className="h-6 px-1.5 text-[11px]">搜索</Button>
+            <Input aria-label="搜索印象时间线" className="h-6 w-28 text-xs" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="搜索…" />
+            <Button type="submit" size="sm" variant="outline" className="h-6 px-1.5 text-xs">搜索</Button>
           </form>
-          <Button type="button" size="sm" variant="ghost" className="h-6 px-1.5 text-[11px]" onClick={() => setReload((value) => value + 1)}><RefreshCwIcon className="size-3" aria-hidden="true" /></Button>
+          <Button type="button" size="sm" variant="ghost" className="h-6 px-1.5 text-xs" onClick={() => setReload((value) => value + 1)}><RefreshCwIcon className="size-3" aria-hidden="true" /></Button>
         </div>
       </div>
       {loading ? (
@@ -263,8 +264,8 @@ function ImpressionTimelinePanel({ query, userId }: { query: { bot_id: string; s
                   <span className="font-semibold text-foreground/80">{entry.source_quote_inferred ? '推测原话（按时间窗口匹配）：' : '原话证据：'}</span>“{entry.source_quote}”
                 </div>
               ) : null}
-              <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
-                <Badge variant="outline" className="font-mono text-[10px]">{timelineKindLabel(entry.kind)}</Badge>
+              <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                <Badge variant="outline" className="font-mono text-xs">{timelineKindLabel(entry.kind)}</Badge>
                 <span>{formatImpressionTime(entry.occurred_at) || '未记录时间'}</span>
                 {entry.dimension && entry.delta !== null && entry.delta !== undefined ? (
                   <span className="font-mono">{entry.dimension}{typeof entry.delta === 'number' ? formatSignedDisplayNumber(entry.delta) : String(entry.delta)}</span>
@@ -276,12 +277,12 @@ function ImpressionTimelinePanel({ query, userId }: { query: { bot_id: string; s
         </ol>
       )}
       {total > limit ? (
-        <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
+        <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
           <span>共 {total} 条</span>
           <div className="flex items-center gap-1">
-            <Button type="button" size="sm" variant="outline" className="h-6 px-1.5 text-[11px]" disabled={offset <= 0 || loading} onClick={() => setOffset((value) => Math.max(0, value - limit))}>上一页</Button>
+            <Button type="button" size="sm" variant="outline" className="h-6 px-1.5 text-xs" disabled={offset <= 0 || loading} onClick={() => setOffset((value) => Math.max(0, value - limit))}>上一页</Button>
             <span className="px-1">{page} / {pageCount}</span>
-            <Button type="button" size="sm" variant="outline" className="h-6 px-1.5 text-[11px]" disabled={offset + limit >= total || loading} onClick={() => setOffset((value) => value + limit)}>下一页</Button>
+            <Button type="button" size="sm" variant="outline" className="h-6 px-1.5 text-xs" disabled={offset + limit >= total || loading} onClick={() => setOffset((value) => value + limit)}>下一页</Button>
           </div>
         </div>
       ) : null}
@@ -425,7 +426,7 @@ function PersonDetail({ item, relationship, relationshipError, query, onChanged 
       <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] p-3.5">
         <div className="mb-1.5 flex flex-wrap items-center gap-2">
           <Badge variant="outline" className="border-amber-500/40 text-amber-600 dark:text-amber-400">Bot 当前印象</Badge>
-          <span className="text-[10px] text-muted-foreground">我眼中的他；下方可按类型与关键词浏览该群友当前群的全部印象、好感与人物事实</span>
+          <span className="text-xs text-muted-foreground">我眼中的他；下方可按类型与关键词浏览该群友当前群的全部印象、好感与人物事实</span>
           {impression ? (
             <Button type="button" size="sm" variant="outline" disabled={clearing} onClick={() => void handleClearImpression()}>
               {clearing ? '清除中…' : '清除当前印象'}
@@ -467,7 +468,7 @@ function PersonDetail({ item, relationship, relationshipError, query, onChanged 
             </p>
           ))}
         </div>
-        <p className="mt-2 text-[10px] text-muted-foreground">
+        <p className="mt-2 text-xs text-muted-foreground">
           来自 formal evidence 中的 historical_audit_summary；与下方 legacy 事件审计表并列，不参与 affinity 计算。
         </p>
       </div>
@@ -497,6 +498,7 @@ function PersonDetail({ item, relationship, relationshipError, query, onChanged 
 }
 
 export function PeoplePage() {
+  const hidePageScope = useHidePageScopeSelectors()
   const pagination = usePaginationSearchParams()
   const botId = pagination.searchParams.get('bot_id') ?? ''
   const sessionId = pagination.searchParams.get('session_id') ?? ''
@@ -704,12 +706,12 @@ export function PeoplePage() {
     <Card className="overflow-hidden border-border/60">
       <CardContent className="p-0">
         <div className="flex flex-col gap-3 bg-muted/[0.035] p-3">
-          <div className="flex flex-wrap items-end gap-2" data-slot="people-scope-context">
+          {hidePageScope ? null : <div className="flex flex-wrap items-end gap-2" data-slot="people-scope-context">
             <Badge variant="outline" className="mb-0.5 h-7">当前群</Badge>
             <ScopeSelect className="min-w-48 flex-1 xl:max-w-64" value={botId || undefined} loadOptions={loadBots} label="Bot" placeholder="选择 Bot" required onValueChange={(value) => pagination.setFilters({ bot_id: value, session_id: null })} />
             <ScopeSelect className="min-w-56 flex-[1.4] xl:max-w-80" value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" placeholder="选择该 Bot 的群" disabled={!botId} required onValueChange={(value) => pagination.setFilters({ session_id: value })} />
-            <span className="pb-1 text-[10px] text-muted-foreground">这里的 Bot 不是 QQ 号</span>
-          </div>
+            <span className="pb-1 text-xs text-muted-foreground">这里的 Bot 不是 QQ 号</span>
+          </div>}
           {isLegacyScope ? (
             <Alert>
               <AlertCircleIcon />
@@ -738,7 +740,7 @@ export function PeoplePage() {
 
             {showAdvancedFilters && (
               <div className="grid gap-3 rounded-lg border bg-muted/20 p-3.5 text-xs animate-in fade-in slide-in-from-top-2 duration-150">
-                <div className="flex items-center justify-between text-[11px] text-muted-foreground border-b pb-2">
+                <div className="flex items-center justify-between text-xs text-muted-foreground border-b pb-2">
                   <span>筛选和排序发给服务端，按全群结果分页；总数是匹配人数，不是当前页人数。</span>
                   <span className="font-mono">本页 {people.length} 人</span>
                 </div>
@@ -780,9 +782,9 @@ export function PeoplePage() {
                       />
                     </div>
                     <div className="flex flex-wrap gap-1">
-                      <Button type="button" size="sm" variant="outline" className="h-6 px-1.5 text-[10px]" disabled={relationshipState === 'unknown'} onClick={() => applyAffinityPreset('15', '')}>高好感 ≥15</Button>
-                      <Button type="button" size="sm" variant="outline" className="h-6 px-1.5 text-[10px]" disabled={relationshipState === 'unknown'} onClick={() => applyAffinityPreset('5', '14')}>中好感</Button>
-                      <Button type="button" size="sm" variant="outline" className="h-6 px-1.5 text-[10px]" disabled={relationshipState === 'unknown'} onClick={() => applyAffinityPreset('', '-1')}>负好感</Button>
+                      <Button type="button" size="sm" variant="outline" className="h-6 px-1.5 text-xs" disabled={relationshipState === 'unknown'} onClick={() => applyAffinityPreset('15', '')}>高好感 ≥15</Button>
+                      <Button type="button" size="sm" variant="outline" className="h-6 px-1.5 text-xs" disabled={relationshipState === 'unknown'} onClick={() => applyAffinityPreset('5', '14')}>中好感</Button>
+                      <Button type="button" size="sm" variant="outline" className="h-6 px-1.5 text-xs" disabled={relationshipState === 'unknown'} onClick={() => applyAffinityPreset('', '-1')}>负好感</Button>
                     </div>
                   </div>
 
@@ -831,7 +833,7 @@ export function PeoplePage() {
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="h-8 shrink-0 px-2 text-[10px]"
+                        className="h-8 shrink-0 px-2 text-xs"
                         aria-label={sortOrder === 'desc' ? '当前从高到低，点击改为从低到高' : '当前从低到高，点击改为从高到低'}
                         onClick={() => {
                           const next = sortOrder === 'asc' ? 'desc' : 'asc'
@@ -867,14 +869,14 @@ export function PeoplePage() {
               keyExtractor={(row) => row.scope_key}
               onRowClick={(row) => openDetail(row)}
               columns={[
-                { key: 'user_id', header: '用户 ID', className: 'max-w-44 truncate py-1 font-mono text-[11px]', render: (row) => row.user_id },
+                { key: 'user_id', header: '用户 ID', className: 'max-w-44 truncate py-1 font-mono text-xs', render: (row) => row.user_id },
                 { key: 'display_name', header: '显示名称', isTitle: true, className: 'max-w-44 truncate py-1 text-xs font-medium', render: (row) => personDisplayName(row) },
                 { key: 'aliases', header: '登记别名', className: 'max-w-48 truncate py-1 text-xs text-muted-foreground', render: (row) => { const aliases = aliasLabels(row.aliases); return aliases.length ? aliases.join('、') : '未登记' } },
                 { key: 'impression', header: 'Bot 印象', className: 'max-w-56 truncate py-1 text-xs text-muted-foreground', render: (row) => impressionOf(row) || '—' },
-                { key: 'group', header: '群', className: 'max-w-36 truncate py-1 font-mono text-[11px]', render: (row) => row.group_id },
-                { key: 'bot', header: 'Bot', className: 'max-w-32 truncate py-1', render: (row) => <Badge variant="secondary" className="max-w-full truncate px-1.5 font-mono text-[10px] font-normal">{row.bot_id}</Badge> },
-                { key: 'count', header: '互动数', className: 'py-1 text-center font-mono text-[11px]', render: (row) => interactionCount(row) ?? '—' },
-                { key: 'affinity', header: '好感', className: 'py-1', render: (row) => { if (relationshipError) return <Badge variant="outline" className="text-[10px] text-destructive">关系读取失败</Badge>; const has = row.affinity !== null; return has ? <Badge className={`text-[10px] font-mono font-semibold ${row.affinity! >= 15 ? 'bg-rose-500 text-white' : row.affinity! >= 5 ? 'bg-pink-500 text-white' : row.affinity! > 0 ? 'bg-pink-400/80 text-white' : row.affinity! < 0 ? 'bg-blue-500 text-white' : 'bg-muted text-muted-foreground'}`}>{formatSignedDisplayNumber(row.affinity)}</Badge> : <Badge variant="outline" className="text-[10px] text-muted-foreground">未记录</Badge> } },
+                { key: 'group', header: '群', className: 'max-w-36 truncate py-1 font-mono text-xs', render: (row) => row.group_id },
+                { key: 'bot', header: 'Bot', className: 'max-w-32 truncate py-1', render: (row) => <Badge variant="secondary" className="max-w-full truncate px-1.5 font-mono text-xs font-normal">{row.bot_id}</Badge> },
+                { key: 'count', header: '互动数', className: 'py-1 text-center font-mono text-xs', render: (row) => interactionCount(row) ?? '—' },
+                { key: 'affinity', header: '好感', className: 'py-1', render: (row) => { if (relationshipError) return <Badge variant="outline" className="text-xs text-destructive">关系读取失败</Badge>; const has = row.affinity !== null; return has ? <Badge className={`text-xs font-mono font-semibold ${row.affinity! >= 15 ? 'bg-rose-500 text-white' : row.affinity! >= 5 ? 'bg-pink-500 text-white' : row.affinity! > 0 ? 'bg-pink-400/80 text-white' : row.affinity! < 0 ? 'bg-blue-500 text-white' : 'bg-muted text-muted-foreground'}`}>{formatSignedDisplayNumber(row.affinity)}</Badge> : <Badge variant="outline" className="text-xs text-muted-foreground">未记录</Badge> } },
                 { key: 'actions', header: null, hideOnMobile: false, render: (row) => <Button type="button" variant="ghost" size="icon-xs" aria-label={`查看 ${personDisplayName(row)} 详情`} onClick={(event) => { event.stopPropagation(); openDetail(row) }}><EyeIcon aria-hidden="true" /></Button> },
               ]}
             />

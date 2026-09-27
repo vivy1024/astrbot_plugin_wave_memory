@@ -14,6 +14,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { SidebarTrigger } from '@/components/ui/sidebar'
+import { GlobalScopeBar } from './GlobalScopeBar'
 
 export function PageHeader() {
   const location = useLocation()
@@ -37,9 +38,10 @@ export function PageHeader() {
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
+      <div className="ml-auto flex min-w-0 items-center gap-2">
+      <GlobalScopeBar />
       {showLogout ? (
         <Button
-          className="ml-auto"
           type="button"
           variant="ghost"
           size="sm"
@@ -54,6 +56,7 @@ export function PageHeader() {
           <span className="sr-only sm:hidden">退出登录</span>
         </Button>
       ) : null}
+      </div>
     </header>
   )
 }

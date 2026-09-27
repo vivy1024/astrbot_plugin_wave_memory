@@ -7,6 +7,7 @@ import { AppRoutes } from '@/app/AppShell'
 import { UnsavedChangesProvider } from '@/app/unsaved-changes'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { ThemeProvider } from '@/components/theme/theme-provider'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { LoginPage } from '@/pages/LoginPage'
@@ -52,14 +53,16 @@ export function AuthGate() {
 
 export default function App() {
   return (
-    <TooltipProvider>
-      <HashRouter>
-        <UnsavedChangesProvider>
-          <AuthProvider>
-            <AuthGate />
-          </AuthProvider>
-        </UnsavedChangesProvider>
-      </HashRouter>
-    </TooltipProvider>
+    <ThemeProvider>
+      <TooltipProvider>
+        <HashRouter>
+          <UnsavedChangesProvider>
+            <AuthProvider>
+              <AuthGate />
+            </AuthProvider>
+          </UnsavedChangesProvider>
+        </HashRouter>
+      </TooltipProvider>
+    </ThemeProvider>
   )
 }

@@ -99,15 +99,15 @@ export function TimeAnchorsExplorer({ botId }: { botId?: string }) {
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-sm font-medium leading-normal">{item.event_summary}</p>
                       {item.emotional_weight ? (
-                        <Badge variant="secondary" className="shrink-0 text-[10px]">
+                        <Badge variant="secondary" className="shrink-0 text-xs">
                           <HeartIcon className="mr-1 size-2.5 text-pink-500" />
                           {(item.emotional_weight * 100).toFixed(0)}%
                         </Badge>
                       ) : null}
                     </div>
-                    <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
+                    <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
                       <span>{new Date(item.timestamp * 1000).toLocaleString('zh-CN')}</span>
-                      {item.bot_id ? <Badge variant="outline" className="text-[10px]">{item.bot_id}</Badge> : null}
+                      {item.bot_id ? <Badge variant="outline" className="text-xs">{item.bot_id}</Badge> : null}
                     </div>
                   </div>
                 </div>

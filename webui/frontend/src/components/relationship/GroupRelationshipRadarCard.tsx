@@ -230,8 +230,8 @@ export function GroupRelationshipRadarCard({
           <p className="mt-1 text-xs text-muted-foreground">轴按各维正式范围归一化到 0–100，小分不会撑满；全部叠加只是叠线。未建立的维度不画成 0。</p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-[11px]" onClick={selectOnlyCurrent}>只看当前</Button>
-          <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-[11px]" onClick={selectAll}>全部叠加</Button>
+          <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={selectOnlyCurrent}>只看当前</Button>
+          <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={selectAll}>全部叠加</Button>
           <Badge variant="outline">不含校准写入口</Badge>
         </div>
       </div>
@@ -301,9 +301,9 @@ export function GroupRelationshipRadarCard({
                       onClick={() => selectSubject(subjectId)}
                     >
                       <span className={`truncate ${selected ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}>{displayName(entry.item)}</span>
-                      {selected ? <Badge variant="secondary" className="text-[10px]">当前解释</Badge> : null}
+                      {selected ? <Badge variant="secondary" className="text-xs">当前解释</Badge> : null}
                     </button>
-                    <Button type="button" size="sm" variant={selected ? 'secondary' : 'ghost'} className="h-6 px-1.5 text-[10px]" onClick={() => selectSubject(subjectId)}>
+                    <Button type="button" size="sm" variant={selected ? 'secondary' : 'ghost'} className="h-6 px-1.5 text-xs" onClick={() => selectSubject(subjectId)}>
                       选择
                     </Button>
                     {objectRef?.ref?.trim() ? (
@@ -311,7 +311,7 @@ export function GroupRelationshipRadarCard({
                         人物页
                       </ObjectDeepLink>
                     ) : (
-                      <span className="text-[10px] text-muted-foreground">未签发对象引用</span>
+                      <span className="text-xs text-muted-foreground">未签发对象引用</span>
                     )}
                   </div>
                 )
@@ -328,7 +328,7 @@ export function GroupRelationshipRadarCard({
                     key={key}
                     type="button"
                     aria-pressed={activeDimension === key}
-                    className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${activeDimension === key ? 'border-primary bg-primary/10 font-semibold text-primary' : 'text-muted-foreground hover:bg-muted'}`}
+                    className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${activeDimension === key ? 'border-primary bg-primary/10 font-semibold text-primary' : 'text-muted-foreground hover:bg-muted'}`}
                     onClick={() => selectDimension(key)}
                   >
                     {label}
@@ -354,19 +354,19 @@ export function GroupRelationshipRadarCard({
               ) : historyError ? (
                 <div className="rounded border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive" role="alert">
                   <div className="flex items-center gap-2"><AlertCircleIcon className="size-3.5" />{historyError}</div>
-                  {onRetryHistory ? <Button type="button" size="sm" variant="outline" className="mt-2 h-7 text-[11px]" onClick={onRetryHistory}>重试事件摘要</Button> : null}
+                  {onRetryHistory ? <Button type="button" size="sm" variant="outline" className="mt-2 h-7 text-xs" onClick={onRetryHistory}>重试事件摘要</Button> : null}
                 </div>
               ) : activeHistory.length ? (
                 <div className="grid gap-2">
                   {activeHistory.map((item) => (
                     <div key={item.id} className="rounded border bg-background/70 px-2.5 py-2">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <Badge variant={item.kind === 'manual' ? 'secondary' : 'outline'} className="text-[10px]">{item.kind === 'manual' ? '人工' : '自动'}</Badge>
-                        {item.event_type ? <Badge variant="outline" className="max-w-full truncate text-[10px]">{item.event_type}</Badge> : null}
-                        <span className="text-[10px] text-muted-foreground">{formatTime(item.timestamp)} · revision {item.revision ?? '未记录'}</span>
+                        <Badge variant={item.kind === 'manual' ? 'secondary' : 'outline'} className="text-xs">{item.kind === 'manual' ? '人工' : '自动'}</Badge>
+                        {item.event_type ? <Badge variant="outline" className="max-w-full truncate text-xs">{item.event_type}</Badge> : null}
+                        <span className="text-xs text-muted-foreground">{formatTime(item.timestamp)} · revision {item.revision ?? '未记录'}</span>
                       </div>
                       <p className="mt-1 text-xs font-medium">{item.reason || '服务端未提供原因'}</p>
-                      <p className="mt-1 text-[10px] text-muted-foreground">来源：{sourceText(item)}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">来源：{sourceText(item)}</p>
                     </div>
                   ))}
                 </div>
@@ -375,7 +375,7 @@ export function GroupRelationshipRadarCard({
               )}
             </div>
 
-            <p className="text-[10px] leading-relaxed text-muted-foreground">
+            <p className="text-xs leading-relaxed text-muted-foreground">
               这里只读展示当前群关系对照；完整事件流与人工校准请通过人物页查看。
               {activeItem?.object_ref?.ref?.trim() ? <span className="ml-1">请使用上方人物页深链。</span> : null}
             </p>

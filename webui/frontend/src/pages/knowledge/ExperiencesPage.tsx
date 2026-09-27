@@ -351,7 +351,7 @@ export function ExperiencesPage() {
                     </>
                   )}
 
-                  <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-border/40 pt-2 text-[11px] text-muted-foreground">
+                  <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-border/40 pt-2 text-xs text-muted-foreground">
                     <span className="font-mono">episode:{item.id}</span>
                     {item.reflection_candidate ? <Badge variant="secondary">反思候选</Badge> : null}
                     {sourceMemoryIds(item.source_memory_ids).length ? (
@@ -360,7 +360,7 @@ export function ExperiencesPage() {
                       <span>暂无来源记忆</span>
                     )}
                   </div>
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                     {item.user_id ? (
                       <Link className="flex items-center gap-1 truncate text-primary hover:underline" to={scopedHref('/people', pagination.searchParams.toString(), { search: item.user_id })}>
                         <UserIcon className="size-3" aria-hidden="true" />{item.user_id}

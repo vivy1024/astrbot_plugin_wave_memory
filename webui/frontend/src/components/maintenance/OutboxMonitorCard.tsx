@@ -43,7 +43,7 @@ export function OutboxMonitorCard() {
             <HardDriveIcon className="size-4 text-primary" />
             <CardTitle className="text-sm font-semibold">WriteGateway & Outbox 管道健康</CardTitle>
           </div>
-          <Badge variant={data.write_gateway_wired ? 'default' : 'secondary'} className="text-[11px]">
+          <Badge variant={data.write_gateway_wired ? 'default' : 'secondary'} className="text-xs">
             <CheckCircle2Icon className="mr-1 size-3" />
             {data.write_gateway_wired ? '写协调器就绪' : '挂载中'}
           </Badge>

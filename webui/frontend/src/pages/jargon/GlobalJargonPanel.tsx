@@ -138,12 +138,12 @@ function ReadOnlyLayer({
         <TableBody>{visible.map((item, index) => <TableRow key={`${title}:${index}`}>
           <TableCell className="font-medium">{textOf(item, titleKeys, `条目 ${index + 1}`)}</TableCell>
           <TableCell className="whitespace-normal break-words text-sm text-muted-foreground">{textOf(item, summaryKeys)}</TableCell>
-          <TableCell>{sourceLabel(item) ? <Badge variant="outline" className="text-[10px]">{sourceLabel(item)}</Badge> : null}</TableCell>
+          <TableCell>{sourceLabel(item) ? <Badge variant="outline" className="text-xs">{sourceLabel(item)}</Badge> : null}</TableCell>
         </TableRow>)}</TableBody></Table>}
         cards={visible.map((item, index) => <article key={`${title}:${index}`} className="flex flex-col gap-2 rounded-lg border bg-card p-4">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <p className="font-medium">{textOf(item, titleKeys, `条目 ${index + 1}`)}</p>
-            {sourceLabel(item) ? <Badge variant="outline" className="text-[10px]">{sourceLabel(item)}</Badge> : null}
+            {sourceLabel(item) ? <Badge variant="outline" className="text-xs">{sourceLabel(item)}</Badge> : null}
           </div>
           <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">{textOf(item, summaryKeys)}</p>
         </article>)}
@@ -393,7 +393,7 @@ export function GlobalJargonPanel({ botId }: { botId: string }) {
               <TableBody>{searchableItems.map((item) => <TableRow key={item.word}>
                 <TableCell className="font-semibold truncate">{item.word}</TableCell>
                 <TableCell className="whitespace-normal break-words text-sm text-muted-foreground">{item.meaning || '尚未填写释义'}</TableCell>
-                <TableCell><Badge variant="outline" className="text-[10px]">{SOURCE_LABELS[item.source] ?? item.source}</Badge></TableCell>
+                <TableCell><Badge variant="outline" className="text-xs">{SOURCE_LABELS[item.source] ?? item.source}</Badge></TableCell>
                 <TableCell><Badge variant={item.status === 'active' ? 'secondary' : 'outline'}>{item.status === 'active' ? '已启用' : '已停用'}</Badge></TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
@@ -414,7 +414,7 @@ export function GlobalJargonPanel({ botId }: { botId: string }) {
               <div className="flex items-start justify-between gap-2">
                 <span className="font-semibold">{item.word}</span>
                 <div className="flex flex-wrap gap-1">
-                  <Badge variant="outline" className="text-[10px]">{SOURCE_LABELS[item.source] ?? item.source}</Badge>
+                  <Badge variant="outline" className="text-xs">{SOURCE_LABELS[item.source] ?? item.source}</Badge>
                   <Badge variant={item.status === 'active' ? 'secondary' : 'outline'}>{item.status === 'active' ? '已启用' : '已停用'}</Badge>
                 </div>
               </div>

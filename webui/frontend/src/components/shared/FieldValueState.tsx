@@ -64,7 +64,7 @@ export function FieldValueState({
     <Field data-slot="field-value-state" className={cn('rounded-xl border border-border/40 bg-muted/10 p-3.5', className)}>
       <div className="flex items-center justify-between gap-3 mb-2.5">
         <span className="text-xs font-semibold text-foreground/80 truncate">{label}</span>
-        <Badge variant={mode === 'hot' ? 'default' : mode === 'restart' ? 'secondary' : 'outline'} className="text-[10px] h-5 py-0 px-2 shrink-0">
+        <Badge variant={mode === 'hot' ? 'default' : mode === 'restart' ? 'secondary' : 'outline'} className="text-xs h-5 py-0 px-2 shrink-0">
           {mode === 'hot'
             ? <ZapIcon className="size-3 mr-1" aria-hidden="true" />
             : <RotateCcwIcon className="size-3 mr-1" aria-hidden="true" />}
@@ -72,7 +72,7 @@ export function FieldValueState({
         </Badge>
       </div>
 
-      <div className="grid gap-2 grid-cols-3 text-[11px] leading-normal font-mono mb-2">
+      <div className="grid gap-2 grid-cols-3 text-xs leading-normal font-mono mb-2">
         <div className="flex flex-col gap-0.5 rounded-lg bg-background/50 p-2 border border-border/20">
           <span className="text-muted-foreground scale-95 origin-left">默认</span>
           <span className="truncate text-foreground/80">{displayValue(defaultValue)}</span>
@@ -92,7 +92,7 @@ export function FieldValueState({
         </div>
       </div>
 
-      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mt-1 leading-normal">
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1 leading-normal">
         {differs ? (
           <>
             <AlertTriangleIcon className="size-3 text-amber-500 shrink-0" />

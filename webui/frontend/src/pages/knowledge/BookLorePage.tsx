@@ -89,7 +89,7 @@ function ItemDetail({ item, resource }: { item: BookLoreItem; resource: BookLore
 }
 
 function SummaryTile({ label, value, help }: { label: string; value: number | undefined; help: string }) {
-  return <div className="min-w-[4.75rem] rounded-lg border bg-muted/20 px-2.5 py-1.5 text-center"><div className="text-[11px] text-muted-foreground">{label}</div><div className="text-base font-semibold leading-5">{value ?? '—'}</div><div className="sr-only">{help}</div></div>
+  return <div className="min-w-[4.75rem] rounded-lg border bg-muted/20 px-2.5 py-1.5 text-center"><div className="text-xs text-muted-foreground">{label}</div><div className="text-base font-semibold leading-5">{value ?? '—'}</div><div className="sr-only">{help}</div></div>
 }
 
 export function BookLorePage() {
@@ -168,7 +168,7 @@ export function BookLorePage() {
           </QueryState>
 
           <Tabs value={resource} onValueChange={(tab) => pagination.setFilters({ tab })} className="w-full">
-            <div className="px-4 pt-3"><TabsList className="h-8 border bg-muted/40 p-0.5">{RESOURCES.map((item) => <TabsTrigger key={item.value} value={item.value} className="h-7 text-xs">{item.label}<span className="ml-1 text-[10px] text-muted-foreground">{summary?.counts[item.value] ?? '—'}</span></TabsTrigger>)}</TabsList></div>
+            <div className="px-4 pt-3"><TabsList className="h-8 border bg-muted/40 p-0.5">{RESOURCES.map((item) => <TabsTrigger key={item.value} value={item.value} className="h-7 text-xs">{item.label}<span className="ml-1 text-xs text-muted-foreground">{summary?.counts[item.value] ?? '—'}</span></TabsTrigger>)}</TabsList></div>
             {RESOURCES.map((item) => (
               <TabsContent key={item.value} value={item.value} className="mt-3">
                 <QueryState status={status} error={error ?? summaryError} title={`${item.label}读取失败`} description={!summary && summaryError ? '无法确认服务端 catalog scope，因此没有使用硬编码默认值继续查询。' : undefined} onRetry={() => setReload((value) => value + 1)}>

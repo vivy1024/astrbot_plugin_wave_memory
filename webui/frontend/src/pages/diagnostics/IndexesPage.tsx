@@ -139,7 +139,7 @@ function CheckDetail({ check }: { check: DiagnosticCheck }) {
 }
 
 function SummaryTile({ label, value, tone }: { label: string; value: number | string; tone?: string }) {
-  return <div className="min-w-0 px-3 py-1.5 text-center"><div className="truncate text-[10px] text-muted-foreground">{label}</div><div className={`text-lg font-semibold leading-5 ${tone ?? ''}`}>{value}</div></div>
+  return <div className="min-w-0 px-3 py-1.5 text-center"><div className="truncate text-xs text-muted-foreground">{label}</div><div className={`text-lg font-semibold leading-5 ${tone ?? ''}`}>{value}</div></div>
 }
 
 function HealthStatus({ loading, error, data, issueCount }: { loading: boolean; error: unknown; data: IndexDiagnostics | null; issueCount: number }) {
@@ -197,7 +197,7 @@ export function IndexesPage() {
       <CardHeader className="gap-3 border-b pb-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div><CardTitle className="text-sm">索引健康矩阵</CardTitle><CardDescription>优先展示各只读探针的当前状态与关键证据。</CardDescription></div>
-          <Badge variant="outline" className="text-[10px]">{data ? `检查于 ${formatCheckedAt(data.checked_at)}` : '状态未确认'}</Badge>
+          <Badge variant="outline" className="text-xs">{data ? `检查于 ${formatCheckedAt(data.checked_at)}` : '状态未确认'}</Badge>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <InputWithIcon value={search} onValueChange={setSearch} placeholder="搜索检查名称" aria-label="搜索诊断项" />

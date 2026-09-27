@@ -85,7 +85,7 @@ function TrajectoryChart({ history }: { history: RelationshipHistoryItem[] }) {
               key={key}
               variant={active ? 'secondary' : 'outline'}
               aria-pressed={active}
-              className={`cursor-pointer select-none text-[11px] transition-opacity ${!hasData ? 'opacity-40 saturate-50' : ''}`}
+              className={`cursor-pointer select-none text-xs transition-opacity ${!hasData ? 'opacity-40 saturate-50' : ''}`}
               onClick={() => setHidden((current) => {
                 const next = new Set(current)
                 if (next.has(key)) next.delete(key)
@@ -101,8 +101,8 @@ function TrajectoryChart({ history }: { history: RelationshipHistoryItem[] }) {
       <ChartContainer config={trajectoryChartConfig} className="h-[240px] w-full min-w-0">
         <LineChart data={data} margin={{ left: 4, right: 12, top: 8 }}>
           <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.2} />
-          <XAxis dataKey="timestamp" tickFormatter={(value) => formatTime(value).slice(5, 16)} tickLine={false} axisLine={false} minTickGap={28} className="text-[10px]" />
-          <YAxis tickLine={false} axisLine={false} width={42} className="text-[10px]" />
+          <XAxis dataKey="timestamp" tickFormatter={(value) => formatTime(value).slice(5, 16)} tickLine={false} axisLine={false} minTickGap={28} className="text-xs" />
+          <YAxis tickLine={false} axisLine={false} width={42} className="text-xs" />
           <ChartTooltip labelFormatter={(value) => formatTime(value)} content={<ChartTooltipContent />} />
           <ChartLegend content={<ChartLegendContent />} />
           {RELATIONSHIP_DIMENSIONS.map(([key]) => (
@@ -120,7 +120,7 @@ function TrajectoryChart({ history }: { history: RelationshipHistoryItem[] }) {
           ))}
         </LineChart>
       </ChartContainer>
-      <p className="text-[10px] text-muted-foreground">同一图上按时间合并各维度；只显示有实际记录的维度，badge 可点按开关叠加。</p>
+      <p className="text-xs text-muted-foreground">同一图上按时间合并各维度；只显示有实际记录的维度，badge 可点按开关叠加。</p>
     </div>
   )
 }
@@ -135,7 +135,7 @@ function HistoryList({ history }: { history: RelationshipHistoryItem[] }) {
             <Badge variant={item.kind === 'manual' ? 'secondary' : 'outline'}>{item.kind === 'manual' ? 'manual calibration' : 'automatic RelationshipEvent'}</Badge>
             <Badge variant="outline">{dimensionLabel(item.dimension)}</Badge>
             {item.action ? <Badge variant="outline">{item.action}</Badge> : null}
-            <span className="text-[10px] text-muted-foreground">{formatTime(item.timestamp)} · revision {item.revision ?? '未记录'}</span>
+            <span className="text-xs text-muted-foreground">{formatTime(item.timestamp)} · revision {item.revision ?? '未记录'}</span>
           </div>
           <p className="mt-2 text-sm font-medium">{item.reason || '服务端未提供原因'}</p>
           <div className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
@@ -148,7 +148,7 @@ function HistoryList({ history }: { history: RelationshipHistoryItem[] }) {
               <span className="ml-2 font-mono">{item.source_memory_id !== null ? `memory:${item.source_memory_id}` : item.source_episode_id !== null ? `episode:${item.source_episode_id}` : '未提供真实消息引用'}</span>
             </div>
           </div>
-          <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+          <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
             {item.operation_id ? <span className="font-mono">operation:{item.operation_id}</span> : null}
             {item.actor ? <span>actor:{item.actor}</span> : null}
           </div>

@@ -423,14 +423,14 @@ export function FactsPage() {
                     }}
                   />
                 </TableHead>
-                <TableHead className="w-14 py-1 text-[11px]">编号</TableHead>
-                <TableHead className="w-1/5 py-1 text-[11px]">主体</TableHead>
-                <TableHead className="w-20 py-1 text-[11px]">关系</TableHead>
-                <TableHead className="w-auto py-1 text-[11px]">客体</TableHead>
-                <TableHead className="w-14 py-1 text-[11px]">置信度</TableHead>
-                <TableHead className="w-20 py-1 text-[11px]">状态</TableHead>
-                <TableHead className="w-24 py-1 text-[11px]">审核建议</TableHead>
-                <TableHead className="w-48 py-1 text-[11px] text-right">操作</TableHead>
+                <TableHead className="w-14 py-1 text-xs">编号</TableHead>
+                <TableHead className="w-1/5 py-1 text-xs">主体</TableHead>
+                <TableHead className="w-20 py-1 text-xs">关系</TableHead>
+                <TableHead className="w-auto py-1 text-xs">客体</TableHead>
+                <TableHead className="w-14 py-1 text-xs">置信度</TableHead>
+                <TableHead className="w-20 py-1 text-xs">状态</TableHead>
+                <TableHead className="w-24 py-1 text-xs">审核建议</TableHead>
+                <TableHead className="w-48 py-1 text-xs text-right">操作</TableHead>
               </TableRow></TableHeader>
               <TableBody>{facts.map((fact) => {
                 const reviewable = REVIEWABLE.has(fact.status) && fact.editable
@@ -439,12 +439,12 @@ export function FactsPage() {
                   <TableCell className="py-1 align-top">
                     <input type="checkbox" aria-label={`选择事实 ${fact.id}`} className="size-3.5" disabled={!reviewable || !reviewAvailable} checked={selectedIds.includes(fact.id)} onChange={() => toggleSelected(fact)} />
                   </TableCell>
-                  <TableCell className="py-1 font-mono text-[11px] align-top">{fact.id}</TableCell>
+                  <TableCell className="py-1 font-mono text-xs align-top">{fact.id}</TableCell>
                   <TableCell className="py-1 text-xs font-medium align-top whitespace-normal break-words">{fact.subject}</TableCell>
-                  <TableCell className="py-1 align-top"><Badge variant="outline" className="px-1.5 text-[10px] font-normal">{fact.predicate}</Badge></TableCell>
+                  <TableCell className="py-1 align-top"><Badge variant="outline" className="px-1.5 text-xs font-normal">{fact.predicate}</Badge></TableCell>
                   <TableCell className="py-1 text-xs align-top whitespace-normal break-words">{fact.object}</TableCell>
-                  <TableCell className="py-1 font-mono text-[11px] align-top">{confidence(fact.confidence)}</TableCell>
-                  <TableCell className="py-1 align-top"><Badge variant="secondary" className="text-[10px]">{fact.status || '未知'}</Badge></TableCell>
+                  <TableCell className="py-1 font-mono text-xs align-top">{confidence(fact.confidence)}</TableCell>
+                  <TableCell className="py-1 align-top"><Badge variant="secondary" className="text-xs">{fact.status || '未知'}</Badge></TableCell>
                   <TableCell className="py-1 align-top text-xs"><span className={HINT_TONE[fact.review_hint]}>{HINT_LABEL[fact.review_hint] || '—'}</span></TableCell>
                   <TableCell className="py-1 align-top text-right">
                     <div className="flex justify-end items-center gap-1">
@@ -452,7 +452,7 @@ export function FactsPage() {
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="h-6 px-1.5 text-[11px]"
+                        className="h-6 px-1.5 text-xs"
                         disabled={!fact.source_memory_id && !fact.evidence?.length}
                         title={fact.source_memory_id ? '还原同作用域聊天证据' : '未关联聊天证据'}
                         onClick={() => setEvidenceFact(fact)}
@@ -464,7 +464,7 @@ export function FactsPage() {
                         <Button type="button" size="icon-sm" className="size-6" aria-label={`批准事实 ${fact.id}`} disabled={busy} onClick={() => reviewOne(fact, 'approve')}><CheckIcon className="size-3" /></Button>
                         <Button type="button" variant="outline" size="icon-sm" className="size-6" aria-label={`拒绝事实 ${fact.id}`} disabled={busy} onClick={() => reviewOne(fact, 'reject')}><XIcon className="size-3" /></Button>
                       </> : null}
-                      <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-[11px]" aria-label={`查看事实 ${fact.id} 详情`} onClick={() => openDetail(fact)}>详情</Button>
+                      <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-xs" aria-label={`查看事实 ${fact.id} 详情`} onClick={() => openDetail(fact)}>详情</Button>
                     </div>
                   </TableCell>
                 </TableRow>

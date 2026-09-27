@@ -59,7 +59,7 @@ export function SystemHealthCard({ services = [], summary }: { services?: Servic
             ['核心异常', summary?.critical_count ?? 0],
           ].map(([label, value]) => (
             <div key={String(label)} className="rounded-lg border bg-muted/5 px-3 py-2">
-              <p className="text-[10px] text-muted-foreground">{label}</p>
+              <p className="text-xs text-muted-foreground">{label}</p>
               <p className="mt-1 font-mono text-sm font-semibold">{String(value)}</p>
             </div>
           ))}
@@ -78,10 +78,10 @@ export function SystemHealthCard({ services = [], summary }: { services?: Servic
                   <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
                   <div className="min-w-0">
                     <p className="text-xs font-medium">{serviceNameLabel(service.name)}</p>
-                    {service.reason ? <p className="text-[10px] text-muted-foreground">{service.reason}</p> : null}
+                    {service.reason ? <p className="text-xs text-muted-foreground">{service.reason}</p> : null}
                   </div>
                 </div>
-                <Badge variant="outline" className="shrink-0 text-[10px]">{serviceStatusLabel(service.status)}</Badge>
+                <Badge variant="outline" className="shrink-0 text-xs">{serviceStatusLabel(service.status)}</Badge>
               </div>
             ))}
           </div>

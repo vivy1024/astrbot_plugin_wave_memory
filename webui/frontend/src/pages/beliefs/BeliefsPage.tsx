@@ -565,18 +565,18 @@ export function BeliefsPage() {
                       <div className="flex flex-col gap-1 items-start">
                         <span className="font-mono text-xs font-semibold tabular-nums">{confidenceText(item.confidence)}</span>
                         <QualityDecisionBadge decision={item.evidence_health === 'available' ? 'allow' : 'quarantine'} />
-                        <span className="font-mono text-[10px] text-muted-foreground mt-0.5">{item.evidence.length} 条引证</span>
+                        <span className="font-mono text-xs text-muted-foreground mt-0.5">{item.evidence.length} 条引证</span>
                       </div>
                     </TableCell>
                     <TableCell className="w-40 px-2 py-2.5 align-top text-right whitespace-normal">
                       <div className="flex flex-col items-end gap-1.5">
-                        <span className="text-[10px] font-mono text-muted-foreground">{formatTime(item.updated_at)}</span>
+                        <span className="text-xs font-mono text-muted-foreground">{formatTime(item.updated_at)}</span>
                         <div className="flex items-center gap-1">
                           <Button
                             type="button"
                             variant="outline"
                             size="sm"
-                            className="h-6 px-1.5 text-[11px]"
+                            className="h-6 px-1.5 text-xs"
                             disabled={!item.object_ref || !payload?.capabilities.evidence?.available}
                             title={item.object_ref ? '还原同作用域证据链' : '缺少服务端签发的 ObjectRef'}
                             onClick={() => setEvidenceItem(item)}

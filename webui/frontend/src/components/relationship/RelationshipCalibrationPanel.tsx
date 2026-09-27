@@ -236,7 +236,7 @@ export function RelationshipCalibrationPanel({ item, query, onChanged }: { item:
                     {displayValue(dimData?.effective_value, '0')}
                   </span>
                 ) : (
-                  <span className="text-[10px] text-muted-foreground font-normal">未建立</span>
+                  <span className="text-xs text-muted-foreground font-normal">未建立</span>
                 )}
               </div>
               <dl className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-muted-foreground">

@@ -64,7 +64,7 @@ function KpiCard({ title, value, description, icon: Icon }: { title: string; val
     <Card className="group relative overflow-hidden border-border/60 bg-gradient-to-b from-card to-card/95 shadow-sm transition-all duration-300 hover:border-primary/25">
       <CardHeader className="flex flex-row items-center justify-between gap-3 p-4 pb-1.5">
         <div className="min-w-0">
-          <CardDescription className="truncate text-[11px] font-medium text-muted-foreground/80">{title}</CardDescription>
+          <CardDescription className="truncate text-xs font-medium text-muted-foreground/80">{title}</CardDescription>
           <CardTitle className="truncate font-mono text-xl font-semibold tracking-tight text-foreground">{value}</CardTitle>
         </div>
         <div className="shrink-0 rounded-lg border border-primary/15 bg-primary/10 p-1.5 text-primary transition-transform duration-300 group-hover:scale-105">
@@ -72,7 +72,7 @@ function KpiCard({ title, value, description, icon: Icon }: { title: string; val
         </div>
       </CardHeader>
       <CardContent className="px-4 pb-3 pt-0">
-        <p className="truncate text-[10px] text-muted-foreground">{description}</p>
+        <p className="truncate text-xs text-muted-foreground">{description}</p>
       </CardContent>
     </Card>
   )
@@ -175,7 +175,7 @@ function NeedsAttentionCards({ system }: { system?: SystemPayload }) {
           <div className="flex-1 min-w-0">
             <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
               <span>系统状态正常</span>
-              <Badge variant="outline" className="text-[9px] font-normal border-emerald-500/20 text-emerald-500 bg-emerald-500/5 px-2 py-0">就绪</Badge>
+              <Badge variant="outline" className="text-xs font-normal border-emerald-500/20 text-emerald-500 bg-emerald-500/5 px-2 py-0">就绪</Badge>
             </p>
             <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
               当前未检测到无标签记忆、待审风格样本或运行时错误。
@@ -195,7 +195,7 @@ function NeedsAttentionCards({ system }: { system?: SystemPayload }) {
             需要介入处理的系统任务和状态审计。
           </CardDescription>
         </div>
-        <Badge variant="destructive" className="font-mono text-[10px] py-0.5 px-2 bg-destructive/10 text-destructive border border-destructive/15">
+        <Badge variant="destructive" className="font-mono text-xs py-0.5 px-2 bg-destructive/10 text-destructive border border-destructive/15">
           {activeTodos.length} 项待办
         </Badge>
       </CardHeader>
@@ -206,7 +206,7 @@ function NeedsAttentionCards({ system }: { system?: SystemPayload }) {
               <div className="min-w-0 flex flex-col gap-1.5">
                 <div className="flex min-w-0 items-start justify-between gap-3">
                   <p className="min-w-0 text-sm font-semibold tracking-tight text-foreground/90">{item.title}</p>
-                  <Badge variant="outline" className="shrink-0 bg-background/80 px-2 py-0.5 text-[10px] font-normal">
+                  <Badge variant="outline" className="shrink-0 bg-background/80 px-2 py-0.5 text-xs font-normal">
                     {item.badge}
                   </Badge>
                 </div>
@@ -264,7 +264,7 @@ function InjectionBreakdownCard({ metrics, channels, channelsUnavailable = false
               const label = moduleLabel(key)
               return (
                 <div key={key} className="flex flex-col gap-1">
-                  <div className="flex min-w-0 items-center justify-between gap-3 text-[11px]">
+                  <div className="flex min-w-0 items-center justify-between gap-3 text-xs">
                     {route ? (
                       <Link to={route} className="min-w-0 flex-1 truncate font-semibold text-foreground/80 hover:text-primary transition-colors hover:underline">
                         {label}
@@ -297,11 +297,11 @@ function InjectionBreakdownCard({ metrics, channels, channelsUnavailable = false
             <BookOpenIcon className="size-4 text-primary" />
             <span>关系注入通道</span>
           </CardTitle>
-          <CardDescription className="text-[10.5px] mt-0.5 leading-relaxed text-muted-foreground/80">
+          <CardDescription className="text-xs mt-0.5 leading-relaxed text-muted-foreground/80">
             印象摘要、印象时间线与好感分数经 affinity 通道一起注入；Token 为该通道单次预算。
           </CardDescription>
         </div>
-        <Badge variant="outline" className="px-2 py-0.5 text-[9px] font-mono shrink-0">
+        <Badge variant="outline" className="px-2 py-0.5 text-xs font-mono shrink-0">
           {metricsUnavailable ? '指标不可用 / 未返回' : `${metrics?.range ?? '当前窗口'} 消耗 ${formatNumber(relationTokens)} token`}
         </Badge>
       </CardHeader>
@@ -309,27 +309,27 @@ function InjectionBreakdownCard({ metrics, channels, channelsUnavailable = false
       <CardContent className="pt-0 pb-5 flex flex-col gap-3.5">
         <div className="grid gap-2 grid-cols-2">
           <div className="rounded-lg border bg-muted/5 p-2 flex flex-col justify-between">
-            <span className="text-[9.5px] text-muted-foreground/80 font-medium">通道唤醒</span>
-            <span className="mt-0.5 text-[11.5px] font-semibold flex items-center gap-1.5">
+            <span className="text-xs text-muted-foreground/80 font-medium">通道唤醒</span>
+            <span className="mt-0.5 text-xs font-semibold flex items-center gap-1.5">
               <span className={`size-1.5 rounded-full ${enabled === true ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.3)]' : 'bg-muted-foreground/30'}`} />
               <span>{channelsUnavailable || enabled === undefined ? '不可用 / 未返回' : enabled ? '自动注入' : '已关闭'}</span>
             </span>
           </div>
           <div className="rounded-lg border bg-muted/5 p-2 flex flex-col justify-between">
-            <span className="text-[9.5px] text-muted-foreground/80 font-medium">配置状态</span>
-            <span className="mt-0.5 font-mono text-[11px] text-foreground/80">{channelsUnavailable ? '不可用' : affinityConfig?.status ? String(affinityConfig.status) : '未返回'}</span>
+            <span className="text-xs text-muted-foreground/80 font-medium">配置状态</span>
+            <span className="mt-0.5 font-mono text-xs text-foreground/80">{channelsUnavailable ? '不可用' : affinityConfig?.status ? String(affinityConfig.status) : '未返回'}</span>
           </div>
           <div className="rounded-lg border bg-muted/5 p-2 flex flex-col justify-between">
-            <span className="text-[9.5px] text-muted-foreground/80 font-medium">注入上限</span>
-            <span className="mt-0.5 font-mono text-[11px] font-semibold">{channelValue(affinityConfig?.max_items, ' 条')}</span>
+            <span className="text-xs text-muted-foreground/80 font-medium">注入上限</span>
+            <span className="mt-0.5 font-mono text-xs font-semibold">{channelValue(affinityConfig?.max_items, ' 条')}</span>
           </div>
           <div className="rounded-lg border bg-muted/5 p-2 flex flex-col justify-between">
-            <span className="text-[9.5px] text-muted-foreground/80 font-medium">Token 预算</span>
-            <span className="mt-0.5 font-mono text-[11px] font-semibold">{channelValue(affinityConfig?.token_budget)}</span>
+            <span className="text-xs text-muted-foreground/80 font-medium">Token 预算</span>
+            <span className="mt-0.5 font-mono text-xs font-semibold">{channelValue(affinityConfig?.token_budget)}</span>
           </div>
         </div>
 
-        <Button asChild variant="outline" size="sm" className="group w-full justify-between h-7.5 text-[11px] font-medium hover:bg-primary/5 hover:text-primary transition-all duration-300">
+        <Button asChild variant="outline" size="sm" className="group w-full justify-between h-7.5 text-xs font-medium hover:bg-primary/5 hover:text-primary transition-all duration-300">
           <Link to="/channels">
             <span>前往通道热配置修改</span>
             <ArrowRightIcon className="size-3.5 transition-transform duration-300 group-hover:translate-x-0.5" data-icon="inline-end" />
@@ -355,13 +355,13 @@ function CompactSystemHealth({ system }: { system: SystemPayload }) {
     <details className="group overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm">
       <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 px-4 py-3 marker:hidden">
         <div className="min-w-0">
-          <div className="flex items-center gap-2"><span className="text-sm font-semibold">系统健康</span><Badge variant={overall === 'critical' ? 'destructive' : 'outline'} className="text-[10px]">{statusLabel}</Badge></div>
-          <p className="mt-0.5 text-[10px] text-muted-foreground">健康矩阵已压缩；展开查看服务级原因，未知状态不会按正常处理。</p>
+          <div className="flex items-center gap-2"><span className="text-sm font-semibold">系统健康</span><Badge variant={overall === 'critical' ? 'destructive' : 'outline'} className="text-xs">{statusLabel}</Badge></div>
+          <p className="mt-0.5 text-xs text-muted-foreground">健康矩阵已压缩；展开查看服务级原因，未知状态不会按正常处理。</p>
         </div>
         <div className="grid grid-cols-4 divide-x overflow-hidden rounded-md border bg-muted/10">
-          {stats.map(([label, value]) => <div key={String(label)} className="min-w-14 px-2 py-1 text-center"><div className="text-[9px] text-muted-foreground">{label}</div><div className="font-mono text-xs font-semibold">{value === undefined ? '—' : String(value)}</div></div>)}
+          {stats.map(([label, value]) => <div key={String(label)} className="min-w-14 px-2 py-1 text-center"><div className="text-xs text-muted-foreground">{label}</div><div className="font-mono text-xs font-semibold">{value === undefined ? '—' : String(value)}</div></div>)}
         </div>
-        <span className="text-[10px] font-medium text-primary group-open:hidden">展开详情</span><span className="hidden text-[10px] font-medium text-primary group-open:inline">收起详情</span>
+        <span className="text-xs font-medium text-primary group-open:hidden">展开详情</span><span className="hidden text-xs font-medium text-primary group-open:inline">收起详情</span>
       </summary>
       <div className="border-t bg-muted/5 p-3"><SystemHealthCard services={services} summary={summary} /></div>
     </details>
@@ -406,13 +406,13 @@ function RecentErrors({ errors }: { errors?: ErrorPayload }) {
                     variant="ghost"
                     size="sm"
                     onClick={() => toggleExpand(index)}
-                    className="h-5.5 px-2 text-[10px] font-semibold text-destructive/80 hover:text-destructive hover:bg-destructive/10 shrink-0"
+                    className="h-5.5 px-2 text-xs font-semibold text-destructive/80 hover:text-destructive hover:bg-destructive/10 shrink-0"
                   >
                     {isExpanded ? '收起详情' : '展开故障堆栈'}
                   </Button>
                 )}
               </div>
-              <pre className="mt-1 max-h-48 w-full overflow-auto rounded-md bg-destructive-foreground/[0.03] p-2 font-mono text-[10px] text-destructive/80 whitespace-pre-wrap break-all leading-relaxed transition-all duration-300">
+              <pre className="mt-1 max-h-48 w-full overflow-auto rounded-md bg-destructive-foreground/[0.03] p-2 font-mono text-xs text-destructive/80 whitespace-pre-wrap break-all leading-relaxed transition-all duration-300">
                 {displayMsg}
               </pre>
             </div>

@@ -1,3 +1,4 @@
+import { useHidePageScopeSelectors } from '@/app/global-scope'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ActivityIcon, AlertCircleIcon, Clock3Icon, CompassIcon, Globe2Icon, RefreshCwIcon, TargetIcon, UsersIcon } from 'lucide-react'
@@ -137,7 +138,7 @@ function SectionUnavailable({ reason }: { reason?: string | null }) {
       <div className="absolute -right-6 -bottom-6 size-24 rounded-full bg-primary/5 blur-xl motion-safe:group-hover:scale-125 transition-transform duration-500" />
       <CompassIcon className="mx-auto mb-3.5 size-6 text-primary/60 motion-safe:animate-pulse" />
       <h4 className="text-xs font-semibold text-foreground/80 tracking-wide">等待心智唤醒</h4>
-      <p className="mt-1.5 text-[11px] text-muted-foreground/90 max-w-[200px] mx-auto leading-normal">{reasonText(reason)}</p>
+      <p className="mt-1.5 text-xs text-muted-foreground/90 max-w-[200px] mx-auto leading-normal">{reasonText(reason)}</p>
     </div>
   )
 }
@@ -183,6 +184,7 @@ function SoulContextCard({ context }: { context: SoulStatePayload['soul_context'
 }
 
 export function SoulPage() {
+  const hidePageScope = useHidePageScopeSelectors()
   const pagination = usePaginationSearchParams()
   const [searchParams] = useSearchParams()
   const [payload, setPayload] = useState<SoulStatePayload | null>(null)
@@ -376,8 +378,12 @@ export function SoulPage() {
           <CardDescription>心情、关切、作息和时间线只按所选 Bot 和群读取，不接受私聊或未绑定群。</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 pt-0 md:grid-cols-2 lg:grid-cols-4">
-          <ScopeSelect value={botId || undefined} loadOptions={loadBots} label="Bot" onValueChange={(value) => pagination.setFilters({ bot_id: value, session_id: null, subject_principal_id: null })} />
-          <ScopeSelect value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" disabled={!botId} onValueChange={(value) => pagination.setFilters({ session_id: value, subject_principal_id: null })} />
+          {hidePageScope ? null : (
+            <>
+              <ScopeSelect value={botId || undefined} loadOptions={loadBots} label="Bot" onValueChange={(value) => pagination.setFilters({ bot_id: value, session_id: null, subject_principal_id: null })} />
+              <ScopeSelect value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" disabled={!botId} onValueChange={(value) => pagination.setFilters({ session_id: value, subject_principal_id: null })} />
+            </>
+          )}
           <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
             <span>开始时间</span>
             <Input type="datetime-local" value={localDateTimeValue(fromTs)} onChange={(event) => pagination.setFilters({ from_ts: timestampFromInput(event.target.value) })} disabled={!scope} />
@@ -445,7 +451,7 @@ export function SoulPage() {
                             <BarChart data={componentData} layout="vertical" margin={{ left: 8, right: 16 }}>
                               <CartesianGrid horizontal={false} opacity={0.2} />
                               <XAxis type="number" tickLine={false} axisLine={false} />
-                              <YAxis dataKey="name" type="category" tickLine={false} axisLine={false} width={88} className="text-[10px]" />
+                              <YAxis dataKey="name" type="category" tickLine={false} axisLine={false} width={88} className="text-xs" />
                               <ChartTooltip content={<ChartTooltipContent />} />
                               <Bar dataKey="value" fill="var(--chart-2)" radius={4} />
                             </BarChart>
@@ -485,7 +491,7 @@ export function SoulPage() {
                             <Badge variant="outline">版本 {item.revision ?? '—'}</Badge>
                           </div>
                         </div>
-                        <p className="mt-1 text-[10px] text-muted-foreground">最近触发 {formatTime(item.last_triggered)}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">最近触发 {formatTime(item.last_triggered)}</p>
                         <div className="mt-3"><EvidenceList evidence={item.evidence} /></div>
                       </div>
                     ))
@@ -515,8 +521,8 @@ export function SoulPage() {
                           <span className="absolute -left-[27px] top-1 size-3 rounded-full border-2 border-background bg-primary" />
                           <div className="rounded-lg border bg-muted/10 p-3">
                             <p className="text-sm font-semibold">{item.event_summary || item.summary || '未命名事件'}</p>
-                            <p className="mt-1 text-[10px] text-muted-foreground">{timelineTypeLabel(item.event_type)} · {formatTime(item.timestamp)} · 版本 {item.revision ?? '未记录'}</p>
-                            <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                            <p className="mt-1 text-xs text-muted-foreground">{timelineTypeLabel(item.event_type)} · {formatTime(item.timestamp)} · 版本 {item.revision ?? '未记录'}</p>
+                            <div className="mt-2 flex flex-wrap gap-2 text-xs">
                               {item.origin_episode_id ? <Link className="text-primary hover:underline" to={scopedHref('/knowledge/experiences', searchParams.toString())}>经历片段</Link> : null}
                               {item.origin_memory_id ? <Link className="text-primary hover:underline" to={scopedHref('/memories', searchParams.toString(), { object_id: item.origin_memory_id })}>来源记忆</Link> : null}
                             </div>

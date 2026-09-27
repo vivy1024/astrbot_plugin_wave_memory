@@ -12,6 +12,7 @@ vi.mock('@/app/routes', () => ({
     { path: '/explore', title: '神经云图', description: '', group: 'overview', icon: () => null, element: () => <div>全屏 Explore 内容</div> },
   ],
 }))
+vi.mock('@/app/global-scope', () => ({ GlobalScopeProvider: ({ children }: { children: ReactNode }) => <>{children}</> }))
 vi.mock('@/components/layout/PageHeader', () => ({ PageHeader: () => <div>外层页头</div> }))
 vi.mock('@/components/layout/WaveSidebar', () => ({ WaveSidebar: () => <div>外层侧栏</div> }))
 vi.mock('@/components/ui/scroll-area', () => ({ ScrollArea: ({ children }: { children: ReactNode }) => <div>{children}</div> }))

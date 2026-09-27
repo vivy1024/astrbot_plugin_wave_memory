@@ -782,7 +782,7 @@ export function TagGraphCanvas({
                   <span className="font-medium text-slate-200">展示节点数量 (Max Nodes)</span>
                   <span className="font-mono text-sky-400 font-bold">{draftNodes}</span>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
+                <p className="text-xs text-slate-400 leading-relaxed">
                   显示当前群内活跃度最高的多少个标签。调大展现完整星云，调小聚焦核心骨干。
                 </p>
                 <div className="flex items-center gap-2 pt-1">
@@ -811,7 +811,7 @@ export function TagGraphCanvas({
                   <span className="font-medium text-slate-200">置信度门限 (Min Confidence)</span>
                   <span className="font-mono text-purple-400 font-bold">{draftConfidence.toFixed(2)}</span>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
+                <p className="text-xs text-slate-400 leading-relaxed">
                   过滤大模型提取时不够确信的低质量杂词，只保留高可信度核心关联。
                 </p>
                 <div className="flex items-center gap-2 pt-1">
@@ -842,7 +842,7 @@ export function TagGraphCanvas({
                   <span className="font-medium text-slate-200">脉冲半衰期 (Pulse Hours)</span>
                   <span className="font-mono text-amber-400 font-bold">{draftHalfLife}h</span>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
+                <p className="text-xs text-slate-400 leading-relaxed">
                   让近期刚刚讨论过的活跃话题在突触连线上流动发光。半衰期越短，脉冲衰退越快。
                 </p>
                 <div className="flex items-center gap-2 pt-1">
@@ -867,25 +867,25 @@ export function TagGraphCanvas({
 
               {/* 快捷预设 */}
               <div className="pt-1">
-                <span className="text-[11px] text-slate-400 block mb-1.5">快速预设</span>
+                <span className="text-xs text-slate-400 block mb-1.5">快速预设</span>
                 <div className="grid grid-cols-3 gap-1.5">
                   <button
                     type="button"
-                    className="p-1 text-[10px] rounded border border-white/10 bg-slate-900/60 hover:bg-slate-800 text-center"
+                    className="p-1 text-xs rounded border border-white/10 bg-slate-900/60 hover:bg-slate-800 text-center"
                     onClick={() => { setDraftNodes(100); setDraftConfidence(0.4); }}
                   >
                     ⚡ 核心紧凑
                   </button>
                   <button
                     type="button"
-                    className="p-1 text-[10px] rounded border border-white/10 bg-slate-900/60 hover:bg-slate-800 text-center"
+                    className="p-1 text-xs rounded border border-white/10 bg-slate-900/60 hover:bg-slate-800 text-center"
                     onClick={() => { setDraftNodes(300); setDraftConfidence(0.0); }}
                   >
                     🌌 标准平衡
                   </button>
                   <button
                     type="button"
-                    className="p-1 text-[10px] rounded border border-white/10 bg-slate-900/60 hover:bg-slate-800 text-center"
+                    className="p-1 text-xs rounded border border-white/10 bg-slate-900/60 hover:bg-slate-800 text-center"
                     onClick={() => { setDraftNodes(1000); setDraftConfidence(0.0); }}
                   >
                     🪐 全景深空
@@ -915,14 +915,14 @@ export function TagGraphCanvas({
                   <FlaskConicalIcon className="size-3.5" />
                   <span>基于本图的拓扑联想检索</span>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
+                <p className="text-xs text-slate-400 leading-relaxed">
                   机器人每次回复时，就是沿着当前星云的突触进行拓扑联想的。输入一句话，图谱上的命中节点将实时发光！
                 </p>
               </div>
 
               {/* 查询输入 */}
               <div className="space-y-1">
-                <span className="text-[11px] text-slate-300 font-medium">测试查询语句</span>
+                <span className="text-xs text-slate-300 font-medium">测试查询语句</span>
                 <div className="flex gap-1.5">
                   <Input
                     placeholder="输入问题或话题..."
@@ -946,8 +946,8 @@ export function TagGraphCanvas({
 
               {/* 算法阶段开关 */}
               <div className="space-y-1 pt-1">
-                <span className="text-[11px] text-slate-300 font-medium block">高阶算法阶段 (自由开关)</span>
-                <div className="space-y-1.5 rounded-lg border border-white/5 bg-slate-900/40 p-2 text-[11px]">
+                <span className="text-xs text-slate-300 font-medium block">高阶算法阶段 (自由开关)</span>
+                <div className="space-y-1.5 rounded-lg border border-white/5 bg-slate-900/40 p-2 text-xs">
                   <label className="flex items-center justify-between cursor-pointer">
                     <span className="text-slate-300">⚡ 脉冲共现扩散 (Spike)</span>
                     <Switch
@@ -955,7 +955,7 @@ export function TagGraphCanvas({
                       onCheckedChange={(checked) => setLabStages((prev) => ({ ...prev, spike: checked }))}
                     />
                   </label>
-                  <p className="text-[10px] text-slate-500">顺着当前星云突触多跳联想，思路更活跃</p>
+                  <p className="text-xs text-slate-500">顺着当前星云突触多跳联想，思路更活跃</p>
 
                   <label className="flex items-center justify-between cursor-pointer pt-1 border-t border-white/5">
                     <span className="text-slate-300">🌐 测地线重排 (Geodesic)</span>
@@ -964,7 +964,7 @@ export function TagGraphCanvas({
                       onCheckedChange={(checked) => setLabStages((prev) => ({ ...prev, geodesic: checked }))}
                     />
                   </label>
-                  <p className="text-[10px] text-slate-500">利用局部拓扑拉回向量偏差，抑制幻觉</p>
+                  <p className="text-xs text-slate-500">利用局部拓扑拉回向量偏差，抑制幻觉</p>
 
                   <label className="flex items-center justify-between cursor-pointer pt-1 border-t border-white/5">
                     <span className="text-slate-300">📐 自省投影修正 (EPA)</span>
@@ -973,7 +973,7 @@ export function TagGraphCanvas({
                       onCheckedChange={(checked) => setLabStages((prev) => ({ ...prev, epa: checked }))}
                     />
                   </label>
-                  <p className="text-[10px] text-slate-500">根据问话倾向动态调整几何匹配距离</p>
+                  <p className="text-xs text-slate-500">根据问话倾向动态调整几何匹配距离</p>
 
                   <label className="flex items-center justify-between cursor-pointer pt-1 border-t border-white/5">
                     <span className="text-slate-300">🔺 残差多阶金字塔 (Pyramid)</span>
@@ -982,7 +982,7 @@ export function TagGraphCanvas({
                       onCheckedChange={(checked) => setLabStages((prev) => ({ ...prev, pyramid: checked }))}
                     />
                   </label>
-                  <p className="text-[10px] text-slate-500">多层差分检索，化解复杂多主语问题</p>
+                  <p className="text-xs text-slate-500">多层差分检索，化解复杂多主语问题</p>
                 </div>
               </div>
 
@@ -994,7 +994,7 @@ export function TagGraphCanvas({
                     {highlightTags.size > 0 ? (
                       <button
                         type="button"
-                        className="text-[10px] text-sky-400 hover:underline"
+                        className="text-xs text-sky-400 hover:underline"
                         onClick={() => setHighlightTags(new Set())}
                       >
                         清除高亮
@@ -1003,8 +1003,8 @@ export function TagGraphCanvas({
                   </div>
                   <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
                     {labResult.results.map((m, idx) => (
-                      <div key={idx} className="p-2 rounded bg-slate-900/80 border border-white/5 text-[11px]">
-                        <div className="flex justify-between text-slate-400 text-[10px] mb-0.5">
+                      <div key={idx} className="p-2 rounded bg-slate-900/80 border border-white/5 text-xs">
+                        <div className="flex justify-between text-slate-400 text-xs mb-0.5">
                           <span>{sanitizeDisplayName(m.sender_name) || '记忆'}</span>
                           <span className="font-mono text-sky-400">
                             {typeof m.score === 'number' ? `${(m.score * 100).toFixed(0)}% 契合` : '已召回'}
@@ -1079,8 +1079,8 @@ export function TagGraphCanvas({
 
       {/* 类型图例：点击类型可自由高亮/筛选该类别 */}
       {legend?.enabled !== false && legendItems.length > 0 ? (
-        <ul className="absolute bottom-4 right-4 flex max-w-[calc(100%-2rem)] flex-col gap-1 rounded-xl border border-sky-300/10 bg-slate-950/80 px-3 py-2 text-[11px] text-slate-300 shadow-lg backdrop-blur-xl z-10" aria-label="节点类型图例">
-          <div className="flex items-center justify-between text-[10px] text-slate-400 mb-0.5 border-b border-white/5 pb-1">
+        <ul className="absolute bottom-4 right-4 flex max-w-[calc(100%-2rem)] flex-col gap-1 rounded-xl border border-sky-300/10 bg-slate-950/80 px-3 py-2 text-xs text-slate-300 shadow-lg backdrop-blur-xl z-10" aria-label="节点类型图例">
+          <div className="flex items-center justify-between text-xs text-slate-400 mb-0.5 border-b border-white/5 pb-1">
             <span>类型透镜</span>
             {activeFilterType ? (
               <button
@@ -1116,7 +1116,7 @@ export function TagGraphCanvas({
                   />
                   <span>{item.label}</span>
                   {legend?.show_count === false ? null : (
-                    <span className="ml-auto font-mono text-[10px] text-slate-500">{item.count}</span>
+                    <span className="ml-auto font-mono text-xs text-slate-500">{item.count}</span>
                   )}
                 </button>
               </li>

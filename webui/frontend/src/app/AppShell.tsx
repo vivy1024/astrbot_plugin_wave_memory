@@ -1,6 +1,7 @@
 import { Suspense } from 'react'
 import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
 
+import { GlobalScopeProvider } from '@/app/global-scope'
 import { appRoutes, defaultRoute } from '@/app/routes'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { WaveSidebar } from '@/components/layout/WaveSidebar'
@@ -31,6 +32,7 @@ function NotFoundPage() {
 
 export function AppShell() {
   return (
+    <GlobalScopeProvider>
     <SidebarProvider>
       <WaveSidebar />
       <SidebarInset>
@@ -45,6 +47,7 @@ export function AppShell() {
       </SidebarInset>
       <Toaster richColors />
     </SidebarProvider>
+    </GlobalScopeProvider>
   )
 }
 

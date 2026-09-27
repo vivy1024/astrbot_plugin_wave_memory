@@ -234,7 +234,7 @@ export function TagCoveragePanel() {
                   </table>
                 </div>
               </div>
-              <p className="text-right text-[11px] text-muted-foreground">统计用时 {report.elapsed_ms} ms · {ago(report.generated_at)}（缓存 1 分钟）</p>
+              <p className="text-right text-xs text-muted-foreground">统计用时 {report.elapsed_ms} ms · {ago(report.generated_at)}（缓存 1 分钟）</p>
             </>
           ) : null}
         </QueryState>

@@ -1,3 +1,4 @@
+import { useHidePageScopeSelectors } from '@/app/global-scope'
 import { useCallback, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { BrainCircuitIcon, FlaskConicalIcon, Loader2Icon, PlayIcon, RotateCcwIcon, ShieldCheckIcon } from 'lucide-react'
@@ -47,6 +48,7 @@ const OUTCOME_CLASS: Record<StageOutcome, string> = {
 }
 
 export function QueryLabPage() {
+  const hidePageScope = useHidePageScopeSelectors()
   const [searchParams, setSearchParams] = useSearchParams()
   const botId = searchParams.get('bot_id') ?? ''
   const sessionId = searchParams.get('session_id') ?? ''
@@ -156,6 +158,8 @@ export function QueryLabPage() {
           <CardDescription>先选 Bot 与群，再输入一句真实的查询。结果会让你看到算法开关带来的差异。</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-end gap-3">
+          {hidePageScope ? null : (
+            <>
           <div className="w-52 shrink-0">
             <ScopeSelect
               value={botId || undefined}
@@ -173,6 +177,8 @@ export function QueryLabPage() {
               onValueChange={(value) => setScope({ session_id: value })}
             />
           </div>
+            </>
+          )}
           <div className="min-w-[240px] flex-1">
             <Field>
               <FieldLabel htmlFor="query-lab-text">查询内容</FieldLabel>
@@ -228,7 +234,7 @@ export function QueryLabPage() {
                     <div key={stage} className="flex items-center justify-between gap-3 rounded-md border p-2">
                       <div className="min-w-0">
                         <p className="text-xs font-medium">{QUERY_STAGE_LABELS[stage]}</p>
-                        <p className="text-[11px] text-muted-foreground">{QUERY_STAGE_HINTS[stage]}</p>
+                        <p className="text-xs text-muted-foreground">{QUERY_STAGE_HINTS[stage]}</p>
                       </div>
                       <Switch
                         checked={config.stages[stage]}
@@ -248,7 +254,7 @@ export function QueryLabPage() {
                       <Field key={spec.name}>
                         <FieldLabel htmlFor={`${arm}-${spec.name}`} className="text-xs">
                           {spec.label}
-                          <span className="ml-2 font-mono text-[11px] text-muted-foreground">
+                          <span className="ml-2 font-mono text-xs text-muted-foreground">
                             {value === undefined ? '默认' : value}
                           </span>
                         </FieldLabel>
@@ -277,7 +283,7 @@ export function QueryLabPage() {
                             })
                           }}
                         />
-                        <FieldDescription className="text-[11px]">范围 {spec.min}–{spec.max} · {spec.hint}</FieldDescription>
+                        <FieldDescription className="text-xs">范围 {spec.min}–{spec.max} · {spec.hint}</FieldDescription>
                       </Field>
                     )
                   })}
@@ -305,12 +311,12 @@ export function QueryLabPage() {
             {stageDiffs.map((row) => (
               <div key={row.stage} className="rounded-md border p-2">
                 <p className="text-xs font-medium">{row.label}</p>
-                <div className="mt-1 flex items-center gap-2 text-[11px]">
+                <div className="mt-1 flex items-center gap-2 text-xs">
                   <span className={OUTCOME_CLASS[row.outcomeA]}>{STAGE_OUTCOME_LABELS[row.outcomeA]}</span>
                   <span className="text-muted-foreground">→</span>
                   <span className={OUTCOME_CLASS[row.outcomeB]}>{STAGE_OUTCOME_LABELS[row.outcomeB]}</span>
                 </div>
-                {row.changed ? <Badge variant="outline" className="mt-1 text-[10px]">有变化</Badge> : null}
+                {row.changed ? <Badge variant="outline" className="mt-1 text-xs">有变化</Badge> : null}
               </div>
             ))}
           </CardContent>
@@ -329,9 +335,9 @@ export function QueryLabPage() {
           <CardContent className="flex flex-col gap-2">
             {comparison.rows.length ? comparison.rows.map((row) => (
               <div key={row.id} className="rounded-md border p-2">
-                <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-2 text-xs font-mono text-muted-foreground">
                   <span>#{row.id}</span>
-                  <Badge variant="outline" className="text-[10px]">
+                  <Badge variant="outline" className="text-xs">
                     {row.type === 'common' ? '共同' : row.type === 'a_only' ? '仅 A' : '仅 B'}
                   </Badge>
                   <span>A {row.rankA ? `#${row.rankA}` : '未命中'}{row.similarityA !== null ? ` · ${row.similarityA}` : ''}</span>
