@@ -1,3 +1,4 @@
+import { MemoryRouter } from 'react-router-dom'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -31,7 +32,7 @@ beforeEach(() => {
 
 describe('BotsPage', () => {
   it('列出 Bot 并显示来源', async () => {
-    render(<BotsPage />)
+    render(<MemoryRouter><BotsPage /></MemoryRouter>)
     expect(await screen.findByText('羽书')).toBeVisible()
     expect(screen.getByText('旧配置迁移')).toBeVisible()
     expect(screen.getByText(/来源：数据库/)).toBeVisible()
@@ -40,7 +41,7 @@ describe('BotsPage', () => {
   it('新建 Bot 以版本 0 保存', async () => {
     const user = userEvent.setup()
     api.saveBot.mockResolvedValue({ ok: true, item: { ...emptyBot('bot_c'), name: '丙', version: 1 } })
-    render(<BotsPage />)
+    render(<MemoryRouter><BotsPage /></MemoryRouter>)
     await screen.findByText('羽书')
     await user.click(screen.getByRole('button', { name: /新建 Bot/ }))
     await user.type(screen.getByLabelText('db_id（稳定主键）'), 'bot_c')
@@ -56,7 +57,7 @@ describe('BotsPage', () => {
   it('编辑已有 Bot 时 db_id 不可改，保存带上读到的版本', async () => {
     const user = userEvent.setup()
     api.saveBot.mockResolvedValue({ ok: true, item: { ...yushu, version: 4 } })
-    render(<BotsPage />)
+    render(<MemoryRouter><BotsPage /></MemoryRouter>)
     await user.click(await screen.findByText('羽书'))
     const dbId = await screen.findByLabelText('db_id（稳定主键）')
     expect(dbId).toBeDisabled()
@@ -65,5 +66,12 @@ describe('BotsPage', () => {
     await waitFor(() => expect(api.saveBot).toHaveBeenCalled())
     expect(api.saveBot.mock.calls[0][2]).toBe(3)
     expect(api.saveBot.mock.calls[0][1].aliases).toEqual(['器灵'])
+  })
+})
+
+describe('BotsPage 深链接', () => {
+  it('?bot= 直接打开对应 Bot', async () => {
+    render(<MemoryRouter initialEntries={['/bots?bot=yushu&tab=behavior']}><BotsPage /></MemoryRouter>)
+    await waitFor(() => expect(api.getBot).toHaveBeenCalledWith('yushu', expect.anything()))
   })
 })

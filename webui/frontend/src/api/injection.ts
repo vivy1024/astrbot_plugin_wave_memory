@@ -82,3 +82,47 @@ export function listInjectionTraces(filters: TraceFilters = {}, signal?: AbortSi
 export function getInjectionTrace(traceId: string, signal?: AbortSignal): Promise<TraceDetailPayload> {
   return fetchJson<TraceDetailPayload>(`/api/observatory/traces/${encodeURIComponent(traceId)}`, { signal })
 }
+
+export interface MemoryTraceChannelHit {
+  channel: string
+  score?: number | null
+  similarity?: number | null
+  rank?: number
+  item_count?: number
+  source?: string | null
+}
+
+export interface MemoryTraceUsage {
+  trace_id: string
+  timestamp: number
+  group_id?: string | null
+  session_id?: string | null
+  sender_id?: string | null
+  sender_name?: string | null
+  bot_id?: string | null
+  bot_profile_id?: string | null
+  message_preview?: string | null
+  final_text_preview?: string | null
+  status?: string
+  source?: string
+  channel: string
+  score?: number | null
+  channels: MemoryTraceChannelHit[]
+  detail_url?: string
+}
+
+export interface MemoryTracesPayload {
+  memory_id: number
+  bot_id: string
+  items: MemoryTraceUsage[]
+  count: number
+  limit: number
+  channels: string[]
+  elapsed_ms?: number
+}
+
+/** 最近把这条记忆作为命中条目注入的回复（只看该 Bot 的 trace）。 */
+export function listMemoryTraces(memoryId: number, botId: string, limit = 10, signal?: AbortSignal): Promise<MemoryTracesPayload> {
+  const params = new URLSearchParams({ bot_id: botId, limit: String(limit) })
+  return fetchJson<MemoryTracesPayload>(`/api/observatory/memories/${encodeURIComponent(String(memoryId))}/traces?${params.toString()}`, { signal })
+}

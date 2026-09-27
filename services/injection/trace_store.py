@@ -20,6 +20,8 @@ except ImportError:  # pragma: no cover - direct services imports in isolated te
 
 _SECRET_KEY_RE = re.compile(r"(api[_-]?key|token|secret|credential|provider)", re.I)
 _SECRET_VALUE_RE = re.compile(r"sk-[A-Za-z0-9_\-]{4,}")
+# items[].id 指向 memories.id 的通道（memory 语义召回、fts5 全文召回）
+MEMORY_ITEM_CHANNELS: tuple[str, ...] = ("memory", "fts5")
 
 
 def _num(value: Any) -> float:
@@ -476,6 +478,111 @@ class InjectionTraceStore:
                 "config_revision": metadata.get("config_revision") if isinstance(metadata, dict) else None,
                 "source": (metadata.get("source") if isinstance(metadata, dict) else None) or "astrbot",
             })
+        return result
+
+    def find_traces_for_memory(
+        self,
+        memory_id: int,
+        *,
+        bot_id: str,
+        limit: int = 10,
+        channels: Iterable[str] = MEMORY_ITEM_CHANNELS,
+    ) -> list[dict[str, Any]]:
+        """返回最近把 ``memory_id`` 作为命中条目注入的 trace（按时间倒序，每个 trace 一行）。
+
+        只看 ``details.items``（真正注入的条目），不看 ``filtered``。details 由 :meth:`record`
+        以 ``json.dumps(sort_keys=True)`` 默认分隔符写入，形如 ``{"group_id": "1", "id": 123, "preview": …}``，
+        先用 ``instr`` 粗筛再用 ``json_each`` 精确匹配，避免 123 误中 1234。
+        """
+        memory_id = int(memory_id)
+        bot_id = str(bot_id or "").strip()
+        channel_list = [str(name) for name in channels if str(name or "").strip()]
+        if not bot_id or not channel_list:
+            return []
+        limit = max(1, min(int(limit), 100))
+        placeholders = ",".join("?" * len(channel_list))
+        rows = self.conn.execute(
+            f"""SELECT t.trace_id, t.timestamp, t.group_id, t.sender_id, t.sender_name,
+                       t.bot_id, t.bot_profile_id, t.message_preview, t.final_preview,
+                       t.status, t.metadata_json, c.channel, c.details
+                  FROM injection_trace_channels c
+                  JOIN injection_traces t ON t.trace_id = c.trace_id
+                 WHERE c.channel IN ({placeholders})
+                   AND (instr(c.details, ?) > 0 OR instr(c.details, ?) > 0)
+                   AND EXISTS (
+                       SELECT 1 FROM json_each(c.details, '$.items') j
+                        WHERE json_extract(j.value, '$.id') = ?
+                   )
+                   AND (t.bot_profile_id = ? OR t.bot_id = ?)
+                 ORDER BY t.timestamp DESC, c.id ASC
+                 LIMIT ?""",
+            [
+                *channel_list,
+                f'"id": {memory_id},',
+                f'"id": {memory_id}}}',
+                memory_id,
+                bot_id,
+                bot_id,
+                # 同一 trace 可能在多个通道里命中同一条记忆，多取一些再按 trace 合并
+                limit * len(channel_list),
+            ],
+        ).fetchall()
+        result: list[dict[str, Any]] = []
+        by_trace: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            trace_id = str(row[0])
+            try:
+                details = json.loads(row[12] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                details = {}
+            items = details.get("items") if isinstance(details, dict) else None
+            hit: dict[str, Any] | None = None
+            rank = 0
+            for index, item in enumerate(items if isinstance(items, list) else []):
+                if isinstance(item, dict) and item.get("id") == memory_id:
+                    hit, rank = item, index + 1
+                    break
+            if hit is None:
+                continue
+            channel_hit = {
+                "channel": row[11],
+                "score": hit.get("score"),
+                "similarity": hit.get("similarity"),
+                "rank": rank,
+                "item_count": len(items or []),
+                "source": hit.get("source"),
+            }
+            entry = by_trace.get(trace_id)
+            if entry is not None:
+                entry["channels"].append(channel_hit)
+                continue
+            if len(result) >= limit:
+                continue
+            try:
+                metadata = json.loads(row[10] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                metadata = {}
+            runtime_scope = metadata.get("runtime_scope") if isinstance(metadata, dict) else None
+            session = runtime_scope.get("session") if isinstance(runtime_scope, dict) else None
+            entry = {
+                "trace_id": trace_id,
+                "timestamp": row[1],
+                "group_id": row[2],
+                "sender_id": row[3],
+                "sender_name": row[4],
+                "bot_id": row[5],
+                "bot_profile_id": row[6],
+                "message_preview": row[7],
+                "final_text_preview": row[8],
+                "status": row[9],
+                "session_id": session.get("id") if isinstance(session, dict) else None,
+                "source": (metadata.get("source") if isinstance(metadata, dict) else None) or "astrbot",
+                "channel": row[11],
+                "score": hit.get("score"),
+                "channels": [channel_hit],
+            }
+            by_trace[trace_id] = entry
+            result.append(entry)
         return result
 
     def count(self, **filters: Any) -> int:

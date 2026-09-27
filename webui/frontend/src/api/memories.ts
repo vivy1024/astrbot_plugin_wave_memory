@@ -50,12 +50,16 @@ export interface MemoriesFilters extends MemoryScope {
   has_tags?: string
   has_vector?: string
   search?: string
+  /** 按记忆编号精确定位（仍受当前群过滤，作用域不符时服务端不签发 ref）。 */
+  id?: number
 }
 export type MemoriesResponse = PageResponse<MemoryItem>
 export interface MemoryMutationResult { ok: boolean; operation: { kind: string; status: string; id?: string }; revision: number | string | null; item?: MemoryItem }
 export interface MemoryTagMutationResult extends Omit<MemoryMutationResult, 'item'> { item?: { memory: MemoryItem; tags: MemoryTagState } }
 export interface MemoryRefInput { id: number; ref: string }
 export interface SimilarMemoryItem { id: number; content: string; source: string; similarity: number }
+export interface MemoryContextMessage { id: number; sender_id?: string; sender_name?: string; content: string; timestamp?: number; source?: string; role: 'before' | 'anchor' | 'after' }
+export interface MemoryContextPayload { memory_id: number; group_id?: string; messages: MemoryContextMessage[]; before: number; after: number }
 
 function query(filters: object): string {
   const params = new URLSearchParams()
@@ -184,4 +188,9 @@ export function runQueryDebug(request: QueryDebugRequest): Promise<QueryDebugRes
     body: JSON.stringify({ text, top_k: topK, stages, params, debug: true }),
     signal,
   })
+}
+/** 同 Bot、同群里这条记忆前后的消息；与详情一样必须带服务端签发的 ref。 */
+export function getMemoryContext(item: Pick<MemoryItem, 'mutation_url'>, before = 5, after = 5, signal?: AbortSignal): Promise<MemoryContextPayload> {
+  const url = scopedActionUrl(item, '/context')
+  return fetchJson(`${url}${url.includes('?') ? '&' : '?'}before=${before}&after=${after}`, { signal })
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { DownloadIcon, PlusIcon, RefreshCwIcon, SaveIcon, Trash2Icon, UploadIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -123,12 +124,12 @@ function BindingsEditor({ bindings, onChange }: { bindings: BotBindingDto[]; onC
   )
 }
 
-function BotEditor({ draft, onChange, isNew }: { draft: BotProfileDto; onChange: (next: BotProfileDto) => void; isNew: boolean }) {
+function BotEditor({ draft, onChange, isNew, initialTab = 'identity' }: { draft: BotProfileDto; onChange: (next: BotProfileDto) => void; isNew: boolean; initialTab?: string }) {
   const set = <K extends keyof BotProfileDto>(key: K, value: BotProfileDto[K]) => onChange({ ...draft, [key]: value })
   const setPersona = <K extends keyof BotProfileDto['persona']>(key: K, value: BotProfileDto['persona'][K]) =>
     onChange({ ...draft, persona: { ...draft.persona, [key]: value } })
   return (
-    <Tabs defaultValue="identity" className="flex flex-col gap-4">
+    <Tabs key={initialTab} defaultValue={initialTab} className="flex flex-col gap-4">
       <TabsList>
         <TabsTrigger value="identity">身份与绑定</TabsTrigger>
         <TabsTrigger value="persona">人设</TabsTrigger>
@@ -213,7 +214,14 @@ export function BotsPage() {
   const [payload, setPayload] = useState<BotListPayload | null>(null)
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading')
   const [error, setError] = useState<string>('')
-  const [selected, setSelected] = useState<string | null>(null)
+  // ?bot=<db_id>&tab=<标签>：配置中心 / 配置来源跳来时直接打开对应 Bot 与标签页
+  const [searchParams] = useSearchParams()
+  const focusBot = searchParams.get('bot')
+  const focusTab = searchParams.get('tab') ?? 'identity'
+  const [selected, setSelected] = useState<string | null>(focusBot)
+  useEffect(() => {
+    if (focusBot) setSelected(focusBot)
+  }, [focusBot])
   const [detail, setDetail] = useState<BotDetailPayload | null>(null)
   const [draft, setDraft] = useState<BotProfileDto | null>(null)
   const [saving, setSaving] = useState(false)
@@ -354,7 +362,7 @@ export function BotsPage() {
               {draft ? <Button type="button" disabled={!dirty || saving} onClick={() => void handleSave()}><SaveIcon className="size-4" />{saving ? '保存中…' : '保存'}</Button> : null}
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
-              {draft ? <BotEditor draft={draft} onChange={setDraft} isNew={isNew} /> : <p className="text-sm text-muted-foreground">从左侧选择 Bot 查看和编辑，或新建一个。</p>}
+              {draft ? <BotEditor draft={draft} onChange={setDraft} isNew={isNew} initialTab={focusBot && selected === focusBot ? focusTab : 'identity'} /> : <p className="text-sm text-muted-foreground">从左侧选择 Bot 查看和编辑，或新建一个。</p>}
               {detail && !isNew ? (
                 <div className="text-sm text-muted-foreground">
                   <p>名下数据：{Object.entries(detail.counts).map(([k, v]) => `${k} ${v}`).join('，') || '—'}</p>

@@ -25,6 +25,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { validateNumericDraft, type NumericConstraints } from '@/lib/numeric-draft'
+import { useSearchParams } from 'react-router-dom'
 import { ChannelConfigTable, type ChannelNumericField } from '@/pages/channels/ChannelConfigTable'
 import { ChannelDiffCard } from '@/pages/channels/ChannelDiffCard'
 import { channelPatchFingerprint, hasFreshChannelPreflight, serializeChannelPatch } from '@/pages/channels/channel-config-state'
@@ -60,7 +61,19 @@ function finiteLimit(limits: Record<string, number>, key: string): number | unde
 }
 
 export function ChannelConfigPage() {
+  const [searchParams] = useSearchParams()
+  const focusChannel = searchParams.get('channel') ?? ''
   const [draft, setDraft] = useState<ChannelConfigData | null>(null)
+  const draftLoaded = draft !== null
+  // ?channel=<id>：观测台 / 配置中心跳来时滚动到该通道
+  useEffect(() => {
+    if (!focusChannel || !draftLoaded) return
+    const timer = window.setTimeout(() => {
+      const target = document.getElementById(`channel-${focusChannel}`) ?? document.getElementById(`channel-card-${focusChannel}`)
+      target?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+    }, 80)
+    return () => window.clearTimeout(timer)
+  }, [draftLoaded, focusChannel])
   const [original, setOriginal] = useState<ChannelConfigData | null>(null)
   const [numericDrafts, setNumericDrafts] = useState<Record<string, string>>({})
   const [numericErrors, setNumericErrors] = useState<Record<string, string>>({})
@@ -312,7 +325,7 @@ export function ChannelConfigPage() {
         <ul className="mt-3 grid gap-x-8 gap-y-2 text-muted-foreground md:grid-cols-2 xl:grid-cols-3">{fieldHelp.map((item) => <li key={item}>{item}</li>)}</ul>
       </details>
 
-      <ChannelConfigTable draft={draft} descriptors={descriptors} limits={limits} numericDrafts={numericDrafts} numericErrors={numericErrors} onDraftChange={updateDraft} onNumericChange={updateChannelNumeric} />
+      <ChannelConfigTable draft={draft} descriptors={descriptors} limits={limits} numericDrafts={numericDrafts} numericErrors={numericErrors} onDraftChange={updateDraft} onNumericChange={updateChannelNumeric} focusChannel={focusChannel} />
       <ChannelDiffCard diff={validationShape.diff} validation={validation} />
 
       <Dialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>

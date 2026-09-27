@@ -75,6 +75,11 @@ Bot 不再只能是静态配置里的两个槽位。本版起 Bot 存进 WaveMem
 45. **WebUI 静态资源压缩与长缓存**：构建时预压缩 `.gz` / `.br`，按 `Accept-Encoding` 返回（首屏主要文件 br 后约为原来的 1/4）；带哈希的资源一年缓存（immutable），HTML 入口 `no-cache`。
 46. **清理**：删除旧 v4 静态界面（`static/index.html`、`app.js`、`styles.css` 与 alpine 依赖）、Vite 模板残留；侧栏去掉 `shadcn · Nova` 模板字样；正文字体统一为 Geist（此前声明的 Inter 并未加载）。
 
+47. **WebUI 全局作用域与主题**：顶栏统一的 Bot / 群选择器（URL 参数 > 上次选择 > 消息量最多的 Bot 与其最活跃的群），各页不再各放一套下拉，切换 Bot 时清空旧群与对象级参数；深色模式（跟随系统 / 手动切换，挂载前写入避免闪烁）与青蓝品牌色；9–11px 小字统一提到 12px。
+48. **信息架构重组**：导航改为「概览 / 回复溯源 / 记忆库 / 认知 / 系统」五组；新增 **Bot 主页**（`/home`，默认首页；`GET /api/bot-home`：今天记住了什么、心情与关切、关系变化、新学到的、最近的回复，1 天窗口线上约 12ms）；新增 **配置中心**（`/config`：按功能分组、高风险项单独列出、症状词搜索，内嵌系统配置 / 通道配置 / 配置来源），配置来源每行可「去修改」直接定位到编辑位置（`/settings?key=`、`/channels?channel=`、`/bots?bot=&tab=` 滚动并高亮）。
+49. **回复溯源**：观测台 trace 详情里命中的记忆 / 事实 / 黑话等条目可点进对应页面，通道名跳到通道配置；记忆页支持 `memory_id` 深链，详情里显示对话上下文与「最近被这些回复用到」（`GET /api/observatory/memories/<id>/traces`，线上 40–62ms）。
+50. **修复**：黑话通道把 RuntimeScope 对象写进 trace 明细，线上所有黑话明细都是 `channel_details_not_json_serializable`；`/api/config/schema`、`/api/config/inventory` 不再明文返回 WebUI 密码（只报告是否已设置，保存时空值表示不修改）。
+
 #### 升级须知
 
 - 首次启动自动把 `MetaThinking_Bot1/2`（以及任意 `MetaThinking_BotN`）迁进 `bot_profiles`：`db_id` 不变，会话前缀从该 Bot 最近的记忆里检测（线上为「羽书」「白真真」），v5 写死的人设片段按 db_id 补进 Profile。**历史数据一条不改。**

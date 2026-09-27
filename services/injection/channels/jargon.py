@@ -76,6 +76,17 @@ def _parse_terms(text: str) -> list[dict[str, Any]]:
     return terms
 
 
+def _scope_audit(scope: Any) -> dict[str, Any] | None:
+    """只保留 JSON 安全的作用域标识，不把 RuntimeScope 对象写进 trace。"""
+    session = getattr(scope, "session", None)
+    bot_id = str(getattr(scope, "bot_id", "") or "")
+    visibility = str(getattr(scope, "visibility", "") or "")
+    session_id = str(getattr(session, "id", "") or "")
+    if not bot_id or not visibility or not session_id:
+        return None
+    return {"bot_id": bot_id, "visibility": visibility, "session_id": session_id}
+
+
 def _service_trace_items(service: Any) -> list[dict[str, Any]]:
     getter = getattr(service, "get_last_injection_items", None)
     if not callable(getter):
@@ -135,7 +146,8 @@ class JargonChannel:
             for item in items:
                 item = dict(item)
                 item.setdefault("trace_id", getattr(ctx, "trace_id", ""))
-                item.setdefault("scope", runtime_scope)
+                # trace 持久化要求 JSON 可序列化；放 RuntimeScope 对象会让整条通道明细被丢弃
+                item.setdefault("scope", _scope_audit(runtime_scope))
                 item.setdefault("source", "jargon")
                 item.setdefault("evidence", item.get("word", ""))
                 item.setdefault("rendered_text", f'{item.get("word", "")} → {item.get("meaning", "")}')

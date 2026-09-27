@@ -50,6 +50,7 @@ _OPTIONAL = (
     ("runtime", "runtime_bp"),
     ("bots", "bots_bp"),
     ("services", "services_bp"),
+    ("bot_home", "bot_home_bp"),
     ("book_lore_workbench", "book_lore_workbench_bp"),
 )
 

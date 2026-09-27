@@ -382,6 +382,11 @@ async def list_memories():
         )
     if "source" in columns:
         where.append("COALESCE(source, '') != 'noise'")
+    exact_id = _safe_int(request.args.get("id"), 0)
+    if exact_id > 0:
+        # 观测台等页面按记忆编号深链：仍受当前群过滤，且只有作用域完全吻合的行才会签发 ref。
+        where.append("id = ?")
+        params.append(exact_id)
     before_id = request.args.get("before_id")
     if before_id:
         where.append("id < ?")
@@ -845,6 +850,64 @@ async def query_test():
         "touch": False,
     }
     return jsonify(payload)
+
+
+def _memory_context_rows(conn, row: dict, *, before: int, after: int) -> list[dict]:
+    """同 Bot、同群按 id 取前后若干条消息（id 即写入顺序），排除隔离与噪声。"""
+    columns = _memory_columns(conn)
+    if not {"id", "group_id", "content"}.issubset(columns):
+        return []
+    selected = [name for name in ("id", "sender_id", "sender_name", "content", "timestamp", "source") if name in columns]
+    where = ["group_id = ?"]
+    params: list = [row.get("group_id")]
+    if "bot_id" in columns:
+        where.append("bot_id IS ?")
+        params.append(row.get("bot_id"))
+    if "quarantine" in columns:
+        where.append("COALESCE(quarantine, 0) = 0")
+    if "memory_type" in columns:
+        where.append("COALESCE(memory_type, 'message') NOT IN ('archived', 'evicted', 'deleted', 'noise')")
+    if "source" in columns:
+        where.append("COALESCE(source, '') != 'noise'")
+    where_sql = " AND ".join(where)
+    select_sql = ", ".join(selected)
+    memory_id = int(row["id"])
+
+    def fetch(op: str, order: str, limit: int) -> list[dict]:
+        if limit <= 0:
+            return []
+        cursor = conn.execute(
+            f"SELECT {select_sql} FROM memories WHERE {where_sql} AND id {op} ? ORDER BY id {order} LIMIT ?",
+            params + [memory_id, limit],
+        )
+        return [dict(zip(selected, values)) for values in cursor.fetchall()]
+
+    anchor = {name: row.get(name) for name in selected}
+    messages = [{**item, "role": "before"} for item in reversed(fetch("<", "DESC", before))]
+    messages.append({**anchor, "role": "anchor"})
+    messages.extend({**item, "role": "after"} for item in fetch(">", "ASC", after))
+    return messages
+
+
+@memories_bp.route("/memories/<int:memory_id>/context", methods=["GET"])
+@require_auth
+async def get_memory_context(memory_id: int):
+    """按服务端签发的 ref 读取这条记忆在同群里的前后消息（只读）。"""
+    conn = get_container().db.conn
+    if not request.args.get("ref"):
+        return jsonify(error_payload("object_ref_required", "Object reference is required")), 400
+    binding, row = _resolve_memory_ref(conn, memory_id)
+    if binding is None or row is None:
+        return jsonify(not_found_payload()), 404
+    before = max(0, min(20, _safe_int(request.args.get("before"), 5)))
+    after = max(0, min(20, _safe_int(request.args.get("after"), 5)))
+    return jsonify({
+        "memory_id": int(row["id"]),
+        "group_id": row.get("group_id"),
+        "messages": _memory_context_rows(conn, row, before=before, after=after),
+        "before": before,
+        "after": after,
+    })
 
 
 @memories_bp.route("/memories/<int:memory_id>/similar", methods=["GET"])

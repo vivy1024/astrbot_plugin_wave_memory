@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { RefreshCwIcon } from 'lucide-react'
+import { PencilIcon, RefreshCwIcon } from 'lucide-react'
+import { Link } from 'react-router-dom'
 
 import { isRequestCancelled } from '@/api/client'
 import { getConfigInventory, type ConfigInventoryPayload, type ConfigLayer } from '@/api/configInventory'
@@ -11,6 +12,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { displayValue, isSecretKey } from '@/pages/config/config-catalog'
+import { legacyBotIdsFrom, locateConfig, locationHref, type ConfigLocation } from '@/pages/config/config-location'
 
 const LAYER_LABELS: Record<ConfigLayer, string> = {
   builtin: '内置默认',
@@ -20,13 +23,36 @@ const LAYER_LABELS: Record<ConfigLayer, string> = {
 }
 const APPLY_LABELS: Record<string, string> = { hot: '立即生效', next_run: '下次运行', service: '重建服务', restart: '需重启', unknown: '未知' }
 
-function show(value: unknown): string {
+function show(value: unknown, key = ''): string {
+  // 密码类只显示是否已设置，不把明文渲染到表格里。
+  if (key && isSecretKey(key)) return displayValue(key, value)
   if (value === null || value === undefined) return '—'
   if (typeof value === 'string') return value === '' ? '（空）' : value
   return JSON.stringify(value)
 }
 
-export function ConfigInventoryPage() {
+function LocateButton({ location, rowKey, onLocate }: { location: ConfigLocation; rowKey: string; onLocate?: (location: ConfigLocation) => void }) {
+  const title = location.note ? `${location.label}。${location.note}` : location.label
+  if (onLocate) {
+    return (
+      <Button type="button" size="sm" variant="outline" title={title} aria-label={`去修改 ${rowKey}`} onClick={() => onLocate(location)}>
+        <PencilIcon />去修改
+      </Button>
+    )
+  }
+  return (
+    <Button asChild size="sm" variant="outline" title={title}>
+      <Link to={locationHref(location)} aria-label={`去修改 ${rowKey}`}><PencilIcon />去修改</Link>
+    </Button>
+  )
+}
+
+export interface ConfigInventoryPageProps {
+  /** 嵌入配置中心时由宿主接管跳转；不传则跳到独立路由。 */
+  onLocate?: (location: ConfigLocation) => void
+}
+
+export function ConfigInventoryPage({ onLocate }: ConfigInventoryPageProps = {}) {
   const [payload, setPayload] = useState<ConfigInventoryPayload | null>(null)
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading')
   const [error, setError] = useState('')
@@ -59,6 +85,8 @@ export function ConfigInventoryPage() {
       && (!changedOnly || row.changed || Boolean(row.warning))
       && (!needle || row.key.toLowerCase().includes(needle) || row.title.toLowerCase().includes(needle)))
   }, [payload, query, layer, changedOnly])
+
+  const legacyBotIds = useMemo(() => legacyBotIdsFrom((payload?.items ?? []).map((row) => ({ key: row.key, effective: row.effective }))), [payload])
 
   const precedence = payload?.precedence ?? (['builtin', 'static', 'bot', 'override'] as ConfigLayer[])
   return (
@@ -107,6 +135,7 @@ export function ConfigInventoryPage() {
                   <TableHead>默认值</TableHead>
                   <TableHead>当前生效</TableHead>
                   <TableHead>生效方式</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -118,9 +147,12 @@ export function ConfigInventoryPage() {
                       {row.warning ? <div className="text-xs text-destructive">{row.warning}</div> : null}
                     </TableCell>
                     <TableCell><Badge variant={row.layer === 'builtin' ? 'outline' : 'default'}>{LAYER_LABELS[row.layer]}</Badge></TableCell>
-                    <TableCell className="max-w-48 truncate font-mono text-xs">{show(row.default)}</TableCell>
-                    <TableCell className="max-w-48 truncate font-mono text-xs">{show(row.effective)}</TableCell>
+                    <TableCell className="max-w-48 truncate font-mono text-xs">{show(row.default, row.key)}</TableCell>
+                    <TableCell className="max-w-48 truncate font-mono text-xs">{show(row.effective, row.key)}</TableCell>
                     <TableCell className="text-xs">{APPLY_LABELS[row.apply_mode] ?? row.apply_mode}</TableCell>
+                    <TableCell className="text-right">
+                      <LocateButton location={locateConfig(row.key, { applyMode: row.apply_mode, legacyBotIds })} rowKey={row.key} onLocate={onLocate} />
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

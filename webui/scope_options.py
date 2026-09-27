@@ -106,6 +106,10 @@ class RuntimeScopeOptionsSource:
         normalized = str(name or "").strip()
         return normalized or None
 
+    def resolve_group_name(self, bot_id: Any, group_id: Any) -> str | None:
+        """只读查群名（走平台上下文缓存，不扫库）；拿不到返回 None。"""
+        return self._group_name(bot_id, group_id)
+
     @staticmethod
     def _session_label(session: SessionRef, group_name: str | None) -> str:
         conversation_id = session.conversation_id

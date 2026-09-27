@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { humanizeApiError } from '@/lib/reason-label'
 import { AlertCircleIcon, Loader2Icon, RefreshCwIcon, SaveIcon, Undo2Icon } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import {
@@ -83,8 +84,14 @@ function errorMessage(error: unknown, fallback: string): string {
   return humanizeApiError(error, fallback)
 }
 
+const SETTINGS_TABS = ['static', 'hot', 'restart', 'advanced'] as const
+
 export function SettingsPage() {
+  const [searchParams] = useSearchParams()
+  const focusKey = searchParams.get('key') ?? ''
+  const focusTabParam = searchParams.get('tab') ?? ''
   const [activeTab, setActiveTab] = useState('static')
+  const [highlightKey, setHighlightKey] = useState('')
   const [schemaGroups, setSchemaGroups] = useState<ConfigGroup[]>([])
   const [originalGroups, setOriginalGroups] = useState<ConfigGroup[]>([])
   const [schemaDrafts, setSchemaDrafts] = useState<Record<string, string>>({})
@@ -357,6 +364,23 @@ export function SettingsPage() {
     setOpenSections((current) => ({ ...current, [key]: next }))
   }, [])
 
+  // 配置中心 / 配置来源的「去修改」：?key=<配置键>&tab=<标签> 切到对应标签、展开章节、滚动并短暂高亮
+  useEffect(() => {
+    if (!focusKey) return
+    const isHot = focusTabParam === 'hot'
+    setActiveTab((SETTINGS_TABS as readonly string[]).includes(focusTabParam) ? focusTabParam : 'advanced')
+    if (!isHot) setOpenSections((current) => ({ ...current, [focusKey.split('.')[0]]: true }))
+    setHighlightKey(isHot ? `hot:${focusKey}` : focusKey)
+    const scroll = window.setTimeout(() => {
+      document.getElementById(isHot ? `setting-hot-${focusKey}` : `setting-${focusKey}`)?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+    }, 80)
+    const clear = window.setTimeout(() => setHighlightKey(''), 4000)
+    return () => {
+      window.clearTimeout(scroll)
+      window.clearTimeout(clear)
+    }
+  }, [focusKey, focusTabParam, schemaGroups.length, hotParams.length])
+
   const visibleGroups = useMemo(() => {
     const term = search.trim().toLowerCase()
     // 搜索时忽略 tab 与折叠过滤：用户已经明确表达了要找什么。
@@ -406,7 +430,7 @@ export function SettingsPage() {
             <p className="mb-3 text-xs text-muted-foreground">{meta.description}</p>
             <div className="space-y-3">
               {group.kind === 'object' ? (group.items ?? []).map((item) => (
-                <div key={item.key} className="grid gap-3 rounded-lg border p-3 xl:grid-cols-[minmax(16rem,0.8fr)_minmax(0,1.2fr)]">
+                <div key={item.key} id={`setting-${group.key}.${item.key}`} className={`grid gap-3 rounded-lg border p-3 transition-shadow xl:grid-cols-[minmax(16rem,0.8fr)_minmax(0,1.2fr)] ${highlightKey === `${group.key}.${item.key}` ? 'ring-2 ring-primary' : ''}`}>
                   <Field>
                     <div className="flex items-center justify-between gap-3">
                       <FieldLabel>{item.description}</FieldLabel>
@@ -425,7 +449,7 @@ export function SettingsPage() {
                   <FieldValueState label={item.description} {...pathState(item)} />
                 </div>
               )) : (
-                <div className="grid gap-3 xl:grid-cols-[minmax(16rem,0.8fr)_minmax(0,1.2fr)]">
+                <div id={`setting-${group.key}`} className={`grid gap-3 rounded-lg transition-shadow xl:grid-cols-[minmax(16rem,0.8fr)_minmax(0,1.2fr)] ${highlightKey === group.key ? 'ring-2 ring-primary' : ''}`}>
                   <Field>
                     <div className="flex items-center justify-between gap-3">
                       <FieldLabel>{group.description}</FieldLabel>
@@ -460,7 +484,7 @@ export function SettingsPage() {
       {warnings.length ? <Alert><AlertCircleIcon /><AlertTitle>旧配置兼容诊断</AlertTitle><AlertDescription><ul className="list-disc space-y-1 pl-5">{warnings.map((item) => <li key={item.key}><span className="font-mono">{item.key}</span>：{item.message}</li>)}</ul></AlertDescription></Alert> : null}
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
+        <TabsList className="grid h-auto! w-full grid-cols-2 gap-1 sm:grid-cols-4">
           <TabsTrigger value="static">保存即生效</TabsTrigger><TabsTrigger value="hot">实时热参数</TabsTrigger><TabsTrigger value="restart">需重启参数</TabsTrigger><TabsTrigger value="advanced">全部高级设置</TabsTrigger>
         </TabsList>
 
@@ -475,7 +499,7 @@ export function SettingsPage() {
                 {hotParams.map((param) => {
                   const error = hotErrors[param.key]
                   return (
-                    <div key={param.key} className="grid gap-4 rounded-lg border p-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,1fr)]">
+                    <div key={param.key} id={`setting-hot-${param.key}`} className={`grid gap-4 rounded-lg border p-4 transition-shadow lg:grid-cols-[minmax(0,1fr)_minmax(18rem,1fr)] ${highlightKey === `hot:${param.key}` ? 'ring-2 ring-primary' : ''}`}>
                       <Field><FieldLabel>{param.description}</FieldLabel><Input aria-label={`修改 ${param.description}`} aria-invalid={Boolean(error)} type="number" min={param.min} max={param.max} step={param.type === 'int' ? 1 : 'any'} value={hotDrafts[param.key] ?? ''} onChange={(event) => updateHotNumeric(param, event.target.value)} />{error ? <p className="text-xs text-destructive" role="alert">{error}</p> : null}<FieldDescription>{param.key}；范围 {param.min}–{param.max}。{param.error ?? ''}</FieldDescription></Field>
                       <FieldValueState label={param.key} defaultValue={param.default} savedValue={param.saved} effectiveValue={param.effective} applyMode="hot" effectiveSince={param.effective_since} />
                     </div>

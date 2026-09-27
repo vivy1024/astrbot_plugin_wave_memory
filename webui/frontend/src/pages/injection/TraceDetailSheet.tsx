@@ -1,7 +1,10 @@
-import { AlertTriangleIcon, ArrowRightIcon } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { AlertTriangleIcon, ArrowRightIcon, ExternalLinkIcon, Settings2Icon } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 import type { TraceDetailPayload } from '@/api/injection'
+import { getScopeOptions, type SessionOptionDto } from '@/api/options'
+import { channelConfigHref, sessionForTrace, traceItemLink, type TraceLinkContext } from '@/lib/trace-links'
 import { ObjectDeepLink, TracePayloadViewer, type ObjectRefDescriptor } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -132,7 +135,7 @@ function Section({ title, description, children }: { title: string; description?
   )
 }
 
-function ItemCards({ items, kind }: { items: Array<Record<string, unknown>>; kind: 'hit' | 'filtered' }) {
+function ItemCards({ items, kind, linkContext }: { items: Array<Record<string, unknown>>; kind: 'hit' | 'filtered'; linkContext?: TraceLinkContext }) {
   if (!items.length) return <p className="text-sm text-muted-foreground">暂无{kind === 'hit' ? '命中' : '过滤'}项。</p>
   return (
     <div className="grid gap-3 lg:grid-cols-2">
@@ -140,6 +143,7 @@ function ItemCards({ items, kind }: { items: Array<Record<string, unknown>>; kin
         const channel = textValue(item.channel_name ?? item.channel ?? item.source_channel ?? item.type, '未记录通道')
         const title = textValue(item.title ?? item.name ?? item.word ?? item.content ?? item.preview, `${kind === 'hit' ? '命中' : '过滤'}项 ${index + 1}`)
         const reason = item.reason ?? item.filter_reason ?? item.skip_reason
+        const target = linkContext ? traceItemLink(channel, item, linkContext) : null
         return (
           <div key={`${channel}-${String(item.id ?? index)}-${index}`} className="min-w-0 rounded-lg border bg-card p-3">
             <div className="flex flex-wrap items-center gap-2">
@@ -150,11 +154,32 @@ function ItemCards({ items, kind }: { items: Array<Record<string, unknown>>; kin
             <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
               {['id', 'score', 'tokens', 'source', 'scope', 'matched_by'].filter((key) => item[key] !== undefined).map((key) => <div key={key}><dt className="inline text-muted-foreground">{key}：</dt><dd className="inline break-words">{textValue(item[key])}</dd></div>)}
             </dl>
+            {target ? (
+              <Button asChild variant="link" size="sm" className="mt-2 h-auto p-0 text-xs">
+                <Link data-slot="trace-item-link" to={target.to} title={target.precise ? '直接打开这条对象' : '只带作用域与搜索词，无法精确定位到单条'}>
+                  {target.label}<ExternalLinkIcon data-icon="inline-end" aria-hidden="true" />
+                </Link>
+              </Button>
+            ) : null}
           </div>
         )
       })}
     </div>
   )
+}
+
+/** 读取 scope 选项里的 group session，用来把 trace 群号换成各页面认的 canonical session_id。 */
+function useTraceSessions(enabled: boolean): SessionOptionDto[] | undefined {
+  const [sessions, setSessions] = useState<SessionOptionDto[]>()
+  useEffect(() => {
+    if (!enabled || sessions) return
+    let active = true
+    getScopeOptions()
+      .then((payload) => { if (active) setSessions(payload.sessions ?? []) })
+      .catch(() => { if (active) setSessions([]) })
+    return () => { active = false }
+  }, [enabled, sessions])
+  return sessions
 }
 
 export function TraceDetailSheet({
@@ -178,6 +203,13 @@ export function TraceDetailSheet({
   const errors = detail ? [detail.error, detail.errors, ...channels.filter((channel) => channel.error).map((channel) => `${channelName(channel)}: ${textValue(channel.error)}`)].flatMap(normalizeMessages) : []
   const finalText = textValue(detail?.final_text ?? detail?.final_injection_text, '')
   const rawPayload = typeof detail?.raw_payload === 'string' ? detail.raw_payload : undefined
+  const sessions = useTraceSessions(Boolean(detail))
+  const linkContext = useMemo<TraceLinkContext | undefined>(() => {
+    const request = asRecord(detail?.request)
+    const botId = textValue(request?.bot_profile_id ?? request?.bot_id, '')
+    if (!botId) return undefined
+    return { botId, sessionId: sessionForTrace(sessions, botId, request?.group_id) }
+  }, [detail?.request, sessions])
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -204,17 +236,17 @@ export function TraceDetailSheet({
                   <DetailGrid value={detail.budget} preferredKeys={['total_tokens', 'token_budget', 'used_tokens', 'remaining_tokens', 'max_chars', 'truncated']} />
                 </Section>
 
-                <Section title="通道瀑布" description="按通道查看状态、耗时、Token、命中/过滤数量和错误。">
+                <Section title="通道瀑布" description="按通道查看状态、耗时、Token、命中/过滤数量和错误；点通道名跳到通道配置。">
                   {channels.length ? <div className="flex flex-col gap-3">{channels.map((channel, index) => {
                     const name = channelName(channel)
                     const status = channel.status
-                    return <div key={`${name}-${index}`} className="rounded-lg border bg-card p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><span className="font-semibold">{name}</span><Badge variant={channelVariant(status)}>{channelStatusLabel(status)}</Badge></div><span className="text-xs text-muted-foreground">{textValue(channel.latency_ms ?? channel.duration_ms)} ms · {textValue(channel.tokens ?? channel.token_count)} tokens</span></div><dl className="mt-3 grid gap-2 text-xs sm:grid-cols-3"><div><dt className="text-muted-foreground">命中</dt><dd>{textValue(channel.hit_count ?? channel.hits_count ?? asRecords(channel.hit_items).length, '0')}</dd></div><div><dt className="text-muted-foreground">过滤</dt><dd>{textValue(channel.filtered_count ?? asRecords(channel.filtered_items).length, '0')}</dd></div><div><dt className="text-muted-foreground">错误</dt><dd className={channel.error ? 'text-destructive' : ''}>{textValue(channel.error, '无')}</dd></div></dl></div>
+                    return <div key={`${name}-${index}`} className="rounded-lg border bg-card p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><Link to={channelConfigHref(name)} className="font-semibold underline-offset-4 hover:underline" title={`在通道配置中查看 ${name}`} data-slot="trace-channel-link">{name}<Settings2Icon className="ml-1 inline size-3.5 text-muted-foreground" aria-hidden="true" /></Link><Badge variant={channelVariant(status)}>{channelStatusLabel(status)}</Badge></div><span className="text-xs text-muted-foreground">{textValue(channel.latency_ms ?? channel.duration_ms)} ms · {textValue(channel.tokens ?? channel.token_count)} tokens</span></div><dl className="mt-3 grid gap-2 text-xs sm:grid-cols-3"><div><dt className="text-muted-foreground">命中</dt><dd>{textValue(channel.hit_count ?? channel.hits_count ?? asRecords(channel.hit_items).length, '0')}</dd></div><div><dt className="text-muted-foreground">过滤</dt><dd>{textValue(channel.filtered_count ?? asRecords(channel.filtered_items).length, '0')}</dd></div><div><dt className="text-muted-foreground">错误</dt><dd className={channel.error ? 'text-destructive' : ''}>{textValue(channel.error, '无')}</dd></div></dl></div>
                   })}</div> : <p className="text-sm text-muted-foreground">暂无通道明细。</p>}
                 </Section>
 
-                <Section title="命中项" description="展示可解释字段；正式对象入口另由服务端给出的跳转链接提供。"><ItemCards items={hits} kind="hit" /></Section>
+                <Section title="命中项" description="记忆条目可直接打开原文与上下文；事实、黑话等只带作用域和搜索词跳到对应页面。"><ItemCards items={hits} kind="hit" linkContext={linkContext} /></Section>
                 {links.length ? <Section title="正式对象入口" description="只跟随服务端给出的跳转链接，不会用裸编号拼路由。"><div className="flex flex-wrap gap-2">{links.map((item) => <ObjectDeepLink key={`${item.path}:${item.ref.ref}`} to={item.path} objectRef={item.ref}>{item.label}</ObjectDeepLink>)}</div></Section> : null}
-                <Section title="过滤项" description="展示过滤通道、原因和可用预览，不补造缺失原因。"><ItemCards items={filtered} kind="filtered" /></Section>
+                <Section title="过滤项" description="展示过滤通道、原因和可用预览，不补造缺失原因；被过滤的记忆同样可以打开。"><ItemCards items={filtered} kind="filtered" linkContext={linkContext} /></Section>
 
                 <Section title="最终注入文本">
                   {finalText ? <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-muted/30 p-3 text-sm leading-relaxed">{finalText}</pre> : <p className="text-sm text-muted-foreground">暂无最终文本。</p>}

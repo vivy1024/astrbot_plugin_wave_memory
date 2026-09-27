@@ -496,6 +496,9 @@ async def update_config_full():
                     errors.append(f"未知配置项: {key}.{sub_key}")
                     continue
                 value = _coerce(sub_val, sub_meta.get("type", "string"), sub_meta.get("default"))
+                # 密码等敏感项接口不回传明文，表单原样提交的空值表示「不修改」
+                if _service_module("services.config.settings_state").is_secret_field(key, sub_key) and value in ("", None):
+                    continue
                 if existing.get(sub_key, object()) == value:
                     continue
                 existing[sub_key] = value

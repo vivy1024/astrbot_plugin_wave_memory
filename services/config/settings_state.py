@@ -38,6 +38,14 @@ def _source(present: bool, raw: Any) -> str:
     return "plugin_config"
 
 
+# 敏感配置：接口只报告「是否已设置」，不回传明文；保存时空值表示不修改。
+SECRET_FIELDS = frozenset({("WebUI_Settings", "webui_password")})
+
+
+def is_secret_field(group_key: str, item_key: str | None) -> bool:
+    return (group_key, item_key) in SECRET_FIELDS
+
+
 def build_field_state(
     *,
     group_key: str,
@@ -83,7 +91,14 @@ def build_field_state(
         for key in ("min", "max", "minimum", "maximum")
         if key in meta
     }
+    secret = {}
+    if is_secret_field(group_key, item_key):
+        secret = {"secret": True, "has_value": bool(saved_value or effective_value)}
+        saved_wire = "" if saved_wire else saved_wire
+        saved_value = ""
+        effective_value = ""
     return {
+        **secret,
         **numeric_limits,
         "default": default,
         "saved": saved_wire,
