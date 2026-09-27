@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Union
 
-from .cooccurrence_v91 import V91Params, fir_weights
+from .cooccurrence_budget import RowBudgetParams, fir_weights
 from .directed_cooccurrence import DirectedCooccurrence
 
 
@@ -68,8 +68,8 @@ class SpikeRouter:
         """
         if not seed_tags or self.cooccurrence.node_count == 0:
             return {"activated_tags": seed_tags, "energy_field": {}}
-        if getattr(self.cooccurrence, "kernel_version", "legacy") == "v91":
-            return self._propagate_v91(seed_tags, epa_result)
+        if getattr(self.cooccurrence, "kernel_version", "global_max") == "row_budget":
+            return self._propagate_row_budget(seed_tags, epa_result)
 
         # 动态动量：聚焦查询动量低，发散查询动量高
         if epa_result and "logic_depth" in epa_result:
@@ -174,8 +174,8 @@ class SpikeRouter:
             "energy_field": energy_field,
         }
 
-    def _propagate_v91(self, seed_tags: list[dict], epa_result: dict | None = None) -> dict:
-        """TagMemo V9.1 传播：固定出流预算的核上做软非回溯 + 归一化有限时域累加。
+    def _propagate_row_budget(self, seed_tags: list[dict], epa_result: dict | None = None) -> dict:
+        """row_budget 传播（TagMemo V9.1）：在固定出流预算的核上做软非回溯 + 归一化有限时域累加。
 
         与旧版的区别：边权已是行内预算份额，虫洞由构建阶段预先判定；立即回流 i→j→i 只保留
         return_flow_factor 的质量；第 t 跳能量按 γ^t/Σγ^r 计入能量场。涌现节点不设能量门槛，
@@ -185,7 +185,7 @@ class SpikeRouter:
         # 请求开始时取定同一代的图、虫洞与锚增益，后台发布不会让本次传播读到新旧混合的数据
         forward = live.forward
         wormholes = getattr(live, "wormhole_edges", frozenset())
-        params = getattr(live, "v91_params", None) or V91Params()
+        params = getattr(live, "kernel_params", None) or RowBudgetParams()
 
         if epa_result and "logic_depth" in epa_result:
             momentum0 = 1.0 + (1.0 - epa_result["logic_depth"]) * 3.0
@@ -254,5 +254,5 @@ class SpikeRouter:
             key=lambda item: -item["energy"],
         )
         activated.extend(emergent[: self.max_emergent_nodes])
-        return {"activated_tags": activated, "energy_field": energy_field, "kernel": "v91"}
+        return {"activated_tags": activated, "energy_field": energy_field, "kernel": "row_budget"}
 

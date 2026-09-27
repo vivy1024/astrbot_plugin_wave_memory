@@ -286,14 +286,14 @@
       },
       "cooccurrence_kernel": {
         "description": "共现传播核",
-        "hint": "legacy：旧版（全库最大值归一化，线上图里只剩几百个标签，脉冲传播基本不起作用）。v91：按 VCP TagMemo V9.1 构建——对数压缩、固定出流预算、入流枢纽校正、残差锚增益、软非回溯传播，测地重排改读 scoped 标签。切换后首次启动重建一次共现图（子进程，约 1 分钟）。",
+        "hint": "global_max：旧做法，全库按最大边权归一化再砍掉弱边（线上图里只剩几百个标签，脉冲传播基本不起作用）。row_budget：每个标签的出边按固定预算分配（移植自 VCP TagMemo V9.1）——对数压缩、入流枢纽校正、残差锚增益、软非回溯传播，测地重排改读 scoped 标签。切换后首次启动重建一次共现图（子进程，约 20 秒）。旧值 legacy / v91 仍可识别。",
         "type": "string",
-        "options": ["legacy", "v91"],
-        "default": "legacy",
+        "options": ["global_max", "row_budget"],
+        "default": "global_max",
         "restart_required": true
       },
       "cooccurrence_min_support": {
-        "description": "共现最少支持记忆数（v91）",
+        "description": "共现最少支持记忆数（row_budget）",
         "hint": "两个标签至少在这么多条记忆里一起出现才建边。默认 2：线上 85% 的标签对只共现过 1 次，多为模型生成的长尾标签。",
         "type": "int",
         "default": 2,

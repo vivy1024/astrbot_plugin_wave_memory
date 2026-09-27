@@ -1,7 +1,7 @@
-"""共现传播核 V9.1（移植自 VCPToolBox TagMemo V9.1，参数默认值取自其 rag_params.json）。
+"""共现传播核 row_budget：每个标签的出边按固定预算分配（移植自 VCPToolBox TagMemo V9.1，参数默认值取自其 rag_params.json）。
 
 旧构建把全库边权按最大值归一化再砍掉 < 0.01 的边：线上 20 万个标签只剩 384 个节点，
-查询种子几乎都不在图里，脉冲传播与测地重排实际不起作用。V9.1 的做法：
+查询种子几乎都不在图里，脉冲传播与测地重排实际不起作用。这里的做法：
 
 1. 证据压缩  C = log(1 + λ·W)；
 2. 锚增益    g(r) = clip(g0 + k·r^γ, gmin, gmax)，r 为内生残差（标签相对邻域基底不可解释的比例）；
@@ -21,7 +21,7 @@ import numpy as np
 
 
 @dataclass
-class V91Params:
+class RowBudgetParams:
     # 传播核
     outbound_mass: float = 0.95
     association_reserve_mass: float = 0.05
@@ -52,7 +52,7 @@ class V91Params:
         return dict(self.__dict__)
 
     @classmethod
-    def from_dict(cls, values: dict | None) -> "V91Params":
+    def from_dict(cls, values: dict | None) -> "RowBudgetParams":
         params = cls()
         for key, value in dict(values or {}).items():
             if hasattr(params, key):
@@ -60,7 +60,7 @@ class V91Params:
         return params
 
 
-def anchor_gain(residual: float, params: V91Params) -> float:
+def anchor_gain(residual: float, params: RowBudgetParams) -> float:
     value = params.anchor_base + params.anchor_scale * max(0.0, min(1.0, float(residual))) ** params.anchor_gamma
     return max(params.anchor_min, min(params.anchor_max, value))
 
@@ -89,7 +89,7 @@ def intrinsic_residual(tag_vec: np.ndarray, neighbor_vecs: list[np.ndarray], wei
 def compute_anchor_gains(
     evidence: dict[int, dict[int, float]],
     vectors: dict[int, np.ndarray],
-    params: V91Params,
+    params: RowBudgetParams,
 ) -> tuple[dict[int, float], dict[int, float]]:
     """按压缩后的共现证据取每个节点最强的邻居作为邻域，返回 (残差, 锚增益)。邻居不足或缺向量的节点不给值（按 1 处理）。"""
     residuals: dict[int, float] = {}
@@ -108,7 +108,7 @@ def compute_anchor_gains(
     return residuals, gains
 
 
-def compress_evidence(raw: dict[int, dict[int, float]], params: V91Params) -> dict[int, dict[int, float]]:
+def compress_evidence(raw: dict[int, dict[int, float]], params: RowBudgetParams) -> dict[int, dict[int, float]]:
     lam = max(0.01, params.evidence_compression)
     compressed: dict[int, dict[int, float]] = {}
     for src, edges in raw.items():
@@ -121,7 +121,7 @@ def compress_evidence(raw: dict[int, dict[int, float]], params: V91Params) -> di
 def build_kernel(
     evidence: dict[int, dict[int, float]],
     gains: dict[int, float],
-    params: V91Params,
+    params: RowBudgetParams,
     max_neighbors: int,
 ) -> tuple[dict[int, dict[int, float]], set[tuple[int, int]]]:
     """由压缩证据构建固定出流预算的传播核，返回 (kernel, 虫洞边)。每行最多保留 max_neighbors 条边。"""
@@ -184,7 +184,7 @@ def fir_weights(gamma: float, max_hops: int) -> list[float]:
 
 
 __all__ = [
-    "V91Params",
+    "RowBudgetParams",
     "anchor_gain",
     "build_kernel",
     "compress_evidence",

@@ -1,4 +1,4 @@
-"""共现传播核 V9.1：构建核、残差锚增益、软非回溯传播、快照与子进程。"""
+"""共现传播核 row_budget（TagMemo V9.1）：构建核、残差锚增益、软非回溯传播、快照与子进程。"""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ if "astrbot.api" not in sys.modules:
     sys.modules["astrbot"] = astrbot
     sys.modules["astrbot.api"] = api
 
-from engine.cooccurrence_v91 import V91Params, anchor_gain, build_kernel, compute_anchor_gains, fir_weights
+from engine.cooccurrence_budget import RowBudgetParams, anchor_gain, build_kernel, compute_anchor_gains, fir_weights
 from engine.database import WaveMemoryDB
 from engine.directed_cooccurrence import CooccurrenceScheduler, DirectedCooccurrence
 from engine.geodesic_rerank import GeodesicReranker
@@ -36,7 +36,7 @@ from services.pair_similarity import PairSimilarityService
 # ─── 纯算法 ───
 
 def test_kernel_rows_share_fixed_outbound_budget_and_hub_is_damped():
-    params = V91Params(tension_threshold=99.0)  # 不产生虫洞，单看预算与枢纽校正
+    params = RowBudgetParams(tension_threshold=99.0)  # 不产生虫洞，单看预算与枢纽校正
     # 标签 9 是被所有人指向的枢纽；1 的两个邻居证据相同
     evidence = {
         1: {2: 1.0, 9: 1.0},
@@ -56,7 +56,7 @@ def test_kernel_rows_share_fixed_outbound_budget_and_hub_is_damped():
 
 
 def test_wormhole_edges_get_reserve_mass():
-    params = V91Params(tension_threshold=1.0)
+    params = RowBudgetParams(tension_threshold=1.0)
     evidence = {1: {2: 0.9, 3: 0.2}, 2: {1: 0.9}, 3: {1: 0.2}}
     kernel, wormholes = build_kernel(evidence, {2: 1.5, 1: 1.0, 3: 1.0}, params, max_neighbors=64)
     assert (1, 2) in wormholes and (1, 3) not in wormholes
@@ -66,13 +66,13 @@ def test_wormhole_edges_get_reserve_mass():
 
 def test_row_is_trimmed_before_normalisation():
     evidence = {1: {t: float(t) for t in range(2, 30)}}
-    kernel, _ = build_kernel(evidence, {}, V91Params(tension_threshold=99.0), max_neighbors=5)
+    kernel, _ = build_kernel(evidence, {}, RowBudgetParams(tension_threshold=99.0), max_neighbors=5)
     assert len(kernel[1]) == 5
     assert sum(kernel[1].values()) == pytest.approx(0.95)
 
 
 def test_anchor_gain_mapping_and_fir():
-    params = V91Params()
+    params = RowBudgetParams()
     assert anchor_gain(0.0, params) == pytest.approx(0.75)
     assert anchor_gain(1.0, params) == pytest.approx(2.0)
     assert anchor_gain(5.0, params) == pytest.approx(2.0)
@@ -88,7 +88,7 @@ def test_residual_is_low_when_tag_lies_in_neighbour_span():
     vectors[10] = basis[0] + basis[1]           # 在邻域张成的子空间里
     vectors[11] = rng.normal(size=16).astype(np.float32)  # 与邻域无关
     evidence = {10: {1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0}, 11: {1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0}, 5: {1: 1.0}}
-    residuals, gains = compute_anchor_gains(evidence, vectors, V91Params())
+    residuals, gains = compute_anchor_gains(evidence, vectors, RowBudgetParams())
     assert residuals[10] < 0.2 < residuals[11]
     assert 5 not in residuals  # 邻居不足 3 个不给值（按 1 处理）
     assert gains[11] > gains[10]
@@ -135,9 +135,9 @@ def seeded(tmp_path):
     db.close()
 
 
-def _v91(db, **kwargs):
+def _row_budget(db, **kwargs):
     return DirectedCooccurrence(
-        db, pair_sim_service=PairSimilarityService(db), kernel_version="v91", v91_params=V91Params(**kwargs)
+        db, pair_sim_service=PairSimilarityService(db), kernel_version="row_budget", kernel_params=RowBudgetParams(**kwargs)
     )
 
 
@@ -147,40 +147,42 @@ def _same(left, right) -> bool:
     )
 
 
-def test_v91_rebuild_filters_support_and_budgets_rows(seeded):
+def test_row_budget_rebuild_filters_support_and_budgets_rows(seeded):
     db, tags = seeded
-    matrix = _v91(db)
+    matrix = _row_budget(db)
     matrix.rebuild()
     assert tags["种田"] not in matrix.forward and tags["孤儿"] not in matrix.forward  # 支持度 1 被滤掉
     assert {tags["缺氧"], tags["电力"], tags["氧气"], tags["羽书"], tags["直播"]} <= set(matrix.forward)
     for edges in matrix.forward.values():
         assert sum(edges.values()) <= 0.95 + 1e-9
 
-    loose = _v91(db, min_support=1)
+    loose = _row_budget(db, min_support=1)
     loose.rebuild()
     assert tags["种田"] in loose.forward
 
 
-def test_v91_subprocess_matches_thread_and_snapshot_checks_kernel(seeded, tmp_path, monkeypatch):
+def test_row_budget_subprocess_matches_thread_and_snapshot_checks_kernel(seeded, tmp_path, monkeypatch):
     db, _ = seeded
-    expected = _v91(db)
+    expected = _row_budget(db)
     expected.rebuild()
 
     monkeypatch.setattr(DirectedCooccurrence, "rebuild", lambda self: (_ for _ in ()).throw(AssertionError("应走子进程")))
-    live = _v91(db)
+    live = _row_budget(db)
     path = str(tmp_path / "graph.json")
     scheduler = CooccurrenceScheduler(live, build_in_subprocess=True, snapshot_path=path)
     asyncio.run(scheduler.force_rebuild(reason="test"))
     assert _same(live.forward, expected.forward)
     assert live.wormhole_edges == expected.wormhole_edges
     assert live.anchor_gain == expected.anchor_gain
-    assert json.load(open(path, encoding="utf-8"))["kernel_version"] == "v91"
+    assert json.load(open(path, encoding="utf-8"))["kernel_version"] == "row_budget"
 
-    restored = _v91(db)
+    restored = _row_budget(db)
     assert restored.load_snapshot(path) is not None
     assert _same(restored.forward, live.forward) and restored.wormhole_edges == live.wormhole_edges
-    legacy = DirectedCooccurrence(db)  # 换回 legacy 时不能沿用 v91 快照
-    assert legacy.load_snapshot(path) is None
+    global_max = DirectedCooccurrence(db)  # 换回 global_max 时不能沿用 row_budget 快照
+    assert global_max.load_snapshot(path) is None
+    assert DirectedCooccurrence(db, kernel_version="v91").kernel_version == "row_budget"  # 早期命名仍识别
+    assert DirectedCooccurrence(db, kernel_version="legacy").kernel_version == "global_max"
 
 
 # ─── 传播 ───
@@ -189,34 +191,34 @@ class _Graph:
     def __init__(self, forward, wormholes=()):
         self.forward = forward
         self.wormhole_edges = frozenset(wormholes)
-        self.kernel_version = "v91"
-        self.v91_params = V91Params()
+        self.kernel_version = "row_budget"
+        self.kernel_params = RowBudgetParams()
 
     @property
     def node_count(self):
         return len(self.forward)
 
 
-def test_v91_propagation_suppresses_immediate_return_and_reaches_second_hop():
+def test_row_budget_propagation_suppresses_immediate_return_and_reaches_second_hop():
     # 1 → 2 → {1, 3}；回到 1 的质量只保留 15%
     graph = _Graph({1: {2: 0.95}, 2: {1: 0.475, 3: 0.475}, 3: {2: 0.95}}, wormholes={(1, 2), (2, 3)})
     router = SpikeRouter(graph, max_hops=4, firing_threshold=0.01)
     result = router.propagate([{"tag_id": 1, "weight": 1.0}])
-    assert result["kernel"] == "v91"
+    assert result["kernel"] == "row_budget"
     field = result["energy_field"]
     assert field[2] > field[3] > 0
     emergent = [item["tag_id"] for item in result["activated_tags"] if item["is_emergent"]]
     assert emergent[:2] == [2, 3]
 
     no_suppression = _Graph(graph.forward, graph.wormhole_edges)
-    no_suppression.v91_params = V91Params(return_flow_factor=1.0)
+    no_suppression.kernel_params = RowBudgetParams(return_flow_factor=1.0)
     baseline = SpikeRouter(no_suppression, max_hops=4, firing_threshold=0.01).propagate([{"tag_id": 1, "weight": 1.0}])
     assert field[1] < baseline["energy_field"][1]
 
 
-def test_legacy_kernel_keeps_old_propagation():
+def test_global_max_kernel_keeps_old_propagation():
     graph = _Graph({1: {2: 1.0}})
-    graph.kernel_version = "legacy"
+    graph.kernel_version = "global_max"
     graph.get_neighbors = lambda tag_id, max_neighbors=20: sorted(graph.forward.get(tag_id, {}).items(), key=lambda x: -x[1])
     result = SpikeRouter(graph).propagate([{"tag_id": 1, "weight": 1.0}])
     assert "kernel" not in result

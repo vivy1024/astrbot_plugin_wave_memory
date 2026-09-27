@@ -59,7 +59,7 @@ def build(request: dict) -> dict:
     plugin_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if plugin_root not in sys.path:
         sys.path.insert(0, plugin_root)
-    from engine.cooccurrence_v91 import V91Params
+    from engine.cooccurrence_budget import RowBudgetParams
     from engine.directed_cooccurrence import DirectedCooccurrence
     from engine.semantic_gain import SemanticGainConfig
 
@@ -78,8 +78,8 @@ def build(request: dict) -> dict:
             residual_map={int(tag): float(value) for tag, value in request.get("residual_map") or []},
             semantic_gain_config=SemanticGainConfig(**gain_fields) if gain_fields else None,
             max_neighbors_per_tag=int(request.get("max_neighbors_per_tag") or 0),
-            kernel_version=str(request.get("kernel_version") or "legacy"),
-            v91_params=V91Params.from_dict(request.get("v91_params")),
+            kernel_version=str(request.get("kernel_version") or "global_max"),
+            kernel_params=RowBudgetParams.from_dict(request.get("kernel_params")),
         )
         matrix.rebuild()
         return {

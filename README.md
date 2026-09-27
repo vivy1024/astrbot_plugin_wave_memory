@@ -429,8 +429,8 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | cold_recall_enabled | true | 启用标签驱动的冷记忆召回 |
 | tag_index_max_vectors | 40000 | 标签索引最大条数 |
 | generation_retention | 1 | 索引历史版本保留数量 |
-| cooccurrence_kernel | legacy | 共现传播核：legacy（旧版）或 v91（VCP TagMemo V9.1：固定出流预算、入流枢纽校正、残差锚增益、软非回溯传播）；切换后首次启动重建一次共现图 |
-| cooccurrence_min_support | 2 | v91 下两个标签至少在几条记忆里共现才建边 |
+| cooccurrence_kernel | global_max | 共现传播核：global_max（旧做法，全库最大值归一化）或 row_budget（每个标签的出边按固定预算分配，移植自 VCP TagMemo V9.1）；切换后首次启动重建一次共现图 |
+| cooccurrence_min_support | 2 | row_budget 下两个标签至少在几条记忆里共现才建边 |
 
 ### 内存预算 (Memory_Budget_Settings)
 

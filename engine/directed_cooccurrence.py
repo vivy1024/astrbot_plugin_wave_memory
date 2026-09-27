@@ -19,7 +19,7 @@ except ImportError:  # pragma: no cover - focused repository tests without AstrB
     import logging
     logger = logging.getLogger(__name__)
 
-from .cooccurrence_v91 import V91Params, build_kernel, compress_evidence, compute_anchor_gains
+from .cooccurrence_budget import RowBudgetParams, build_kernel, compress_evidence, compute_anchor_gains
 from .db.scoped_tag_projection import effective_tag_rows
 from .semantic_gain import bell_gain, SemanticGainConfig
 
@@ -41,8 +41,18 @@ DEFAULT_REBUILD_COOLDOWN_SEC = 1800.0
 # graph.  Keeping the strongest edges preserves routing behaviour under a bound.
 DEFAULT_MAX_NEIGHBORS_PER_TAG = 64
 
-# 共现传播核：legacy = 全局最大值归一化 + 0.01 截断（V8 时代）；v91 = TagMemo V9.1 固定出流预算
-KERNEL_VERSIONS = ("legacy", "v91")
+# 共现传播核：
+#   global_max  全库按最大边权归一化、砍掉 < 0.01 的边（旧做法）
+#   row_budget  每个标签的出边按固定预算分配（移植自 VCP TagMemo V9.1，见 cooccurrence_budget.py）
+KERNEL_VERSIONS = ("global_max", "row_budget")
+# 早期命名，配置里写旧值时照常识别
+KERNEL_ALIASES = {"legacy": "global_max", "v91": "row_budget"}
+
+
+def normalize_kernel(name) -> str:
+    value = str(name or "").strip().lower()
+    value = KERNEL_ALIASES.get(value, value)
+    return value if value in KERNEL_VERSIONS else "global_max"
 
 # 常驻图落盘格式版本；只存裁剪后的正向图（线上几百个节点、几千条边），反向图加载时推导。
 SNAPSHOT_VERSION = 1
@@ -73,13 +83,13 @@ class DirectedCooccurrence:
         semantic_gain_config: SemanticGainConfig = None,
         max_neighbors_per_tag: int = DEFAULT_MAX_NEIGHBORS_PER_TAG,
         *,
-        kernel_version: str = "legacy",
-        v91_params: V91Params | None = None,
+        kernel_version: str = "global_max",
+        kernel_params: RowBudgetParams | None = None,
     ):
         self.db = db
-        self.kernel_version = kernel_version if kernel_version in KERNEL_VERSIONS else "legacy"
-        self.v91_params = v91_params or V91Params()
-        # v91：虫洞边（传播时低衰减、不扣动量）与锚增益（由内生残差映射），与图同代发布
+        self.kernel_version = normalize_kernel(kernel_version)
+        self.kernel_params = kernel_params or RowBudgetParams()
+        # row_budget：虫洞边（传播时低衰减、不扣动量）与锚增益（由内生残差映射），与图同代发布
         self.wormhole_edges: frozenset[tuple[int, int]] = frozenset()
         self.anchor_gain: dict[int, float] = {}
         self.pair_sim_service = pair_sim_service
@@ -133,8 +143,8 @@ class DirectedCooccurrence:
             logger.info("[WaveMemory] DirectedCooccurrence: no data")
             return
 
-        if self.kernel_version == "v91":
-            self._rebuild_v91(rows, bool(has_scoped))
+        if self.kernel_version == "row_budget":
+            self._rebuild_row_budget(rows, bool(has_scoped))
             return
 
         # 按完整 Scope + memory_id 分组，避免不同 Scope 的同号对象混合。
@@ -247,10 +257,10 @@ class DirectedCooccurrence:
         self.wormhole_edges = getattr(other, "wormhole_edges", frozenset())
         self.anchor_gain = getattr(other, "anchor_gain", {})
 
-    # ─── V9.1 构建 ───
+    # ─── row_budget 构建（TagMemo V9.1）───
 
-    def _rebuild_v91(self, rows: list[tuple], has_scoped: bool) -> None:
-        params = self.v91_params
+    def _rebuild_row_budget(self, rows: list[tuple], has_scoped: bool) -> None:
+        params = self.kernel_params
         # 同一记忆内标签对的原始证据与支持度（出现在几条记忆里）。权重对称，按无序对存一份。
         pair_weight: dict[tuple[int, int], float] = {}
         pair_support: dict[tuple[int, int], int] = {}
@@ -293,7 +303,7 @@ class DirectedCooccurrence:
         kernel, wormholes = build_kernel(evidence, gains, params, self.max_neighbors_per_tag)
         self.publish(kernel, self._current_tag_count(has_scoped), wormholes=wormholes, anchor_gain=gains)
         logger.info(
-            "[WaveMemory] DirectedCooccurrence(v9.1) rebuilt: %s nodes, %s edges, %s wormholes, "
+            "[WaveMemory] DirectedCooccurrence(row_budget) rebuilt: %s nodes, %s edges, %s wormholes, "
             "anchor gains %s/%s (min_support=%s)",
             len(kernel), sum(len(v) for v in kernel.values()), len(wormholes), len(gains), len(evidence), min_support,
         )
@@ -349,8 +359,8 @@ class DirectedCooccurrence:
                 payload = json.load(handle)
             if int(payload.get("version", 0)) != SNAPSHOT_VERSION:
                 return None
-            # 换了传播核（legacy ↔ v91）时旧快照不能用，重建一次
-            if str(payload.get("kernel_version") or "legacy") != self.kernel_version:
+            # 换了传播核（global_max ↔ row_budget）时旧快照不能用，重建一次；没写内核的旧快照是 global_max
+            if normalize_kernel(payload.get("kernel_version")) != self.kernel_version:
                 return None
             bound = self.max_neighbors_per_tag
             forward: dict[int, dict[int, float]] = {}
@@ -606,11 +616,11 @@ class CooccurrenceScheduler:
         if pair_sim is not None and not getattr(pair_sim, "table_backed", False):
             return None
         gain = getattr(live, "semantic_gain_config", None)
-        v91_params = getattr(live, "v91_params", None)
+        kernel_params = getattr(live, "kernel_params", None)
         return {
             "db_path": db_path,
-            "kernel_version": str(getattr(live, "kernel_version", "legacy")),
-            "v91_params": v91_params.to_dict() if hasattr(v91_params, "to_dict") else {},
+            "kernel_version": str(getattr(live, "kernel_version", "global_max")),
+            "kernel_params": kernel_params.to_dict() if hasattr(kernel_params, "to_dict") else {},
             "max_neighbors_per_tag": int(getattr(live, "max_neighbors_per_tag", DEFAULT_MAX_NEIGHBORS_PER_TAG)),
             "residual_map": [[int(k), float(v)] for k, v in dict(getattr(live, "residual_map", None) or {}).items()],
             "semantic_gain": asdict(gain) if is_dataclass(gain) else {},
@@ -648,7 +658,7 @@ class CooccurrenceScheduler:
         )
         logger.info(
             "[WaveMemory] 共现图在子进程构建完成（%s）: %s 个节点、%s 条边、%s 条虫洞，%.1fs",
-            getattr(new_matrix, "kernel_version", "legacy"),
+            getattr(new_matrix, "kernel_version", "global_max"),
             new_matrix.node_count, new_matrix.edge_count, len(getattr(new_matrix, "wormhole_edges", ())),
             float(result.get("elapsed_sec") or 0.0),
         )
@@ -658,8 +668,8 @@ class CooccurrenceScheduler:
         kwargs = {}
         if hasattr(self.cooccurrence, "kernel_version"):
             kwargs["kernel_version"] = self.cooccurrence.kernel_version
-        if hasattr(self.cooccurrence, "v91_params"):
-            kwargs["v91_params"] = self.cooccurrence.v91_params
+        if hasattr(self.cooccurrence, "kernel_params"):
+            kwargs["kernel_params"] = self.cooccurrence.kernel_params
         return kwargs
 
     async def _build_replacement(self, new_matrix) -> None:

@@ -1,4 +1,4 @@
-"""离线对比共现传播核 legacy 与 v91：同一批真实查询的种子标签在两张图上各跑一次脉冲传播。
+"""离线对比共现传播核 global_max（旧）与 row_budget（新）：同一批真实查询的种子标签在两张图上各跑一次脉冲传播。
 
 在 astrbot 容器里运行（只读数据库；种子标签取自运行中的 9876 检索实验室 debug 输出）::
 
@@ -28,17 +28,17 @@ def _build(db_path: str, kernel: str, min_support: int) -> dict:
     from engine.cooccurrence_worker import build
 
     return build({
-        "db_path": db_path, "kernel_version": kernel, "v91_params": {"min_support": min_support},
+        "db_path": db_path, "kernel_version": kernel, "kernel_params": {"min_support": min_support},
         "max_neighbors_per_tag": 64, "residual_map": [], "semantic_gain": {}, "pair_similarity": True,
     })
 
 
 def _router(result: dict, kernel: str):
-    from engine.cooccurrence_v91 import V91Params
+    from engine.cooccurrence_budget import RowBudgetParams
     from engine.directed_cooccurrence import DirectedCooccurrence
     from engine.spike_routing import SpikeRouter
 
-    matrix = DirectedCooccurrence(None, kernel_version=kernel, v91_params=V91Params())
+    matrix = DirectedCooccurrence(None, kernel_version=kernel, kernel_params=RowBudgetParams())
     matrix.publish(
         {int(s): {int(t): float(w) for t, w in edges} for s, edges in result["forward"]},
         int(result.get("tag_count") or 0),
@@ -71,7 +71,7 @@ def main() -> int:
 
     conn = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
     graphs = {}
-    for kernel in ("legacy", "v91"):
+    for kernel in ("global_max", "row_budget"):
         started = time.perf_counter()
         result = _build(args.db, kernel, args.min_support)
         matrix, router = _router(result, kernel)
@@ -108,7 +108,7 @@ def main() -> int:
             out = router.propagate(seeds, epa_result={"logic_depth": logic_depth})
             s["ms"].append((time.perf_counter() - started) * 1000)
             emergent = [item for item in out["activated_tags"] if item["is_emergent"]]
-            if kernel == "legacy":
+            if kernel == "global_max":
                 emergent = [item for item in emergent if item["energy"] > 0.1]  # 与检索引擎的并入门槛一致
             s["fired"] += 1 if emergent else 0
             s["emergent"].append(len(emergent))
@@ -125,7 +125,7 @@ def main() -> int:
               f"传播耗时 p50 {ms[len(ms)//2]:.1f}ms / max {ms[-1]:.1f}ms")
     print("\n样例：")
     for sample in samples[:12]:
-        print(f"- {sample['query'][:40]}\n    种子: {'、'.join(sample['seeds'])}\n    v91 涌现: {'、'.join(sample['v91']) or '（无）'}\n    legacy 涌现: {'、'.join(sample['legacy']) or '（无）'}")
+        print(f"- {sample['query'][:40]}\n    种子: {'、'.join(sample['seeds'])}\n    row_budget 涌现:{'、'.join(sample['row_budget']) or '（无）'}\n    global_max 涌现: {'、'.join(sample['global_max']) or '（无）'}")
     if args.dump:
         json.dump({"stats": stats, "samples": samples}, open(args.dump, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     return 0

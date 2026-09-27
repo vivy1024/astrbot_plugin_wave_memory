@@ -26,7 +26,7 @@ class GeodesicReranker:
         self.alpha = alpha
         self.min_geo_samples = min_geo_samples
         # 能量场按 scoped_tags 的 id 计；旧逻辑读 legacy memory_tags，新数据上得分恒为 0。
-        # 随共现传播核 v91 一起开启（legacy 模式保持原行为，便于对照）。
+        # 随共现传播核 row_budget 一起开启（global_max 保持原行为，便于对照）。
         self.use_scoped_tags = False
 
     def rerank(

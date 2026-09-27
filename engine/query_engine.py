@@ -1136,9 +1136,9 @@ class QueryEngine:
                 try:
                     spike_result = spike.propagate(seed_tags, epa_result={"logic_depth": logic_depth, "entropy": entropy})
                     energy_field = dict(spike_result.get("energy_field", {}))
-                    # v9.1：涌现节点按能量直接加权并入（能量已是有限时域加权后的份额，量级远小于旧版，
+                    # row_budget：涌现节点按能量直接加权并入（能量已是有限时域加权后的份额，量级远小于旧版，
                     # 不能沿用 >0.1、×0.5 的旧门槛），与上游 TagMemo 一致
-                    v91_kernel = spike_result.get("kernel") == "v91"
+                    row_budget_kernel = spike_result.get("kernel") == "row_budget"
                     activated = []
                     for item in spike_result.get("activated_tags", []):
                         compact = {
@@ -1147,7 +1147,7 @@ class QueryEngine:
                             "is_emergent": bool(item.get("is_emergent")),
                         }
                         activated.append(compact)
-                        if compact["is_emergent"] and v91_kernel and float(item.get("energy", 0)) > 0:
+                        if compact["is_emergent"] and row_budget_kernel and float(item.get("energy", 0)) > 0:
                             matched_tags.append((compact["tag_id"], float(item.get("energy", 0))))
                             highlights["emergent_tags"].append(compact)
                         elif compact["is_emergent"] and compact["energy"] > 0.1:
@@ -1156,7 +1156,7 @@ class QueryEngine:
                     self._trace_record(collector, "spike", {
                         "enabled": True, "available": True,
                         "params": {"max_hops": getattr(spike, "max_hops", None), "firing_threshold": getattr(spike, "firing_threshold", None)},
-                        "kernel": spike_result.get("kernel", "legacy"),
+                        "kernel": spike_result.get("kernel", "global_max"),
                         "seed_count": len(seed_tags), "seed_tags": seed_tags,
                         "activated_count": len(activated), "activated_tags": activated,
                         "energy_field_size": len(energy_field),
