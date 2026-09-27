@@ -507,6 +507,7 @@ class BootstrapMixin:
         self.geodesic = GeodesicReranker(self.db) if self.enable_geodesic else None
         if self.geodesic is not None:
             self.geodesic.use_scoped_tags = self.cooccurrence_kernel == "row_budget"
+            self.geodesic.cooccurrence = self.cooccurrence
 
         # 书设知识索引：memory_only/compat_only 默认关闭 BookLore，避免加载世界观/小说知识能力。
         # 书设是独立 Catalog 知识库（直读 book_lore.db），不是 Learning reviewed projection。

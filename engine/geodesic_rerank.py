@@ -10,6 +10,7 @@ except ImportError:  # pragma: no cover - focused repository tests without AstrB
     import logging
     logger = logging.getLogger(__name__)
 from .database import WaveMemoryDB
+from .potential_field_rerank import PotentialFieldParams, hub_specificity_base, rerank as potential_field_rerank
 
 
 class GeodesicReranker:
@@ -28,6 +29,12 @@ class GeodesicReranker:
         # 能量场按 scoped_tags 的 id 计；旧逻辑读 legacy memory_tags，新数据上得分恒为 0。
         # 随共现传播核 row_budget 一起开启（global_max 保持原行为，便于对照）。
         self.use_scoped_tags = False
+        # row_budget 下改用势场读出（封顶加分 + 枢纽特异性 + 低可信退回），需要共现图取入流与锚增益
+        self.cooccurrence = None
+        self.potential_params = PotentialFieldParams()
+        self.last_diagnostics: dict = {}
+        # 检索时按请求浅拷贝本对象；缓存放在共享的 dict 里，副本之间不重复计算全图入流
+        self._specificity_cache: dict = {}
 
     def rerank(
         self,
@@ -47,12 +54,69 @@ class GeodesicReranker:
         if not energy_field or not candidates:
             return candidates
 
+        if self.use_scoped_tags:
+            try:
+                return self._potential_field(candidates, energy_field)
+            except Exception as e:
+                logger.debug(f"[WaveMemory] 势场重排失败，保持原排序: {e}")
+                self.last_diagnostics = {"applied": False, "reason": "error", "error": repr(e)}
+                return candidates
+
         try:
             return self._rerank_internal(candidates, energy_field)
         except Exception as e:
             # L2 兜底：异常时直接返回原列表
             logger.debug(f"[WaveMemory] GeodesicRerank fallback to L2: {e}")
             return candidates
+
+    def _specificity(self) -> dict[int, float]:
+        forward = getattr(self.cooccurrence, "forward", None) or {}
+        cache = self._specificity_cache
+        if cache.get("key") != id(forward):
+            cache["value"] = hub_specificity_base(forward)
+            cache["key"] = id(forward)
+        return cache["value"]
+
+    def _potential_field(self, candidates: list[dict], energy_field: dict[int, float]) -> list[dict]:
+        import numpy as np
+
+        memory_ids = [int(c["id"]) for c in candidates]
+        marks = ",".join("?" * len(memory_ids))
+        chains: dict[int, list[tuple[int, int]]] = {}
+        for memory_id, tag_id, position in self.db.conn.execute(
+            f"SELECT memory_id, tag_id, position FROM scoped_memory_tags WHERE memory_id IN ({marks})", memory_ids
+        ).fetchall():
+            chains.setdefault(int(memory_id), []).append((int(tag_id), int(position or 0)))
+        field_top = [tid for tid, _ in sorted(energy_field.items(), key=lambda item: -item[1])[: self.potential_params.max_field_nodes]]
+        tag_ids = sorted({tid for chain in chains.values() for tid, _ in chain} | {int(t) for t in field_top})
+        tag_vectors: dict[int, np.ndarray] = {}
+        for start in range(0, len(tag_ids), 900):
+            batch = tag_ids[start:start + 900]
+            for tag_id, blob in self.db.conn.execute(
+                "SELECT s.id, t.embedding FROM scoped_tags s JOIN tag_catalog t ON t.id = s.catalog_id "
+                f"WHERE s.id IN ({','.join('?' * len(batch))}) AND t.embedding IS NOT NULL",
+                batch,
+            ).fetchall():
+                tag_vectors[int(tag_id)] = np.frombuffer(bytes(blob), dtype=np.float32)
+        memory_vectors = {
+            int(memory_id): np.frombuffer(bytes(blob), dtype=np.float32)
+            for memory_id, blob in self.db.conn.execute(
+                f"SELECT id, vector FROM memories WHERE id IN ({marks}) AND vector IS NOT NULL", memory_ids
+            ).fetchall()
+        }
+        reranked, diagnostics = potential_field_rerank(
+            candidates,
+            energy_field,
+            seed_ids=getattr(energy_field, "seed_ids", frozenset()),
+            tag_chains=chains,
+            tag_vectors=tag_vectors,
+            memory_vectors=memory_vectors,
+            specificity_base=self._specificity(),
+            anchor_gain=getattr(self.cooccurrence, "anchor_gain", {}) or {},
+            params=self.potential_params,
+        )
+        self.last_diagnostics = diagnostics
+        return reranked
 
     def _rerank_internal(self, candidates: list[dict], energy_field: dict[int, float]) -> list[dict]:
         """内部重排逻辑。"""

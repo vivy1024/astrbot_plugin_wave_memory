@@ -34,7 +34,7 @@ from .vector_index import VectorIndex
 from .embedding import EmbeddingService
 from .directed_cooccurrence import DirectedCooccurrence
 from .context_segmenter import ContextSegmenter
-from .spike_routing import SpikeRouter
+from .spike_routing import EnergyField, SpikeRouter
 from .residual_pyramid import ResidualPyramid
 from .epa import EPAModule
 from .geodesic_rerank import GeodesicReranker
@@ -933,6 +933,8 @@ class QueryEngine:
                         "rank_after": rank,
                         "score_after": round(float(item.get("score", 0)), 4),
                         "geo_score": round(float(item.get("geo_score", 0) or 0), 4),
+                        "geo_bonus": item.get("geo_bonus"),
+                        "geo_class": item.get("geo_class"),
                     })
                     if memory_id in score_breakdown:
                         score_breakdown[memory_id].update(geodesic_details[-1])
@@ -942,6 +944,8 @@ class QueryEngine:
                 self._trace_record(collector, "geodesic", {
                     "enabled": True, "available": True,
                     "params": {"alpha": getattr(geo, "alpha", None)},
+                    "mode": "potential_field" if getattr(geo, "use_scoped_tags", False) else "legacy_blend",
+                    "diagnostics": dict(getattr(geo, "last_diagnostics", {}) or {}),
                     "before_ids": list(before_rank), "after_ids": [item["id"] for item in reranked],
                     "reranked": geodesic_details,
                 })
@@ -1135,7 +1139,9 @@ class QueryEngine:
                 highlights["seed_tags"] = [dict(item) for item in seed_tags]
                 try:
                     spike_result = spike.propagate(seed_tags, epa_result={"logic_depth": logic_depth, "entropy": entropy})
-                    energy_field = dict(spike_result.get("energy_field", {}))
+                    raw_field = spike_result.get("energy_field", {})
+                    # 保留种子标签 id：势场重排据此区分「直接命中查询」与「传播得来」的证据
+                    energy_field = EnergyField(raw_field, seed_ids=getattr(raw_field, "seed_ids", ()))
                     # row_budget：涌现节点按能量直接加权并入（能量已是有限时域加权后的份额，量级远小于旧版，
                     # 不能沿用 >0.1、×0.5 的旧门槛），与上游 TagMemo 一致
                     row_budget_kernel = spike_result.get("kernel") == "row_budget"

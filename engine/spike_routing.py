@@ -9,6 +9,14 @@ from .cooccurrence_budget import RowBudgetParams, fir_weights
 from .directed_cooccurrence import DirectedCooccurrence
 
 
+class EnergyField(dict):
+    """{tag_id: energy}，另带本次查询的种子标签 id（势场重排据此区分直接证据与传播证据）。"""
+
+    def __init__(self, values=(), *, seed_ids=()):
+        super().__init__(values)
+        self.seed_ids = frozenset(seed_ids)
+
+
 class SpikeRouter:
     """脉冲传播引擎：从种子 Tag 出发，沿共现图扩散能量，发现间接关联。
 
@@ -254,5 +262,9 @@ class SpikeRouter:
             key=lambda item: -item["energy"],
         )
         activated.extend(emergent[: self.max_emergent_nodes])
-        return {"activated_tags": activated, "energy_field": energy_field, "kernel": "row_budget"}
+        return {
+            "activated_tags": activated,
+            "energy_field": EnergyField(energy_field, seed_ids=seed_ids),
+            "kernel": "row_budget",
+        }
 
