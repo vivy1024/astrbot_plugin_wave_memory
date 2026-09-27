@@ -472,15 +472,14 @@ class BootstrapMixin:
         # 共现图只在内存里，以前每次重启都全量重建（线上单次 15–50 秒，期间注入被拖慢）。
         # 有快照就直接加载；快照之后新增的标签关联计入待处理变更，按正常阈值与冷却期再重建。
         snapshot_built_at = self.cooccurrence_scheduler.load_snapshot()
+        self._cooccurrence_changes_since_snapshot = 0
         if snapshot_built_at is not None:
             try:
-                changed = int(self.db.conn.execute(
+                self._cooccurrence_changes_since_snapshot = int(self.db.conn.execute(
                     "SELECT COUNT(*) FROM scoped_memory_tags WHERE created_at > ?", (snapshot_built_at,)
                 ).fetchone()[0])
             except Exception:
-                changed = 0
-            if changed:
-                self.cooccurrence_scheduler.notify_tag_change(changed, reason="since_snapshot")
+                self._cooccurrence_changes_since_snapshot = 0
 
         # 脉冲传播
         self.spike_router = SpikeRouter(
@@ -568,6 +567,12 @@ class BootstrapMixin:
             self.cooccurrence,
             scheduler=self.cooccurrence_scheduler,
         )
+        # 必须在投影把重建锁绑定到调度器之后再通知：变更数一旦过阈值，调度器会立即排上重建任务，
+        # 之后再绑定锁会抛 "cannot replace cooccurrence rebuild lock while scheduled"，插件整体载入失败。
+        if self._cooccurrence_changes_since_snapshot:
+            self.cooccurrence_scheduler.notify_tag_change(
+                self._cooccurrence_changes_since_snapshot, reason="since_snapshot"
+            )
         self.runtime_refresh_projection = RuntimeRefreshProjection(
             callbacks={"memory": self._on_memory_projection_refresh}
         )
