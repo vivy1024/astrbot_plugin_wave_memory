@@ -44,8 +44,18 @@ export interface TagGraphNode {
   out_weight: number
   ref: string
   object_ref?: ObjectRefDescriptor
+  /** 以下时间字段由新版后端提供（秒）；旧后端缺省。 */
+  created_at?: number
+  updated_at?: number
+  /** 本次投影读到的最近一条有效关联记忆时间。 */
+  last_seen_ts?: number
+  /** recent_window_hours 窗口内的关联记忆条数。 */
+  recent_memory_count?: number
   read_only: true
 }
+
+/** 选哪 max_nodes 个标签：links 关联记忆最多（默认）/ recent 最近活跃 / created 最新创建。 */
+export type TagGraphRankBy = 'links' | 'recent' | 'created'
 
 export interface TagGraphEdge {
   id: string
@@ -88,6 +98,9 @@ export interface TagGraphPayload {
   generated_at: number
   warnings: Array<{ layer: string; reason: string }>
   pulse: { enabled: boolean; half_life_hours: number }
+  /** 新版后端回显的排序方式与窗口。 */
+  rank_by?: TagGraphRankBy
+  recent_window_hours?: number
 }
 
 export interface TagGraphPathPayload {
@@ -106,6 +119,8 @@ export interface GetTagGraphOptions {
   maxNodes?: number
   includePulse?: boolean
   pulseHalfLifeHours?: number
+  rankBy?: TagGraphRankBy
+  recentWindowHours?: number
   signal?: AbortSignal
 }
 
@@ -120,7 +135,9 @@ export function getTagGraph(scope: TagGraphScope, options: GetTagGraphOptions = 
   if (options.maxNodes !== undefined) params.set('max_nodes', String(options.maxNodes))
   if (options.includePulse) params.set('include_pulse', '1')
   if (options.pulseHalfLifeHours !== undefined) params.set('pulse_half_life_hours', String(options.pulseHalfLifeHours))
-  return fetchJson<TagGraphPayload>(`/api/tag-graph?${params.toString()}`, { signal: options.signal })
+  if (options.rankBy && options.rankBy !== 'links') params.set('rank_by', options.rankBy)
+  if (options.recentWindowHours !== undefined) params.set('recent_window_hours', String(options.recentWindowHours))
+  return fetchJson<TagGraphPayload>(`/api/tag-graph?${params.toString()}`, { signal: options.signal, timeoutMs: 30_000 })
 }
 
 export function getTagGraphDetail(scope: TagGraphScope, ref: string, layers?: TagGraphLayer[], signal?: AbortSignal): Promise<{ item: TagGraphNode; scope: TagGraphScope; read_only: true }> {

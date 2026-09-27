@@ -80,6 +80,8 @@ Bot 不再只能是静态配置里的两个槽位。本版起 Bot 存进 WaveMem
 49. **回复溯源**：观测台 trace 详情里命中的记忆 / 事实 / 黑话等条目可点进对应页面，通道名跳到通道配置；记忆页支持 `memory_id` 深链，详情里显示对话上下文与「最近被这些回复用到」（`GET /api/observatory/memories/<id>/traces`，线上 40–62ms）。
 50. **修复**：黑话通道把 RuntimeScope 对象写进 trace 明细，线上所有黑话明细都是 `channel_details_not_json_serializable`；`/api/config/schema`、`/api/config/inventory` 不再明文返回 WebUI 密码（只报告是否已设置，保存时空值表示不修改）。
 
+51. **关系图谱**（`/graph`）取代「神经云图」与「标签神经星云」：知识图谱 / 标签两个数据层，sigma WebGL 渲染、ForceAtlas2 在 Web Worker 里布局并在收敛后停止（静止时不再重绘，1000 节点交互 60fps）；默认视图「最强关系」，另有「新出现」「当前话题」「全部」，每个视图有一句说明；搜索聚焦、悬停高亮邻居、节点详情与证据、两点找路径、类型过滤，浅深主题统一配色。`/api/tag-graph` 节点新增时间与近期记忆数字段和 `rank_by=links|recent|created`，`/api/kg/full` 边新增 `created_ts`。下线旧 3D 页（`static/explore.html`、`kg.js`、`static/vendor/` 约 1.2MB）与手写 Canvas 画布；`/explore`、`/tags/graph` 重定向到 `/graph`。
+
 #### 升级须知
 
 - 首次启动自动把 `MetaThinking_Bot1/2`（以及任意 `MetaThinking_BotN`）迁进 `bot_profiles`：`db_id` 不变，会话前缀从该 Bot 最近的记忆里检测（线上为「羽书」「白真真」），v5 写死的人设片段按 db_id 补进 Profile。**历史数据一条不改。**

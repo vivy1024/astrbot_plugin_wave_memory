@@ -42,12 +42,27 @@ async def index():
     return _html_response(_STATIC_DIR / "app" / "index.html", _INDEX_MISSING)
 
 
+def _request_query_string() -> str:
+    try:
+        from quart import request
+        raw = request.query_string
+    except Exception:  # 无请求上下文（单测）时按无参数处理
+        return ""
+    return raw.decode("utf-8", "ignore") if isinstance(raw, (bytes, bytearray)) else str(raw or "")
+
+
+def graph_redirect_location(layer: str, query_string: str = "") -> str:
+    """旧入口统一跳到 React 关系图谱；保留原查询参数，丢弃只属于旧 iframe 的 embed/layer。"""
+    from urllib.parse import parse_qsl, urlencode
+
+    pairs = [(key, value) for key, value in parse_qsl(query_string, keep_blank_values=True) if key not in {"embed", "layer"}]
+    return "/#/graph?" + urlencode([("layer", layer), *pairs])
+
+
 @pages_bp.route("/explore")
 async def explore():
-    return _html_response(
-        _STATIC_DIR / "explore.html",
-        "<h1>Wave Memory 3D 星图</h1><p>3D 资源暂不可用。</p>",
-    )
+    """旧 3D 神经云图已下线，保留地址并 302 到 /#/graph?layer=kg。"""
+    return redirect(graph_redirect_location("kg", _request_query_string()), code=302)
 
 
 @pages_bp.route("/maintain")

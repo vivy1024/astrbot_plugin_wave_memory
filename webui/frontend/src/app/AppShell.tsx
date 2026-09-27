@@ -21,9 +21,13 @@ function PageFallback() {
   )
 }
 
-function RenamedPath({ to }: { to: string }) {
+function RenamedPath({ to, set, drop = [] }: { to: string; set?: Record<string, string>; drop?: string[] }) {
   const location = useLocation()
-  return <Navigate replace to={{ pathname: to, search: location.search }} />
+  if (!set && !drop.length) return <Navigate replace to={{ pathname: to, search: location.search }} />
+  const params = new URLSearchParams(location.search)
+  for (const key of drop) params.delete(key)
+  for (const [key, value] of Object.entries(set ?? {})) params.set(key, value)
+  return <Navigate replace to={{ pathname: to, search: `?${params.toString()}` }} />
 }
 
 function NotFoundPage() {
@@ -54,13 +58,9 @@ export function AppShell() {
 export function AppRoutes() {
   return (
     <Routes>
-      {appRoutes.filter((route) => route.path === '/explore').map((route) => {
-        const Element = route.element
-        return <Route key={route.path} path={route.path} element={<Suspense fallback={<PageFallback />}><Element /></Suspense>} />
-      })}
       <Route element={<AppShell />}>
         <Route index element={<Navigate replace to={defaultRoute} />} />
-        {appRoutes.filter((route) => route.path !== '/explore').map((route) => {
+        {appRoutes.map((route) => {
           const Element = route.element
           return <Route key={route.path} path={route.path} element={<Element />} />
         })}
@@ -68,6 +68,9 @@ export function AppRoutes() {
         <Route path="/maintain" element={<RenamedPath to="/maintenance" />} />
         <Route path="/knowledge/fewshot" element={<RenamedPath to="/knowledge/style-examples" />} />
         <Route path="/knowledge/facts" element={<RenamedPath to="/facts" />} />
+        {/* 两个旧「神经云图」合并为关系图谱：保留原查询参数，只补上数据层 */}
+        <Route path="/tags/graph" element={<RenamedPath to="/graph" set={{ layer: 'tags' }} />} />
+        <Route path="/explore" element={<RenamedPath to="/graph" set={{ layer: 'kg' }} drop={['embed']} />} />
         <Route path="/login" element={<RenamedPath to={defaultRoute} />} />
       </Route>
       <Route path="*" element={<NotFoundPage />} />

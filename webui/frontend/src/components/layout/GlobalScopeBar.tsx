@@ -94,7 +94,7 @@ export function GlobalScopeBar({ className }: { className?: string }) {
         <TooltipTrigger asChild>
           <div className="min-w-0">
             <Select value={scope.botId || undefined} onValueChange={(value) => scope.setScope({ botId: value })}>
-              <SelectTrigger size="sm" className="w-32 sm:w-40" aria-label="当前 Bot">
+              <SelectTrigger size="sm" className="w-24 sm:w-40" aria-label="当前 Bot">
                 <BotIcon className="size-4 text-muted-foreground" aria-hidden="true" />
                 <SelectValue placeholder="选择 Bot" />
               </SelectTrigger>
@@ -114,7 +114,7 @@ export function GlobalScopeBar({ className }: { className?: string }) {
           onValueChange={(value) => scope.setScope({ sessionId: value })}
           disabled={!scope.botId || !sessions.length}
         >
-          <SelectTrigger size="sm" className="w-40 sm:w-60" aria-label="当前群 / 会话">
+          <SelectTrigger size="sm" className="w-36 min-w-0 sm:w-60" aria-label="当前群 / 会话">
             <MessagesSquareIcon className="size-4 text-muted-foreground" aria-hidden="true" />
             <SelectValue placeholder={sessions.length ? '选择群' : '该 Bot 暂无群'} />
           </SelectTrigger>

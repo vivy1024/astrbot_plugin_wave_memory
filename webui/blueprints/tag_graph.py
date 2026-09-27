@@ -149,6 +149,8 @@ def _graph_from_request(scope: RuntimeScope, *, layers: tuple[str, ...] | None =
         max_nodes=max_nodes or _bounded_int(request.args.get("max_nodes"), 300, 10, 5000),
         include_pulse=_as_bool(request.args.get("include_pulse")),
         pulse_half_life_hours=_bounded_float(request.args.get("pulse_half_life_hours"), 72.0, 1.0, 24.0 * 365.0),
+        rank_by=str(request.args.get("rank_by") or "links").strip() or "links",
+        recent_window_hours=_bounded_float(request.args.get("recent_window_hours"), 168.0, 1.0, 24.0 * 365.0),
     )
 
 

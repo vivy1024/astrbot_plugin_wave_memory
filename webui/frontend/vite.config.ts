@@ -100,9 +100,6 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': proxiedBackendRoute,
-      '/explore': proxiedBackendRoute,
-      '/static/kg.js': proxiedBackendRoute,
-      '/static/kg-config.js': proxiedBackendRoute,
     },
   },
   build: {

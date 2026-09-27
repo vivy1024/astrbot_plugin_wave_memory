@@ -5,14 +5,13 @@ import {
   BookOpenIcon, NotebookPenIcon,
   BotIcon,
   ServerCogIcon,
-  BrainCircuitIcon,
-  CompassIcon,
   DatabaseIcon,
   FlaskConicalIcon,
   DownloadIcon,
   GaugeIcon,
   FeatherIcon,
   MessageSquareTextIcon,
+  NetworkIcon,
   GitBranchIcon,
   GitCompareArrowsIcon,
   HeartIcon,
@@ -28,10 +27,9 @@ import {
 import type { RouteScopeAllowances, RouteScopeLevel } from '@/lib/global-scope'
 
 const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })))
-const ExplorePage = lazy(() => import('@/pages/PlaceholderPage').then((m) => ({ default: m.ExplorePage })))
 const MemoriesPage = lazy(() => import('@/pages/memories/MemoriesPage').then((m) => ({ default: m.MemoriesPage })))
 const TagsPage = lazy(() => import('@/pages/tags/TagsPage').then((m) => ({ default: m.TagsPage })))
-const TagGraphPage = lazy(() => import('@/pages/tags/TagGraphPage').then((m) => ({ default: m.TagGraphPage })))
+const GraphPage = lazy(() => import('@/pages/graph/GraphPage').then((m) => ({ default: m.GraphPage })))
 const ImportPage = lazy(() => import('@/pages/import/ImportPage').then((m) => ({ default: m.ImportPage })))
 const MaintenancePage = lazy(() => import('@/pages/maintenance/MaintenancePage').then((m) => ({ default: m.MaintenancePage })))
 const InjectionPage = lazy(() => import('@/pages/injection/InjectionPage').then((m) => ({ default: m.InjectionPage })))
@@ -80,8 +78,7 @@ export const appRoutes: AppRoute[] = [
   // 记忆库
   { path: '/memories', scope: 'session', title: '记忆', description: '按 Bot 和群查看、编辑记忆', group: 'memory', icon: DatabaseIcon, element: MemoriesPage },
   { path: '/tags', title: '标签', description: '覆盖率、频率、类型与置信度总览', group: 'memory', icon: TagsIcon, element: TagsPage },
-  { path: '/tags/graph', title: '标签神经星云', description: '标签共现网络、突触脉冲与高维拓扑星云', group: 'memory', icon: BrainCircuitIcon, element: TagGraphPage },
-  { path: '/explore', title: '神经云图', description: '3D 交互式高维记忆与关系星图', group: 'memory', icon: CompassIcon, element: ExplorePage },
+  { path: '/graph', scope: 'session', title: '关系图谱', description: '知识图谱与标签共现：最强关系、新出现、当前话题与路径', group: 'memory', icon: NetworkIcon, element: GraphPage },
   { path: '/knowledge/book-lore', title: '书设定', description: '独立只读语料、解析与本地化', group: 'memory', icon: BookOpenIcon, element: BookLorePage },
   { path: '/knowledge/book-lore/workbench', title: '书设工作台', description: '新章节导入、笔记编辑、检索索引补齐，保存即生效', group: 'memory', icon: NotebookPenIcon, element: BookLoreWorkbenchPage },
   { path: '/import', title: '导入', description: '从来源预检并导入记忆', group: 'memory', icon: DownloadIcon, element: ImportPage },

@@ -20,7 +20,7 @@ export interface ScopeSelection {
 export const GLOBAL_SCOPE_STORAGE_KEY = 'wavememory.webui.global-scope.v1'
 
 /** 作用域变化后必须失效的对象级 / 分页参数：旧群的对象引用不能落到新群上。 */
-export const SCOPE_DEPENDENT_QUERY_KEYS = ['offset', 'ref', 'object_id', 'subject_principal_id', 'trace_id', 'source_ref', 'target_ref'] as const
+export const SCOPE_DEPENDENT_QUERY_KEYS = ['offset', 'ref', 'object_id', 'subject_principal_id', 'trace_id', 'source_ref', 'target_ref', 'node', 'path_from', 'path_to'] as const
 
 export interface StoredGlobalScope {
   bot_id: string

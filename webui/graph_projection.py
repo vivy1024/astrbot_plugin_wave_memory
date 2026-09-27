@@ -196,6 +196,7 @@ def _project_facts(graph: GraphProjection, conn: Any, min_confidence: float) -> 
                 f"fact:{row['id']}", source, target, row.get("predicate") or "relates", layer, "fact",
                 weight=float(row.get("confidence") or 0), confidence=float(row.get("confidence") or 0),
                 ts=float(row.get("updated_at") or row.get("created_at") or 0),
+                created_ts=float(row.get("created_at") or row.get("updated_at") or 0),
                 source_type="entity", target_type="entity", fact_id=int(row["id"]),
                 source_memory_id=row.get("source_memory_id"), status=row.get("status"),
                 revision=int(row.get("revision") or 1),
@@ -233,6 +234,7 @@ def _project_facts(graph: GraphProjection, conn: Any, min_confidence: float) -> 
                 "tag_relation", weight=float(row.get("weight") or 0),
                 confidence=float(row.get("confidence") or 0),
                 ts=float(row.get("updated_at") or row.get("created_at") or 0),
+                created_ts=float(row.get("created_at") or row.get("updated_at") or 0),
                 source_type=row.get("source_type") or "topic", target_type=row.get("target_type") or "topic",
                 relation_id=int(row["id"]), metadata=_json(row.get("metadata"), {}),
                 status=row.get("status"), valid_until=row.get("valid_until"),
@@ -629,6 +631,7 @@ def scoped_layer_counts(conn: Any, scope: RuntimeScope) -> dict[str, int | None]
 
 
 TAG_GRAPH_LAYERS = ("cooccurrence", "relations")
+TAG_GRAPH_RANKINGS = ("links", "recent", "created")
 
 
 def _ordinal_potential(position: int, max_position: int) -> float:
@@ -731,14 +734,25 @@ def build_tag_graph_projection(
     *, conn: Any, scope: RuntimeScope, layers: Iterable[str] = TAG_GRAPH_LAYERS,
     min_confidence: float = 0.0, max_nodes: int = 300, include_pulse: bool = False,
     pulse_half_life_hours: float = 72.0, now: float | None = None,
+    rank_by: str = "links", recent_window_hours: float = 168.0,
 ) -> dict[str, Any]:
-    """构造严格 Scope 隔离的正式 Tag 神经云图只读投影。"""
+    """构造严格 Scope 隔离的正式 Tag 神经云图只读投影。
+
+    rank_by 决定「选哪 max_nodes 个标签」：
+    - links（默认，兼容旧行为）：关联记忆条数最多的标签；
+    - recent：窗口 recent_window_hours 内关联记忆最多、最近出现过的标签（当前话题）；
+    - created：scoped_tags.created_at 最新的标签（新出现）。
+    """
     requested = tuple(dict.fromkeys(str(layer).strip() for layer in layers if str(layer).strip()))
     invalid = sorted(set(requested) - set(TAG_GRAPH_LAYERS))
     if invalid:
         raise ValueError("unsupported_tag_graph_layers:" + ",".join(invalid))
+    if rank_by not in TAG_GRAPH_RANKINGS:
+        raise ValueError("unsupported_tag_graph_rank_by:" + str(rank_by))
     _scope_params(scope)
     generated_at = float(time.time() if now is None else now)
+    recent_cutoff = generated_at - max(1.0, float(recent_window_hours)) * 3600.0
+    ranking_meta = {"rank_by": rank_by, "recent_window_hours": float(recent_window_hours)}
     if conn is None:
         return {
             "nodes": [], "edges": [], "layers": list(requested),
@@ -748,13 +762,24 @@ def build_tag_graph_projection(
             "scope": ScopeCodec.to_dict(scope), "read_only": True, "generated_at": generated_at,
             "warnings": [{"layer": "all", "reason": "database_unavailable"}],
             "pulse": {"enabled": bool(include_pulse), "half_life_hours": float(pulse_half_life_hours)},
+            **ranking_meta,
         }
 
     tag_rows = _active_tag_rows(conn, scope)
     tags = {int(row["id"]): row for row in tag_rows}
-    # 1. 节点前置收敛：按用户设定的 max_nodes 动态放开，支持大容量星云自由展示
+    # 1. 节点前置收敛：按用户设定的 max_nodes 动态放开，支持大容量星云自由展示。
+    #    recent / created 的候选按时间取，否则最近才出现的标签会被老标签挤出候选集。
     candidate_cap = max(100, min(len(tag_rows), int(max_nodes * 2.5)))
-    candidate_tags = sorted(tag_rows, key=lambda r: float(r.get("confidence") or 0.0), reverse=True)[:candidate_cap]
+    if rank_by == "recent":
+        def candidate_key(r):
+            return (float(r.get("updated_at") or 0.0), int(r["id"]))
+    elif rank_by == "created":
+        def candidate_key(r):
+            return (float(r.get("created_at") or 0.0), int(r["id"]))
+    else:
+        def candidate_key(r):
+            return float(r.get("confidence") or 0.0)
+    candidate_tags = sorted(tag_rows, key=candidate_key, reverse=True)[:candidate_cap]
     candidate_ids = [int(r["id"]) for r in candidate_tags]
 
     # 2. 链接查询下推 candidate_ids，大幅缩减 link 数量
@@ -889,7 +914,28 @@ def build_tag_graph_projection(
         target_id = int(str(edge["target"]).split(":", 1)[1])
         degree_score[source_id] += 1.0 + float(edge["weight"])
         degree_score[target_id] += 1.0 + float(edge["weight"])
-    ranked_ids = sorted(tags, key=lambda tag_id: (len(links_by_tag.get(tag_id, ())), degree_score[tag_id], float(tags[tag_id].get("confidence") or 0.0), tag_id), reverse=True)
+    last_seen: dict[int, float] = {}
+    recent_count: dict[int, int] = {}
+    for tag_id, tag_links in links_by_tag.items():
+        memory_times = {
+            int(link["memory_id"]): float(memories[int(link["memory_id"])].get("timestamp") or 0.0)
+            for link in tag_links
+        }
+        last_seen[tag_id] = max(memory_times.values(), default=0.0)
+        recent_count[tag_id] = sum(1 for ts in memory_times.values() if ts >= recent_cutoff)
+
+    def _link_rank(tag_id: int) -> tuple:
+        return (len(links_by_tag.get(tag_id, ())), degree_score[tag_id], float(tags[tag_id].get("confidence") or 0.0), tag_id)
+
+    if rank_by == "recent":
+        def rank_key(tag_id: int) -> tuple:
+            return (recent_count.get(tag_id, 0), last_seen.get(tag_id, 0.0), *_link_rank(tag_id))
+    elif rank_by == "created":
+        def rank_key(tag_id: int) -> tuple:
+            return (float(tags[tag_id].get("created_at") or 0.0), *_link_rank(tag_id))
+    else:
+        rank_key = _link_rank
+    ranked_ids = sorted(tags, key=rank_key, reverse=True)
     selected_ids = set(ranked_ids[:max(1, min(10_000, int(max_nodes)))])
     edges = [edge for edge in edges if int(str(edge["source"]).split(":", 1)[1]) in selected_ids and int(str(edge["target"]).split(":", 1)[1]) in selected_ids]
 
@@ -939,6 +985,12 @@ def build_tag_graph_projection(
             "in_degree": len(incoming[tag_id]), "out_degree": len(outgoing[tag_id]),
             "in_weight": round(sum(float(edge["weight"]) for edge in incoming[tag_id]), 6),
             "out_weight": round(sum(float(edge["weight"]) for edge in outgoing[tag_id]), 6),
+            # 时间字段：created_at / updated_at 取自 scoped_tags；last_seen_ts 与 recent_memory_count
+            # 由本次投影读到的有效关联记忆时间戳计算（窗口 = recent_window_hours）。
+            "created_at": float(row.get("created_at") or 0.0),
+            "updated_at": float(row.get("updated_at") or 0.0),
+            "last_seen_ts": float(last_seen.get(tag_id, 0.0)),
+            "recent_memory_count": int(recent_count.get(tag_id, 0)),
             "read_only": True,
         }
         nodes.append(node)
@@ -955,6 +1007,7 @@ def build_tag_graph_projection(
         "scope": ScopeCodec.to_dict(scope), "read_only": True,
         "generated_at": generated_at, "warnings": warnings,
         "pulse": {"enabled": bool(include_pulse), "half_life_hours": float(pulse_half_life_hours)},
+        **ranking_meta,
     }
 
 
@@ -1006,6 +1059,6 @@ def find_tag_graph_path(
 
 
 __all__ = [
-    "SUPPORTED_LAYERS", "TAG_GRAPH_LAYERS", "build_graph_projection",
+    "SUPPORTED_LAYERS", "TAG_GRAPH_LAYERS", "TAG_GRAPH_RANKINGS", "build_graph_projection",
     "build_tag_graph_projection", "find_tag_graph_path", "scoped_layer_counts",
 ]

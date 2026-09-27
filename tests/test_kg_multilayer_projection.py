@@ -184,3 +184,18 @@ def test_missing_optional_tables_degrade_without_legacy_fallback():
         conn.close()
     assert payload["edges"] == []
     assert {item["reason"] for item in payload["warnings"]} == {"scoped_beliefs_unavailable", "scoped_soul_mood_unavailable"}
+
+
+def test_fact_and_tag_relation_edges_carry_created_and_updated_time():
+    conn = _database()
+    try:
+        conn.execute("UPDATE scoped_facts SET created_at=5, updated_at=50 WHERE id=1")
+        conn.execute("UPDATE scoped_tag_relations SET created_at=7, updated_at=70 WHERE id=1")
+        payload = build_graph_projection(conn=conn, scope=_scope(), layers=("facts",))
+    finally:
+        conn.close()
+    edges = {edge["id"]: edge for edge in payload["edges"]}
+    assert edges["fact:1"]["created_ts"] == 5.0
+    assert edges["fact:1"]["ts"] == 50.0
+    assert edges["tagrel:1"]["created_ts"] == 7.0
+    assert edges["tagrel:1"]["ts"] == 70.0

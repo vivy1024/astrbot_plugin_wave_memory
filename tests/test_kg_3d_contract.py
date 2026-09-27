@@ -63,50 +63,7 @@ _SCOPE_ARGS = {
 }
 
 
-class NeuroGalaxy3DFrontendContractTest(unittest.TestCase):
-    def test_explore_product_entry_is_retained_and_scope_is_explicit(self):
-        html_path = REPO_ROOT / "webui" / "static" / "explore.html"
-        self.assertTrue(html_path.exists())
-        html = html_path.read_text(encoding="utf-8")
-        self.assertIn("galaxy-container", html)
-        self.assertIn("OrbitControls", html)
-        self.assertIn("scope-bot-id", html)
-        self.assertIn("scope-session-id", html)
-        self.assertIn("scope-visibility", html)
-        self.assertIn("installScopedApiFetch", html)
-        self.assertIn("只读", html)
-
-    def test_kg_js_keeps_3d_read_runtime(self):
-        js = (REPO_ROOT / "webui" / "static" / "kg.js").read_text(encoding="utf-8")
-        for marker in (
-            "new THREE.Scene", "new THREE.Raycaster", "graphState", "nodes: new Map",
-            "edges: new Map", "appendGraphData", "doQuery", "doPathFind",
-            "loadPersonGraph", "focusPerson", "focusNode", "loadTimeline",
-        ):
-            self.assertIn(marker, js)
-        self.assertNotIn("new Sigma", js)
-        self.assertNotIn("graphology.Graph", js)
-
-    def test_multilayer_threejs_contract_is_explicit_and_read_only(self):
-        html = (REPO_ROOT / "webui" / "static" / "explore.html").read_text(encoding="utf-8")
-        js = (REPO_ROOT / "webui" / "static" / "kg.js").read_text(encoding="utf-8")
-        config = (REPO_ROOT / "webui" / "static" / "kg-config.js").read_text(encoding="utf-8")
-        for layer in (
-            "facts", "memories", "beliefs", "jargon", "concerns", "mood",
-            "timeline", "affinity", "few_shot", "book_lore", "communities",
-        ):
-            self.assertIn(f'data-layer="{layer}"', html)
-        for marker in (
-            "_kgFullNodes", "data.nodes", "cfg-memory-limit", "cfg-similarity-k",
-            "cfg-similarity-threshold", "buildProjectionMetadataHtml",
-        ):
-            self.assertIn(marker, html + js + config)
-        self.assertNotIn("fact-edit-dialog", html)
-        self.assertNotIn("relation-edit-dialog", html)
-        self.assertNotIn("method: 'DELETE'", js)
-        self.assertNotIn("method: 'PUT'", js)
-        self.assertNotIn("/api/kg/add-fact", js)
-
+class ExploreBlueprintContractTest(unittest.TestCase):
     def test_explore_blueprint_has_auth_on_every_route(self):
         source = (REPO_ROOT / "webui" / "blueprints" / "explore.py").read_text(encoding="utf-8")
         route_count = source.count("@explore_bp.route")
