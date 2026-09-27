@@ -79,8 +79,9 @@ function Get-InitLine([string]$log) {
 }
 
 function Restart-AndWait([string]$expectCommit) {
-    # 重启前最后一条启动完成行作为分界：只看它之后的日志，旧进程的报错与启动行不算数
-    $marker = Get-InitLine (Get-RecentLog)
+    # 重启前的最后一行日志作为分界：只看它之后的日志，旧进程的报错与启动行不算数。
+    # （不能用上一条启动完成行：上一次启动失败时它指向更早的成功启动，中间那次失败会被误算进来）
+    $marker = ((Get-RecentLog) -split "`n" | Where-Object { $_.Trim() } | Select-Object -Last 1)
     Write-Host "  docker restart $Container（QQ Bot 会短暂离线）"
     Invoke-Checked 'docker restart' { docker restart $Container | Out-Null }
     $deadline = (Get-Date).AddSeconds($StartTimeoutSeconds)

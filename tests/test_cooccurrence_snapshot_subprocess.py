@@ -182,3 +182,30 @@ def test_begin_immediate_retries_lock_then_gives_up():
     with pytest.raises(sqlite3.OperationalError):
         coordinator._begin_immediate(other)
     assert other.calls == 1
+
+
+def test_since_snapshot_notify_happens_after_projection_binds_lock(seeded_db):
+    """快照后变更超过阈值时调度器会立即排上重建；必须先绑定投影的重建锁再通知，否则插件载入失败。"""
+    from services.derived_projections import CooccurrenceProjection
+
+    async def scenario():
+        live = _matrix(seeded_db)
+        scheduler = CooccurrenceScheduler(live, threshold_pct=0.01, cooldown_sec=1800)
+        CooccurrenceProjection(live, scheduler=scheduler)  # 绑定锁
+        scheduler.notify_tag_change(10_000, reason="since_snapshot")  # 过阈值，立即排任务
+        assert scheduler._scheduled_task is not None
+        scheduler._scheduled_task.cancel()
+
+        early = CooccurrenceScheduler(_matrix(seeded_db), threshold_pct=0.01, cooldown_sec=1800)
+        early.notify_tag_change(10_000, reason="since_snapshot")
+        with pytest.raises(RuntimeError):
+            CooccurrenceProjection(early.cooccurrence, scheduler=early)
+        early._scheduled_task.cancel()
+
+    asyncio.run(scenario())
+
+    # bootstrap 里的通知必须写在 CooccurrenceProjection 构造之后
+    source = open("app/bootstrap.py", encoding="utf-8").read()
+    assert source.index("self.cooccurrence_projection = CooccurrenceProjection(") < source.index(
+        'reason="since_snapshot"'
+    )
