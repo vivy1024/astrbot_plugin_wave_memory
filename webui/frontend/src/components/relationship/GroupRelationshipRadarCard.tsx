@@ -9,6 +9,7 @@ import { ObjectDeepLink } from '@/components/shared/ObjectDeepLink'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
+import { pickDisplayName } from '@/lib/display-name'
 import { formatDisplayNumber } from '@/lib/format-number'
 import {
   RADAR_DIMENSIONS,
@@ -54,7 +55,7 @@ function formatTime(seconds: unknown): string {
 }
 
 function displayName(item: RelationshipItem): string {
-  return item.person.display_name || item.person.nickname || item.person.user_id
+  return pickDisplayName([item.person.display_name, item.person.nickname], item.person.user_id)
 }
 
 const NOISY_EVENT_TYPES = new Set(['message_seen'])

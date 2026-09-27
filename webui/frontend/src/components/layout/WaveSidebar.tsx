@@ -1,4 +1,4 @@
-import { MoonStarIcon, WavesIcon } from 'lucide-react'
+import { WavesIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 
@@ -46,5 +46,5 @@ export function WaveSidebar() {
   const version = usePluginVersion()
   return <Sidebar collapsible="icon" variant="inset"><SidebarHeader><SidebarMenu><SidebarMenuItem><SidebarMenuButton asChild size="lg" tooltip="Wave Memory"><NavLink to={{ pathname: '/dashboard', search: navigationSearch }}><WavesIcon aria-hidden="true" /><span className="flex flex-col gap-0.5"><span className="font-semibold">Wave Memory</span><span className="text-sm text-muted-foreground">WebUI 控制台</span></span></NavLink></SidebarMenuButton></SidebarMenuItem></SidebarMenu></SidebarHeader><SidebarContent>
     {groups.map((group) => <SidebarGroup key={group.id}><SidebarGroupLabel>{group.label}</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>{appRoutes.filter((route) => route.group === group.id && !route.hidden).map((route) => { const Icon = route.icon; return <SidebarMenuItem key={route.path}><SidebarMenuButton asChild isActive={location.pathname === route.path || location.pathname.startsWith(`${route.path}/`)} tooltip={route.title}><NavLink to={{ pathname: route.path, search: navigationSearch }}><Icon aria-hidden="true" /><span>{route.title}</span></NavLink></SidebarMenuButton></SidebarMenuItem> })}</SidebarMenu></SidebarGroupContent></SidebarGroup>)}
-  </SidebarContent><SidebarFooter><div className="flex items-center gap-2 px-2 py-1 text-sm text-muted-foreground"><MoonStarIcon className="size-4" aria-hidden="true" /><span>shadcn · Nova</span>{version ? <Badge variant="secondary">{version}</Badge> : null}</div></SidebarFooter></Sidebar>
+  </SidebarContent><SidebarFooter><div className="flex items-center gap-2 px-2 py-1 text-sm text-muted-foreground"><WavesIcon className="size-4" aria-hidden="true" /><span>Wave Memory</span>{version ? <Badge variant="secondary">{version}</Badge> : null}</div></SidebarFooter></Sidebar>
 }

@@ -18,6 +18,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 import { Input } from '@/components/ui/input'
 import { useCanonicalScopeDefault, usePaginationSearchParams } from '@/hooks/use-pagination-search-params'
 import { formatDisplayNumber } from '@/lib/format-number'
+import { pickDisplayName } from '@/lib/display-name'
 import { humanizeApiError, humanizeReason } from '@/lib/reason-label'
 import { scopedHref } from '@/lib/navigation-search'
 
@@ -109,7 +110,7 @@ function hasFormalRelationshipValues(item: RelationshipItem): boolean {
 function relationshipSortScore(item: RelationshipItem): [number, number, number, string] {
   const affinity = typeof item.affinity === 'number' && Number.isFinite(item.affinity) ? item.affinity : -1_000_000_000
   const interactions = typeof item.person.interaction_count === 'number' && Number.isFinite(item.person.interaction_count) ? item.person.interaction_count : -1
-  const name = item.person.display_name || item.person.nickname || item.person.user_id
+  const name = pickDisplayName([item.person.display_name, item.person.nickname], item.person.user_id)
   return [hasFormalRelationshipValues(item) ? 1 : 0, affinity, interactions, name]
 }
 

@@ -12,8 +12,10 @@ from typing import Any
 from quart import Blueprint, current_app, jsonify, request
 
 try:
+    from ...domain.display_name import sanitize_display_name
     from ...domain.scope import CatalogScope, RuntimeScope, SessionRef
 except ImportError:
+    from domain.display_name import sanitize_display_name
     from domain.scope import CatalogScope, RuntimeScope, SessionRef
 
 logger = logging.getLogger(__name__)
@@ -537,7 +539,7 @@ async def context_prepare():
 
     scope_data = dict(body.get("scope") or {})
     speaker_id = str(body.get("uid") or speaker.get("id") or "").strip()
-    speaker_name = str(speaker.get("name") or "").strip()
+    speaker_name = sanitize_display_name(speaker.get("name"))
     if speaker_id and not scope_data.get("subject_principal_id"):
         scope_data["subject_principal_id"] = speaker_id
     try:
@@ -627,7 +629,7 @@ async def memory_store():
             "group_id": scope.session.conversation_id,
             "content": content,
             "sender_id": uid,
-            "sender_name": str(body.get("sender_name") or uid),
+            "sender_name": sanitize_display_name(body.get("sender_name")) or uid,
             "timestamp": float(body.get("timestamp") or time.time()),
             "importance": float(body.get("importance") or 1.0),
             "source": str(body.get("source") or "user_direct"),
@@ -834,7 +836,7 @@ async def user_profile(raw_uid: str):
         })
 
     # POST 更新画像
-    nickname = str(body.get("nickname") or "").strip()
+    nickname = sanitize_display_name(body.get("nickname"))
     dimensions = body.get("dimensions")
     affection_delta = int(body.get("affection_delta") or 0)
 

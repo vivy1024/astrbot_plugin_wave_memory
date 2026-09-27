@@ -17,9 +17,11 @@ except ImportError:  # pragma: no cover - 仅用于独立测试环境
     logger = logging.getLogger(__name__)
 
 try:  # 兼容插件包导入和仓库测试直接导入
+    from ..domain.display_name import sanitize_alias_list, sanitize_display_name
     from ..domain.scope import RuntimeScope, ScopeValidationError
     from ..engine.database import WaveMemoryDB
 except ImportError:  # pragma: no cover - 由仓库测试直接导入 services 使用
+    from domain.display_name import sanitize_alias_list, sanitize_display_name
     from domain.scope import RuntimeScope, ScopeValidationError
     from engine.database import WaveMemoryDB
 
@@ -301,7 +303,9 @@ class AffinityEngine:
                 ).fetchall()
                 if not names:
                     continue
-                all_names = [n[0] for n in names]
+                all_names = sanitize_alias_list([n[0] for n in names])
+                if not all_names:
+                    continue
                 # flush 缓冲只保留 legacy (user_id, group_id) 键，无法证明
                 # Fact 的 Bot/canonical session 归属；不得从 legacy facts 猜测别名。
                 # 正式 alias assertion/People 投影将在 Facts v2 阶段提供带 Scope 的来源。
@@ -310,8 +314,9 @@ class AffinityEngine:
                     "SELECT sender_name FROM memories WHERE sender_id=? AND sender_name != '' ORDER BY timestamp DESC LIMIT 1",
                     (user_id,),
                 ).fetchone()
-                if recent_name:
-                    display_name = recent_name[0]
+                display_name = sanitize_display_name(recent_name[0]) if recent_name else ""
+                if not display_name:
+                    display_name = all_names[0]
                 aliases_json = json.dumps(all_names, ensure_ascii=False)
                 msg_count = self.db.conn.execute("SELECT COUNT(*) FROM memories WHERE sender_id=?", (user_id,)).fetchone()[0]
                 self.db.conn.execute(

@@ -26,7 +26,8 @@ except Exception:  # pragma: no cover - 本地单测未安装 Quart 时的轻量
 pages_bp = Blueprint("pages", __name__)
 
 _STATIC_DIR = Path(__file__).parent.parent / "static"
-_HTML_HEADERS = {"Content-Type": "text/html"}
+# HTML 入口不缓存正文：每次向服务端重新验证，确保引用最新的哈希资源。
+_HTML_HEADERS = {"Content-Type": "text/html", "Cache-Control": "no-cache"}
 _INDEX_MISSING = "<h1>Wave Memory WebUI</h1><p>built WebUI is unavailable</p>"
 
 

@@ -20,8 +20,10 @@ from .context import InjectionContext
 from .orchestrator import InjectionOrchestrator, OrchestrationResult
 
 try:
+    from ...domain.display_name import sanitize_display_name
     from ...domain.scope import RuntimeScope
 except ImportError:  # top-level import in isolated tests
+    from domain.display_name import sanitize_display_name
     from domain.scope import RuntimeScope
 
 # 各档位允许运行的通道；未列出的通道本次不运行（不改变全局配置）。
@@ -77,6 +79,7 @@ class RuntimeContextPreparer:
     ) -> OrchestrationResult:
         if not isinstance(scope, RuntimeScope):
             raise ValueError("scope must be a RuntimeScope")
+        sender_name = sanitize_display_name(sender_name)
         effective = self._config_resolver(scope)
         if effective is None:
             raise ValueError("effective channel config unavailable for scope")

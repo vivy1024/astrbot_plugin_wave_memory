@@ -14,6 +14,7 @@ import numpy as np
 
 try:
     from ..domain.commands import DomainCommand, EntityChange
+    from ..domain.display_name import sanitize_display_name
     from ..domain.quality import QualityDecision, QualityProposal
     from ..domain.scope import RuntimeScope, scene_key
     from ..engine.db.migrations.memories_v2 import MEMORIES_V2_VERSION
@@ -33,6 +34,7 @@ try:
     from .tag_governance import TAG_GOVERNANCE_COMMANDS, apply_tag_governance_command
 except ImportError:  # pragma: no cover - focused repository tests import top-level packages
     from domain.commands import DomainCommand, EntityChange
+    from domain.display_name import sanitize_display_name
     from domain.quality import QualityDecision, QualityProposal
     from domain.scope import RuntimeScope, scene_key
     from engine.db.migrations.memories_v2 import MEMORIES_V2_VERSION
@@ -119,7 +121,7 @@ def _append_memory_handler(connection, command: DomainCommand, now: float) -> Mu
     source = str(payload.get("source") or "live")
     content = str(payload.get("content") or "")
     sender_id = str(payload.get("sender_id") or "")
-    sender_name = str(payload.get("sender_name") or "")
+    sender_name = sanitize_display_name(payload.get("sender_name"))
     scope_payload = {
         "bot_id": scope.bot_id,
         "session_id": scope.session.id,

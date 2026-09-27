@@ -15,6 +15,7 @@ from astrbot.api import logger, AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+from ..domain.display_name import sanitize_display_name
 from ..domain.scope import RuntimeScope
 from ..engine.database import WaveMemoryDB
 from ..engine.vector_index import VectorIndex
@@ -242,7 +243,7 @@ class IngressMixin:
         # 插件越级替换会让后续引用/发送阶段把组件结构当作 Plain 文本嵌套序列化。
         sender_name = ""
         if event.message_obj and event.message_obj.sender:
-            sender_name = event.message_obj.sender.nickname or ""
+            sender_name = sanitize_display_name(event.message_obj.sender.nickname)
         message_ts = time.time()
 
         debounce_key = (

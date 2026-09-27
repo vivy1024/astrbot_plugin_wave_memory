@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { sanitizeDisplayName } from '@/lib/display-name'
 
 export interface ChatEvidenceMessage {
   id: number | string
@@ -160,7 +161,7 @@ export function ChatContextEvidenceDialog({
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                       <span className="font-medium text-foreground/90">
-                        {message.sender_name || message.sender_id || '未知发言者'}
+                        {sanitizeDisplayName(message.sender_name) || message.sender_id || '未知发言者'}
                       </span>
                       <span>
                         {formatMessageTime(message.timestamp)}

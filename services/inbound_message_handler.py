@@ -17,8 +17,10 @@ except ImportError:  # pragma: no cover - focused repository tests
     AstrMessageEvent = Any
 
 try:
+    from ..domain.display_name import sanitize_display_name
     from ..domain.scope import RuntimeScope
 except ImportError:  # pragma: no cover - focused repository tests
+    from domain.display_name import sanitize_display_name
     from domain.scope import RuntimeScope
 
 
@@ -51,6 +53,7 @@ class InboundMessagePipeline:
         sender_name: str,
         bot_id: str,
     ) -> None:
+        sender_name = sanitize_display_name(sender_name)
         # ─── 抢词被打断检测 (Hesitation Memory Capture) ───
         if (
             runtime_scope.visibility == "group"

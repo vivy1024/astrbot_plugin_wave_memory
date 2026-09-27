@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { sanitizeDisplayName } from '@/lib/display-name'
 import { cn } from '@/lib/utils'
 
 function usePrefersReducedMotion(): boolean {
@@ -1004,7 +1005,7 @@ export function TagGraphCanvas({
                     {labResult.results.map((m, idx) => (
                       <div key={idx} className="p-2 rounded bg-slate-900/80 border border-white/5 text-[11px]">
                         <div className="flex justify-between text-slate-400 text-[10px] mb-0.5">
-                          <span>{String(m.sender_name || '记忆')}</span>
+                          <span>{sanitizeDisplayName(m.sender_name) || '记忆'}</span>
                           <span className="font-mono text-sky-400">
                             {typeof m.score === 'number' ? `${(m.score * 100).toFixed(0)}% 契合` : '已召回'}
                           </span>

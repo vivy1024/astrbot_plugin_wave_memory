@@ -11,8 +11,10 @@ from typing import Any, Optional
 import numpy as np
 
 try:
+    from ...domain.display_name import sanitize_display_name
     from ...domain.scope import RuntimeScope, subject_local_id
 except ImportError:  # pragma: no cover - repository tests import engine as top-level
+    from domain.display_name import sanitize_display_name
     from domain.scope import RuntimeScope, subject_local_id
 
 from .connection import ConnectionManager
@@ -230,6 +232,7 @@ class MemoryRepo:
         conversation ID 的断言，不能再独立决定新记录的归属。
         """
         scope = _require_memory_scope(scope, group_id)
+        sender_name = sanitize_display_name(sender_name)
         if scope.visibility == "private":
             required_v2 = {"bot_id", "session_id", "visibility", "resolution_state", "quarantine", "version"}
             missing = required_v2 - self._memories_columns()

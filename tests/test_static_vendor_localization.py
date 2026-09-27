@@ -21,8 +21,6 @@ REQUIRED_VENDOR_FILES = {
     "UnrealBloomPass.js": "UnrealBloomPass",
     "gsap.min.js": "gsap",
     "tailwind.min.js": "tailwind",
-    "alpine.min.js": "Alpine",
-    "alpine-collapse.min.js": "collapse",
 }
 
 _CDN_RE = re.compile(r"""https?://(?:cdn|cdnjs|unpkg)[^"'\s)]*""", re.IGNORECASE)
@@ -38,14 +36,14 @@ def test_vendor_dependency_exists_and_is_real_javascript(filename: str, symbol: 
     assert symbol in content, f"{filename} 未包含预期符号 {symbol}"
 
 
-@pytest.mark.parametrize("page", ["explore.html", "index.html"])
+@pytest.mark.parametrize("page", ["explore.html"])
 def test_static_pages_do_not_reference_external_cdn(page: str):
     content = (STATIC / page).read_text(encoding="utf-8")
     found = _CDN_RE.findall(content)
     assert not found, f"{page} 仍引用外部 CDN：{found}"
 
 
-@pytest.mark.parametrize("page", ["explore.html", "index.html"])
+@pytest.mark.parametrize("page", ["explore.html"])
 def test_static_pages_load_dependencies_from_local_vendor(page: str):
     content = (STATIC / page).read_text(encoding="utf-8")
     assert "/static/vendor/" in content, f"{page} 未使用本地 vendor 依赖"

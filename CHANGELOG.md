@@ -68,6 +68,11 @@ Bot 不再只能是静态配置里的两个槽位。本版起 Bot 存进 WaveMem
 41. **全量构建挪到子进程**：构建是纯 Python 双重循环（约 250 万次配对），在插件进程的线程里会一直占着 GIL，期间注入被拖到 10–30 秒、写事务被拖长。现在在独立子进程里构建（`engine/cooccurrence_worker.py`），语义增益直接读 `tag_pair_similarity` 表（与原服务同一数据源），线上 12 秒、只占另一个 CPU 核；子进程失败时退回原来的线程构建。
 42. **修复启动后共现任务反复重跑**：写入协调器拿写锁时等满 busy_timeout 仍被占用就直接失败，维护任务「标记成功」失败后整体重跑（线上一次启动连跑 4 次、8.5 分钟）。现在 `BEGIN IMMEDIATE` 撞锁时重试 2 次（此时事务函数尚未执行，重试安全）；内生残差落库改为一次批量写入，缩短写事务。
 
+43. **修复注入观测台默认为空**：AstrBot 写入的 trace 的 `bot_id` 列存的是 QQ 号，Bot 的 db_id 在 `bot_profile_id`；trace 也没有 session_id。按 Bot 筛选此前只能匹配 Cortico 写的 71 条，再加群筛选就是 0 条。现在 Bot 同时匹配两列，没有会话信息的旧 trace 按群号回退（线上 3-5 层群 0 → 2,629 条，不同群不串）。
+44. **昵称清洗**：QQ 群名片偶尔带 protobuf 残片入库，人物页显示成乱码。新增 `domain/display_name.py`，所有写入口统一清洗（去控制字符与残片、折叠空白）；前端显示前同样兜底。存量只修真正损坏的值（线上 18 处，旧值备份在 `display_name_repair_v51`），纯空白一类样式问题不改写。
+45. **WebUI 静态资源压缩与长缓存**：构建时预压缩 `.gz` / `.br`，按 `Accept-Encoding` 返回（首屏主要文件 br 后约为原来的 1/4）；带哈希的资源一年缓存（immutable），HTML 入口 `no-cache`。
+46. **清理**：删除旧 v4 静态界面（`static/index.html`、`app.js`、`styles.css` 与 alpine 依赖）、Vite 模板残留；侧栏去掉 `shadcn · Nova` 模板字样；正文字体统一为 Geist（此前声明的 Inter 并未加载）。
+
 #### 升级须知
 
 - 首次启动自动把 `MetaThinking_Bot1/2`（以及任意 `MetaThinking_BotN`）迁进 `bot_profiles`：`db_id` 不变，会话前缀从该 Bot 最近的记忆里检测（线上为「羽书」「白真真」），v5 写死的人设片段按 db_id 补进 Profile。**历史数据一条不改。**

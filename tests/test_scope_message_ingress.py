@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from domain.display_name import sanitize_display_name
+
 
 class _FakeClock:
     def __init__(self, value=100.0):
@@ -287,6 +289,7 @@ def _load_on_message():
         "logger": logger,
         "time": _FakeClock(),
         "_record_err": lambda source, reason: recorded_errors.append((source, reason)),
+        "sanitize_display_name": sanitize_display_name,
     }
     exec(compile(module, str(source_path), "exec"), namespace)
     return namespace["on_message"], logger, recorded_errors

@@ -90,6 +90,9 @@ def build_trace_list_payload(trace_store: InjectionTraceStore, filters: Mapping[
         status=filters.get("status") or None,
         has_error=_bool_or_none(filters.get("has_error")),
         scope=filters.get("scope") or filters.get("chat_type") or None,
+        session_id=filters.get("session_id") or None,
+        config_revision=filters.get("config_revision") or None,
+        source=filters.get("source") or None,
         limit=limit,
     )
     return {"traces": traces, "count": len(traces), "limit": limit}

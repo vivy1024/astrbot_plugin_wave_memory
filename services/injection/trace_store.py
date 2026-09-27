@@ -334,6 +334,14 @@ class InjectionTraceStore:
         return result
 
     @staticmethod
+    def _session_group_id(session_id: Any) -> str | None:
+        """从 ``<平台前缀>:group:<群号>`` 解析群号；私聊或格式不符返回 None。"""
+        parts = str(session_id or "").split(":", 2)
+        if len(parts) != 3 or parts[1] != "group":
+            return None
+        return parts[2].strip() or None
+
+    @staticmethod
     def _query_filter(
         *,
         from_ts: float,
@@ -356,10 +364,15 @@ class InjectionTraceStore:
             conditions.append("COALESCE(group_id, '') != ''")
         elif normalized_scope in {"private", "private_chat", "direct"}:
             conditions.append("COALESCE(group_id, '') = ''")
-        for column, value in (("group_id", group_id), ("sender_id", sender_id), ("bot_id", bot_id)):
+        for column, value in (("group_id", group_id), ("sender_id", sender_id)):
             if value:
                 conditions.append(f"{column} = ?")
                 params.append(value)
+        if bot_id:
+            # WebUI 传的是 BotProfile.db_id（如 "yushu"）；AstrBot 路径的旧 trace 在 bot_id 列存的是
+            # QQ 号、bot_profile_id 列才是 db_id，Cortico 路径两列都是 db_id。两列任一命中即可。
+            conditions.append("(bot_profile_id = ? OR bot_id = ?)")
+            params.extend([bot_id, bot_id])
         if status:
             if status == "timeout":
                 conditions.append(
@@ -374,8 +387,16 @@ class InjectionTraceStore:
                 conditions.append("status = ?")
                 params.append(status)
         if session_id:
-            conditions.append("json_extract(metadata_json, '$.runtime_scope.session.id') = ?")
-            params.append(session_id)
+            session_expr = "json_extract(metadata_json, '$.runtime_scope.session.id')"
+            legacy_group = InjectionTraceStore._session_group_id(session_id)
+            if legacy_group:
+                # 旧 trace 没有持久化 runtime_scope，只能按群号列回退；带 canonical session 的
+                # 新 trace 以 metadata 为准，避免同群号的其它平台会话串进来。
+                conditions.append(f"({session_expr} = ? OR ({session_expr} IS NULL AND group_id = ?))")
+                params.extend([session_id, legacy_group])
+            else:
+                conditions.append(f"{session_expr} = ?")
+                params.append(session_id)
         if config_revision:
             conditions.append("json_extract(metadata_json, '$.config_revision') = ?")
             params.append(config_revision)

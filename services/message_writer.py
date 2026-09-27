@@ -19,6 +19,7 @@ from ..engine.vector_index import VectorIndex
 from ..engine.embedding import EmbeddingService
 from .identity_safety import is_identity_contamination
 try:
+    from ..domain.display_name import sanitize_display_name
     from ..domain.quality import QualityDecision, QualityProposal
     from ..domain.scope import RuntimeScope
     from .quality_gate import QualityGate, decode_quality_evidence
@@ -28,6 +29,7 @@ try:
         decide_storage_admission,
     )
 except ImportError:  # 兼容独立测试/外部调用 services
+    from domain.display_name import sanitize_display_name
     from domain.quality import QualityDecision, QualityProposal
     from domain.scope import RuntimeScope
     from services.quality_gate import QualityGate, decode_quality_evidence
@@ -374,7 +376,7 @@ class MessageWriter:
                 content=str(item.get("content") or ""),
                 vector=vector,
                 sender_id=str(item.get("sender_id") or ""),
-                sender_name=str(item.get("sender_name") or ""),
+                sender_name=sanitize_display_name(item.get("sender_name")),
                 timestamp=timestamp,
                 importance=float(importance),
                 source=source,
@@ -388,7 +390,7 @@ class MessageWriter:
             content=item["content"],
             vector=vector,
             sender_id=item.get("sender_id", ""),
-            sender_name=item.get("sender_name", ""),
+            sender_name=sanitize_display_name(item.get("sender_name")),
             timestamp=timestamp,
             importance=float(importance),
             source=source,

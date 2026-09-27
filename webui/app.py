@@ -22,7 +22,8 @@ def _enable_cors(app: Quart) -> None:
         origin = request.headers.get("Origin")
         if origin:
             response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Vary"] = "Origin"
+            # 用 HeaderSet.add 而非直接赋值，避免覆盖下游（如静态资源）已设置的 Vary。
+            response.vary.add("Origin")
             response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers.setdefault(
             "Access-Control-Allow-Headers",
@@ -72,9 +73,17 @@ def create_app(
     @app.route("/assets/<path:filename>")
     @app.route("/static/app/assets/<path:filename>")
     async def serve_app_assets(filename):
-        from quart import send_from_directory
-        assets_dir = static_dir / "app" / "assets"
-        return await send_from_directory(assets_dir, filename)
+        from .static_assets import send_hashed_asset
+        assets_dir = app.config.get("WAVE_APP_ASSETS_DIR") or (static_dir / "app" / "assets")
+        return await send_hashed_asset(Path(assets_dir), filename)
+
+    @app.after_request
+    async def _no_cache_spa_entry(response):
+        # SPA 入口必须每次重新验证，才能及时拿到新哈希资源的引用。
+        if request.path in ("/static/app/", "/static/app/index.html"):
+            response.headers["Cache-Control"] = "no-cache"
+            response.headers.pop("Expires", None)
+        return response
 
     # Stage 3 diagnostics is independently registered so older blueprint registries
     # can load it without gaining any database/provider fallback behavior.

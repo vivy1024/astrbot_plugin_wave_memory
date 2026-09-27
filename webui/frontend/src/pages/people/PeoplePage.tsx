@@ -32,11 +32,16 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { pickDisplayName, sanitizeDisplayName } from '@/lib/display-name'
 import { formatSignedDisplayNumber } from '@/lib/format-number'
 import { scopedHref } from '@/lib/navigation-search'
 
 function aliasLabels(aliases: unknown[]): string[] {
-  return aliases.map((alias) => typeof alias === 'string' ? alias : '').filter(Boolean)
+  return [...new Set(aliases.map((alias) => sanitizeDisplayName(alias)).filter(Boolean))]
+}
+
+function personDisplayName(item: PersonItem): string {
+  return pickDisplayName([item.display_name, item.nickname], item.user_id)
 }
 
 function interactionCount(item: PersonItem): number | null {
@@ -387,7 +392,7 @@ function PersonDetail({ item, relationship, relationshipError, query, onChanged 
 
 
     <div className="grid gap-3 rounded-lg border bg-muted/10 p-3.5">
-      <div><span className="mb-0.5 block text-xs text-muted-foreground">显示名称</span><span className="break-words font-medium">{item.display_name}</span></div>
+      <div><span className="mb-0.5 block text-xs text-muted-foreground">显示名称</span><span className="break-words font-medium">{personDisplayName(item)}</span></div>
       <div><span className="mb-0.5 block text-xs text-muted-foreground">用户 ID</span><span className="break-all font-mono text-xs">{item.user_id}</span></div>
       <div><span className="mb-0.5 block text-xs text-muted-foreground">所在群</span><span className="break-all font-mono text-xs">{item.bot_id} · {item.group_id}</span></div>
     </div>
@@ -863,14 +868,14 @@ export function PeoplePage() {
               onRowClick={(row) => openDetail(row)}
               columns={[
                 { key: 'user_id', header: '用户 ID', className: 'max-w-44 truncate py-1 font-mono text-[11px]', render: (row) => row.user_id },
-                { key: 'display_name', header: '显示名称', isTitle: true, className: 'max-w-44 truncate py-1 text-xs font-medium', render: (row) => row.display_name },
+                { key: 'display_name', header: '显示名称', isTitle: true, className: 'max-w-44 truncate py-1 text-xs font-medium', render: (row) => personDisplayName(row) },
                 { key: 'aliases', header: '登记别名', className: 'max-w-48 truncate py-1 text-xs text-muted-foreground', render: (row) => { const aliases = aliasLabels(row.aliases); return aliases.length ? aliases.join('、') : '未登记' } },
                 { key: 'impression', header: 'Bot 印象', className: 'max-w-56 truncate py-1 text-xs text-muted-foreground', render: (row) => impressionOf(row) || '—' },
                 { key: 'group', header: '群', className: 'max-w-36 truncate py-1 font-mono text-[11px]', render: (row) => row.group_id },
                 { key: 'bot', header: 'Bot', className: 'max-w-32 truncate py-1', render: (row) => <Badge variant="secondary" className="max-w-full truncate px-1.5 font-mono text-[10px] font-normal">{row.bot_id}</Badge> },
                 { key: 'count', header: '互动数', className: 'py-1 text-center font-mono text-[11px]', render: (row) => interactionCount(row) ?? '—' },
                 { key: 'affinity', header: '好感', className: 'py-1', render: (row) => { if (relationshipError) return <Badge variant="outline" className="text-[10px] text-destructive">关系读取失败</Badge>; const has = row.affinity !== null; return has ? <Badge className={`text-[10px] font-mono font-semibold ${row.affinity! >= 15 ? 'bg-rose-500 text-white' : row.affinity! >= 5 ? 'bg-pink-500 text-white' : row.affinity! > 0 ? 'bg-pink-400/80 text-white' : row.affinity! < 0 ? 'bg-blue-500 text-white' : 'bg-muted text-muted-foreground'}`}>{formatSignedDisplayNumber(row.affinity)}</Badge> : <Badge variant="outline" className="text-[10px] text-muted-foreground">未记录</Badge> } },
-                { key: 'actions', header: null, hideOnMobile: false, render: (row) => <Button type="button" variant="ghost" size="icon-xs" aria-label={`查看 ${row.display_name} 详情`} onClick={(event) => { event.stopPropagation(); openDetail(row) }}><EyeIcon aria-hidden="true" /></Button> },
+                { key: 'actions', header: null, hideOnMobile: false, render: (row) => <Button type="button" variant="ghost" size="icon-xs" aria-label={`查看 ${personDisplayName(row)} 详情`} onClick={(event) => { event.stopPropagation(); openDetail(row) }}><EyeIcon aria-hidden="true" /></Button> },
               ]}
             />
           </QueryState>

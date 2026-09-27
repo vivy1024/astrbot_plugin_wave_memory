@@ -25,6 +25,7 @@ from .db.connection import ConnectionManager
 from .db.memory_repo import MemoryRepo
 from .db.migrations.importance_touch_repair import repair_touch_inflated_importance
 from .db.migrations.tag_status_repair import repair_done_without_tags
+from .db.migrations.display_name_repair import repair_dirty_display_names
 from .db.migrations.memories_v2 import ensure_memories_v2_schema
 from .db.migrations.scoped_derived_knowledge import ensure_scoped_derived_knowledge_schema
 from .db.migrations.scoped_learning_projections import ensure_scoped_learning_projection_schema
@@ -97,6 +98,11 @@ class WaveMemoryDB:
             retagged = repair_done_without_tags(self._cm)
             if retagged:
                 logger.info(f"[WaveMemory] 已把无标签的 done 提取状态改为 skipped: {retagged} 条（见 tag_status_repair_v51）")
+            # v5.1：清洗混入控制字符/二进制残片的存量昵称（一次性，旧值备份在单独的表里）
+            renamed = repair_dirty_display_names(self._cm)
+            if renamed:
+                summary = "、".join(f"{name} {count} 条" for name, count in renamed.items())
+                logger.info(f"[WaveMemory] 已清洗存量昵称: {summary}（旧值见 display_name_repair_v51）")
             # Shared-memory grants: read authorization only; never physical fanout.
             ensure_shared_memory_grants_schema(self._cm)
             self._shared_memory_grants = SharedMemoryGrantRepository(self._cm)
