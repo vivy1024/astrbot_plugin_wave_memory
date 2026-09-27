@@ -446,12 +446,21 @@ class BootstrapMixin:
             DEFAULT_MAX_NEIGHBORS_PER_TAG,
             1,
         )
+        # 共现传播核：legacy（旧版，全局归一化）或 v91（TagMemo V9.1 固定出流预算、残差锚增益、
+        # 软非回溯传播，测地重排改读 scoped 标签）。切换后首次启动会重建一次共现图。
+        kernel = str(memory_index_cfg.get("cooccurrence_kernel") or "legacy").strip().lower()
+        self.cooccurrence_kernel = kernel if kernel in ("legacy", "v91") else "legacy"
+        from ..engine.cooccurrence_v91 import V91Params
+
+        v91_params = V91Params(min_support=_bounded_index_int("cooccurrence_min_support", 2, 1))
         self.cooccurrence = DirectedCooccurrence(
             self.db,
             pair_sim_service=self.pair_sim_service,
             residual_map=residual_map,
             semantic_gain_config=self.semantic_gain_config,
             max_neighbors_per_tag=self.cooccurrence_max_neighbors,
+            kernel_version=self.cooccurrence_kernel,
+            v91_params=v91_params,
         )
 
         self.intrinsic_residual = IntrinsicResidualCalculator(
@@ -495,6 +504,8 @@ class BootstrapMixin:
 
         # 测地线重排
         self.geodesic = GeodesicReranker(self.db) if self.enable_geodesic else None
+        if self.geodesic is not None:
+            self.geodesic.use_scoped_tags = self.cooccurrence_kernel == "v91"
 
         # 书设知识索引：memory_only/compat_only 默认关闭 BookLore，避免加载世界观/小说知识能力。
         # 书设是独立 Catalog 知识库（直读 book_lore.db），不是 Learning reviewed projection。

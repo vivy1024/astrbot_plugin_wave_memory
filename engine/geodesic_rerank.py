@@ -25,6 +25,9 @@ class GeodesicReranker:
         self.db = db
         self.alpha = alpha
         self.min_geo_samples = min_geo_samples
+        # 能量场按 scoped_tags 的 id 计；旧逻辑读 legacy memory_tags，新数据上得分恒为 0。
+        # 随共现传播核 v91 一起开启（legacy 模式保持原行为，便于对照）。
+        self.use_scoped_tags = False
 
     def rerank(
         self,
@@ -103,8 +106,9 @@ class GeodesicReranker:
             return {}
 
         placeholders = ",".join("?" * len(memory_ids))
+        table = "scoped_memory_tags" if self.use_scoped_tags else "memory_tags"
         rows = self.db.conn.execute(
-            f"SELECT memory_id, tag_id FROM memory_tags WHERE memory_id IN ({placeholders})",
+            f"SELECT memory_id, tag_id FROM {table} WHERE memory_id IN ({placeholders})",
             memory_ids,
         ).fetchall()
 

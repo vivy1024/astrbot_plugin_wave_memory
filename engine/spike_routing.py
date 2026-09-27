@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Union
 
+from .cooccurrence_v91 import V91Params, fir_weights
 from .directed_cooccurrence import DirectedCooccurrence
 
 
@@ -67,6 +68,8 @@ class SpikeRouter:
         """
         if not seed_tags or self.cooccurrence.node_count == 0:
             return {"activated_tags": seed_tags, "energy_field": {}}
+        if getattr(self.cooccurrence, "kernel_version", "legacy") == "v91":
+            return self._propagate_v91(seed_tags, epa_result)
 
         # 动态动量：聚焦查询动量低，发散查询动量高
         if epa_result and "logic_depth" in epa_result:
@@ -170,3 +173,86 @@ class SpikeRouter:
             "activated_tags": activated,
             "energy_field": energy_field,
         }
+
+    def _propagate_v91(self, seed_tags: list[dict], epa_result: dict | None = None) -> dict:
+        """TagMemo V9.1 传播：固定出流预算的核上做软非回溯 + 归一化有限时域累加。
+
+        与旧版的区别：边权已是行内预算份额，虫洞由构建阶段预先判定；立即回流 i→j→i 只保留
+        return_flow_factor 的质量；第 t 跳能量按 γ^t/Σγ^r 计入能量场。涌现节点不设能量门槛，
+        按能量取前 max_emergent_nodes 个（与上游一致），调用方按能量加权并入标签增强。
+        """
+        live = self.cooccurrence
+        # 请求开始时取定同一代的图、虫洞与锚增益，后台发布不会让本次传播读到新旧混合的数据
+        forward = live.forward
+        wormholes = getattr(live, "wormhole_edges", frozenset())
+        params = getattr(live, "v91_params", None) or V91Params()
+
+        if epa_result and "logic_depth" in epa_result:
+            momentum0 = 1.0 + (1.0 - epa_result["logic_depth"]) * 3.0
+        else:
+            momentum0 = self.base_momentum
+        fir = fir_weights(params.fir_gamma, self.max_hops)
+        return_flow = max(0.0, min(1.0, params.return_flow_factor))
+        max_states = max(100, int(params.max_propagation_states))
+
+        seed_ids: set[int] = set()
+        energy_field: dict[int, float] = {}
+        # 传播状态：(前驱, 当前节点) → [能量, 动量]
+        active: dict[tuple, list[float]] = {}
+        for seed in seed_tags:
+            tid = seed["tag_id"]
+            seed_ids.add(tid)
+            energy_field[tid] = energy_field.get(tid, 0.0) + seed["weight"] * fir[0]
+            state = active.setdefault((None, tid), [0.0, momentum0])
+            state[0] += seed["weight"]
+
+        for hop in range(self.max_hops):
+            nxt: dict[tuple, list[float]] = {}
+            for (prev, node), (energy, momentum) in active.items():
+                if energy < self.firing_threshold or momentum < 0:
+                    continue
+                edges = forward.get(node)
+                if not edges:
+                    continue
+                neighbors = sorted(edges.items(), key=lambda item: (-item[1], item[0]))[: self.max_neighbors_per_node]
+                for neighbor, weight in neighbors:
+                    is_wormhole = (node, neighbor) in wormholes
+                    decay = self.wormhole_decay if is_wormhole else self.base_decay
+                    flow = return_flow if neighbor == prev else 1.0
+                    current = energy * weight * decay * flow
+                    if current < 0.01:
+                        continue
+                    next_momentum = momentum - (0.0 if is_wormhole else 1.0)
+                    if next_momentum < 0 and not is_wormhole:
+                        continue
+                    state = nxt.get((node, neighbor))
+                    if state is None:
+                        nxt[(node, neighbor)] = [current, next_momentum]
+                    else:
+                        state[0] += current
+                        state[1] = max(state[1], next_momentum)
+            if len(nxt) > max_states:
+                nxt = dict(sorted(nxt.items(), key=lambda item: -item[1][0])[:max_states])
+            propagated = False
+            hop_energy: dict[int, float] = {}
+            for (_, node), (energy, _) in nxt.items():
+                hop_energy[node] = hop_energy.get(node, 0.0) + energy
+            for node, energy in hop_energy.items():
+                energy_field[node] = energy_field.get(node, 0.0) + energy * fir[hop + 1]
+                if energy > 0.01:
+                    propagated = True
+            if not propagated:
+                break
+            active = nxt
+
+        activated = [
+            {"tag_id": seed["tag_id"], "energy": max(seed["weight"], energy_field.get(seed["tag_id"], 0.0)), "is_emergent": False}
+            for seed in seed_tags
+        ]
+        emergent = sorted(
+            ({"tag_id": tid, "energy": energy, "is_emergent": True} for tid, energy in energy_field.items() if tid not in seed_ids),
+            key=lambda item: -item["energy"],
+        )
+        activated.extend(emergent[: self.max_emergent_nodes])
+        return {"activated_tags": activated, "energy_field": energy_field, "kernel": "v91"}
+

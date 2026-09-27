@@ -987,6 +987,9 @@ class MaintenanceMixin:
 
     async def _on_cooccurrence_rebuilt(self):
         """共现矩阵重建完成后，重算内生残差（30分钟最小间隔）。"""
+        # v91 的锚增益在构建共现图时一并算好、随图同代发布，这里的旧版残差（按 legacy tags 表）不再需要
+        if getattr(self.cooccurrence, "kernel_version", "legacy") == "v91":
+            return
         # 最小间隔保护
         now = time.time()
         last_ts = getattr(self, '_last_residual_compute_ts', 0)

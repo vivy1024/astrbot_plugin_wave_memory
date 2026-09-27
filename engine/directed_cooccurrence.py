@@ -19,6 +19,7 @@ except ImportError:  # pragma: no cover - focused repository tests without AstrB
     import logging
     logger = logging.getLogger(__name__)
 
+from .cooccurrence_v91 import V91Params, build_kernel, compress_evidence, compute_anchor_gains
 from .db.scoped_tag_projection import effective_tag_rows
 from .semantic_gain import bell_gain, SemanticGainConfig
 
@@ -39,6 +40,9 @@ DEFAULT_REBUILD_COOLDOWN_SEC = 1800.0
 # so peak memory grew with the widest tag co-occurrence rather than the retained
 # graph.  Keeping the strongest edges preserves routing behaviour under a bound.
 DEFAULT_MAX_NEIGHBORS_PER_TAG = 64
+
+# 共现传播核：legacy = 全局最大值归一化 + 0.01 截断（V8 时代）；v91 = TagMemo V9.1 固定出流预算
+KERNEL_VERSIONS = ("legacy", "v91")
 
 # 常驻图落盘格式版本；只存裁剪后的正向图（线上几百个节点、几千条边），反向图加载时推导。
 SNAPSHOT_VERSION = 1
@@ -68,8 +72,16 @@ class DirectedCooccurrence:
         residual_map: dict = None,
         semantic_gain_config: SemanticGainConfig = None,
         max_neighbors_per_tag: int = DEFAULT_MAX_NEIGHBORS_PER_TAG,
+        *,
+        kernel_version: str = "legacy",
+        v91_params: V91Params | None = None,
     ):
         self.db = db
+        self.kernel_version = kernel_version if kernel_version in KERNEL_VERSIONS else "legacy"
+        self.v91_params = v91_params or V91Params()
+        # v91：虫洞边（传播时低衰减、不扣动量）与锚增益（由内生残差映射），与图同代发布
+        self.wormhole_edges: frozenset[tuple[int, int]] = frozenset()
+        self.anchor_gain: dict[int, float] = {}
         self.pair_sim_service = pair_sim_service
         self.residual_map = residual_map or {}
         self.semantic_gain_config = semantic_gain_config or SemanticGainConfig()
@@ -117,10 +129,12 @@ class DirectedCooccurrence:
             ]
 
         if not rows:
-            self.forward = new_forward
-            self.backward = new_backward
-            self._tag_count = 0
+            self.publish(new_forward, 0)
             logger.info("[WaveMemory] DirectedCooccurrence: no data")
+            return
+
+        if self.kernel_version == "v91":
+            self._rebuild_v91(rows, bool(has_scoped))
             return
 
         # 按完整 Scope + memory_id 分组，避免不同 Scope 的同号对象混合。
@@ -210,11 +224,101 @@ class DirectedCooccurrence:
                 backward[tgt] = dict(sorted(inbound.items(), key=lambda item: (-item[1], item[0]))[:bound])
         return backward
 
-    def publish(self, forward: dict[int, dict[int, float]], tag_count: int) -> None:
-        """换上一份已裁剪的正向图（重建、子进程构建、落盘加载共用）。"""
+    def publish(
+        self,
+        forward: dict[int, dict[int, float]],
+        tag_count: int,
+        *,
+        wormholes=None,
+        anchor_gain: dict[int, float] | None = None,
+    ) -> None:
+        """换上一份已裁剪的正向图（重建、子进程构建、落盘加载共用）；虫洞与锚增益随图同代替换。"""
         self.forward = forward
         self.backward = self.backward_from_forward(forward, self.max_neighbors_per_tag)
         self._tag_count = int(tag_count)
+        self.wormhole_edges = frozenset(wormholes or ())
+        self.anchor_gain = dict(anchor_gain or {})
+
+    def adopt(self, other: "DirectedCooccurrence") -> None:
+        """接管另一份构建好的图（调度器发布替换图时用），各字段一次换齐。"""
+        self.forward = other.forward
+        self.backward = other.backward
+        self._tag_count = other._tag_count
+        self.wormhole_edges = getattr(other, "wormhole_edges", frozenset())
+        self.anchor_gain = getattr(other, "anchor_gain", {})
+
+    # ─── V9.1 构建 ───
+
+    def _rebuild_v91(self, rows: list[tuple], has_scoped: bool) -> None:
+        params = self.v91_params
+        # 同一记忆内标签对的原始证据与支持度（出现在几条记忆里）。权重对称，按无序对存一份。
+        pair_weight: dict[tuple[int, int], float] = {}
+        pair_support: dict[tuple[int, int], int] = {}
+        for memory_key, group in groupby(rows, key=lambda r: (r[0], r[1], r[2], r[3])):
+            del memory_key
+            tags = [(r[4], r[5]) for r in group]
+            if len(tags) < 2:
+                continue
+            max_pos = max(p for _, p in tags) or 1
+            seen: set[tuple[int, int]] = set()
+            for i in range(len(tags)):
+                a, pa = tags[i]
+                phi_a = ordinal_potential(pa, max_pos)
+                for j in range(i + 1, len(tags)):
+                    b, pb = tags[j]
+                    if a == b:
+                        continue
+                    key = (a, b) if a < b else (b, a)
+                    weight = phi_a * ordinal_potential(pb, max_pos)
+                    if self.pair_sim_service:
+                        weight *= bell_gain(self.pair_sim_service.get_similarity(a, b), self.semantic_gain_config)
+                    pair_weight[key] = pair_weight.get(key, 0.0) + weight
+                    if key not in seen:
+                        seen.add(key)
+                        pair_support[key] = pair_support.get(key, 0) + 1
+
+        min_support = max(1, int(params.min_support))
+        raw: dict[int, dict[int, float]] = defaultdict(dict)
+        for key, weight in pair_weight.items():
+            if pair_support.get(key, 0) < min_support:
+                continue
+            a, b = key
+            raw[a][b] = weight
+            raw[b][a] = weight
+        del pair_weight, pair_support
+
+        evidence = compress_evidence(raw, params)
+        vectors = self._load_tag_vectors(list(evidence), has_scoped)
+        _, gains = compute_anchor_gains(evidence, vectors, params)
+        kernel, wormholes = build_kernel(evidence, gains, params, self.max_neighbors_per_tag)
+        self.publish(kernel, self._current_tag_count(has_scoped), wormholes=wormholes, anchor_gain=gains)
+        logger.info(
+            "[WaveMemory] DirectedCooccurrence(v9.1) rebuilt: %s nodes, %s edges, %s wormholes, "
+            "anchor gains %s/%s (min_support=%s)",
+            len(kernel), sum(len(v) for v in kernel.values()), len(wormholes), len(gains), len(evidence), min_support,
+        )
+
+    def _load_tag_vectors(self, tag_ids: list[int], has_scoped: bool) -> dict[int, "np.ndarray"]:
+        """scoped 标签取其目录项向量；旧版库取 tags.vector。缺向量的标签不参与残差（锚增益按 1）。"""
+        import numpy as np
+
+        sql = (
+            "SELECT s.id, t.embedding FROM scoped_tags s JOIN tag_catalog t ON t.id = s.catalog_id "
+            "WHERE s.id IN ({}) AND t.embedding IS NOT NULL"
+            if has_scoped
+            else "SELECT id, vector FROM tags WHERE id IN ({}) AND vector IS NOT NULL"
+        )
+        vectors: dict[int, np.ndarray] = {}
+        try:
+            for start in range(0, len(tag_ids), 900):
+                batch = tag_ids[start:start + 900]
+                for tag_id, blob in self.db.conn.execute(sql.format(",".join("?" * len(batch))), batch).fetchall():
+                    if blob:
+                        vectors[int(tag_id)] = np.frombuffer(bytes(blob), dtype=np.float32)
+        except Exception as error:
+            logger.warning(f"[WaveMemory] 共现图读取标签向量失败，锚增益全部按 1: {error!r}")
+            return {}
+        return vectors
 
     # ─── 落盘 ───
 
@@ -225,6 +329,9 @@ class DirectedCooccurrence:
             "built_at": float(built_at if built_at is not None else time.time()),
             "tag_count": int(self._tag_count),
             "max_neighbors_per_tag": int(self.max_neighbors_per_tag),
+            "kernel_version": self.kernel_version,
+            "wormholes": [[int(src), int(tgt)] for src, tgt in sorted(self.wormhole_edges)],
+            "anchor_gain": {str(tag): float(gain) for tag, gain in self.anchor_gain.items()},
             "forward": {
                 str(src): {str(tgt): float(weight) for tgt, weight in neighbors.items()}
                 for src, neighbors in self.forward.items()
@@ -242,6 +349,9 @@ class DirectedCooccurrence:
                 payload = json.load(handle)
             if int(payload.get("version", 0)) != SNAPSHOT_VERSION:
                 return None
+            # 换了传播核（legacy ↔ v91）时旧快照不能用，重建一次
+            if str(payload.get("kernel_version") or "legacy") != self.kernel_version:
+                return None
             bound = self.max_neighbors_per_tag
             forward: dict[int, dict[int, float]] = {}
             for src, neighbors in dict(payload.get("forward") or {}).items():
@@ -252,7 +362,12 @@ class DirectedCooccurrence:
                     forward[int(src)] = edges
             if not forward:
                 return None
-            self.publish(forward, int(payload.get("tag_count", 0)))
+            wormholes = {
+                (int(src), int(tgt)) for src, tgt in payload.get("wormholes") or []
+                if int(src) in forward and int(tgt) in forward[int(src)]
+            }
+            gains = {int(tag): float(gain) for tag, gain in dict(payload.get("anchor_gain") or {}).items()}
+            self.publish(forward, int(payload.get("tag_count", 0)), wormholes=wormholes, anchor_gain=gains)
             return float(payload.get("built_at", 0.0))
         except (OSError, ValueError, TypeError, AttributeError) as error:
             if not isinstance(error, FileNotFoundError):
@@ -491,8 +606,11 @@ class CooccurrenceScheduler:
         if pair_sim is not None and not getattr(pair_sim, "table_backed", False):
             return None
         gain = getattr(live, "semantic_gain_config", None)
+        v91_params = getattr(live, "v91_params", None)
         return {
             "db_path": db_path,
+            "kernel_version": str(getattr(live, "kernel_version", "legacy")),
+            "v91_params": v91_params.to_dict() if hasattr(v91_params, "to_dict") else {},
             "max_neighbors_per_tag": int(getattr(live, "max_neighbors_per_tag", DEFAULT_MAX_NEIGHBORS_PER_TAG)),
             "residual_map": [[int(k), float(v)] for k, v in dict(getattr(live, "residual_map", None) or {}).items()],
             "semantic_gain": asdict(gain) if is_dataclass(gain) else {},
@@ -522,11 +640,27 @@ class CooccurrenceScheduler:
             int(src): {int(tgt): float(weight) for tgt, weight in neighbors}
             for src, neighbors in result.get("forward") or []
         }
-        new_matrix.publish(forward, int(result.get("tag_count") or 0))
-        logger.info(
-            "[WaveMemory] 共现图在子进程构建完成: %s 个节点、%s 条边，%.1fs",
-            new_matrix.node_count, new_matrix.edge_count, float(result.get("elapsed_sec") or 0.0),
+        new_matrix.publish(
+            forward,
+            int(result.get("tag_count") or 0),
+            wormholes={(int(src), int(tgt)) for src, tgt in result.get("wormholes") or []},
+            anchor_gain={int(tag): float(gain) for tag, gain in result.get("anchor_gain") or []},
         )
+        logger.info(
+            "[WaveMemory] 共现图在子进程构建完成（%s）: %s 个节点、%s 条边、%s 条虫洞，%.1fs",
+            getattr(new_matrix, "kernel_version", "legacy"),
+            new_matrix.node_count, new_matrix.edge_count, len(getattr(new_matrix, "wormhole_edges", ())),
+            float(result.get("elapsed_sec") or 0.0),
+        )
+
+    def _kernel_kwargs(self) -> dict:
+        """替换图沿用常驻图的传播核配置（测试替身没有这些字段时不传）。"""
+        kwargs = {}
+        if hasattr(self.cooccurrence, "kernel_version"):
+            kwargs["kernel_version"] = self.cooccurrence.kernel_version
+        if hasattr(self.cooccurrence, "v91_params"):
+            kwargs["v91_params"] = self.cooccurrence.v91_params
+        return kwargs
 
     async def _build_replacement(self, new_matrix) -> None:
         request = self._subprocess_request()
@@ -692,13 +826,17 @@ class CooccurrenceScheduler:
                         "max_neighbors_per_tag",
                         DEFAULT_MAX_NEIGHBORS_PER_TAG,
                     ),
+                    **self._kernel_kwargs(),
                 )
                 await self._build_replacement(new_matrix)
                 # Publish only a fully rebuilt matrix; readers never observe its
                 # partially constructed local dictionaries.
-                self.cooccurrence.forward = new_matrix.forward
-                self.cooccurrence.backward = new_matrix.backward
-                self.cooccurrence._tag_count = new_matrix._tag_count
+                if hasattr(self.cooccurrence, "adopt"):
+                    self.cooccurrence.adopt(new_matrix)
+                else:  # 测试替身
+                    self.cooccurrence.forward = new_matrix.forward
+                    self.cooccurrence.backward = new_matrix.backward
+                    self.cooccurrence._tag_count = new_matrix._tag_count
                 self._accumulated_changes = max(0, self._change_generation - generation)
                 self._last_rebuild_ts = time.time()
                 self._metrics["rebuild_completed_total"] = int(self._metrics["rebuild_completed_total"]) + 1

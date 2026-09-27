@@ -283,6 +283,21 @@
         "type": "int",
         "default": 1,
         "restart_required": true
+      },
+      "cooccurrence_kernel": {
+        "description": "共现传播核",
+        "hint": "legacy：旧版（全库最大值归一化，线上图里只剩几百个标签，脉冲传播基本不起作用）。v91：按 VCP TagMemo V9.1 构建——对数压缩、固定出流预算、入流枢纽校正、残差锚增益、软非回溯传播，测地重排改读 scoped 标签。切换后首次启动重建一次共现图（子进程，约 1 分钟）。",
+        "type": "string",
+        "options": ["legacy", "v91"],
+        "default": "legacy",
+        "restart_required": true
+      },
+      "cooccurrence_min_support": {
+        "description": "共现最少支持记忆数（v91）",
+        "hint": "两个标签至少在这么多条记忆里一起出现才建边。默认 2：线上 85% 的标签对只共现过 1 次，多为模型生成的长尾标签。",
+        "type": "int",
+        "default": 2,
+        "restart_required": true
       }
     }
   },
