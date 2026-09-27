@@ -33,6 +33,13 @@ class JargonService:
         self._min_frequency = int(self._config.get("min_frequency", 5))
         self._min_messages = int(self._config.get("min_messages", 10))
         self._mine_cooldown = int(self._config.get("mine_cooldown", 20))
+        # 入站消息自动触发挖掘的节奏（每次挖掘要调模型推断释义，不能像手工入口那样 10 条就挖）
+        self._auto_mine_messages = int(self._config.get("auto_mine_messages", 300))
+        self._auto_mine_cooldown = float(self._config.get("auto_mine_cooldown_seconds", 1800))
+        self._auto_msg_count: dict[str, int] = {}
+        self._last_auto_mine: dict[str, float] = {}
+        # 由启动装配按 Learning_Settings.auto_approve_enabled 设置：推断可信且有来源记忆时直接生效
+        self.auto_approve = False
         self._top_k = int(self._config.get("top_k", 20))
         self._max_context = int(self._config.get("max_context", 15))
         self._confidence_threshold = float(self._config.get("confidence_threshold", .5))
@@ -136,6 +143,20 @@ class JargonService:
             return
         self._filter.feed(text, runtime_scope, sender_id, timestamp=timestamp or time.time())
         self._msg_count[key] = self._msg_count.get(key, 0) + 1
+        self._auto_msg_count[key] = self._auto_msg_count.get(key, 0) + 1
+
+    def claim_auto_mine(self, runtime_scope: RuntimeScope | None) -> bool:
+        """入站消息攒够 auto_mine_messages 条且过了冷却期时返回 True，并重置计数（每群独立）。"""
+        key = scope_key(runtime_scope)
+        if not self._enabled or key is None or not self._repository_available():
+            return False
+        now = time.time()
+        if self._auto_msg_count.get(key, 0) < self._auto_mine_messages:
+            return False
+        if now - self._last_auto_mine.get(key, 0.0) < self._auto_mine_cooldown:
+            return False
+        self._auto_msg_count[key], self._last_auto_mine[key] = 0, now
+        return True
 
     def should_mine(self, runtime_scope: RuntimeScope | None) -> bool:
         key = scope_key(runtime_scope)
@@ -209,7 +230,11 @@ class JargonService:
                 except Exception:
                     tag_chain_status = "unavailable"
             if status == "confirmed" and (trace_status != "verified" or tag_chain_status != "complete"):
-                status = "pending"
+                # 自动审核开启时：模型推断可信、有来源记忆且标签链完整即可生效
+                if self.auto_approve and source_memory_id is not None and tag_chain_status == "complete":
+                    trace_status = "auto_review"
+                else:
+                    status = "pending"
             if self._is_globally_blocked(word):
                 continue
             self._repo.upsert_scoped_jargon(

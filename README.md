@@ -495,6 +495,28 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | confidence_threshold | 0.5 | 推断置信度门限 |
 | max_inject | 3 | 单次回复最大注入黑话数 |
 
+### 记账与学习 (Learning_Settings)
+
+两个会改变羽书行为的开关默认关闭：`auto_approve_enabled`、`proactive_reply_enabled`。
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| auto_approve_enabled | false | 自动审核：带原话与来源记忆的事实、引用 ≥2 条已批准事实的信念、被多人多次使用的黑话直接生效；关闭时全部进待审 |
+| jargon_auto_min_memories | 3 | 黑话自动生效最少出现条数 |
+| jargon_auto_min_senders | 2 | 黑话自动生效最少使用人数 |
+| proactive_reply_enabled | false | 关切驱动的主动回复：有未了关切的人在群里说话时，没点名也主动问一句；关闭时只在本来就要回复此人时附提示 |
+| proactive_cooldown_hours | 12 | 同一条关切的跟进冷却（小时） |
+| proactive_group_min_gap_seconds | 600 | 同一群两次主动回复最小间隔（秒） |
+| proactive_group_max_per_hour | 3 | 同一群每小时最多主动回复次数 |
+| proactive_quiet_hours | 1-7 | 静默时段（起-止，小时）；起止相同表示不设 |
+| concern_stale_days | 30 | 关切无进展多少天后自动过期 |
+| post_reply_bookkeeping_enabled | true | 事后记账：对话停下后回看这段，交给正式工具记印象与好感结算、事实、黑话、人情、关切、信念 |
+| bookkeeping_delay_seconds | 90 | 对话停下多久后记账（秒） |
+| bookkeeping_session_cooldown_seconds | 600 | 同一群两次记账最小间隔（秒） |
+| bookkeeping_daily_limit | 150 | 每天最多记账次数 |
+| daily_diary_enabled | true | 每日日记：每晚为当天说过话的每个群写一篇，写入经历时间线与记忆库 |
+| daily_diary_hour | 23 | 几点之后写日记（0-23） |
+
 ### 风格学习 (FewShot_Settings)
 
 | 配置项 | 默认值 | 说明 |

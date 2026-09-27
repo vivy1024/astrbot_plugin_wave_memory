@@ -165,6 +165,7 @@ class RelationshipChannel:
             try:
                 from ...impression_timeline import (
                     affinity_shift_range,
+                    effective_unsettled_state,
                     injection_lines,
                     load_timeline_events,
                     load_unsettled_state,
@@ -174,6 +175,7 @@ class RelationshipChannel:
             except ImportError:  # pragma: no cover
                 from services.impression_timeline import (
                     affinity_shift_range,
+                    effective_unsettled_state,
                     injection_lines,
                     load_timeline_events,
                     load_unsettled_state,
@@ -194,24 +196,15 @@ class RelationshipChannel:
                 )
             unsettled = {"energy": 0.0, "traces": []}
             if db is not None and sender_id:
-                # 未决能量按 (bot_id, user_id, "") 跨群累积；旧版按群存的行只作为兜底。
+                # 与结算工具读同一份：本场合行 + 跨群行合并、按时间衰减并封顶
                 unsettled = await self._run_sync(
-                    load_unsettled_state,
+                    effective_unsettled_state,
                     db,
                     bot_id=scope.bot_id,
                     user_id=sender_id,
-                    group_id="",
+                    scene=scene,
                     connection=conn,
                 )
-                if float(unsettled.get("energy") or 0.0) <= 0 and group_id and scope.visibility == "group":
-                    unsettled = await self._run_sync(
-                        load_unsettled_state,
-                        db,
-                        bot_id=scope.bot_id,
-                        user_id=sender_id,
-                        group_id=group_id,
-                        connection=conn,
-                    )
             context_config = _mapping(getattr(ctx, "config", {}))
             half_life_days = context_config.get(
                 "timeline_decay_half_life_days",
@@ -322,7 +315,6 @@ class RelationshipChannel:
                     "日常观感继续写 <<impression:当下观感 | impact:1-5>>，不要覆盖这句结算。"
                 )
 
-            # 印象时间线全量注入：不再按 900 字符预算截断历史背景；
             # 结算提示固定追加在末尾，保证裁决节点指令完整。
             if transition_hint:
                 parts.append(transition_hint)
@@ -340,6 +332,7 @@ class RelationshipChannel:
                     "dedupe_key": f"relationship:{scope.bot_id}:{scope.session.id}:{scope.subject_principal_id}:{revision}",
                 }],
                 latency_ms=self._latency_ms(started),
+                # 时间线已按条数与长度收敛（约 1–1.5 千字），可以不被预算截断：保证末尾的结算提示完整
                 preserve_full_text=has_timeline,
                 filtered=[{"filter_reason": "identity_contamination", "filter_channel": self.name} for _ in filtered_lines],
             )

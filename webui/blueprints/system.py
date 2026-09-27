@@ -463,13 +463,25 @@ async def health_check():
         services["ingress"] = {**snapshot, "status": "ok" if snapshot["status"] == "ok" else "error",
                                "message": ingress.summary_text()}
 
+    learning = getattr(c, "learning_stats_getter", None)
+    learning_stats = None
+    if callable(learning):
+        try:
+            learning_stats = learning()
+        except Exception as e:
+            learning_stats = {"error": str(e)}
+
     overall = "healthy" if all(s.get("status") == "ok" for s in services.values()) else "degraded"
     try:
         from ...utils.build_info import build_info
         build = build_info()
     except Exception:
         build = {}
-    return jsonify({"status": overall, "services": services, "build": build})
+    payload = {"status": overall, "services": services, "build": build}
+    if learning_stats is not None:
+        # 不参与健康判定：只用来确认记账、自动审核、主动跟进、日记确实在跑
+        payload["learning"] = learning_stats
+    return jsonify(payload)
 
 
 @system_bp.route("/metrics", methods=["GET"])

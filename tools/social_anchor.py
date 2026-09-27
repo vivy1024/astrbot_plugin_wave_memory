@@ -130,7 +130,10 @@ class WaveMemoryNoteSocialAnchorTool(FunctionTool[AstrAgentContext]):
                         topic=concern_topic,
                         intensity=0.75,
                         concern_type="social_anchor",
-                        evidence=[{"kind": "social_anchor", "summary": summary[:80]}],
+                        evidence=[
+                            {"kind": "social_anchor", "summary": summary[:80]},
+                            {"kind": "subject", "user_id": str(user_id)},
+                        ],
                         actor="social_anchor_tool",
                     )
                     tracker = self.concern_tracker

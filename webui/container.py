@@ -73,6 +73,8 @@ class ServiceContainer:
         self.ingress_health: Any = None
         # 当前 TagWorker（可能被服务注册表重启，所以存取值函数）；标签覆盖面板用。
         self.tag_worker_getter: Any = None
+        # 记账与学习各服务的运行统计（反思提醒、自动审核、关切跟进、事后记账、每日日记）；/api/health 用。
+        self.learning_stats_getter: Any = None
         # 书设工作台（services.book_lore_workbench.BookLoreWorkbench）；书设没加载时为 None。
         self.book_lore_workbench: Any = None
 

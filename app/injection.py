@@ -139,6 +139,17 @@ class InjectionMixin:
                         req.extra_user_content_parts = extra = []
                     extra.append({"type": "text", "text": prompt})
 
+        concern_prompt = self._concern_followup_prompt(event, sender_id)
+        if concern_prompt:
+            try:
+                from astrbot.core.agent.message import TextPart
+                req.extra_user_content_parts.append(TextPart(text=concern_prompt))
+            except Exception:
+                extra = getattr(req, "extra_user_content_parts", None)
+                if extra is None:
+                    req.extra_user_content_parts = extra = []
+                extra.append({"type": "text", "text": concern_prompt})
+
         # ─── 硬规则：极端攻击 + 辱骂冷却 ───
         from ..services.meta_thinking import EXTREME_ATTACK
 
@@ -283,6 +294,33 @@ class InjectionMixin:
                     req.extra_user_content_parts.append({"type": "text", "text": reflection_prompt})
         except Exception as exc:
             logger.debug("[WaveMemory] reflection trigger skipped: %s", exc)
+
+    def _concern_followup_prompt(self, event, sender_id: str) -> str:
+        """「你惦记的事」提示：主动开口时必附；本来就要回复这个人时，没在冷却期内也附一次。"""
+        followup = getattr(self, "concern_followup", None)
+        if followup is None:
+            return ""
+        sender_name = ""
+        if event.message_obj and event.message_obj.sender:
+            sender_name = event.message_obj.sender.nickname or ""
+        claimed = getattr(event, "_wave_memory_concern_followup", None)
+        if isinstance(claimed, dict) and claimed.get("concern"):
+            return followup.hint(claimed["concern"], sender_name, proactive=True)
+        scope = getattr(event, "_wave_memory_runtime_scope", None)
+        if not isinstance(scope, RuntimeScope) or not sender_id:
+            return ""
+        try:
+            pending = [
+                item for item in followup.open_concerns_for(scope, sender_id, sender_name)
+                if not followup.recently_followed(item["id"])
+            ]
+        except Exception as exc:
+            logger.debug("[WaveMemory] concern followup lookup failed: %s", exc)
+            return ""
+        if not pending:
+            return ""
+        followup.mark_followed(pending[0]["id"])
+        return followup.hint(pending[0], sender_name, proactive=False)
 
     def _set_injection_channel_config(self, config) -> None:
         """WebUI 热应用通道配置时更新运行时注入编排器配置。"""

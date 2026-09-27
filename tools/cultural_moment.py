@@ -30,6 +30,14 @@ except ImportError:  # pragma: no cover
     from tools.scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
 
 
+def _auto_reviewer():
+    try:
+        from ..services.auto_review import get_auto_reviewer
+    except ImportError:  # pragma: no cover
+        from services.auto_review import get_auto_reviewer
+    return get_auto_reviewer()
+
+
 def _event_message_id(ctx: Any) -> str:
     event = getattr(getattr(ctx, "context", None), "event", None)
     raw = getattr(event, "message_id", None)
@@ -102,8 +110,16 @@ class WaveMemoryMarkCulturalMomentTool(FunctionTool[AstrAgentContext]):
                     runtime_scope,
                     quote=target_phrase,
                 )
+                # 审核（WebUI 与自动审核）要求 source_tags 与 evidence：过去这里没写，标记的黑话永远批不下来
+                source_tags: list = []
+                tag_getter = getattr(repo, "list_scoped_memory_tags", None)
+                if callable(tag_getter) and source_memory_id is not None:
+                    try:
+                        source_tags = list(tag_getter(runtime_scope, [int(source_memory_id)]) or [])
+                    except Exception:
+                        source_tags = []
                 try:
-                    repo.upsert_scoped_jargon(
+                    jargon_id = repo.upsert_scoped_jargon(
                         runtime_scope,
                         word=target_phrase,
                         meaning=context_note,
@@ -115,10 +131,19 @@ class WaveMemoryMarkCulturalMomentTool(FunctionTool[AstrAgentContext]):
                             "source": "bot_marked_moment",
                             "context_note": context_note,
                             "marked_at": now,
+                            "source_tags": source_tags,
+                            "evidence": {
+                                "memory_ids": [source_memory_id] if source_memory_id is not None else [],
+                                "context_note": context_note,
+                            },
+                            "tag_chain_status": "complete" if source_tags else "missing",
                         },
                     )
                 except Exception as e:
                     return f"黑话候选标记失败: {e}"
+                reviewer = _auto_reviewer()
+                if reviewer is not None and reviewer.review_jargon(runtime_scope, jargon_id) == "confirmed":
+                    return f"已收录本群黑话「{target_phrase}」（群里多人用过，已自动生效）：{context_note}"
             return f"已将潜在黑话「{target_phrase}」提交至本群待审候选区：{context_note}"
 
         # 2. 高光风骨回复 -> 正式 style 审查队列；证据只能来自当轮消息 id

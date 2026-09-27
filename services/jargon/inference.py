@@ -369,7 +369,11 @@ class JargonInjector:
     def _evidence_ready(row: Dict[str, Any]) -> bool:
         provenance = row.get("provenance") if isinstance(row.get("provenance"), dict) else {}
         if provenance.get("producer") in {"wave_memory", "jargon_mining"}:
-            return bool(provenance.get("source_tags")) and bool(provenance.get("evidence")) and provenance.get("trace_status") == "verified"
+            return (
+                bool(provenance.get("source_tags"))
+                and bool(provenance.get("evidence"))
+                and provenance.get("trace_status") in {"verified", "auto_review"}
+            )
         return provenance.get("tag_chain_status") in (None, "complete")
 
     @staticmethod

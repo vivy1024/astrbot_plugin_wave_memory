@@ -491,6 +491,8 @@ class StartupMixin:
             f"time_anchor={bool(self.subjective_time)} desire={bool(self.desire_engine)}"
         )
 
+        self._init_learning_services()
+
         # 新编排器影子链路：只写 trace，不改真实 ProviderRequest。
         self._setup_injection_shadow_pipeline()
         self._setup_runtime_context_preparer()
@@ -581,6 +583,15 @@ class StartupMixin:
                 await self.task_supervisor.cancel(owner="belief", timeout=5.0)
         except Exception as e:
             logger.debug(f"[WaveMemory] belief tag refresh cancel error: {e}")
+
+        try:
+            bookkeeper = getattr(self, "post_reply_bookkeeper", None)
+            if bookkeeper is not None:
+                bookkeeper.cancel_all()
+            if hasattr(self, "task_supervisor") and self.task_supervisor:
+                await self.task_supervisor.cancel(owner="learning", timeout=5.0)
+        except Exception as e:
+            logger.debug(f"[WaveMemory] learning services cancel error: {e}")
 
         try:
             if hasattr(self, 'dream_service') and self.dream_service:
@@ -749,6 +760,126 @@ class StartupMixin:
         """EPA 初始化（在线程池中执行，避免阻塞事件循环）。"""
         await asyncio.to_thread(self.epa.initialize)
 
+    def _init_learning_services(self) -> None:
+        """记账与学习：自动审核、关切主动跟进、事后记账、每日日记（Learning_Settings）。
+
+        两个会改变羽书行为的开关默认关闭：auto_approve_enabled（事实/信念/黑话有证据时直接生效，
+        不等人审）、proactive_reply_enabled（惦记的人出现时没点名也主动开口）。
+        """
+        from ..services.auto_review import AutoReviewer, set_auto_reviewer
+        from ..services.concern_followup import ConcernFollowupService
+        from ..services.daily_diary import DailyDiaryService
+        from ..services.post_reply_bookkeeping import PostReplyBookkeeper
+
+        cfg = self.config.get("Learning_Settings", {}) or {}
+
+        def _flag(key: str, default: bool) -> bool:
+            value = cfg.get(key)  # 旧 config 没有该字段时为 None，按默认值处理
+            return default if value is None else bool(value)
+
+        def _num(key: str, default: float) -> float:
+            try:
+                return float(cfg.get(key, default))
+            except (TypeError, ValueError):
+                return default
+
+        write_gateway = getattr(self, "write_gateway", None)
+        try:
+            self.auto_reviewer = AutoReviewer(
+                self.db, write_gateway,
+                enabled=_flag("auto_approve_enabled", False),
+                jargon_min_memories=int(_num("jargon_auto_min_memories", 3)),
+                jargon_min_senders=int(_num("jargon_auto_min_senders", 2)),
+            )
+        except Exception as e:
+            logger.warning(f"[WaveMemory] AutoReviewer init failed: {e}")
+            _record_err("AutoReviewer", e)
+            self.auto_reviewer = None
+        set_auto_reviewer(self.auto_reviewer)
+        if getattr(self, "jargon_service", None) is not None:
+            self.jargon_service.auto_approve = bool(self.auto_reviewer and self.auto_reviewer.enabled)
+
+        quiet = str(cfg.get("proactive_quiet_hours") or "1-7")
+        try:
+            quiet_start, quiet_end = (int(part) % 24 for part in quiet.split("-", 1))
+        except ValueError:
+            quiet_start, quiet_end = 1, 7
+        try:
+            self.concern_followup = ConcernFollowupService(
+                self.db, write_gateway,
+                enabled=_flag("proactive_reply_enabled", False),
+                cooldown_hours=_num("proactive_cooldown_hours", 12.0),
+                group_min_gap_seconds=_num("proactive_group_min_gap_seconds", 600.0),
+                group_max_per_hour=int(_num("proactive_group_max_per_hour", 3)),
+                quiet_hours=(quiet_start, quiet_end),
+                stale_days=_num("concern_stale_days", 30.0),
+            )
+            self._spawn(self._concern_tidy_loop(), name="wave-memory:learning:concern-tidy", owner="learning")
+        except Exception as e:
+            logger.warning(f"[WaveMemory] ConcernFollowup init failed: {e}")
+            _record_err("ConcernFollowup", e)
+            self.concern_followup = None
+
+        meta = getattr(self, "meta_thinking", None)
+        learning_llm = getattr(meta, "llm", None) if meta is not None else None
+        if learning_llm is None and self._llm_chain():
+            learning_llm = LLMFallbackClient(context=self.context, provider_ids=self._llm_chain(), log_prefix="[Learning]")
+        self.post_reply_bookkeeper = None
+        self.daily_diary = None
+        if learning_llm is None:
+            logger.warning("[WaveMemory] 事后记账/每日日记未启动：没有可用的 LLM Provider")
+        else:
+            if _flag("post_reply_bookkeeping_enabled", True):
+                self.post_reply_bookkeeper = PostReplyBookkeeper(
+                    self.db, self.tool_registry, learning_llm,
+                    delay_seconds=_num("bookkeeping_delay_seconds", 90.0),
+                    session_cooldown_seconds=_num("bookkeeping_session_cooldown_seconds", 600.0),
+                    daily_limit=int(_num("bookkeeping_daily_limit", 150)),
+                    bot_name_for=self._bot_display_name,
+                )
+            if _flag("daily_diary_enabled", True):
+                self.daily_diary = DailyDiaryService(
+                    self.db, self.tool_registry, learning_llm, self.writer,
+                    hour=int(_num("daily_diary_hour", 23)),
+                    bot_name_for=self._bot_display_name,
+                    group_name_for=self._get_group_name,
+                )
+                self._spawn(self.daily_diary.loop(), name="wave-memory:learning:daily-diary", owner="learning")
+        from ..webui.container import get_container
+
+        def _learning_stats() -> dict:
+            def _of(service) -> dict | None:
+                if service is None:
+                    return None
+                return {"enabled": bool(getattr(service, "enabled", True)), **dict(getattr(service, "stats", {}) or {})}
+
+            return {
+                "reflection_trigger": _of(getattr(self, "reflection_trigger", None)),
+                "auto_review": _of(self.auto_reviewer),
+                "proactive_reply": _of(self.concern_followup),
+                "bookkeeping": _of(self.post_reply_bookkeeper),
+                "daily_diary": _of(self.daily_diary),
+            }
+
+        get_container().learning_stats_getter = _learning_stats
+        logger.info(
+            "[WaveMemory] 记账与学习: auto_approve=%s proactive_reply=%s bookkeeping=%s daily_diary=%s",
+            bool(self.auto_reviewer and self.auto_reviewer.enabled),
+            bool(self.concern_followup and self.concern_followup.enabled),
+            self.post_reply_bookkeeper is not None, self.daily_diary is not None,
+        )
+
+    async def _concern_tidy_loop(self) -> None:
+        await asyncio.sleep(600)
+        while True:
+            try:
+                await self.concern_followup.tidy()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.debug(f"[WaveMemory] concern tidy failed: {e}")
+            await asyncio.sleep(6 * 3600)
+
     def _spawn(self, coro, *, name: str | None = None, owner: str = "plugin") -> asyncio.Task:
         """通过统一 supervisor 创建可观察、可等待的命名后台任务。"""
         self._task_sequence += 1
@@ -778,7 +909,7 @@ class StartupMixin:
         logger.debug("[WaveMemory] persona cache warmup withheld: scope_migration_required")
 
     async def _jargon_mine_task(self, runtime_scope: RuntimeScope) -> None:
-        """手工/排障入口：不再由入站消息自动调度。"""
+        """挖掘一个群的黑话候选：入站消息每攒够一批自动调度一次（JargonService.claim_auto_mine），也可手工触发。"""
         if runtime_scope.visibility != "group" or runtime_scope.session is None:
             return
         try:

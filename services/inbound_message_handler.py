@@ -205,9 +205,18 @@ class InboundMessagePipeline:
             "importance": 1.0,
         })
 
-        # 4. 派发给 Jargon 系统进行语用积累（只记账，不再后台盲抽）
-        if runtime_scope.visibility == "group" and getattr(self.plugin, "jargon_service", None):
-            self.plugin.jargon_service.feed_message(locked_message, runtime_scope, sender_id, timestamp=message_ts)
+        # 4. 派发给 Jargon 系统进行语用积累；每群攒够一批消息后在后台挖掘一次
+        jargon_service = getattr(self.plugin, "jargon_service", None)
+        if runtime_scope.visibility == "group" and jargon_service is not None:
+            jargon_service.feed_message(locked_message, runtime_scope, sender_id, timestamp=message_ts)
+            claim = getattr(jargon_service, "claim_auto_mine", None)
+            if callable(claim) and claim(runtime_scope) and hasattr(self.plugin, "_jargon_mine_task"):
+                task = asyncio.create_task(self.plugin._jargon_mine_task(runtime_scope))
+                background = getattr(self.plugin, "_learning_background_tasks", None)
+                if background is None:
+                    background = self.plugin._learning_background_tasks = set()
+                background.add(task)
+                task.add_done_callback(background.discard)
 
         # 5. 派发给自省系统与生命周期
         if runtime_scope.visibility == "group" and getattr(self.plugin, "self_reflect", None) and group_id:

@@ -92,12 +92,14 @@ class ReflectionOutcome:
 class ReflectionTriggerService:
     """为当前群聊请求生成有证据的认知资产提审提示。"""
 
-    def __init__(self, db: Any, *, cooldown_seconds: float = 180.0, max_candidates: int = 6, max_chars: int = 1200):
+    def __init__(self, db: Any, *, cooldown_seconds: float = 180.0, max_candidates: int = 6, max_chars: int = 1500):
         self.db = db
         self.cooldown_seconds = float(cooldown_seconds)
         self.max_candidates = max(1, int(max_candidates))
         self.max_chars = max(240, int(max_chars))
         self._last: dict[str, float] = {}
+        # 触发 / 各跳过原因的累计次数，供 /api/health 与排查（是否提醒了、为什么没提醒）
+        self.stats: dict[str, int] = {}
 
     def build_prompt(self, *, scope: RuntimeScope, message: str, sender_id: str = "", trace_id: str = "") -> str:
         """兼容既有调用方：只返回提示文本。"""
@@ -124,6 +126,8 @@ class ReflectionTriggerService:
             outcome.duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
             if outcome.dependency_failures and not outcome.triggered and not outcome.skip_reason:
                 outcome.skip_reason = SKIP_DEPENDENCY_ERROR
+            key = "triggered" if outcome.triggered else f"skip:{outcome.skip_reason or 'unknown'}"
+            self.stats[key] = self.stats.get(key, 0) + 1
         return outcome
 
     # ---- internals -------------------------------------------------------
@@ -168,14 +172,15 @@ class ReflectionTriggerService:
             "群文化/梗 wave_memory_mark_cultural_moment（context_note 须完整说明出处原话与语境）；"
             "社交锚点 wave_memory_note_social_anchor；"
             "群友观感 wave_memory_record_social_impression（必须带群友真实原话 source_quote，无原话不记）；"
-            "好感 wave_memory_affinity_update（必须带群友触发好感变动的真实原话 source_quote）；"
             "关切 wave_memory_note_concern；"
             "群经历 wave_memory_note_episode（trigger_text 必须描述具体事件与触发原话；注意：episode 不等于 social anchor，群经历属于公共事件而非个人私信交往）；"
             "群聊亲笔日记 wave_memory_record_diary_episode（当聊到深度话题、关键事件或产生强烈自省时，亲笔记录今日生活日记与心智历程，入选 Bot 经历时间线主干）。"
             "所有提审与变动均要求实事求是、铁证如山，后台会自动溯源并绑定真实对话证据。"
         )
         lines = [header]
-        used = len(header)
+        # 工具清单优先：先给它留出位置再放证据。过去证据占满预算后清单被截掉，
+        # 模型只看到候选却不知道该调哪个工具。
+        used = len(header) + len(footer) + 1
         emitted = 0
         for source, item in candidates[: self.max_candidates]:
             line = f"- {item}"
@@ -189,10 +194,7 @@ class ReflectionTriggerService:
             outcome.budget_truncated = True
             outcome.skip_reason = SKIP_BUDGET_EXHAUSTED
             return
-        if used + len(footer) + 1 <= self.max_chars:
-            lines.append(footer)
-        else:
-            outcome.budget_truncated = True
+        lines.append(footer)
         self._last[key] = now
         outcome.prompt = "\n".join(lines)
         outcome.triggered = True
@@ -325,7 +327,8 @@ class ReflectionTriggerService:
                 # 导致下发的是 belief id，模型拿去提审必然被拒。
                 approved = [
                     item
-                    for item in knowledge.list_scoped_facts(scope, limit=8)
+                    # 取足够多再筛：待审事实堆积时，最近 8 条可能全是 pending，已批准的被挤出窗口
+                for item in knowledge.list_scoped_facts(scope, limit=50)
                     if str(item.get("status") or "") in APPROVED_FACT_STATUSES
                 ]
                 if len(approved) >= 2:

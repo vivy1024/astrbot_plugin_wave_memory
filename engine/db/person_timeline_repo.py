@@ -474,7 +474,8 @@ class PersonTimelineRepo:
         stamp = float(now if now is not None else time.time())
         traces = list(state.get("traces") or [])
         traces.append({"text": text, "summary": text, "detail": text, "impact": impact, "ts": stamp})
-        energy = round(float(state.get("energy") or 0.0) + float(impact or 0.0), 2)
+        traces = traces[-40:]  # 与 impression_timeline.UNSETTLED_MAX_TRACES 一致
+        energy = round(min(20.0, float(state.get("energy") or 0.0) + float(impact or 0.0)), 2)
         count = int(state.get("interaction_count") or 0) + 1
         self.set_unsettled_state(
             bot_id=bot_id,

@@ -30,6 +30,14 @@ except ImportError:  # pragma: no cover
     from tools.scope_boundary import require_group_runtime_scope, resolve_source_memory_id, scope_error_message
 
 
+def _auto_reviewer():
+    try:
+        from ..services.auto_review import get_auto_reviewer
+    except ImportError:  # pragma: no cover
+        from services.auto_review import get_auto_reviewer
+    return get_auto_reviewer()
+
+
 def _parse_fact_ids(value: Any) -> list[int]:
     if value is None or value == "":
         return []
@@ -149,6 +157,9 @@ class WaveMemoryProposeBeliefTool(FunctionTool[AstrAgentContext]):
                     "proposed_at": time.time(),
                 },
             )
+            reviewer = _auto_reviewer()
+            if reviewer is not None and reviewer.review_belief(runtime_scope, belief_id) == "active":
+                return f"已形成信念：[{belief_type}] {content}（有已批准事实支撑，已自动生效，ID: {belief_id}）"
             return f"已成功提审信念：[{belief_type}] {content} (待审ID: {belief_id})"
         except Exception as e:
             return f"信念提审写入失败: {e}"

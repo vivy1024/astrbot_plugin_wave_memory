@@ -30,9 +30,11 @@ except Exception:  # pragma: no cover
 
 try:
     from ..services.identity_safety import is_identity_contamination
+    from .person_identity import resolve_user_id
     from .scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
 except ImportError:  # pragma: no cover
     from services.identity_safety import is_identity_contamination
+    from tools.person_identity import resolve_user_id
     from tools.scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
 
 # 模型可以做的动作。expire/archive 属于系统整理与人工裁决，不开放给现场工具。
@@ -69,6 +71,10 @@ class WaveMemoryNoteConcernTool(FunctionTool[AstrAgentContext]):
             "intensity": {"type": "number", "description": "关心强度，0 到 1"},
             "concern_type": {"type": "string", "description": "可选类型，如 follow_up / wellbeing / unfinished_task"},
             "note": {"type": "string", "description": "结案或进展说明；resolve 时必填"},
+            "target_user": {
+                "type": "string",
+                "description": "这件事关于谁（群友名字/别名/QQ号）。填了之后，这个人下次在群里出现时你会想起并跟进",
+            },
         },
         "required": ["action"],
     })
@@ -116,6 +122,12 @@ class WaveMemoryNoteConcernTool(FunctionTool[AstrAgentContext]):
             evidence.append({"kind": "memory", "id": auto_mid})
         if topic:
             evidence.append({"kind": "concern_topic", "topic": topic[:80]})
+        target = str(kwargs.get("target_user") or "").strip()
+        if target:
+            subject_id = resolve_user_id(self.db, target, scope)
+            if subject_id:
+                # 关切表没有「关于谁」这一列；记在证据里，供惦记的人出现时主动跟进
+                evidence.append({"kind": "subject", "user_id": str(subject_id)})
         try:
             result = await gateway.transition_concern(
                 scope=scope,

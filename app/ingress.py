@@ -9,7 +9,7 @@ import math
 import os
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 from astrbot.api import logger, AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
@@ -339,6 +339,26 @@ class IngressMixin:
             # 放行给后面的逻辑使用
             message = merged_content
 
+        # 惦记的人出现：没点名羽书也让她开口（关切驱动的主动跟进）。回复走正常链路，
+        # 注入阶段会附上「你惦记的事」提示（见 injection._handle_meta_thinking_check）。
+        followup = getattr(self, "concern_followup", None)
+        if (
+            followup is not None
+            and runtime_scope.visibility == "group"
+            and not getattr(event, "is_at_or_wake_command", False)
+        ):
+            concern = followup.claim_followup(runtime_scope, sender_id, sender_name, message)
+            if concern is not None:
+                event.is_at_or_wake_command = True
+                try:
+                    event._wave_memory_concern_followup = {"concern": concern, "proactive": True}
+                except Exception:
+                    pass
+                logger.info(
+                    "[WaveMemory] 关切跟进：%s 出现，主动回应 concern:%s（%s）",
+                    sender_name or sender_id, concern["id"], concern["topic"][:40],
+                )
+
         # 委托给 InboundMessagePipeline 管道执行抢词咽回、串行处理、命令拦截与生命周期派发
         await self.inbound_pipeline.process_message(
             event=event,
@@ -658,6 +678,14 @@ class IngressMixin:
                 scope=runtime_scope,
                 message_id=message_id,
             )
+
+        # 事后记账：这段对话停下来之后单独回看一遍（见 services/post_reply_bookkeeping.py）
+        bookkeeper = getattr(self, "post_reply_bookkeeper", None)
+        if bookkeeper is not None and runtime_scope.visibility == "group":
+            try:
+                bookkeeper.schedule(replace(runtime_scope, subject_principal_id=None))
+            except Exception as exc:
+                logger.debug(f"[WaveMemory] bookkeeping schedule failed: {exc!r}")
 
     def _bot_display_name(self, db_id: str) -> str:
         profile = self.bot_registry.get(db_id) if getattr(self, "bot_registry", None) else None

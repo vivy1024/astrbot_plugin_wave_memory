@@ -14,6 +14,20 @@ from typing import Any
 AFFINITY_STEP_CAP = 2.0
 AFFINITY_HOSTILITY_STEP_CAP = 3.0
 UNSETTLED_ENERGY_FULL = 10.0
+# 未结算能量按时间衰减并封顶：模型长期不结算时不会无限累积（线上曾涨到 55），
+# 久远的观感也不该和刚发生的一样急着结算。
+UNSETTLED_HALF_LIFE_DAYS = 7.0
+UNSETTLED_ENERGY_CAP = 2 * UNSETTLED_ENERGY_FULL
+# 每行最多保留的观感轨迹条数（旧的只丢弃轨迹，已结算的影响不受影响）
+UNSETTLED_MAX_TRACES = 40
+# 关系处于极端区时，至少攒到这么多新能量才再次提示结算
+UNSETTLED_EXTREME_MIN_ENERGY = 3.0
+
+# 印象时间线每轮注入的条数与每条摘要长度
+TIMELINE_INJECT_MAX_EVENTS = 8
+TIMELINE_INJECT_SUMMARY_CHARS = 90
+# 挑选时各类事件的分量：好感结算与里程碑比日常观感更值得常驻
+_TIMELINE_KIND_WEIGHT = {"affinity": 2.0, "milestone": 2.0, "social_anchor": 1.8, "impression": 1.0, "person_fact": 0.8}
 IMPACT_CAP = 5.0
 
 # 模块级动态上限配置（可由 main.py 从 Social_Settings 注入）
@@ -553,8 +567,13 @@ def impression_timeline_lines(
     query: str = "",
     events: Sequence[Any] | None = None,
     half_life_days: Any = None,
+    max_events: int | None = TIMELINE_INJECT_MAX_EVENTS,
+    max_summary_chars: int = TIMELINE_INJECT_SUMMARY_CHARS,
 ) -> list[str]:
-    """印象时间线全量注入：每条一行摘要（早→近），近事权重高，旧事只作背景。"""
+    """印象时间线注入：按「时间权重 × 事件分量」挑最相关的 max_events 条，按时间顺序每条一行。
+
+    过去全量注入、不受预算约束，交往越多提示越长（线上平均 7 千字、最长 2 万字），
+    夹在其中的结算提示与记账提醒被淹没。完整时间线仍可用 wave_memory_person_search 查。"""
     payload = _as_mapping(metadata)
     items = [item for item in (events or ()) if isinstance(item, Mapping)]
     if not items:
@@ -579,11 +598,19 @@ def impression_timeline_lines(
     if stamp is None:
         stamp = time.time()
     half_life = normalize_timeline_half_life(half_life_days)
+    items = [item for item in items if _item_summary(item)]
+    omitted = 0
+    if max_events is not None and len(items) > max_events:
+        def rank(row: Mapping[str, Any]) -> float:
+            weight = timeline_decay_weight(row, now=stamp, half_life_days=half_life) or 0.0
+            return weight * _TIMELINE_KIND_WEIGHT.get(str(row.get("kind") or ""), 1.0)
+        kept = sorted(items, key=rank, reverse=True)[: max(1, int(max_events))]
+        omitted = len(items) - len(kept)
+        items = kept
     lines = [
-        f"印象时间线（全量摘要，早→近；时间权重每 {half_life:g} 天减半）：",
-        "按时间权重理解当前印象；旧事仅作历史背景，不代表近期事实，不据此改写真实关系分数。",
-        "详情按需调用 wave_memory_person_search(query_type=timeline, person=当前人物, event_id=事件编号)；"
-        "非当前群记录须显式 scope=all_groups。",
+        f"印象时间线（{'挑选最相关的 ' + str(len(items)) + ' 条，另有 ' + str(omitted) + ' 条较早或次要' if omitted else '早→近'}；"
+        f"时间权重每 {half_life:g} 天减半）：旧事仅作背景，不据此改写关系分数；"
+        "详情用 wave_memory_person_search(query_type=timeline, person=当前人物, event_id=编号)。",
     ]
     header_count = len(lines)
     # query 仅为旧调用兼容保留；自动注入不筛选历史，也不拼接详情。
@@ -602,9 +629,11 @@ def impression_timeline_lines(
         group_id = str(item.get("group_id") or "").strip()
         if group_id:
             identity += f"来源群={group_id} "
-        # 每条一行，不删除摘要中的文字；详情保留在正式仓库供按需读取。
+        # 每条一行、截断摘要；详情保留在正式仓库供按需读取。
         summary = summary.replace("\r\n", " / ").replace("\n", " / ").replace("\r", " / ")
-        lines.append(f"- {identity}{when} [时间权重={weight_text}] {summary}")
+        if max_summary_chars and len(summary) > max_summary_chars:
+            summary = summary[:max_summary_chars] + "…"
+        lines.append(f"- {identity}{when} [权重={weight_text}] {summary}")
     return lines if len(lines) > header_count else []
 
 
@@ -642,6 +671,8 @@ def injection_lines(
         ) if str(item.get("kind") or "") in {"impression", "affinity"}
     ), {"summary": payload.get("impression"), "at": payload.get("impression_updated_at")})
     current = _item_summary(current_item)
+    if len(current) > TIMELINE_INJECT_SUMMARY_CHARS:
+        current = current[:TIMELINE_INJECT_SUMMARY_CHARS] + "…"
     if current:
         weight = timeline_decay_weight(current_item, now=stamp, half_life_days=half_life_days)
         weight_text = f"{weight:.6g}" if weight is not None else "未知"
@@ -653,8 +684,8 @@ def injection_lines(
     if formatted and formatted != "互动" and not timeline:
         lines.append(f"最近关系线索：{formatted}")
 
-    # 4. 羽书自主 Tool Calling 查阅全貌引导提示：仅当存在实质印象/线索时附带
-    if lines:
+    # 4. 查阅全貌的提示：时间线表头已含，没有时间线时才单独附带
+    if lines and not timeline:
         lines.append("（如需查阅交往全貌或历史借还，可自主调用 wave_memory_person_search(query_type='timeline', person=...) 查看）")
     return lines
 
@@ -696,6 +727,45 @@ def load_unsettled_state(
     if repo is None or not hasattr(repo, "get_unsettled_state"):
         return {"energy": 0.0, "interaction_count": 0, "traces": []}
     return repo.get_unsettled_state(bot_id=bot_id, user_id=user_id, group_id=group_id, connection=connection)
+
+
+def effective_unsettled_state(
+    db: Any,
+    *,
+    bot_id: str,
+    user_id: str,
+    scene: str = "",
+    now: float | None = None,
+    connection=None,
+) -> dict[str, Any]:
+    """注入提示与结算工具共用的未结算能量：本场合行 + 跨群行合并，按轨迹时间衰减并封顶。
+
+    过去注入先读跨群行、工具先读本场合行，两边看到的能量与允许范围对不上：提示说可以 ±5，
+    工具只允许 ±2，结算被拒，能量越积越多。
+    """
+    stamp = float(now if now is not None else time.time())
+    rows = []
+    for key in dict.fromkeys(["", str(scene or "")]):
+        if key == "" and rows:
+            continue
+        rows.append(load_unsettled_state(db, bot_id=bot_id, user_id=user_id, group_id=key, connection=connection))
+    traces: list[Any] = []
+    energy = 0.0
+    for state in rows:
+        row_traces = [item for item in state.get("traces") or [] if isinstance(item, Mapping)]
+        traces.extend(row_traces)
+        stored = max(0.0, _finite(state.get("energy")) or 0.0)
+        raw = decayed = 0.0
+        for item in row_traces:
+            impact = max(0.0, _finite(item.get("impact")) or 1.0)
+            ts = _finite(item.get("ts"))
+            # 早于 2001 年的时间戳不可信（旧数据/占位值），不参与衰减
+            age_days = max(0.0, (stamp - ts) / 86400.0) if ts and ts > 1e9 else 0.0
+            raw += impact
+            decayed += impact * 0.5 ** (age_days / UNSETTLED_HALF_LIFE_DAYS)
+        # 行内总数是权威值（轨迹可能已被裁剪或部分结算），按轨迹的衰减比例折算
+        energy += stored * (decayed / raw) if raw > 0 else stored
+    return {"energy": round(min(energy, UNSETTLED_ENERGY_CAP), 2), "traces": traces}
 
 
 def persist_unsettled_trace(
@@ -906,6 +976,9 @@ def should_trigger_affinity_transition(
     amount = energy if energy is not None else unsettled_energy(payload)
     if amount >= UNSETTLED_ENERGY_FULL:
         return True
+    # 敌意/信任极端只在有新观感待结算时提醒；否则结算后维度仍在极端区，提示会每轮都出现
+    if amount < UNSETTLED_EXTREME_MIN_ENERGY:
+        return False
     dims = _as_mapping(dimensions)
     hostility = _finite(dims.get("hostility"))
     if hostility is not None and hostility >= 10.0:

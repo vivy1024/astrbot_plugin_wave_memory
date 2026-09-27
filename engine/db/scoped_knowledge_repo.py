@@ -304,7 +304,11 @@ class ScopedKnowledgeRepo:
                     revision
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 ON CONFLICT(bot_id, session_id, visibility, subject, predicate, object) DO UPDATE SET
-                    confidence=excluded.confidence, status=excluded.status,
+                    -- 重复提审（pending）不得把已批准/已驳回的事实打回待审
+                    confidence=MAX(scoped_facts.confidence, excluded.confidence),
+                    status=CASE WHEN excluded.status='pending'
+                                 AND scoped_facts.status IN ('active', 'approved', 'rejected')
+                                THEN scoped_facts.status ELSE excluded.status END,
                     source_memory_id=excluded.source_memory_id, provenance=excluded.provenance,
                     valid_from=excluded.valid_from, valid_until=excluded.valid_until,
                     updated_at=excluded.updated_at, revision=scoped_facts.revision+1
@@ -1043,7 +1047,11 @@ class ScopedKnowledgeRepo:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(bot_id, session_id, visibility, belief_key) DO UPDATE SET
                     content=excluded.content, belief_type=excluded.belief_type,
-                    strength=excluded.strength, status=excluded.status,
+                    strength=MAX(scoped_beliefs.strength, excluded.strength),
+                    -- 重复提审（pending）不得把已批准/已驳回的信念打回待审
+                    status=CASE WHEN excluded.status='pending'
+                                 AND scoped_beliefs.status IN ('active', 'approved', 'rejected')
+                                THEN scoped_beliefs.status ELSE excluded.status END,
                     source_memory_id=excluded.source_memory_id, provenance=excluded.provenance,
                     updated_at=excluded.updated_at""",
             (*_scope_params(scope), belief_key, content, belief_type, float(strength), status,

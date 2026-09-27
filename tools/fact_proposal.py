@@ -29,6 +29,14 @@ except ImportError:  # pragma: no cover
     from tools.scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
 
 
+def _auto_reviewer():
+    try:
+        from ..services.auto_review import get_auto_reviewer
+    except ImportError:  # pragma: no cover
+        from services.auto_review import get_auto_reviewer
+    return get_auto_reviewer()
+
+
 _IRONY_MARKERS = ("irony", "sarcasm", "ironic", "反串", "阴阳")
 
 
@@ -227,6 +235,12 @@ class WaveMemoryProposeFactTool(FunctionTool[AstrAgentContext]):
                 source_memory_id=source_memory_id,
                 provenance=provenance,
             )
-            return f"已成功提审事实：[{subject}] {predicate} [{obj}] (待审ID: {fact_id})"
         except Exception as e:
             return f"事实提审写入失败: {e}"
+        reviewer = _auto_reviewer()
+        status = await reviewer.review_fact(runtime_scope, fact_id) if reviewer is not None else None
+        if status == "active":
+            return f"已记录事实：[{subject}] {predicate} [{obj}]（有原话支撑，已自动生效，ID: {fact_id}）"
+        if status == "conflict":
+            return f"已提审事实：[{subject}] {predicate} [{obj}]，与已有事实冲突，留待人工裁决 (ID: {fact_id})"
+        return f"已成功提审事实：[{subject}] {predicate} [{obj}] (待审ID: {fact_id})"

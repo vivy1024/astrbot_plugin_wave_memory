@@ -27,6 +27,7 @@ try:
         affinity_shift_range,
         clear_unsettled_state,
         consume_dimensional_energy,
+        effective_unsettled_state,
         event_type_for_shift,
         load_unsettled_state,
         parse_dimensional_energy,
@@ -45,6 +46,7 @@ except ImportError:  # pragma: no cover
         affinity_shift_range,
         clear_unsettled_state,
         consume_dimensional_energy,
+        effective_unsettled_state,
         event_type_for_shift,
         load_unsettled_state,
         parse_dimensional_energy,
@@ -202,19 +204,13 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
         # 按场合存储的键：私聊为 private:<会话ID>，其具体内容只在该私聊可见。
         group_id = scene_key(runtime_scope)
         # 跨群主体性与当前群兼容读取未决能量
-        unsettled = load_unsettled_state(
+        # 与注入提示读同一份未结算能量（本场合行 + 跨群行，按时间衰减并封顶）
+        unsettled = effective_unsettled_state(
             self.db,
             bot_id=runtime_scope.bot_id,
             user_id=user_id,
-            group_id=group_id,
+            scene=group_id,
         )
-        if float(unsettled.get("energy") or 0.0) <= 0:
-            unsettled = load_unsettled_state(
-                self.db,
-                bot_id=runtime_scope.bot_id,
-                user_id=user_id,
-                group_id="",
-            )
         energy_val = float(unsettled.get("energy") or 0.0)
         dim_energy = parse_dimensional_energy(unsettled.get("traces"))
         dim_val = max(dim_energy.get(dimension, 0.0), energy_val if energy_val >= UNSETTLED_ENERGY_FULL else 0.0)

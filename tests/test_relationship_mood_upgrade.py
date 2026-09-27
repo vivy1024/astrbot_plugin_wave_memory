@@ -131,17 +131,18 @@ def test_relationship_full_history_reaches_provider_request(tmp_path):
         text = req.extra_user_content_parts[0].text
         assert result.injected
         assert "记忆占满预算" in text
-        for i, event_id in enumerate(events):
-            assert f"完整摘要{i:02d}" in text
-            assert "X" * 250 in text
-            assert f"事件#{event_id}" in text
+        # 只注入最相关的 8 条（这里即最近 8 条）且摘要截断；预算再小也不截掉这一段
+        for i in range(len(events)):
+            assert (f"完整摘要{i:02d}" in text) == (i >= 22)
             assert f"完整详情{i:02d}" not in text
+        assert f"事件#{events[29]}" in text and "另有 22 条" in text
+        assert "X" * 250 not in text and "…" in text
         timeline_start = text.index("印象时间线")
-        assert timeline_start < text.index("完整摘要00") < text.index("完整摘要29")
+        assert timeline_start < text.index("完整摘要22") < text.index("完整摘要29")
         assert text.index("完整摘要29") < text.index("你对这个人的印象：完整摘要29")
-        assert "时间权重=1" in text
-        assert "时间权重=0.5" in text
-        assert "时间权重=0.25" in text
+        assert "权重=1" in text
+        assert "权重=0.5" in text
+        assert "权重=0.25" in text
         unknown = SimpleNamespace(
             mode="full",
             config={"channels": {"affinity": {"enabled": True}}},

@@ -125,16 +125,28 @@ def test_unsettled_energy_and_threshold_transition():
     meta = {"unsettled_traces": [{"impact": 4}, {"impact": 4}, {"impact": 3}]}
     assert unsettled_energy(meta) == 11.0
     assert should_trigger_affinity_transition(meta)
-    assert should_trigger_affinity_transition({}, {"hostility": 12.0})
+    # 维度处于极端区：只有攒到新的待结算观感才提示，否则结算后每轮都会重复出现
+    assert not should_trigger_affinity_transition({}, {"hostility": 12.0})
+    assert should_trigger_affinity_transition({}, {"hostility": 12.0}, energy=3.0)
     assert not should_trigger_affinity_transition({})
 
 
-def test_history_is_not_truncated_at_twenty():
-    events = [{"kind": "impression", "summary": f"印象节点{i:02d}足够长", "detail": f"印象节点{i:02d}足够长", "occurred_at": float(i + 1)} for i in range(25)]
-    lines = injection_lines({}, events=events, now=30.0)
+def test_timeline_injection_keeps_most_relevant_events():
+    day = 86400.0
+    now = 1_780_000_000.0
+    events = [
+        {"kind": "impression", "summary": f"印象节点{i:02d}足够长", "detail": f"印象节点{i:02d}足够长", "occurred_at": now - (24 - i) * day}
+        for i in range(25)
+    ]
+    # 较早的一次好感结算：分量高，仍应入选
+    events[0]["kind"] = "affinity"
+    events[0]["occurred_at"] = now - 5 * day
+    lines = injection_lines({}, events=events, now=now)
     body = "\n".join(lines)
-    for i in range(25):
-        assert f"印象节点{i:02d}足够长" in body
+    assert "另有 17 条" in body
+    assert sum(1 for line in lines if line.startswith("- ")) == 8
+    assert "印象节点24足够长" in body and "印象节点00足够长" in body
+    assert "印象节点05足够长" not in body
     assert current_impression_text(list(reversed(events))) == "印象节点24足够长"
 
 
@@ -191,12 +203,12 @@ def test_timeline_injection_is_full_and_labels_age():
     assert body.index("介绍 健身软件开发") < body.index("计划切换使用 城3.1") < body.index("说了 喜欢伊芙")
     assert "事件#11" in body
     assert "来源群=g1" in body
-    assert "时间权重=0.5" in "\n".join(impression_timeline_lines({}, events=[{"id": 1, "summary": "半衰期", "occurred_at": now - 21 * 86400}], now=now))
+    assert "权重=0.5" in "\n".join(impression_timeline_lines({}, events=[{"id": 1, "summary": "半衰期", "occurred_at": now - 21 * 86400}], now=now))
     may_weight = timeline_decay_weight(events[0], now=now, half_life_days=21)
     july_weight = timeline_decay_weight(events[1], now=now, half_life_days=21)
     assert may_weight is not None and july_weight is not None
     assert may_weight < july_weight
-    assert f"时间权重={may_weight:.6g}" in body
+    assert f"权重={may_weight:.6g}" in body
     assert "时间未知" in body
     assert "昨天" in body
     assert "3天前" in body
