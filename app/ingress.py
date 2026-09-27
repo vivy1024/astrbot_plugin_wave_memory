@@ -93,6 +93,11 @@ from ..services.bot_registry import BotRegistry, legacy_profiles_from_config
 from .common import _record_err, _ObservationEvent, _stringify_config_value, _parse_csv_config_value, _parse_bool_config_value, _parse_int_config_value, _positive_float, _parse_bot_config, _build_bot_registry
 
 
+
+def reply_tracker_key(bot_scope_id: str, group_id: str, sender_id: str) -> str:
+    """ABA 连续对话的回复记录键：同一 Bot、同一群、同一个人。"""
+    return f"{bot_scope_id}:{group_id}:{sender_id}"
+
 class IngressMixin:
     async def _handle_message(self, event: AstrMessageEvent):
         """捕获所有消息，异步写入记忆。"""
@@ -372,8 +377,10 @@ class IngressMixin:
                     return "must_reply"
 
         # 4. bot 30s 内回复过此人 → may_reply（ABA 连续对话）
-        reply_key = f"{sender_id}:{group_id}"
-        last_reply_ts = self._reply_tracker.get(reply_key, 0)
+        # 写入与读取必须用同一个键：此前写入用「用户:bot:可见性:会话」、读取用「用户:群号」，这条规则从未触发过。
+        engage_scope = getattr(event, "_wave_memory_runtime_scope", None)
+        engage_bot = engage_scope.bot_id if isinstance(engage_scope, RuntimeScope) else ""
+        last_reply_ts = self._reply_tracker.get(reply_tracker_key(engage_bot, group_id, sender_id), 0)
         aba_window = int(self.hot_config.get("social.aba_window_seconds", 30)) if hasattr(self, 'hot_config') else 30
         if time.time() - last_reply_ts < aba_window:
             return "may_reply"
@@ -592,8 +599,7 @@ class IngressMixin:
 
         # reply tracker 使用完整 Scope，避免群聊/私聊兼容 conversation id 相撞。
         if sender_id and group_id:
-            reply_scope_key = f"{runtime_scope.bot_id}:{runtime_scope.visibility}:{runtime_scope.session.id}"
-            self._reply_tracker[f"{sender_id}:{reply_scope_key}"] = time.time()
+            self._reply_tracker[reply_tracker_key(runtime_scope.bot_id, group_id, sender_id)] = time.time()
             # 清理 60s 前的旧记录（防止内存泄漏）
             now = time.time()
             if len(self._reply_tracker) > 200:

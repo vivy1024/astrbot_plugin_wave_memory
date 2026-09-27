@@ -334,6 +334,7 @@ def _load_on_bot_sent():
         "Image": _FakeImage,
         "_record_err": lambda source, reason: recorded_errors.append((source, reason)),
         "event_message_id": event_message_id,
+        "reply_tracker_key": lambda bot_scope_id, group_id, sender_id: f"{bot_scope_id}:{group_id}:{sender_id}",
     }
     exec(compile(module, str(source_path), "exec"), namespace)
     _BotSentPlugin._process_bot_reply = namespace["_process_bot_reply"]

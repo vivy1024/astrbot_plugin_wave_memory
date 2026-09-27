@@ -154,7 +154,8 @@ describe('配置文案不暴露实现术语', () => {
         if (!meta.type) noType.push(`${section}.${field}`)
       }
     }
-    expect(total).toBe(129)
+    // 129 + 共现传播核新增的 cooccurrence_kernel / cooccurrence_min_support（41e0ece8、2277b1e6）
+    expect(total).toBe(131)
     expect(noType).toEqual([])
   })
 

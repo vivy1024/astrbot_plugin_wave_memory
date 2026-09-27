@@ -25,6 +25,7 @@ from .db.connection import ConnectionManager
 from .db.memory_repo import MemoryRepo
 from .db.migrations.importance_touch_repair import repair_touch_inflated_importance
 from .db.migrations.tag_status_repair import repair_done_without_tags
+from .db.migrations.memory_version_backfill import backfill_null_memory_versions
 from .db.migrations.display_name_repair import repair_dirty_display_names
 from .db.migrations.memories_v2 import ensure_memories_v2_schema
 from .db.migrations.scoped_derived_knowledge import ensure_scoped_derived_knowledge_schema
@@ -73,6 +74,10 @@ class WaveMemoryDB:
             self._memory_repo = MemoryRepo(self._cm)
             # memories 表已经存在；在任何 FTS 建表/填充之前一次性完成纯增量 v2 迁移。
             ensure_memories_v2_schema(self._cm)
+            # v5.1：旧记忆的空 version 补成 1（读取方本就按 1 处理；WebUI 签发对象引用要求整数）
+            versioned = backfill_null_memory_versions(self._cm)
+            if versioned:
+                logger.info(f"[WaveMemory] 已为旧记忆补齐版本号: {versioned} 条（原为空，按 1 处理）")
             # v5.1：扣回旧版「每次召回重要度 +0.01」累加的部分（一次性，旧值备份在单独的表里）
             repaired = repair_touch_inflated_importance(self._cm)
             if repaired:
