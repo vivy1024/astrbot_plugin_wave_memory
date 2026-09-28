@@ -16,6 +16,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from .mood_policy import MoodSettings
+
 PROFILE_SCHEMA_VERSION = 2
 
 # 绑定的宿主类型。astrbot=QQ 等 AstrBot 平台账号；cortico=Cortico 部署；bilibili=直播间。
@@ -192,6 +194,8 @@ class BotProfile:
     session_prefix: str = ""
     bindings: list[BotBinding] = field(default_factory=list)
     persona: PersonaSettings = field(default_factory=PersonaSettings)
+    # 心情画像：基线、敏感度、恢复半衰期、群氛围权重、疲劳、说话倾向（见 domain/mood_policy.py）。
+    mood: MoodSettings = field(default_factory=MoodSettings)
     # 注入通道覆盖：{通道名: {enabled/budget_tokens/...}}，叠加在全局通道配置之上。
     channels: dict[str, dict[str, Any]] = field(default_factory=dict)
     # 工具开关：allow 非空时只开放列出的工具；deny 里的工具总是关闭。
@@ -290,6 +294,7 @@ class BotProfile:
             session_prefix=_text(data.get("session_prefix")),
             bindings=bindings,
             persona=PersonaSettings.from_dict(data.get("persona")),
+            mood=MoodSettings.from_dict(data.get("mood")),
             channels={str(k): dict(v) for k, v in channels.items() if isinstance(v, dict)},
             tools_allow=_text_list(data.get("tools_allow")),
             tools_deny=_text_list(data.get("tools_deny")),

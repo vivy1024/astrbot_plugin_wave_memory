@@ -3,7 +3,7 @@
 ``GET /api/bot-home?bot_id=<db_id>&days=1`` 一次返回：
 
 - ``memories``：窗口内新增记忆数、按群分布、最活跃发言人、最近的高光记忆；
-- ``soul``：当前心情与主要关切（复用 ScopedSoulRepository.get_state）；
+- ``soul``：Bot 本人的当前心情（心情 v2：情绪词 + 最近原因）、最近观测的群氛围与主要关切；
 - ``relationships``：窗口内关系变化最大的人（scoped_soul_relationship_events）；
 - ``learned``：窗口内新增的事实 / 信念 / 黑话候选 / 经历片段；
 - ``replies``：最近几次注入 trace 与命中的通道。
@@ -370,18 +370,58 @@ def _soul_scope(ctx: _Context) -> RuntimeScope | None:
     return None
 
 
-def _soul_section(ctx: _Context, soul_repository: Any) -> dict[str, Any]:
+def _bot_mood(ctx: _Context, mood_service: Any) -> dict[str, Any] | None:
+    """心情 v2：Bot 本人的一份心情（情绪词 + 最近原因）；私聊来源的原因只显示「私下有件事」。"""
+    current = getattr(mood_service, "current", None)
+    if not callable(current):
+        return None
+    reading = current(ctx.bot_id, now=ctx.until)
+    if not isinstance(reading, Mapping) or not reading.get("enabled"):
+        return None
+    causes = []
+    for cause in reading.get("causes") or []:
+        if not isinstance(cause, Mapping):
+            continue
+        item = {key: cause.get(key) for key in ("text", "source", "private", "redacted", "subject_name", "age_seconds", "created_at")}
+        if cause.get("session_id"):
+            item.update(ctx.place(cause.get("session_id"), visibility=cause.get("visibility")))
+        causes.append(item)
+    return {
+        "valence": reading.get("valence"),
+        "arousal": reading.get("arousal"),
+        "fatigue": reading.get("fatigue"),
+        "feeling": _text(reading.get("word")),
+        "category": _text(reading.get("category")),
+        "cause": causes[0]["text"] if causes else "；".join(reading.get("fatigue_reasons") or []),
+        "causes": causes,
+        "fatigue_reasons": list(reading.get("fatigue_reasons") or []),
+        "hint": _text(reading.get("hint")),
+        "recent_replies": reading.get("recent_replies"),
+        "active_events": reading.get("active_events"),
+        "baseline": reading.get("baseline"),
+        "observed_at": reading.get("observed_at"),
+        "policy_version": reading.get("policy_version"),
+    }
+
+
+def _soul_section(ctx: _Context, soul_repository: Any, mood_service: Any = None) -> dict[str, Any]:
     if soul_repository is None or not callable(getattr(soul_repository, "get_state", None)):
         return _unavailable("soul_scoped_repository_unavailable")
+    try:
+        mood = _bot_mood(ctx, mood_service)
+    except Exception as exc:
+        logger.warning("[WaveMemory BotHome] 心情读取失败 bot=%s: %s", ctx.bot_id, exc)
+        mood = None
     scope = _soul_scope(ctx)
     if scope is None:
-        return _ready(mood=None, concerns=[], concerns_total=0, scope=None)
+        return _ready(mood=mood, atmosphere=None, concerns=[], concerns_total=0, scope=None)
     state = soul_repository.get_state(scope, limit=25)
     mood_raw = state.get("mood") if isinstance(state, Mapping) else None
-    mood = None
+    # 旧的按群数值（scoped_soul_mood）只是最近一次观测到的群氛围，单独给出。
+    atmosphere = None
     if isinstance(mood_raw, Mapping) and mood_raw.get("state") == "known":
         components = mood_raw.get("components") if isinstance(mood_raw.get("components"), Mapping) else {}
-        mood = {
+        atmosphere = {
             "valence": components.get("valence", mood_raw.get("value")),
             "arousal": components.get("arousal"),
             "cause": _text(mood_raw.get("cause")),
@@ -410,6 +450,7 @@ def _soul_section(ctx: _Context, soul_repository: Any) -> dict[str, Any]:
     ]
     return _ready(
         mood=mood,
+        atmosphere=atmosphere,
         concerns=concerns,
         concerns_total=int((concerns_raw or {}).get("total") or 0) if isinstance(concerns_raw, Mapping) else 0,
         scope={"session_id": scope.session.id if scope.session else None, "visibility": scope.visibility},
@@ -659,6 +700,7 @@ def build_bot_home_payload(
     platform_ids: Iterable[str] = (),
     soul_repository: Any = None,
     group_name_resolver: Callable[[str, str], str | None] | None = None,
+    mood_service: Any = None,
 ) -> dict[str, Any]:
     """构造 Bot 主页聚合；各区块独立失败。``conn`` 只需要 ``execute``。"""
     started = time.perf_counter()
@@ -687,7 +729,7 @@ def build_bot_home_payload(
 
     # memories 先跑：它顺带收集会话映射，后面的区块用来补群名/会话。
     memories = run("memories", lambda: _memories_section(ctx))
-    soul = run("soul", lambda: _soul_section(ctx, soul_repository))
+    soul = run("soul", lambda: _soul_section(ctx, soul_repository, mood_service))
     relationships = run("relationships", lambda: _relationships_section(ctx))
     learned = run("learned", lambda: _learned_section(ctx))
     replies = run("replies", lambda: _replies_section(ctx))
@@ -777,6 +819,7 @@ async def bot_home():
         platform_ids=platform_ids,
         soul_repository=soul_repository,
         group_name_resolver=_group_name_resolver(),
+        mood_service=getattr(container, "mood_service", None),
     )
     return jsonify(payload)
 

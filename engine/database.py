@@ -48,6 +48,7 @@ from .db.scoped_learning_projection_repo import ScopedFewShotRepository
 from .db.person_timeline_repo import PersonTimelineRepo
 from .db.person_identity_repo import PersonIdentityRepo
 from .db.bot_profile_repo import BotProfileRepo
+from .db.bot_mood_repo import BotMoodRepository
 from .db.config_override_repo import ConfigOverrideRepo
 from .db.scoped_soul_repo import ScopedSoulRepository
 from .db.shared_memory_grant_repo import SharedMemoryGrantRepository
@@ -120,6 +121,8 @@ class WaveMemoryDB:
             self._person_timeline = PersonTimelineRepo(self._cm)
             self._person_identity = PersonIdentityRepo(self._cm)
             self._bot_profiles = BotProfileRepo(self._cm)
+            # 心情 v2：一个 Bot 一份心情（bot_mood_state / bot_mood_events，纯增量建表）
+            self._bot_mood = BotMoodRepository(self._cm)
             self._config_overrides = ConfigOverrideRepo(self._cm)
             self._fewshot_repository = ScopedFewShotRepository(self._cm, ensure_schema=False)
             self._injection_metrics = InjectionMetricStore(self._cm)
@@ -167,6 +170,11 @@ class WaveMemoryDB:
     def bot_profiles(self) -> BotProfileRepo:
         """Bot Profile v2 仓储（v6 起 Bot 定义的唯一来源）。"""
         return self._bot_profiles
+
+    @property
+    def bot_mood(self) -> BotMoodRepository:
+        """Bot 心情仓储：一个 Bot 一份心情 + 带来源的情绪事件流水。"""
+        return self._bot_mood
 
     @property
     def config_overrides(self) -> ConfigOverrideRepo:

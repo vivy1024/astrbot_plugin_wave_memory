@@ -55,6 +55,8 @@ class ServiceContainer:
         self.scope_options_source: Any = None
         self.request_scope_provider: Any = None
         self.soul_repository: Any = None
+        # 心情 v2（services.bot_mood.BotMoodService）：Bot 主页与 /api/health 读当前心情。
+        self.mood_service: Any = None
         self.relationship_calibration: Any = None
         self.fewshot_repository: Any = None
         # v6 Bot 注册表（services.bot_registry.BotRegistry）；Bot 管理页和 Runtime API 用它解析 Bot。

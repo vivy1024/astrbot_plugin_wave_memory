@@ -68,7 +68,6 @@ SELF_COMMIT_ALLOWLIST = WRITE_ENTRY_ALLOWLIST | {
     "inbound_message_handler.py",  # 遗留：入口自提交
     "lifecycle.py",  # 遗留：好感/画像自提交，含已无调用者的 legacy 事件写入
     "meta_thinking.py",  # 遗留：现场思考自提交
-    "mood_trajectory.py",  # 遗留：情绪轨迹写入未走命令链
     "subjective_time.py",  # 遗留：时间锚点写入未走命令链
     "tag_job.py",  # 遗留：标签作业
 }

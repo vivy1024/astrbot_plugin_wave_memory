@@ -3,7 +3,8 @@
 锁定的行为：
 - 窗口内记忆计数/按群分布/最活跃发言人（昵称经 sanitize_display_name 清洗，排除 Bot 自己）；
 - 高光记忆 = Bot 自己说的话、source=core 或 importance>1，排除隔离与噪声；
-- 心情/关切复用 ScopedSoulRepository.get_state，已了结关切不算「主要关切」；
+- 心情来自 BotMoodService（一个 Bot 一份：情绪词 + 最近原因，私聊来源脱敏）；群氛围/关切复用
+  ScopedSoulRepository.get_state，已了结关切不算「主要关切」；
 - 关系变化按窗口内事件聚合，噪声事件不计；
 - trace 按 ``bot_profile_id = ? OR bot_id = ?`` 匹配（AstrBot 写入的 bot_id 是 QQ 号）；
 - 缺表只让对应区块 unavailable，不拖垮整页；参数错误 400、未知 Bot 404、库不可用 503。
@@ -188,11 +189,36 @@ def test_memories_section_counts_groups_speakers_and_highlights(seeded):
 def test_soul_section_reuses_scoped_state(seeded):
     soul = _build(seeded)["soul"]
     assert soul["status"] == "ready"
-    mood = soul["mood"]
-    assert (mood["valence"], mood["arousal"], mood["cause"]) == (0.4, 0.7, "群里很热闹")
-    assert mood["session_id"] == SESSION_A and mood["group_name"] == "3-5层群"
+    # 旧的按群数值是最近观测的群氛围，单独给出；没有心情服务时 Bot 心情为空
+    assert soul["mood"] is None
+    atmosphere = soul["atmosphere"]
+    assert (atmosphere["valence"], atmosphere["arousal"], atmosphere["cause"]) == (0.4, 0.7, "群里很热闹")
+    assert atmosphere["session_id"] == SESSION_A and atmosphere["group_name"] == "3-5层群"
     assert [c["topic"] for c in soul["concerns"]] == ["期末考试周"]  # 已解决的不算
     assert soul["concerns"][0]["urgency"] == 0.8
+
+
+def test_soul_section_shows_bot_mood_word_and_causes(seeded):
+    from services.bot_mood import BotMoodService
+
+    mood_service = BotMoodService(seeded, clock=lambda: NOW, hour_of=lambda _ts: 12)
+    # 首次同步导入最近 12 小时的关系事件（一起玩梗、聊到很晚……），48 小时前的不导入
+    mood_service.sync_relationship_events("yushu", now=NOW, force=True)
+    mood_service.observe_message(
+        RuntimeScope("yushu", "private", SessionRef("羽书:private:u7", "羽书", "private", "u7"),
+                     subject_principal_id="羽书:user:u7"),
+        content="你真好，谢谢你", sender_name="秘密的人", directed=True, now=NOW - 60,
+    )
+    soul = _build(seeded, mood_service=mood_service)["soul"]
+    mood = soul["mood"]
+    assert mood["feeling"] and mood["category"] == "正面"
+    assert mood["valence"] > 0.1
+    texts = [cause["text"] for cause in mood["causes"]]
+    assert any("私下有件事" in text for text in texts), texts
+    assert all("秘密的人" not in text for text in texts), "私聊来源在管理台也脱敏"
+    assert any(cause["source"] == "relationship_event" for cause in mood["causes"])
+    assert mood["policy_version"] == "bot-mood/v2"
+    assert soul["atmosphere"]["cause"] == "群里很热闹"
 
 
 def test_soul_section_without_repository_is_unavailable(seeded):

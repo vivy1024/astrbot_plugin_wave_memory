@@ -80,6 +80,18 @@ class _FakeLifecycle:
         return True
 
 
+class _FakeMood:
+    def __init__(self):
+        self.messages = []
+        self.replies = []
+
+    def observe_message(self, scope, **kwargs):
+        self.messages.append((scope, dict(kwargs)))
+
+    def note_bot_reply(self, bot_id):
+        self.replies.append(bot_id)
+
+
 class _FakeConcernTracker:
     def __init__(self):
         self.added = []
@@ -497,6 +509,23 @@ class ScopeMessageIngressTest(unittest.TestCase):
         self.assertEqual(plugin.subjective_time.anchors, [])
         self.assertEqual(len(plugin.lifecycle.calls), 1)
 
+    def test_mood_observes_private_as_directed_and_group_only_when_addressed(self):
+        on_message, _, _ = _load_on_message()
+        plugin = _IngressPlugin(self._resolver())
+        plugin.mood_service = _FakeMood()
+        asyncio.run(on_message(plugin, _FakePrivateEvent(message="你真可爱")))
+        asyncio.run(on_message(plugin, _FakeEvent(message="群里随便聊聊")))
+        addressed = _FakeEvent(message="@她 你真厉害")
+        addressed.is_at_or_wake_command = True
+        addressed.message_id = "message-addressed"
+        asyncio.run(on_message(plugin, addressed))
+
+        calls = plugin.mood_service.messages
+        self.assertEqual([(scope.visibility, kw["directed"]) for scope, kw in calls],
+                         [("private", True), ("group", False), ("group", True)])
+        self.assertEqual(calls[0][1]["content"], "你真可爱")
+        self.assertEqual(calls[0][0].bot_id, "bot-profile")
+
     def test_lifecycle_receives_event_resolved_scope_without_first_bot_fallback(self):
         on_message, _, _ = _load_on_message()
         resolver = self._resolver()
@@ -621,6 +650,13 @@ class ScopeMessageIngressTest(unittest.TestCase):
         self.assertEqual(payload["sender_id"], "bot")
         self.assertEqual(reflection.replies, [])
         self.assertEqual(recorded_errors, [])
+
+    def test_bot_reply_feeds_mood_fatigue_counter(self):
+        on_bot_sent, _, _ = _load_on_bot_sent()
+        plugin = _BotSentPlugin(self._resolver())
+        plugin.mood_service = _FakeMood()
+        asyncio.run(on_bot_sent(plugin, _FakePrivateBotSentEvent(sender_id="user-event", self_id="bot-event")))
+        self.assertEqual(plugin.mood_service.replies, ["bot-profile"])
 
     def test_bot_sent_unknown_bot_fails_closed_without_pseudo_private_group(self):
         on_bot_sent, _, recorded_errors = _load_on_bot_sent()

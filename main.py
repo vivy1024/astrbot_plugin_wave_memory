@@ -70,7 +70,6 @@ from .services.self_reflect import SelfReflectService
 from .services.llm_fallback import LLMFallbackClient, build_provider_chain
 from .services.eviction import EvictionService
 from .services.concern_tracker import ConcernTracker
-from .services.mood_trajectory import MoodTrajectory
 from .services.subjective_time import SubjectiveTime
 from .services.desire_engine import DesireEngine
 from .services.belief_engine import BeliefEngine

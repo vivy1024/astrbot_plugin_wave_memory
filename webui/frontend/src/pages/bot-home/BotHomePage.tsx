@@ -331,7 +331,10 @@ function MoodCard({ data, botId, onRetry }: { data: BotHomePayload; botId: strin
   const soul = data.soul
   const mood = soul.mood ?? null
   const concerns = soul.concerns ?? []
-  const soulPlace = mood ?? (soul.scope ? { session_id: soul.scope.session_id, visibility: soul.scope.visibility } : null)
+  const causes = mood?.causes ?? []
+  const soulPlace: LinkPlace = mood?.session_id
+    ? { session_id: mood.session_id, visibility: mood.visibility ?? 'group' }
+    : soul.scope ? { session_id: soul.scope.session_id, visibility: soul.scope.visibility } : null
   return (
     <Card>
       <CardHeader>
@@ -343,8 +346,21 @@ function MoodCard({ data, botId, onRetry }: { data: BotHomePayload; botId: strin
           <div className="flex flex-col gap-4">
             {mood ? (
               <div className="flex flex-col gap-2">
-                <p className="text-lg font-semibold text-foreground" data-testid="bot-home-mood">{describeMood(mood.valence, mood.arousal)}</p>
-                {mood.cause ? <p className="text-sm text-muted-foreground">{mood.cause}</p> : null}
+                <p className="text-lg font-semibold text-foreground" data-testid="bot-home-mood">{mood.feeling || describeMood(mood.valence, mood.arousal)}</p>
+                {causes.length ? (
+                  <ul className="flex flex-col gap-1 text-sm text-muted-foreground" data-testid="bot-home-mood-causes">
+                    {causes.map((cause, index) => (
+                      <li key={`${cause.created_at ?? index}-${index}`} className="flex items-start gap-2">
+                        <span>{cause.text}</span>
+                        {cause.redacted ? <Badge variant="outline" className="shrink-0">私聊·已脱敏</Badge> : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : mood.cause ? <p className="text-sm text-muted-foreground">{mood.cause}</p> : null}
+                {causes.length && mood.fatigue_reasons?.length ? (
+                  <p className="text-sm text-muted-foreground">{mood.fatigue_reasons.join('；')}</p>
+                ) : null}
+                {mood.hint ? <p className="text-xs text-muted-foreground">说话倾向：{mood.hint}</p> : null}
                 <div className="grid grid-cols-2 gap-3 text-xs text-muted-foreground">
                   <div className="flex flex-col gap-1">
                     <span>愉悦度 {formatSignedDisplayNumber(mood.valence)}</span>
@@ -355,7 +371,16 @@ function MoodCard({ data, botId, onRetry }: { data: BotHomePayload; botId: strin
                     <MeterBar value={mood.arousal ?? 0} max={1} />
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground">{formatTime(mood.observed_at)} · 在 {mood.label}</p>
+                {typeof mood.fatigue === 'number' && mood.fatigue > 0 ? (
+                  <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+                    <span>疲劳 {formatDisplayNumber(mood.fatigue)}</span>
+                    <MeterBar value={mood.fatigue} max={1} />
+                  </div>
+                ) : null}
+                <p className="text-xs text-muted-foreground">
+                  {formatTime(mood.observed_at)}{mood.label ? ` · 在 ${mood.label}` : ''}
+                  {soul.atmosphere?.cause ? ` · 群氛围：${soul.atmosphere.cause}（${soul.atmosphere.label}）` : ''}
+                </p>
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">还没有心情记录。</p>

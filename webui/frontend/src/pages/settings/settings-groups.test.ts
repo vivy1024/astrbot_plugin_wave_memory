@@ -156,7 +156,7 @@ describe('配置文案不暴露实现术语', () => {
     }
     // 129 + 共现传播核新增的 cooccurrence_kernel / cooccurrence_min_support（41e0ece8、2277b1e6）
     // + Learning_Settings 15 项（6255ea1b 事后记账 / 日记 / 自动审核 / 主动回复）
-    expect(total).toBe(146)
+    expect(total).toBe(148)
     expect(noType).toEqual([])
   })
 

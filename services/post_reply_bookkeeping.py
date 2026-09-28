@@ -69,7 +69,9 @@ PROMPT = """你是{bot_name}。下面是你刚在群里参与的一段对话（�
   ],
   "beliefs": [  // 只有当上面列出的已批准事实里有两条以上共同支撑一个判断时才写
     {{"belief_type": "person_judgment|world_view|preference", "content": "判断", "source_fact_ids": [事实id, ...]}}
-  ]
+  ],
+  "mood": {{"direction": "up|down|none", "strength": 0到1, "reason": "一句话：这段对话里什么事让你心情变好或变差"}}
+  // 这段对话对你自己心情的影响；没什么影响就填 none
 }}"""
 
 
@@ -103,6 +105,7 @@ class PostReplyBookkeeper:
         daily_limit: int = 150,
         window_messages: int = 40,
         bot_name_for: Callable[[str], str] | None = None,
+        mood_recorder: Callable[..., Any] | None = None,
     ):
         self.db = db
         self.tool_registry = tool_registry
@@ -113,6 +116,8 @@ class PostReplyBookkeeper:
         self.daily_limit = max(1, int(daily_limit))
         self.window_messages = max(6, int(window_messages))
         self.bot_name_for = bot_name_for or (lambda bot_id: bot_id)
+        # 心情 v2：同一次 LLM 调用顺带输出的心情影响交给 BotMoodService（不新增调用；解析失败安全忽略）。
+        self.mood_recorder = mood_recorder
         self._timers: dict[str, asyncio.Task] = {}
         self._last_run: dict[str, float] = {}
         self._last_memory_id: dict[str, int] = {}
@@ -261,6 +266,12 @@ class PostReplyBookkeeper:
         payload = _json_object(getattr(response, "completion_text", "") or "")
         self._last_memory_id[scope.session.id] = int(rows[-1][0])
         self._count("runs")
+        if self.mood_recorder is not None:
+            try:
+                if self.mood_recorder(scope, payload.get("mood"), ref=str(rows[-1][0])) is not None:
+                    self._count("mood")
+            except Exception as exc:
+                logger.debug(f"[WaveMemory] 事后记账心情记录失败: {exc!r}")
         done = 0
         for item in _items(payload, "impressions", 8):
             if item.get("user") and item.get("impression"):

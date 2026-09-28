@@ -69,7 +69,6 @@ from ..services.self_reflect import SelfReflectService
 from ..services.llm_fallback import LLMFallbackClient, build_provider_chain
 from ..services.eviction import EvictionService
 from ..services.concern_tracker import ConcernTracker
-from ..services.mood_trajectory import MoodTrajectory
 from ..services.subjective_time import SubjectiveTime
 from ..services.desire_engine import DesireEngine
 from ..services.belief_engine import BeliefEngine
@@ -456,17 +455,26 @@ class StartupMixin:
             logger.warning(f"[WaveMemory] ConcernTracker init failed: {e}")
             _record_err("ConcernTracker", e)
             self.concern_tracker = None
+        # 心情 v2：一个 Bot 一份心情（事件驱动 + 惯性回落），画像来自 Bot Profile 的 mood 段。
+        # 取代从未接线的 MoodTrajectory；旧的按群 scoped_soul_mood 只作为群氛围输入。
         try:
-            self.mood_trajectory = MoodTrajectory(
-                db=self.db,
-                bot_id=soul_bot_id,
-                repository=soul_repository,
-                coordinator=soul_coordinator,
-            ) if runtime_capability_enabled(self.runtime_mode, "mood_trajectory", True) and soul_bot_id else None
+            from ..services.bot_mood import BotMoodService
+
+            self.mood_service = BotMoodService(
+                self.db,
+                profile_for=lambda db_id: self.bot_registry.get(db_id),
+                default_half_life_minutes=float(self.mood_duration_hours or 2.0) * 60.0,
+            ) if self.enable_mood and getattr(self.db, "bot_mood", None) is not None else None
         except Exception as e:
-            logger.warning(f"[WaveMemory] MoodTrajectory init failed: {e}")
-            _record_err("MoodTrajectory", e)
-            self.mood_trajectory = None
+            logger.warning(f"[WaveMemory] BotMoodService init failed: {e}")
+            _record_err("BotMoodService", e)
+            self.mood_service = None
+        if getattr(self, "lifecycle", None) is not None:
+            self.lifecycle.mood_service = self.mood_service
+        if self.mood_service is not None:
+            self._spawn(self._mood_tick_loop(), name="wave-memory:mood-tick", owner="mood")
+        from ..webui.container import get_container as _get_container
+        _get_container().mood_service = self.mood_service
         try:
             self.subjective_time = SubjectiveTime(
                 db=self.db,
@@ -487,7 +495,7 @@ class StartupMixin:
             self.desire_engine = None
         logger.info(
             f"[WaveMemory] 灵魂子系统就绪: belief={bool(self.belief_engine)} "
-            f"concern={bool(self.concern_tracker)} mood_traj={bool(self.mood_trajectory)} "
+            f"concern={bool(self.concern_tracker)} mood={bool(self.mood_service)} "
             f"time_anchor={bool(self.subjective_time)} desire={bool(self.desire_engine)}"
         )
 
@@ -531,7 +539,7 @@ class StartupMixin:
         _reg("记忆淘汰", "ok" if getattr(self, 'eviction_service', None) else "off", "" if getattr(self, 'eviction_service', None) else "Eviction 未启用", dependency="自动启用")
         _reg("信念引擎", "ok" if self.belief_engine else "off", "" if self.belief_engine else soul_off_reason, dependency="LLM Provider + Bot Profile")
         _reg("关切追踪", "ok" if self.concern_tracker else "off", "" if self.concern_tracker else f"concern_tracker {soul_state_off_reason}", dependency="Bot Profile")
-        _reg("情绪轨迹", "ok" if self.mood_trajectory else "off", "" if self.mood_trajectory else f"mood_trajectory {soul_state_off_reason}", dependency="Bot Profile")
+        _reg("Bot 心情", "ok" if self.mood_service else "off", "" if self.mood_service else "Lifecycle_Settings.enable_mood 关闭或初始化失败", dependency="enable_mood + Bot Profile")
         _reg("黑话系统", "ok" if getattr(self, 'jargon_service', None) else "off", "" if getattr(self, 'jargon_service', None) else "Jargon 未启用", dependency="LLM Provider + 聊天记录积累")
         _reg("风格学习", "ok" if getattr(self, 'few_shot_service', None) else "off", "" if getattr(self, 'few_shot_service', None) else "FewShot 未启用", dependency="LLM Provider + bot 回复积累")
 
@@ -836,6 +844,7 @@ class StartupMixin:
                     session_cooldown_seconds=_num("bookkeeping_session_cooldown_seconds", 600.0),
                     daily_limit=int(_num("bookkeeping_daily_limit", 150)),
                     bot_name_for=self._bot_display_name,
+                    mood_recorder=getattr(getattr(self, "mood_service", None), "record_bookkeeping", None),
                 )
             if _flag("daily_diary_enabled", True):
                 self.daily_diary = DailyDiaryService(
@@ -863,6 +872,7 @@ class StartupMixin:
                 "proactive_reply": _of(self.concern_followup),
                 "bookkeeping": _of(self.post_reply_bookkeeper),
                 "daily_diary": _of(self.daily_diary),
+                "mood": _of(getattr(self, "mood_service", None)),
             }
 
         get_container().learning_stats_getter = _learning_stats
@@ -872,6 +882,21 @@ class StartupMixin:
             bool(self.concern_followup and self.concern_followup.enabled),
             self.post_reply_bookkeeper is not None, self.daily_diary is not None,
         )
+
+    async def _mood_tick_loop(self) -> None:
+        """心情维护：每 10 分钟增量导入关系事件、清理过期情绪事件、刷新快照（在线程里跑，不占事件循环）。"""
+        while True:
+            try:
+                await asyncio.sleep(600)
+                service = getattr(self, "mood_service", None)
+                if service is None:
+                    return
+                bot_ids = [p.db_id for p in self.bot_registry.all() if p.db_id]
+                await asyncio.to_thread(service.tick, bot_ids)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.debug(f"[WaveMemory] mood tick failed: {e}")
 
     async def _concern_tidy_loop(self) -> None:
         await asyncio.sleep(600)

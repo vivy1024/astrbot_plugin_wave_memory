@@ -50,7 +50,35 @@ export interface BotHomeMemories extends BotHomeSectionBase {
   highlights?: BotHomeHighlight[]
 }
 
-export interface BotHomeMood extends BotHomePlace {
+export interface BotHomeMoodCause extends Partial<BotHomePlace> {
+  text: string
+  source: string
+  /** 来源是私聊 */
+  private: boolean
+  /** 私聊来源已脱敏（不带人名与内容） */
+  redacted: boolean
+  subject_name?: string
+  age_seconds?: number
+  created_at?: number
+}
+
+/** 心情 v2：Bot 本人的一份心情（旧后端返回按群的数值，只有 valence/arousal/cause） */
+export interface BotHomeMood extends Partial<BotHomePlace> {
+  valence: number | null
+  arousal: number | null
+  cause: string
+  observed_at: number | null
+  policy_version: string | null
+  feeling?: string
+  category?: string
+  fatigue?: number | null
+  causes?: BotHomeMoodCause[]
+  fatigue_reasons?: string[]
+  hint?: string
+}
+
+/** 最近一次观测到的群氛围（旧的按群 scoped_soul_mood） */
+export interface BotHomeAtmosphere extends BotHomePlace {
   valence: number | null
   arousal: number | null
   cause: string
@@ -70,6 +98,7 @@ export interface BotHomeConcern extends BotHomePlace {
 
 export interface BotHomeSoul extends BotHomeSectionBase {
   mood?: BotHomeMood | null
+  atmosphere?: BotHomeAtmosphere | null
   concerns?: BotHomeConcern[]
   concerns_total?: number
   scope?: { session_id: string | null; visibility: string } | null

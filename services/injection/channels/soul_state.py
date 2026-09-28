@@ -1,4 +1,10 @@
-"""正式 Scoped Mood/Concern/Timeline 注入通道。"""
+"""Bot 自身状态注入通道：心情（自然语言）+ 近期时间线。
+
+心情 v2 来自 ``BotMoodService``：一个 Bot 一份心情，注入情绪词与 1–2 条最近原因，
+不输出 valence/arousal 裸数字；私聊来源的原因在别处只说「私下有件事」。旧的按群
+``scoped_soul_mood`` 只是群氛围，不再注入。群日记在人格通道的自我经历里已经出现，
+这里的时间线不再重复。
+"""
 
 from __future__ import annotations
 
@@ -39,20 +45,28 @@ def _as_int(value: Any, default: int) -> int:
         return default
 
 
+def _is_diary(item: Mapping[str, Any], summary: str) -> bool:
+    """群日记（``【日记】…``）已在人格通道的自我经历里注入，这里不再重复。"""
+    return summary.startswith("【日记】") or (
+        str(item.get("event_type") or "") == "episode" and "日记" in summary[:8]
+    )
+
+
 def _channel_cfg(ctx: Any) -> Mapping[str, Any]:
     config = _mapping(getattr(ctx, "config", {}))
     return _mapping(_mapping(config.get("channels", {})).get("soul_state", {}))
 
 
 class SoulStateChannel:
-    """Inject only formal current Scope Soul state; no legacy mood/concern fallback."""
+    """注入 Bot 此刻的心情与近期时间线；没有心情服务时只注入时间线。"""
 
     name = "soul_state"
     # build 里没有 await、全是同步读库：编排器放到工作线程跑，不占事件循环
     offload_to_thread = True
 
-    def __init__(self, *, repository: Any = None):
+    def __init__(self, *, repository: Any = None, mood_service: Any = None):
         self.repository = repository
+        self.mood_service = mood_service
 
     async def build(self, ctx: Any) -> InjectionResult:
         started = time.perf_counter()
@@ -74,24 +88,29 @@ class SoulStateChannel:
             return InjectionResult.empty(self.name, reason="soul_repository_unavailable")
         try:
             state = _mapping(self.repository.get_state(scope, limit=25, offset=0))
-            mood = _mapping(state.get("mood"))
             timeline = _mapping(state.get("timeline")).get("items") or []
             lines: list[str] = []
-            if mood.get("state") == "known":
-                components = _mapping(mood.get("components"))
-                lines.append(
-                    f"近期情绪：valence={round(float(components.get('valence', mood.get('value', 0.0))), 2)}，"
-                    f"arousal={round(float(components.get('arousal', 0.0)), 2)}"
-                    + (f"（原因：{str(mood.get('cause'))[:80]}）" if mood.get("cause") else "")
-                )
+            mood_service = self.mood_service
+            if mood_service is not None:
+                try:
+                    mood_lines = mood_service.render_lines(scope.bot_id, scope)
+                except Exception:
+                    # 心情读取失败不拖垮整个通道：时间线照常注入。
+                    mood_lines = []
+                # 原因里可能引用群友原话：逐行过身份安全检查，只丢有问题的那一行。
+                lines.extend(line for line in mood_lines if not is_identity_contamination(line))
             # 关切不再常驻注入：本轮是否惦记由 MetaThinking × 印象时间线线索决定。
             inject_cfg = _mapping(getattr(ctx, "config", {})).get("Inject_Settings", {}) or {}
             soul_timeline_max = _as_int(inject_cfg.get("soul_timeline_max_items"), 3)
             recent_timeline = []
-            for item in timeline[:max(1, soul_timeline_max)]:
+            for item in timeline:
+                if len(recent_timeline) >= max(1, soul_timeline_max):
+                    break
                 if not isinstance(item, Mapping):
                     continue
                 summary = str(item.get("event_summary") or "").strip()[:100]
+                if _is_diary(item, summary):
+                    continue
                 if summary and not is_identity_contamination(summary):
                     recent_timeline.append(summary)
             if recent_timeline:

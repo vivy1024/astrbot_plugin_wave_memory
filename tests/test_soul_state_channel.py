@@ -12,6 +12,16 @@ class FakeSoulRepository:
         return self.state
 
 
+class FakeMoodService:
+    def __init__(self, lines):
+        self.lines = lines
+        self.calls = []
+
+    def render_lines(self, bot_id, scope):
+        self.calls.append((bot_id, scope))
+        return list(self.lines)
+
+
 class SoulStateChannelTest(unittest.TestCase):
     def _ctx(self, *, mode="full", config=None, scope=None):
         from domain.scope import RuntimeScope, SessionRef
@@ -47,12 +57,44 @@ class SoulStateChannelTest(unittest.TestCase):
             "timeline": {"items": [{"event_summary": "昨天一起对过题"}]},
             "revision": 3,
         })
+        mood = FakeMoodService(["心情：愉快", "缘由：20 分钟前，小明帮你查了资料"])
+        result = asyncio.run(SoulStateChannel(repository=repo, mood_service=mood).build(self._ctx()))
+
+        self.assertEqual(result.status, "hit")
+        self.assertIn("心情：愉快", result.text)
+        self.assertIn("小明帮你查了资料", result.text)
+        self.assertIn("昨天一起对过题", result.text)
+        # 旧的按群数值只是群氛围：不再注入，也不输出裸数字
+        self.assertNotIn("valence", result.text)
+        self.assertNotIn("群里有人帮忙", result.text)
+        self.assertNotIn("当前关切", result.text)
+        self.assertEqual(len(repo.calls), 1)
+        self.assertEqual(mood.calls[0][0], "yushu")
+
+    def test_group_diary_is_not_repeated_in_timeline(self):
+        from services.injection.channels.soul_state import SoulStateChannel
+
+        repo = FakeSoulRepository({"timeline": {"items": [
+            {"event_summary": "【日记】热闹的一天：大家都在", "event_type": "episode"},
+            {"event_summary": "答应了帮他看代码", "event_type": "social_anchor.bot_promised_user"},
+        ]}})
         result = asyncio.run(SoulStateChannel(repository=repo).build(self._ctx()))
 
         self.assertEqual(result.status, "hit")
-        self.assertIn("近期情绪", result.text)
-        self.assertNotIn("当前关切", result.text)
-        self.assertEqual(len(repo.calls), 1)
+        self.assertNotIn("日记", result.text)
+        self.assertIn("答应了帮他看代码", result.text)
+
+    def test_mood_failure_or_contamination_does_not_break_channel(self):
+        from services.injection.channels.soul_state import SoulStateChannel
+
+        class Broken:
+            def render_lines(self, *_a, **_k):
+                raise RuntimeError("boom")
+
+        repo = FakeSoulRepository({"timeline": {"items": [{"event_summary": "一起通关"}]}})
+        result = asyncio.run(SoulStateChannel(repository=repo, mood_service=Broken()).build(self._ctx()))
+        self.assertEqual(result.status, "hit")
+        self.assertIn("一起通关", result.text)
 
     def test_memory_only_disables_without_querying_repository(self):
         from services.injection.channels.soul_state import SoulStateChannel

@@ -69,6 +69,24 @@ describe('BotsPage', () => {
   })
 })
 
+describe('BotsPage 心情画像', () => {
+  it('心情标签页编辑敏感度与说话倾向，保存时带上 mood 段', async () => {
+    const user = userEvent.setup()
+    api.saveBot.mockResolvedValue({ ok: true, item: { ...yushu, version: 4 } })
+    render(<MemoryRouter initialEntries={['/bots?bot=yushu&tab=mood']}><BotsPage /></MemoryRouter>)
+    const sensitivity = await screen.findByLabelText('敏感度（0~3）')
+    await user.clear(sensitivity)
+    await user.type(sensitivity, '1.5')
+    await user.type(screen.getByLabelText('各心情下的说话倾向（每行「情绪词=提示」）'), '烦躁=句子变短')
+    await user.click(screen.getByRole('button', { name: /保存/ }))
+    await waitFor(() => expect(api.saveBot).toHaveBeenCalled())
+    const mood = api.saveBot.mock.calls[0][1].mood
+    expect(mood.sensitivity).toBe(1.5)
+    expect(mood.speaking_hints).toEqual({ 烦躁: '句子变短' })
+    expect(mood.half_life_minutes).toBe(0)
+  })
+})
+
 describe('BotsPage 深链接', () => {
   it('?bot= 直接打开对应 Bot', async () => {
     render(<MemoryRouter initialEntries={['/bots?bot=yushu&tab=behavior']}><BotsPage /></MemoryRouter>)

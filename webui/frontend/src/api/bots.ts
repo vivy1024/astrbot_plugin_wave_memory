@@ -23,6 +23,49 @@ export interface PersonaDto {
   lore_corpus?: string
 }
 
+/** 心情画像（Bot Profile 的 mood 段；见 domain/mood_policy.py） */
+export interface MoodDto {
+  enabled: boolean
+  baseline_valence: number
+  baseline_arousal: number
+  sensitivity: number
+  /** 0 = 用全局 Lifecycle_Settings.mood_duration_hours */
+  half_life_minutes: number
+  strong_event_boost: number
+  atmosphere_weight: number
+  fatigue_enabled: boolean
+  fatigue_window_minutes: number
+  fatigue_reply_threshold: number
+  night_start_hour: number
+  night_end_hour: number
+  fatigue_strength: number
+  /** 情绪词或类别（正面/负面/平静/疲惫）→ 说话倾向 */
+  speaking_hints: Record<string, string>
+  positive_words: string[]
+  negative_words: string[]
+}
+
+export function emptyMood(): MoodDto {
+  return {
+    enabled: true,
+    baseline_valence: 0.1,
+    baseline_arousal: 0.4,
+    sensitivity: 1,
+    half_life_minutes: 0,
+    strong_event_boost: 1,
+    atmosphere_weight: 0.15,
+    fatigue_enabled: true,
+    fatigue_window_minutes: 120,
+    fatigue_reply_threshold: 40,
+    night_start_hour: 1,
+    night_end_hour: 6,
+    fatigue_strength: 0.5,
+    speaking_hints: {},
+    positive_words: [],
+    negative_words: [],
+  }
+}
+
 export interface BotProfileDto {
   db_id: string
   name: string
@@ -39,6 +82,8 @@ export interface BotProfileDto {
   session_prefix: string
   bindings: BotBindingDto[]
   persona: PersonaDto
+  /** 旧后端没有这一段；编辑器按 emptyMood() 补齐 */
+  mood?: MoodDto
   channels: Record<string, Record<string, unknown>>
   tools_allow: string[]
   tools_deny: string[]
@@ -138,6 +183,7 @@ export function emptyBot(dbId = ''): BotProfileDto {
       reflection_prefixes: [],
       lore_corpus: '',
     },
+    mood: emptyMood(),
     channels: {},
     tools_allow: [],
     tools_deny: [],
