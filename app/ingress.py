@@ -70,7 +70,6 @@ from ..services.self_reflect import SelfReflectService
 from ..services.llm_fallback import LLMFallbackClient, build_provider_chain
 from ..services.eviction import EvictionService
 from ..services.concern_tracker import ConcernTracker
-from ..services.mood_trajectory import MoodTrajectory
 from ..services.subjective_time import SubjectiveTime
 from ..services.desire_engine import DesireEngine
 from ..services.belief_engine import BeliefEngine
@@ -678,6 +677,14 @@ class IngressMixin:
                 scope=runtime_scope,
                 message_id=message_id,
             )
+
+        # 心情 v2 的疲劳输入：一段时间内她说了多少话。
+        mood_service = getattr(self, "mood_service", None)
+        if mood_service is not None:
+            try:
+                mood_service.note_bot_reply(runtime_scope.bot_id)
+            except Exception as exc:
+                logger.debug(f"[WaveMemory] mood reply count failed: {exc!r}")
 
         # 事后记账：这段对话停下来之后单独回看一遍（见 services/post_reply_bookkeeping.py）
         bookkeeper = getattr(self, "post_reply_bookkeeper", None)

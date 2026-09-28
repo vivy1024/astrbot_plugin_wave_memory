@@ -188,7 +188,7 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 ├─ book_lore（世界观知识）
 ├─ affinity（全群累加的好感、印象时间线、人情账、已审事实）
 ├─ holyman_persona（holyman-skills 风格人格包，默认关闭）
-└─ soul_state（当前群情绪 valence/arousal、关切、时间线）
+└─ soul_state（Bot 本人此刻的心情：情绪词 + 1–2 条最近原因 + 可选说话倾向；近期时间线，不含群日记）
 ```
 
 通道配置在 9876 WebUI「通道配置」热更新：`enabled`、`priority`、`top_k/max_items`、`token_budget`、`timeout_ms`、`min_score`。
@@ -219,7 +219,7 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 | PersonaComposer | 编排自我人格、精选自我经历与审核信念；不塞虚假的群友刻板画像 |
 | BeliefEngine | 维护已审核稳定判断；只注入当前群 active 信念 |
 | 现场提审工具 | 印象 / 人情 / 黑话 / 事实 / 信念由主对话 LLM 按需调用，进入 pending 审核 |
-| MoodTrajectory | 群聊密度与情绪 tag 影响 valence/arousal；由 `soul_state` 通道注入近期心境 |
+| BotMoodService | 心情 v2：一个 Bot 一份心情，跨群/私聊共享。冲她来的话（按情绪词 + 关系加权）、关系事件、事后记账顺带给出的心情影响、群氛围（小权重）作为带来源的情绪事件，按半衰期向画像基线回落，可选疲劳；`soul_state` 通道注入情绪词与原因，不输出裸数字，私聊来源的原因在别处只说「私下有件事」。画像见下方「Bot 心情画像」 |
 | SubjectiveTime | 代码仅初始化保留，经历时间线注入直接来源于 Bot 亲笔日记（`scoped_soul_timeline`） |
 | ConcernTracker | 关切只读展示；v5 不再从入站消息截词入库 |
 | DesireEngine | 代码仅初始化保留，**当前回复路径不调用** `trigger` / `resolve` |
@@ -539,9 +539,9 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| enable_mood | true | 启用生理心境系统 (Bot Mood) |
-| mood_duration_hours | 2.0 | 情绪状态自然半衰退天数 |
-| mood_msg_threshold | 30 | 情绪爆发活跃消息门限 |
+| enable_mood | true | 启用 Bot 心情（心情 v2，BotMoodService）；关闭后不记情绪事件、不注入心情 |
+| mood_duration_hours | 2.0 | 心情恢复的默认半衰期（小时）；Bot 画像里 `mood.half_life_minutes` 为 0 时使用 |
+| mood_msg_threshold | 30 | 群氛围统计的活跃消息门限（群氛围只作心情的小权重输入） |
 | positive_emotion_threshold | 0.6 | CHEERFUL 喜悦触发临界值 |
 | negative_emotion_threshold | 0.4 | CONCERNED 悲伤触发临界值 |
 | relationship_single_delta_cap | 5.0 | 单次互动关系变化极大值 |
@@ -553,6 +553,27 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | dream_recent_k | 5 | 近期记忆联想召回深度 |
 | dream_mid_seeds | 2 | 中期经历种子数 |
 | dream_mid_k | 3 | 中期经历联想召回深度 |
+
+### Bot 心情画像（9876「Bot 管理」→ 心情，Bot Profile 的 `mood` 段）
+
+每个 Bot 单独配置，保存即热生效；旧 Profile 没有这一段时全部取下表默认值（中性）。
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `mood.enabled` | true | 这个 Bot 是否有心情 |
+| `mood.baseline_valence` | 0.1 | 没发生任何事时回落到的愉悦度基线（-1~1） |
+| `mood.baseline_arousal` | 0.4 | 激活度基线（0~1） |
+| `mood.sensitivity` | 1.0 | 敏感度：所有事件冲击的倍数（0~3，0 = 不为外事所动） |
+| `mood.half_life_minutes` | 0 | 恢复半衰期（分钟）；0 = 用 `Lifecycle_Settings.mood_duration_hours` |
+| `mood.strong_event_boost` | 1.0 | 强事件影响更久：半衰期 × (1 + 该值 × 事件强度) |
+| `mood.atmosphere_weight` | 0.15 | 群氛围传染权重（0~1），只作小权重输入 |
+| `mood.fatigue_enabled` | true | 疲劳：回复太多或深夜时激活度下降、心情略降 |
+| `mood.fatigue_window_minutes` | 120 | 统计回复条数的时间窗 |
+| `mood.fatigue_reply_threshold` | 40 | 窗口内回复超过该数开始累，两倍时最累 |
+| `mood.night_start_hour` / `mood.night_end_hour` | 1 / 6 | 深夜时段 [开始, 结束)，本机时区；相等表示不按深夜算疲劳 |
+| `mood.fatigue_strength` | 0.5 | 疲劳强度（0~1） |
+| `mood.speaking_hints` | （空） | 各心情下的说话倾向：键为情绪词（开心/烦躁/委屈/疲惫…）或类别（正面/负面/平静/疲惫），空则不写 |
+| `mood.positive_words` / `mood.negative_words` | （空） | 叠加在通用词表上的额外正面 / 负面词，用于识别冲她来的话 |
 
 ### 社交与关系 (Social_Settings)
 
@@ -728,7 +749,8 @@ Runtime_Settings.runtime_mode = memory_only
 |------|------|------|
 | TagWorker | 持续运行 | 新消息自动结构化标签提炼与分析队列（异步批量处理） |
 | DreamService | 6h 周期 | 记忆巩固与重放强化（基于多层联想提升重要记忆权重） |
-| LifecycleService | 30min 周期 | 群友互动频率统计归档、心情状态衰退及长期好感自然衰减 |
+| LifecycleService | 30min 周期 | 群友互动频率统计归档、群氛围统计及长期好感自然衰减 |
+| BotMoodService 维护 | 10min 周期 | 增量导入关系事件为情绪事件、清理 14 天前的情绪事件、刷新心情快照 |
 | EvictionService | 6h 周期 | 自动扫描并物理清理过期超时的临时 noise 对话记忆 |
 
 ---
@@ -801,7 +823,7 @@ Runtime_Settings.runtime_mode = memory_only
 │   ├── experience_episodes.py   # 经历片段
 │   ├── identity_safety.py       # 身份污染防线
 │   ├── desire_engine.py         # 欲望引擎
-│   ├── mood_trajectory.py       # 情绪轨迹
+│   ├── bot_mood.py              # Bot 心情 v2（一个 Bot 一份心情）
 │   ├── subjective_time.py       # 主观时间
 │   ├── memory_budget_policy.py  # 内存预算档位
 │   ├── storage_capacity_policy.py  # 存储容量策略

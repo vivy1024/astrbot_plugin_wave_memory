@@ -68,7 +68,7 @@ def test_readme_documents_no_phantom_config_keys():
 
 def test_readme_has_no_reference_to_deleted_modules():
     """README 不得再描述已被删除的模块。"""
-    deleted = ["persona_evolution.py", "consolidation.py", "ConsolidationService", "bot_soul.py"]
+    deleted = ["persona_evolution.py", "consolidation.py", "ConsolidationService", "bot_soul.py", "mood_trajectory.py", "MoodTrajectory"]
     hits = [name for name in deleted if name in README]
     assert not hits, f"README 仍引用已删除的模块: {hits}"
 

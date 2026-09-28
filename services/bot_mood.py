@@ -1,0 +1,632 @@
+"""Bot 心情 v2：一个 Bot 一份心情，事件驱动、带惯性，向画像基线回落。
+
+v5.1 之前的心情是「当前群最近 30 分钟的关键词统计」，按群各存一份：结果是群氛围而不是她本人的
+心情，在 A 群被骂、B 群照样开心，也和发生在她身上的事无关。这里改成：
+
+- **一份心情**：按 bot_id 存事件流水（``bot_mood_events``），所有群与私聊共享；
+- **事件驱动**：冲她来的话（@/回复/私聊，按情绪词 + 关系加权）、正式关系事件（被夸/被攻击/深谈……）、
+  事后记账那次 LLM 调用顺带给出的「这段对话对你心情的影响」、群氛围（小权重），每条带来源与时间；
+- **惯性与回归**：当前心情 = 画像基线 + Σ 事件冲击 × 0.5^(经过时间/半衰期)，强事件半衰期更长；
+  可选疲劳（一段时间回复太多、深夜）；
+- **注入自然语言**：情绪词 + 1–2 条最近原因（谁/什么事/多久前）+ 可选说话倾向，不输出裸数字；
+  私聊里发生的事会影响心情，但在别处只说「私下有件事」，不带人名与内容。
+
+画像（基线、敏感度、半衰期、氛围权重、疲劳、说话倾向）来自 Bot Profile 的 ``mood`` 段，
+未配置时用中性默认值；这里不写死任何角色。
+"""
+
+from __future__ import annotations
+
+import re
+import threading
+import time
+from collections import deque
+from collections.abc import Callable, Mapping
+from typing import Any
+
+try:
+    from astrbot.api import logger
+except ImportError:  # pragma: no cover
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+try:
+    from ..domain.display_name import sanitize_display_name
+    from ..domain.mood_policy import (
+        POLICY_VERSION,
+        MoodContribution,
+        MoodSettings,
+        compose_mood,
+        describe_age,
+        effect_phrase,
+        event_half_life,
+        fatigue_level,
+        night_active,
+        parse_bookkeeping_mood,
+        relationship_closeness,
+        relationship_event_impulse,
+        score_directed_message,
+        speaking_hint,
+    )
+    from ..domain.scope import RuntimeScope
+except ImportError:  # pragma: no cover - focused tests import top-level packages
+    from domain.display_name import sanitize_display_name
+    from domain.mood_policy import (
+        POLICY_VERSION,
+        MoodContribution,
+        MoodSettings,
+        compose_mood,
+        describe_age,
+        effect_phrase,
+        event_half_life,
+        fatigue_level,
+        night_active,
+        parse_bookkeeping_mood,
+        relationship_closeness,
+        relationship_event_impulse,
+        score_directed_message,
+        speaking_hint,
+    )
+    from domain.scope import RuntimeScope
+
+# 冲她来的话：同一个人 45 秒内的同向情绪只记最强的一条，防刷屏把心情打穿。
+MESSAGE_MERGE_SECONDS = 45.0
+# 关系事件导入：首次启用时回看这么久（之后按游标增量），更早的事件对心情早已衰减殆尽。
+FIRST_IMPORT_LOOKBACK = 12 * 3600.0
+# 同一个人 10 分钟内已经因为原话记过同向情绪，关系事件再来只按一半记，避免同一件事记两遍。
+RELATIONSHIP_DEDUP_SECONDS = 600.0
+ATMOSPHERE_INTERVAL = 900.0
+SYNC_INTERVAL = 15.0
+EVENT_RETENTION = 14 * 86400.0
+CAUSE_MIN_WEIGHT = 0.03
+MAX_EVENT_VALENCE = 0.6
+MAX_EVENT_AROUSAL = 0.5
+_MARKUP = re.compile(r"\[[^\]]{0,200}\]|\[CQ:[^\]]*\]|@\S+")
+
+
+def _principal_user_id(principal: str) -> str:
+    text = str(principal or "")
+    return text.rsplit(":user:", 1)[1] if ":user:" in text else ""
+
+
+def _quote(content: str, limit: int = 18) -> str:
+    text = _MARKUP.sub(" ", str(content or ""))
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return ""
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+class BotMoodService:
+    def __init__(
+        self,
+        db: Any,
+        *,
+        profile_for: Callable[[str], Any] | None = None,
+        default_half_life_minutes: float = 120.0,
+        enabled: bool = True,
+        clock: Callable[[], float] | None = None,
+        hour_of: Callable[[float], int] | None = None,
+    ):
+        self.db = db
+        self.profile_for = profile_for or (lambda _bot_id: None)
+        self.default_half_life_minutes = max(1.0, float(default_half_life_minutes or 120.0))
+        self.enabled = bool(enabled) and self.repository is not None
+        self.clock = clock or time.time
+        self.hour_of = hour_of or (lambda ts: time.localtime(ts).tm_hour)
+        self.stats: dict[str, int] = {}
+        self._lock = threading.Lock()
+        self._replies: dict[str, deque[float]] = {}
+        self._replies_warmed: set[str] = set()
+        self._last_sync: dict[str, float] = {}
+        self._last_atmosphere: dict[tuple[str, str], float] = {}
+        self._bots: set[str] = set()
+
+    # ─── 基础 ───
+
+    @property
+    def repository(self) -> Any:
+        return getattr(self.db, "bot_mood", None)
+
+    def _count(self, key: str, amount: int = 1) -> None:
+        with self._lock:
+            self.stats[key] = self.stats.get(key, 0) + amount
+
+    def _now(self, now: float | None) -> float:
+        return float(now if now is not None else self.clock())
+
+    def settings_for(self, bot_id: str) -> MoodSettings:
+        try:
+            profile = self.profile_for(bot_id)
+        except Exception:
+            profile = None
+        settings = getattr(profile, "mood", None)
+        if isinstance(settings, MoodSettings):
+            return settings
+        if isinstance(settings, Mapping):
+            return MoodSettings.from_dict(settings)
+        return MoodSettings()
+
+    def _active(self, bot_id: str) -> MoodSettings | None:
+        if not self.enabled or not bot_id:
+            return None
+        settings = self.settings_for(bot_id)
+        return settings if settings.enabled else None
+
+    @staticmethod
+    def _valid_scope(scope: Any) -> bool:
+        return (
+            isinstance(scope, RuntimeScope)
+            and scope.session is not None
+            and scope.visibility in {"group", "private"}
+        )
+
+    def _name_for(self, bot_id: str, principal: str, fallback: str = "") -> str:
+        name = sanitize_display_name(fallback) if fallback else ""
+        if name:
+            return name[:20]
+        user_id = _principal_user_id(principal)
+        try:
+            name = sanitize_display_name(self.repository.display_name(bot_id, user_id)) if user_id else ""
+        except Exception:
+            name = ""
+        return (name or "有人")[:20]
+
+    def _add(self, bot_id: str, **kwargs) -> int | None:
+        # 护栏：单条事件的冲击有上限，一句话不能把心情直接打到极端（叠加后还有软饱和）。
+        kwargs["valence"] = max(-MAX_EVENT_VALENCE, min(MAX_EVENT_VALENCE, float(kwargs.get("valence") or 0.0)))
+        kwargs["arousal"] = max(-MAX_EVENT_AROUSAL, min(MAX_EVENT_AROUSAL, float(kwargs.get("arousal") or 0.0)))
+        try:
+            event_id = self.repository.add_event(bot_id, **kwargs)
+        except Exception as exc:
+            self._count("write_error")
+            logger.debug(f"[WaveMemory] 心情事件写入失败 {bot_id}: {exc!r}")
+            return None
+        if event_id is None:
+            self._count("duplicate")
+            return None
+        self._bots.add(bot_id)
+        self._count(f"events:{kwargs.get('source', 'unknown')}")
+        return event_id
+
+    # ─── 输入：冲她来的话 ───
+
+    def observe_message(
+        self,
+        scope: RuntimeScope,
+        *,
+        content: str,
+        sender_name: str = "",
+        directed: bool = False,
+        now: float | None = None,
+    ) -> int | None:
+        """别人说的一句话。只有冲她来的（@/回复/私聊）才按情绪词评估，其余只顺带增量导入关系事件。"""
+        if not self._valid_scope(scope):
+            return None
+        settings = self._active(scope.bot_id)
+        if settings is None:
+            return None
+        timestamp = self._now(now)
+        self._bots.add(scope.bot_id)
+        self.sync_relationship_events(scope.bot_id, now=timestamp)
+        if not directed:
+            return None
+        first_pass = score_directed_message(content, settings)
+        if first_pass.is_empty:
+            return None
+        subject = str(scope.subject_principal_id or "")
+        closeness, hostility = self._relationship(scope, subject)
+        impact = score_directed_message(content, settings, closeness=closeness, hostility=hostility)
+        if impact.is_empty:
+            return None
+        last = self.repository.last_subject_event(
+            scope.bot_id, subject_principal_id=subject, source="directed_message",
+            since=timestamp - MESSAGE_MERGE_SECONDS,
+        ) if subject else None
+        capped = min(abs(impact.valence), MAX_EVENT_VALENCE)
+        if last is not None and (last.valence >= 0) == (impact.valence >= 0) and abs(last.valence) >= capped:
+            self._count("merged")
+            return None
+        name = self._name_for(scope.bot_id, subject, sender_name)
+        quote = _quote(content)
+        quoted = f"「{quote}」" if quote else ""
+        templates = {
+            "praise": f"{name}夸你{quoted}",
+            "insult": (f"{name}又冲你来{quoted}" if hostility >= 0.5 else f"{name}说你{quoted}"),
+            "banter": f"{name}跟你斗嘴{quoted}",
+            "tease": f"{name}逗你{quoted}",
+            "extreme": f"{name}对你恶语相向",
+        }
+        event_id = self._add(
+            scope.bot_id,
+            source="directed_message",
+            valence=impact.valence,
+            arousal=impact.arousal,
+            intensity=impact.intensity,
+            cause=templates.get(impact.kind, f"{name}对你说{quoted}"),
+            subject_principal_id=subject,
+            subject_name=name,
+            session_id=scope.session.id,
+            visibility=scope.visibility,
+            evidence={
+                "kind": impact.kind, "matched": impact.matched,
+                "closeness": round(closeness, 3), "hostility": round(hostility, 3),
+            },
+            created_at=timestamp,
+        )
+        if event_id is not None:
+            self.snapshot(scope.bot_id, now=timestamp)
+        return event_id
+
+    def _relationship(self, scope: RuntimeScope, subject: str) -> tuple[float, float]:
+        """(亲近度 0~1, 敌意 0~1)。优先用仓储的关系姿态（有就用），否则按跨群五维汇总简化计算。"""
+        repo = getattr(self.db, "soul_repository", None)
+        if not subject or repo is None:
+            return 0.0, 0.0
+        stance_for = getattr(repo, "relationship_stance_for", None)
+        if callable(stance_for):
+            try:
+                stance = stance_for(scope.bot_id, subject)
+            except Exception:
+                stance = None
+            if isinstance(stance, Mapping) and stance.get("available"):
+                try:
+                    closeness = max(-1.0, min(1.0, float(stance.get("closeness") or 0.0)))
+                except (TypeError, ValueError):
+                    closeness = 0.0
+                _unused, hostility = relationship_closeness(0, stance.get("dimensions"))
+                return max(0.0, closeness), max(hostility, max(0.0, -closeness))
+        summarize = getattr(repo, "summarize_cross_group_relationship", None)
+        if not callable(summarize):
+            return 0.0, 0.0
+        try:
+            summary = summarize(scope, subject_principal_id=subject)
+        except Exception:
+            return 0.0, 0.0
+        if not isinstance(summary, Mapping) or not summary.get("available"):
+            return 0.0, 0.0
+        return relationship_closeness(summary.get("merged_affinity"), summary.get("merged_dimensions"))
+
+    # ─── 输入：群氛围（小权重） ───
+
+    def observe_atmosphere(
+        self,
+        scope: RuntimeScope,
+        *,
+        valence: float,
+        arousal: float,
+        now: float | None = None,
+    ) -> int | None:
+        """旧关键词统计得到的群氛围：只按画像的氛围权重作小幅输入，不再直接覆盖心情。"""
+        if not self._valid_scope(scope) or scope.visibility != "group":
+            return None
+        settings = self._active(scope.bot_id)
+        if settings is None or settings.atmosphere_weight <= 0:
+            return None
+        try:
+            group_valence = float(valence)
+            group_arousal = float(arousal)
+        except (TypeError, ValueError):
+            return None
+        if abs(group_valence) < 0.2:
+            return None
+        timestamp = self._now(now)
+        key = (scope.bot_id, scope.session.id)
+        if timestamp - self._last_atmosphere.get(key, 0.0) < ATMOSPHERE_INTERVAL:
+            return None
+        self._last_atmosphere[key] = timestamp
+        weight = settings.atmosphere_weight * settings.sensitivity * 0.5
+        event_id = self._add(
+            scope.bot_id,
+            source="atmosphere",
+            valence=round(group_valence * weight, 4),
+            arousal=round((group_arousal - 0.4) * weight, 4),
+            intensity=0.1,
+            cause="群里气氛不错" if group_valence > 0 else "群里气氛有点糟",
+            session_id=scope.session.id,
+            visibility="group",
+            source_ref=f"atmosphere:{scope.session.id}:{int(timestamp // ATMOSPHERE_INTERVAL)}",
+            evidence={"group_valence": round(group_valence, 3), "group_arousal": round(group_arousal, 3)},
+            created_at=timestamp,
+        )
+        if event_id is not None:
+            self.snapshot(scope.bot_id, now=timestamp)
+        return event_id
+
+    # ─── 输入：事后记账那次 LLM 顺带给出的心情影响 ───
+
+    def record_bookkeeping(self, scope: RuntimeScope, raw: Any, *, ref: str = "", now: float | None = None) -> int | None:
+        """``raw`` 形如 ``{"direction": "up|down|none", "strength": 0~1, "reason": "一句话"}``；解析失败安全忽略。"""
+        if not self._valid_scope(scope):
+            return None
+        settings = self._active(scope.bot_id)
+        if settings is None:
+            return None
+        if raw is None:
+            self._count("bookkeeping:absent")
+            return None
+        parsed = parse_bookkeeping_mood(raw, settings)
+        if parsed is None:
+            self._count("bookkeeping:ignored")
+            return None
+        valence, arousal, strength, reason = parsed
+        timestamp = self._now(now)
+        event_id = self._add(
+            scope.bot_id,
+            source="bookkeeping",
+            valence=valence,
+            arousal=arousal,
+            intensity=strength,
+            cause=reason,
+            session_id=scope.session.id,
+            visibility=scope.visibility,
+            source_ref=f"bookkeeping:{scope.session.id}:{ref}" if ref else "",
+            evidence={"direction": str(raw.get("direction")), "strength": strength},
+            created_at=timestamp,
+        )
+        if event_id is not None:
+            self.snapshot(scope.bot_id, now=timestamp)
+        return event_id
+
+    # ─── 输入：正式关系事件（增量导入） ───
+
+    def sync_relationship_events(self, bot_id: str, *, now: float | None = None, force: bool = False) -> int:
+        settings = self._active(bot_id)
+        repo = self.repository
+        if settings is None or repo is None:
+            return 0
+        timestamp = self._now(now)
+        if not force and timestamp - self._last_sync.get(bot_id, 0.0) < SYNC_INTERVAL:
+            return 0
+        self._last_sync[bot_id] = timestamp
+        try:
+            state = repo.get_state(bot_id)
+        except Exception:
+            return 0
+        first_run = state is None
+        cursor = 0 if first_run else int(state.get("relationship_cursor") or 0)
+        since = timestamp - (FIRST_IMPORT_LOOKBACK if first_run else 3 * 86400.0)
+        imported = 0
+        new_cursor = cursor
+        for _ in range(5):
+            rows = repo.relationship_events_after(bot_id, cursor=new_cursor, since=since, limit=200)
+            if not rows:
+                break
+            for row in rows:
+                new_cursor = max(new_cursor, int(row["id"]))
+                if self._import_relationship_event(bot_id, row, settings):
+                    imported += 1
+            if len(rows) < 200:
+                break
+        if first_run and new_cursor == 0:
+            new_cursor = repo.max_relationship_event_id(bot_id)
+        if imported or new_cursor != cursor or first_run:
+            self._bots.add(bot_id)
+            self.snapshot(bot_id, now=timestamp, relationship_cursor=new_cursor)
+        if imported:
+            self._count("relationship_imported", imported)
+        return imported
+
+    def _import_relationship_event(self, bot_id: str, row: Mapping[str, Any], settings: MoodSettings) -> bool:
+        impulse = relationship_event_impulse(row.get("event_type"), row.get("delta"), settings)
+        if impulse is None:
+            return False
+        valence, arousal, intensity, verb = impulse
+        subject = str(row.get("subject_principal_id") or "")
+        created_at = float(row.get("created_at") or 0.0)
+        recent = self.repository.last_subject_event(
+            bot_id, subject_principal_id=subject, source="directed_message",
+            since=created_at - RELATIONSHIP_DEDUP_SECONDS,
+        ) if subject else None
+        if recent is not None and recent.created_at <= created_at + 60 and (recent.valence >= 0) == (valence >= 0):
+            valence, arousal = round(valence * 0.5, 4), round(arousal * 0.5, 4)
+        name = self._name_for(bot_id, subject)
+        reason = re.sub(r"\s+", " ", str(row.get("reason") or "")).strip()
+        cause = f"{name}{verb}" + (f"（{reason[:30]}{'…' if len(reason) > 30 else ''}）" if reason else "")
+        return self._add(
+            bot_id,
+            source="relationship_event",
+            valence=valence,
+            arousal=arousal,
+            intensity=intensity,
+            cause=cause,
+            subject_principal_id=subject,
+            subject_name=name,
+            session_id=str(row.get("session_id") or ""),
+            visibility=str(row.get("visibility") or "group"),
+            source_ref=f"relationship_event:{int(row['id'])}",
+            evidence={"event_type": row.get("event_type"), "delta": row.get("delta")},
+            created_at=created_at,
+        ) is not None
+
+    # ─── 输入：Bot 自己的回复（疲劳） ───
+
+    def note_bot_reply(self, bot_id: str, *, now: float | None = None) -> None:
+        settings = self._active(bot_id)
+        if settings is None or not settings.fatigue_enabled:
+            return
+        timestamp = self._now(now)
+        bucket = self._reply_bucket(bot_id, settings, timestamp)
+        with self._lock:
+            bucket.append(timestamp)
+
+    def _reply_bucket(self, bot_id: str, settings: MoodSettings, now: float) -> deque[float]:
+        window = settings.fatigue_window_minutes * 60.0
+        with self._lock:
+            bucket = self._replies.setdefault(bot_id, deque(maxlen=5000))
+            warm = bot_id not in self._replies_warmed
+            if warm:
+                self._replies_warmed.add(bot_id)
+        if warm and self.repository is not None:
+            try:
+                stamps = self.repository.bot_reply_timestamps(bot_id, since=now - window)
+            except Exception:
+                stamps = []
+            with self._lock:
+                merged = sorted(set(stamps) | set(bucket))
+                bucket.clear()
+                bucket.extend(merged)
+        return bucket
+
+    def recent_replies(self, bot_id: str, settings: MoodSettings, now: float) -> int:
+        if not settings.fatigue_enabled:
+            return 0
+        bucket = self._reply_bucket(bot_id, settings, now)
+        cutoff = now - settings.fatigue_window_minutes * 60.0
+        with self._lock:
+            while bucket and bucket[0] < cutoff:
+                bucket.popleft()
+            return len(bucket)
+
+    # ─── 读取 ───
+
+    def current(
+        self,
+        bot_id: str,
+        *,
+        viewer_scope: RuntimeScope | None = None,
+        now: float | None = None,
+        max_causes: int = 3,
+    ) -> dict[str, Any] | None:
+        """现算当前心情（只读，不写库）。``viewer_scope`` 决定私聊来源的原因是否可见。"""
+        if not self.enabled or not bot_id or self.repository is None:
+            return None
+        settings = self.settings_for(bot_id)
+        timestamp = self._now(now)
+        if not settings.enabled:
+            return {"bot_id": bot_id, "enabled": False, "policy_version": POLICY_VERSION}
+        horizon = min(7 * 86400.0, event_half_life(settings, 1.0, self.default_half_life_minutes) * 8.0)
+        try:
+            events = self.repository.list_events(bot_id, since=timestamp - horizon, limit=400)
+        except Exception as exc:
+            logger.debug(f"[WaveMemory] 心情读取失败 {bot_id}: {exc!r}")
+            return None
+        replies = self.recent_replies(bot_id, settings, timestamp)
+        hour = int(self.hour_of(timestamp))
+        fatigue = fatigue_level(settings, recent_replies=replies, hour=hour)
+        reading = compose_mood(
+            events, settings, now=timestamp, fatigue=fatigue,
+            default_half_life_minutes=self.default_half_life_minutes,
+        )
+        causes = [
+            self._cause(item, viewer_scope, timestamp)
+            for item in reading.contributions
+            if item.weight >= CAUSE_MIN_WEIGHT
+        ][:max(0, int(max_causes))]
+        fatigue_reasons: list[str] = []
+        if fatigue > 0:
+            if replies > settings.fatigue_reply_threshold:
+                fatigue_reasons.append(f"这 {settings.fatigue_window_minutes // 60 or 1} 小时回了很多消息" if settings.fatigue_window_minutes >= 60 else "刚才回了很多消息")
+            if night_active(hour, settings.night_start_hour, settings.night_end_hour):
+                fatigue_reasons.append("夜深了")
+        return {
+            "bot_id": bot_id,
+            "enabled": True,
+            "valence": reading.valence,
+            "arousal": reading.arousal,
+            "fatigue": reading.fatigue,
+            "word": reading.word,
+            "category": reading.category,
+            "baseline": {"valence": settings.baseline_valence, "arousal": settings.baseline_arousal},
+            "causes": causes,
+            "fatigue_reasons": fatigue_reasons,
+            "hint": speaking_hint(settings, reading.word, reading.category),
+            "recent_replies": replies,
+            "active_events": len(reading.contributions),
+            "observed_at": timestamp,
+            "policy_version": POLICY_VERSION,
+        }
+
+    @staticmethod
+    def _cause(item: MoodContribution, viewer: RuntimeScope | None, now: float) -> dict[str, Any]:
+        event = item.event
+        viewer_session = viewer.session.id if isinstance(viewer, RuntimeScope) and viewer.session else ""
+        same_place = bool(viewer_session) and event.session_id == viewer_session
+        private = event.visibility == "private"
+        visible = not private or same_place
+        age = describe_age(now - event.created_at)
+        if not visible:
+            text = f"{age}私下有件事{effect_phrase(item.valence, item.arousal)}"
+        else:
+            if same_place:
+                place = ""
+            elif private:
+                place = "在私聊里"
+            elif viewer_session:
+                place = "在别的群里"
+            else:
+                place = "在群里"
+            text = f"{age}{place}，{event.cause}"
+        return {
+            "text": text,
+            "source": event.source,
+            "private": private,
+            "redacted": not visible,
+            "subject_name": event.subject_name if visible else "",
+            "age_seconds": round(max(0.0, now - event.created_at), 1),
+            "created_at": event.created_at,
+            "session_id": event.session_id if visible else "",
+            "visibility": event.visibility,
+            "valence": round(item.valence, 4),
+            "arousal": round(item.arousal, 4),
+        }
+
+    def render_lines(self, bot_id: str, viewer_scope: RuntimeScope, *, now: float | None = None, max_causes: int = 2) -> list[str]:
+        """注入用的自然语言行；心情就在基线附近、也没有可说的原因时返回空列表。"""
+        mood = self.current(bot_id, viewer_scope=viewer_scope, now=now, max_causes=max_causes)
+        if not mood or not mood.get("enabled"):
+            return []
+        causes = [cause["text"] for cause in mood.get("causes") or []]
+        reasons = [*causes, *(mood.get("fatigue_reasons") or [])]
+        if not reasons:
+            return []
+        lines = [f"心情：{mood['word']}", "缘由：" + "；".join(reasons[: max_causes + 1])]
+        if mood.get("hint"):
+            lines.append(f"说话倾向：{mood['hint']}")
+        self._count("rendered")
+        return lines
+
+    # ─── 维护 ───
+
+    def snapshot(self, bot_id: str, *, now: float | None = None, relationship_cursor: int | None = None) -> None:
+        repo = self.repository
+        if repo is None:
+            return
+        mood = self.current(bot_id, now=now, max_causes=0)
+        if not mood or not mood.get("enabled"):
+            if relationship_cursor is None:
+                return
+            mood = {"valence": 0.0, "arousal": 0.0, "fatigue": 0.0, "word": ""}
+        try:
+            repo.save_state(
+                bot_id,
+                valence=float(mood.get("valence") or 0.0),
+                arousal=float(mood.get("arousal") or 0.0),
+                fatigue=float(mood.get("fatigue") or 0.0),
+                word=str(mood.get("word") or ""),
+                relationship_cursor=relationship_cursor,
+                updated_at=self._now(now),
+            )
+        except Exception as exc:
+            logger.debug(f"[WaveMemory] 心情快照写入失败 {bot_id}: {exc!r}")
+
+    def tick(self, bot_ids: list[str] | None = None, *, now: float | None = None) -> None:
+        """周期维护：增量导入关系事件、清理过期流水、刷新快照。"""
+        if not self.enabled:
+            return
+        timestamp = self._now(now)
+        for bot_id in sorted(set(bot_ids or ()) | self._bots):
+            if self._active(bot_id) is None:
+                continue
+            try:
+                self.sync_relationship_events(bot_id, now=timestamp, force=True)
+                pruned = self.repository.prune(bot_id, before=timestamp - EVENT_RETENTION)
+                if pruned:
+                    self._count("pruned", pruned)
+                self.snapshot(bot_id, now=timestamp)
+            except Exception as exc:
+                logger.debug(f"[WaveMemory] 心情维护失败 {bot_id}: {exc!r}")
+
+
+__all__ = ["BotMoodService"]

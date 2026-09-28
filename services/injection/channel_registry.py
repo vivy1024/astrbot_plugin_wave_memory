@@ -179,7 +179,7 @@ def builtin_channel_specs() -> list[ChannelSpec]:
         ChannelSpec("holyman_persona", lambda d, b: HolymanPersonaChannel(persona_pack=HolymanPersonaPack())),
         ChannelSpec("fewshot", lambda d, b: FewShotChannel(few_shot_service=getattr(d, "few_shot_service", None))),
         ChannelSpec("affinity", lambda d, b: RelationshipChannel(repository=d.db.soul_repository, db=d.db)),
-        ChannelSpec("soul_state", lambda d, b: SoulStateChannel(repository=d.db.soul_repository)),
+        ChannelSpec("soul_state", lambda d, b: SoulStateChannel(repository=d.db.soul_repository, mood_service=getattr(d, "mood_service", None))),
         ChannelSpec(
             "book_lore",
             lambda d, b: BookLoreChannel(

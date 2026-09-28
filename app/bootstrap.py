@@ -69,7 +69,6 @@ from ..services.self_reflect import SelfReflectService
 from ..services.llm_fallback import LLMFallbackClient, build_provider_chain
 from ..services.eviction import EvictionService
 from ..services.concern_tracker import ConcernTracker
-from ..services.mood_trajectory import MoodTrajectory
 from ..services.subjective_time import SubjectiveTime
 from ..services.desire_engine import DesireEngine
 from ..services.belief_engine import BeliefEngine
@@ -343,7 +342,10 @@ class BootstrapMixin:
 
         # 生命周期配置：memory_only/compat_only 强制关闭高级社交/人格/情绪能力，避免旧 default=true 穿透模式边界。
         self.enable_affinity = runtime_capability_enabled(self.runtime_mode, "affinity", lifecycle_cfg.get("enable_affinity", True))
-        self.enable_mood = runtime_capability_enabled(self.runtime_mode, "mood", lifecycle_cfg.get("enable_mood", True))
+        _enable_mood_cfg = lifecycle_cfg.get("enable_mood")
+        if _enable_mood_cfg is None:  # 旧 config 缺字段或被保存成空值时按默认开启
+            _enable_mood_cfg = True
+        self.enable_mood = runtime_capability_enabled(self.runtime_mode, "mood", _enable_mood_cfg)
         self.mood_duration_hours = float(lifecycle_cfg.get("mood_duration_hours", "2.0"))
         self.mood_msg_threshold = int(lifecycle_cfg.get("mood_msg_threshold", 30))
         self.positive_emotion_threshold = float(lifecycle_cfg.get("positive_emotion_threshold", "0.6"))
@@ -750,7 +752,7 @@ class BootstrapMixin:
         self._belief_tag_refresh_delay_seconds = 0.4
         self._pending_belief_tag_refresh: dict[tuple[str, str, str, int], asyncio.Task] = {}
         self.concern_tracker = None
-        self.mood_trajectory = None
+        self.mood_service = None
         self.subjective_time = None
         self.desire_engine = None
         self.lifecycle = None

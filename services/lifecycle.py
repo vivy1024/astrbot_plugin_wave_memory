@@ -527,6 +527,8 @@ class LifecycleService:
         self.run_global_jobs = run_global_jobs
         self._scoped_mood_scopes: dict[tuple[str, str, str], RuntimeScope] = {}
         self._last_scoped_mood_update: dict[tuple[str, str, str], float] = {}
+        # 心情 v2（services/bot_mood.py）：这里算出的按群数值只是「群氛围」，作为小权重输入交给它。
+        self.mood_service: Any | None = None
 
     def sync_bot_identities(self, bot_identities: Mapping[str, str]) -> list[str]:
         """Bot 注册表热重载时补建新 Bot 的好感引擎；已有引擎保留缓冲，不重建。"""
@@ -592,7 +594,10 @@ class LifecycleService:
         now: float | None = None,
         force: bool = False,
     ) -> bool:
-        """根据正式 Scope 最近消息更新正式 Soul mood；绝不回写 Legacy mood。"""
+        """根据正式 Scope 最近消息更新该群的「群氛围」（scoped_soul_mood）；绝不回写 Legacy mood。
+
+        心情 v2 起这不再是 Bot 的心情：由消息触发的更新会作为群氛围小权重输入交给 BotMoodService。
+        """
         if not isinstance(scope, RuntimeScope) or scope.session is None:
             return False
         repository = getattr(self.db, "soul_repository", None)
@@ -661,10 +666,16 @@ class LifecycleService:
                 observed_at=timestamp,
             )
             self._last_scoped_mood_update[key] = timestamp
-            return True
         except Exception as exc:
             logger.debug("[WaveMemory] formal scoped mood update skipped: %s", exc)
             return False
+        mood_service = getattr(self, "mood_service", None)
+        if mood_service is not None and not force:
+            try:
+                mood_service.observe_atmosphere(scope, valence=valence, arousal=arousal, now=timestamp)
+            except Exception as exc:
+                logger.debug("[WaveMemory] group atmosphere → bot mood skipped: %s", exc)
+        return True
 
     def start(self, supervisor=None):
         if self._running:

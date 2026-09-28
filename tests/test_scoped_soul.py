@@ -144,7 +144,6 @@ class _InjectedRepo:
 
 def test_runtime_services_use_injected_coordinator_and_repository():
     from services.concern_tracker import ConcernTracker
-    from services.mood_trajectory import MoodTrajectory
     from services.relationship_events import RelationshipEventService
     from services.subjective_time import SubjectiveTime
 
@@ -154,9 +153,7 @@ def test_runtime_services_use_injected_coordinator_and_repository():
     other_scope = group_scope("g2", subject="qq:user:u2")
     db = types.SimpleNamespace(conn=types.SimpleNamespace(execute=lambda *_a, **_k: None, commit=lambda: None))
 
-    mood = MoodTrajectory(db, bot_id="bot-alpha", repository=repo, coordinator=coordinator)
-    mood.record(0.4, 0.2, "cause", scope=scope, evidence=[{"memory_id": 1}])
-    mood.record(-0.4, 0.1, "other", scope=other_scope, evidence=[{"memory_id": 5}])
+    # 心情 v2 不再经 MoodTrajectory 写 scoped_soul_mood（见 tests/test_bot_mood.py）。
     concerns = ConcernTracker(db, bot_id="bot-alpha", repository=repo, coordinator=coordinator)
     # 关切写入已迁出 tracker：只能经 ProductionWriteGateway.transition_concern 命令链落库，
     # 旧的全量替换（_persist）与物理剔除（tick）不得回流。
@@ -176,12 +173,12 @@ def test_runtime_services_use_injected_coordinator_and_repository():
         source_memory_id=4,
     )
 
-    assert coordinator.calls == 5
+    assert coordinator.calls == 3
     assert [call[0] for call in repo.calls] == [
-        "mood", "mood", "timeline", "timeline", "relationship"
+        "timeline", "timeline", "relationship"
     ]
-    assert [call[1] for call in repo.calls[:4]] == [
-        scope, other_scope, scope, other_scope
+    assert [call[1] for call in repo.calls[:2]] == [
+        scope, other_scope
     ]
     assert all("connection" in call[2] for call in repo.calls)
     assert result.after_affection == 2

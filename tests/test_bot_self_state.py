@@ -1,6 +1,6 @@
 """Bot 自身状态属于 Bot 本人，不按群分裂。
 
-- 心情只有一个：任何场合最近一次的心情带到所有场合；
+- 心情只有一个（心情 v2，services/bot_mood.py）：任何场合发生的事都作用在同一份心情上；
 - 私聊里发生的具体内容（心情原因、关切、经历）只在同一私聊中可见；
 - 信念是 Bot 自己的：在别的群形成的信念处处可用，依据在形成它的群里校验；
 - Soul 表迁移只放宽 visibility 约束，不改动任何已有数据。
@@ -30,26 +30,49 @@ def _private(user_id: str = "u1", bot_id: str = "bot-a") -> RuntimeScope:
     )
 
 
-def _soul_text(repo, scope) -> str:
+def _soul_text(repo, scope, mood_service=None) -> str:
     ctx = SimpleNamespace(mode="full", config={"channels": {"soul_state": {"enabled": True}}}, scope=scope)
-    return asyncio.run(SoulStateChannel(repository=repo).build(ctx)).text or ""
+    return asyncio.run(SoulStateChannel(repository=repo, mood_service=mood_service).build(ctx)).text or ""
+
+
+def _group_from(group_id: str, user_id: str, bot_id: str = "bot-a") -> RuntimeScope:
+    return RuntimeScope(
+        bot_id, "group", SessionRef(f"qq:group:{group_id}", "qq", "group", group_id),
+        subject_principal_id=f"qq:user:{user_id}",
+    )
 
 
 def test_mood_is_one_continuous_state_with_private_causes_kept_private(tmp_path):
+    """心情 v2：一份心情跨群/私聊共享；私聊里的原因在别处只说「私下有件事」。"""
+    from services.bot_mood import BotMoodService
+
     db = WaveMemoryDB(str(tmp_path / "soul.sqlite"), dimension=3)
     try:
         repo = db.soul_repository
-        repo.upsert_mood(_group("g1"), valence=0.6, arousal=0.4, cause="群里被夸", observed_at=1000.0)
-        assert "群里被夸" in _soul_text(repo, _private("u1"))
-        assert "valence=0.6" in _soul_text(repo, _group("g2"))
+        clock = {"now": 1100.0}
+        mood = BotMoodService(db, clock=lambda: clock["now"], hour_of=lambda _ts: 12)
+        mood.observe_message(_group_from("g1", "u9"), content="你真可爱，太厉害了", sender_name="小明",
+                             directed=True, now=1000.0)
+        # 群里被夸：私聊里也带着这份心情与原因（群里的事处处可见）
+        in_private = _soul_text(repo, _private("u1"), mood)
+        assert "小明夸你" in in_private and "心情：" in in_private
+        in_other_group = _soul_text(repo, _group("g2"), mood)
+        assert "在别的群里" in in_other_group and "小明夸你" in in_other_group
+        assert "valence" not in in_other_group and "arousal" not in in_other_group, "不输出裸数字"
+        happy = mood.current("bot-a")["valence"]
+        assert happy > 0.1
 
-        repo.upsert_mood(_private("u1"), valence=-0.4, arousal=0.3, cause="他私下说要离开", observed_at=2000.0)
-        in_group = _soul_text(repo, _group("g1"))
-        assert "valence=-0.4" in in_group, "心情是同一个，私聊里的低落带到群里"
-        assert "他私下说要离开" not in in_group, "私聊里的原因不外流"
-        assert "他私下说要离开" not in _soul_text(repo, _private("u2"))
-        assert "他私下说要离开" in _soul_text(repo, _private("u1"))
-        assert "valence" not in _soul_text(db.soul_repository, _group("g1", bot_id="bot-b"))
+        clock["now"] = 2100.0
+        mood.observe_message(_private("u1"), content="讨厌你，烦死了，闭嘴", sender_name="阿青",
+                             directed=True, now=2000.0)
+        assert mood.current("bot-a")["valence"] < happy, "心情是同一个，私聊里的低落带到群里"
+        in_group = _soul_text(repo, _group("g1"), mood)
+        assert "私下有件事" in in_group
+        assert "讨厌你" not in in_group and "阿青" not in in_group, "私聊里的原因不外流"
+        assert "讨厌你" not in _soul_text(repo, _private("u2"), mood)
+        assert "讨厌你" in _soul_text(repo, _private("u1"), mood)
+        other_bot = _soul_text(db.soul_repository, _group("g1", bot_id="bot-b"), mood)
+        assert "心情" not in other_bot, "别的 Bot 没有这份心情"
     finally:
         db.close()
 

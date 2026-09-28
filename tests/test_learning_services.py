@@ -285,6 +285,31 @@ def test_bookkeeper_dispatches_items_to_formal_tools():
     assert keeper.stats["skip_short"] == 1
 
 
+def test_bookkeeper_forwards_mood_from_the_same_llm_call_and_ignores_bad_output():
+    lines = [("u1", "小明", "生日快乐！"), ("bot", "羽书", "谢谢大家"), ("u2", "小红", "蛋糕来了")]
+    recorded = []
+
+    def recorder(scope, raw, *, ref=""):
+        recorded.append((scope.session.id, raw, ref))
+        return 1 if isinstance(raw, dict) and raw.get("direction") == "up" else None
+
+    llm = _LLM({"impressions": [], "mood": {"direction": "up", "strength": 0.7, "reason": "大家给我过生日"}})
+    keeper = PostReplyBookkeeper(_memory_db(lines), _Registry(), llm, bot_name_for=lambda _b: "羽书", mood_recorder=recorder)
+    asyncio.run(keeper.run(_scope()))
+    assert len(llm.prompts) == 1, "不新增 LLM 调用"
+    assert '"mood"' in llm.prompts[0]
+    assert recorded[0][0] == "qq:group:g1" and recorded[0][1]["reason"] == "大家给我过生日" and recorded[0][2]
+    assert keeper.stats["mood"] == 1
+
+    def broken(*_a, **_k):
+        raise RuntimeError("boom")
+
+    for payload, sink in (({"mood": "开心"}, recorder), ({}, recorder), ({"mood": {"direction": "up"}}, broken)):
+        keeper = PostReplyBookkeeper(_memory_db(lines), _Registry(), _LLM(payload), mood_recorder=sink)
+        assert asyncio.run(keeper.run(_scope())) == {"actions": 0, "messages": 3}, "心情字段解析失败安全忽略"
+    assert "mood" not in keeper.stats
+
+
 def test_bookkeeper_disabled_without_llm_and_ignores_private():
     keeper = PostReplyBookkeeper(_memory_db([]), _Registry(), None)
     assert keeper.enabled is False

@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 
 import {
   emptyBot,
+  emptyMood,
   exportBots,
   getBot,
   importBots,
@@ -16,6 +17,7 @@ import {
   type BotDetailPayload,
   type BotListPayload,
   type BotProfileDto,
+  type MoodDto,
 } from '@/api/bots'
 import { isRequestCancelled } from '@/api/client'
 import { QueryState } from '@/components/shared'
@@ -66,6 +68,95 @@ function AreaField({ id, label, value, onChange, hint, rows = 4 }: {
       <Textarea id={id} rows={rows} value={value} onChange={(event) => onChange(event.target.value)} />
       {hint ? <FieldDescription>{hint}</FieldDescription> : null}
     </Field>
+  )
+}
+
+/** 数字输入：输入过程中保留原文（如「0.」），能解析成数字时才回写。 */
+function NumberField({ id, label, value, onChange, hint, min, max }: {
+  id: string; label: string; value: number; onChange: (value: number) => void; hint?: string; min?: number; max?: number
+}) {
+  const [text, setText] = useState(String(value))
+  useEffect(() => {
+    setText((current) => (Number(current) === value ? current : String(value)))
+  }, [value])
+  return (
+    <Field className="gap-1">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Input
+        id={id}
+        inputMode="decimal"
+        value={text}
+        onChange={(event) => {
+          const next = event.target.value
+          setText(next)
+          const parsed = Number(next)
+          if (next.trim() !== '' && Number.isFinite(parsed)) {
+            onChange(Math.min(max ?? parsed, Math.max(min ?? parsed, parsed)))
+          }
+        }}
+      />
+      {hint ? <FieldDescription>{hint}</FieldDescription> : null}
+    </Field>
+  )
+}
+
+function hintLines(hints: Record<string, string>): string {
+  return Object.entries(hints).map(([key, text]) => `${key}=${text}`).join('\n')
+}
+function fromHintLines(text: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const line of text.split('\n')) {
+    const match = line.match(/^\s*([^=：:]+?)\s*[=：:]\s*(.+)$/)
+    if (match) out[match[1]] = match[2].trim()
+  }
+  return out
+}
+
+function MoodEditor({ mood, onChange }: { mood: MoodDto; onChange: (next: MoodDto) => void }) {
+  const set = <K extends keyof MoodDto>(key: K, value: MoodDto[K]) => onChange({ ...mood, [key]: value })
+  // 说话倾向逐行编辑：原文保留在本地，失焦前不强行规整（否则「开心=」这样的半行会被吞掉）
+  const [hintsText, setHintsText] = useState(hintLines(mood.speaking_hints))
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      <Field className="gap-1">
+        <FieldLabel htmlFor="bot-mood-enabled">有心情</FieldLabel>
+        <Switch id="bot-mood-enabled" checked={mood.enabled} onCheckedChange={(value) => set('enabled', value)} />
+        <FieldDescription>一个 Bot 一份心情，跨群与私聊共享。关闭后不记情绪事件、不注入心情。</FieldDescription>
+      </Field>
+      <NumberField id="bot-mood-sensitivity" label="敏感度（0~3）" value={mood.sensitivity} min={0} max={3} onChange={(v) => set('sensitivity', v)}
+        hint="所有事件冲击的倍数。0 = 不为外事所动，1 = 默认。" />
+      <NumberField id="bot-mood-valence" label="心情基线（-1~1）" value={mood.baseline_valence} min={-1} max={1} onChange={(v) => set('baseline_valence', v)}
+        hint="没发生任何事时回落到的愉悦度。正数偏乐观，负数偏忧郁。" />
+      <NumberField id="bot-mood-arousal" label="精神基线（0~1）" value={mood.baseline_arousal} min={0} max={1} onChange={(v) => set('baseline_arousal', v)}
+        hint="平时的激活度：越高越活泼，越低越安静。" />
+      <NumberField id="bot-mood-half-life" label="恢复半衰期（分钟）" value={mood.half_life_minutes} min={0} onChange={(v) => set('half_life_minutes', v)}
+        hint="事件影响每过这么久减半。0 = 用全局「心情恢复半衰期」（Lifecycle_Settings.mood_duration_hours）。" />
+      <NumberField id="bot-mood-boost" label="强事件延长倍数" value={mood.strong_event_boost} min={0} max={5} onChange={(v) => set('strong_event_boost', v)}
+        hint="越强烈的事影响越久：半衰期 ×（1 + 该值 × 事件强度）。" />
+      <NumberField id="bot-mood-atmosphere" label="群氛围传染权重（0~1）" value={mood.atmosphere_weight} min={0} max={1} onChange={(v) => set('atmosphere_weight', v)}
+        hint="群里整体气氛对她的影响，只作小权重输入。0 = 不受群氛围影响。" />
+      <Field className="gap-1">
+        <FieldLabel htmlFor="bot-mood-fatigue">疲劳</FieldLabel>
+        <Switch id="bot-mood-fatigue" checked={mood.fatigue_enabled} onCheckedChange={(value) => set('fatigue_enabled', value)} />
+        <FieldDescription>一段时间回复太多、或处于深夜时，精神下降、心情略降。</FieldDescription>
+      </Field>
+      <NumberField id="bot-mood-fatigue-window" label="疲劳统计窗口（分钟）" value={mood.fatigue_window_minutes} min={10} onChange={(v) => set('fatigue_window_minutes', Math.round(v))} />
+      <NumberField id="bot-mood-fatigue-threshold" label="窗口内回复多少条开始累" value={mood.fatigue_reply_threshold} min={1} onChange={(v) => set('fatigue_reply_threshold', Math.round(v))}
+        hint="超过开始累，两倍时最累。" />
+      <NumberField id="bot-mood-night-start" label="深夜开始（时）" value={mood.night_start_hour} min={0} max={23} onChange={(v) => set('night_start_hour', Math.round(v))}
+        hint="服务器本机时区。开始与结束相同表示不按深夜算疲劳。" />
+      <NumberField id="bot-mood-night-end" label="深夜结束（时）" value={mood.night_end_hour} min={0} max={23} onChange={(v) => set('night_end_hour', Math.round(v))} />
+      <NumberField id="bot-mood-fatigue-strength" label="疲劳强度（0~1）" value={mood.fatigue_strength} min={0} max={1} onChange={(v) => set('fatigue_strength', v)} />
+      <TextField id="bot-mood-positive" label="额外正面词（逗号分隔）" value={csv(mood.positive_words)} onChange={(v) => set('positive_words', fromCsv(v))}
+        hint="叠加在通用词表上，用于识别冲她来的夸奖。" />
+      <TextField id="bot-mood-negative" label="额外负面词（逗号分隔）" value={csv(mood.negative_words)} onChange={(v) => set('negative_words', fromCsv(v))}
+        hint="叠加在通用词表上，用于识别冲她来的损话。" />
+      <div className="md:col-span-2">
+        <AreaField id="bot-mood-hints" label="各心情下的说话倾向（每行「情绪词=提示」）" rows={5} value={hintsText}
+          onChange={(v) => { setHintsText(v); set('speaking_hints', fromHintLines(v)) }}
+          hint="情绪词如 开心 / 烦躁 / 委屈 / 疲惫，也可写类别 正面 / 负面 / 平静 / 疲惫。命中时随心情一起注入；空则不写。" />
+      </div>
+    </div>
   )
 }
 
@@ -134,6 +225,7 @@ function BotEditor({ draft, onChange, isNew, initialTab = 'identity' }: { draft:
         <TabsTrigger value="identity">身份与绑定</TabsTrigger>
         <TabsTrigger value="persona">人设</TabsTrigger>
         <TabsTrigger value="behavior">行为</TabsTrigger>
+        <TabsTrigger value="mood">心情</TabsTrigger>
         <TabsTrigger value="advanced">通道与工具</TabsTrigger>
       </TabsList>
       <TabsContent value="identity" className="grid gap-4 md:grid-cols-2">
@@ -191,6 +283,9 @@ function BotEditor({ draft, onChange, isNew, initialTab = 'identity' }: { draft:
         <div className="md:col-span-2">
           <AreaField id="bot-meta" label="MetaThinking 提示词" rows={6} value={draft.meta_prompt} onChange={(v) => set('meta_prompt', v)} hint="留空用默认模板。" />
         </div>
+      </TabsContent>
+      <TabsContent value="mood">
+        <MoodEditor mood={draft.mood ?? emptyMood()} onChange={(next) => set('mood', next)} />
       </TabsContent>
       <TabsContent value="advanced" className="grid gap-4 md:grid-cols-2">
         <TextField id="bot-tools-allow" label="只开放这些工具（逗号分隔）" value={csv(draft.tools_allow)} onChange={(v) => set('tools_allow', fromCsv(v))} hint="留空表示全部开放。" />

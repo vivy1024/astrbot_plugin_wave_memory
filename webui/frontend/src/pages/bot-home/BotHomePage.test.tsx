@@ -43,7 +43,16 @@ function payload(overrides: Partial<BotHomePayload> = {}): BotHomePayload {
     soul: {
       status: 'ready',
       reason_code: null,
-      mood: { ...placeA, valence: 0.25, arousal: 0.68, cause: '当前群聊互动很密集', observed_at: now - 10, policy_version: 'scoped-mood/v2' },
+      mood: {
+        valence: 0.25, arousal: 0.68, fatigue: 0, feeling: '愉快', category: '正面',
+        cause: '20 分钟前，测试群友乙夸你「真棒」',
+        causes: [
+          { ...placeA, text: '20 分钟前，测试群友乙夸你「真棒」', source: 'directed_message', private: false, redacted: false },
+          { text: '1 小时前私下有件事让你开心', source: 'directed_message', private: true, redacted: true },
+        ],
+        fatigue_reasons: [], hint: '话多一点', observed_at: now - 10, policy_version: 'bot-mood/v2',
+      },
+      atmosphere: { ...placeA, valence: 0, arousal: 0.6, cause: '当前群聊互动很密集', observed_at: now - 10, policy_version: 'scoped-mood/v2' },
       concerns: [{ ...placeA, id: 7, topic: '芝麻姐姐的救命之恩', intensity: 0.75, urgency: 0.75, status: 'active', concern_type: 'social_anchor', last_triggered: now - 100 }],
       concerns_total: 1,
       scope: { session_id: SESSION_A, visibility: 'group' },
@@ -128,8 +137,12 @@ describe('BotHomePage', () => {
 
     expect(await screen.findByTestId('bot-home-summary')).toHaveTextContent('羽书 今天记住了 3,140 条，最活跃的是 3-5层群')
     expect(api.getBotHome).toHaveBeenCalledWith(expect.objectContaining({ botId: 'yushu', days: 1 }))
-    expect(screen.getByTestId('bot-home-mood')).toHaveTextContent('愉快 · 活跃')
-    expect(screen.getByText('当前群聊互动很密集')).toBeVisible()
+    expect(screen.getByTestId('bot-home-mood')).toHaveTextContent('愉快')
+    expect(screen.getByText('20 分钟前，测试群友乙夸你「真棒」')).toBeVisible()
+    expect(screen.getByText('1 小时前私下有件事让你开心')).toBeVisible()
+    expect(screen.getByText('私聊·已脱敏')).toBeVisible()
+    expect(screen.getByText('说话倾向：话多一点')).toBeVisible()
+    expect(screen.getByText(/群氛围：当前群聊互动很密集/)).toBeVisible()
     expect(screen.getByText('芝麻姐姐的救命之恩')).toBeVisible()
     expect(screen.getByText('今天记住的')).toBeVisible()
     expect(screen.getByText('关系变化')).toBeVisible()

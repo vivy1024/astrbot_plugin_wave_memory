@@ -217,7 +217,7 @@ def test_main_production_wiring_passes_formal_repositories_writer_and_runtime_sc
     assert "book_lore_repository" not in constructor_source
     assert "repository=self.db.fewshot_repository" in initializer_source
     assert "writer=self.scoped_projection_writer" in initializer_source
-    for service_name in ("ConcernTracker", "MoodTrajectory", "SubjectiveTime"):
+    for service_name in ("ConcernTracker", "BotMoodService", "SubjectiveTime"):
         assert service_name in _call_names(initializer)
     assert "repository=soul_repository" in initializer_source
     assert "coordinator=soul_coordinator" in initializer_source

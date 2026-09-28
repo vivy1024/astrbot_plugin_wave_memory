@@ -247,14 +247,32 @@ class InboundMessagePipeline:
             except Exception:
                 pass
 
+        bot_ids = [bid for bid in (getattr(self.plugin, "_bot_qq_ids", None) or []) if bid]
+        is_at_bot = any(bid in (event.message_str or "") for bid in bot_ids)
+        is_reply_to_bot = False
+        if hasattr(event, "message_obj") and event.message_obj:
+            raw = event.message_str or ""
+            if "[引用消息" in raw and any(bid in raw for bid in bot_ids):
+                is_reply_to_bot = True
+
+        # 心情 v2：冲她来的话（@/唤醒/回复她/私聊）按情绪词 + 关系评估；关切跟进临时置的唤醒不算。
+        mood_service = getattr(self.plugin, "mood_service", None)
+        if mood_service is not None:
+            woken = bool(getattr(event, "is_at_or_wake_command", False)) and not getattr(
+                event, "_wave_memory_concern_followup", None
+            )
+            directed = runtime_scope.visibility == "private" or is_at_bot or is_reply_to_bot or woken
+            try:
+                mood_service.observe_message(
+                    runtime_scope,
+                    content=locked_message,
+                    sender_name=sender_name or "",
+                    directed=directed,
+                )
+            except Exception as exc:
+                logger.debug(f"[WaveMemory] mood observe failed: {exc!r}")
+
         if runtime_scope.visibility == "group" and getattr(self.plugin, "lifecycle", None):
-            bot_ids = self.plugin._bot_qq_ids
-            is_at_bot = any(bid in (event.message_str or "") for bid in bot_ids)
-            is_reply_to_bot = False
-            if hasattr(event, "message_obj") and event.message_obj:
-                raw = event.message_str or ""
-                if "[引用消息" in raw and any(bid in raw for bid in bot_ids):
-                    is_reply_to_bot = True
             hour = int(time.strftime("%H", time.localtime()))
             self.plugin.lifecycle.process_scoped_message(
                 scope=runtime_scope,
