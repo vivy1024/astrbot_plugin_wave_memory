@@ -3,7 +3,9 @@
 SQLite WAL 模式下 readers 不阻塞 writers，writers 不阻塞 readers。
 利用两个独立连接实现真正的读写并发：
 - _write_conn：写操作专用，写锁保护序列化
-- _read_conn：读操作专用，无锁，随时可读
+- _read_conn：读操作专用，无锁，随时可读；只给创建它的线程（事件循环）用，
+  其他线程各自懒建一个只读连接（sqlite3 的语句缓存按连接共享，同一连接被多个线程
+  同时执行会串位：返回 None / 别的行、报 ``bad parameter or other API misuse``）
 - conn 属性：兼容旧代码 db.conn.execute()，自动判断读/写路由
 """
 
@@ -22,6 +24,13 @@ _WRITE_SQL_PATTERN = re.compile(
     r"^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|ALTER|DROP|ATTACH|DETACH|REINDEX|VACUUM|PRAGMA\s+(?!table_info|database_list|index_list|index_info))",
     re.IGNORECASE,
 )
+
+
+def _close_quietly(conn: sqlite3.Connection) -> None:
+    try:
+        conn.close()
+    except Exception:
+        pass
 
 
 class RawWriteForbiddenError(RuntimeError):
@@ -93,6 +102,12 @@ class ConnectionManager:
             self._write_conn if self._shared_memory_connection else self._create_read_connection()
         )
 
+        self._owner_thread_id = threading.get_ident()
+        self._thread_local = threading.local()
+        self._thread_read_conns: dict[int, tuple[threading.Thread, sqlite3.Connection]] = {}
+        self._thread_read_lock = threading.Lock()
+        self._read_generation = 0
+
         # 兼容旧代码 db.conn.execute()
         self.conn = _ConnProxy(self)
 
@@ -109,15 +124,44 @@ class ConnectionManager:
         conn.execute("PRAGMA cache_size=-8192")
         return conn
 
-    def _create_read_connection(self) -> sqlite3.Connection:
+    def _create_read_connection(self, cache_kib: int = 8192) -> sqlite3.Connection:
         """打开不会建库、不会切 WAL 的 query-only 文件读连接。"""
         uri = Path(self.db_path).resolve().as_uri() + "?mode=ro"
         conn = sqlite3.connect(uri, uri=True, check_same_thread=False, timeout=30.0)
         conn.execute("PRAGMA query_only=ON")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=10000")
-        conn.execute("PRAGMA cache_size=-8192")
+        conn.execute(f"PRAGMA cache_size=-{int(cache_kib)}")
         return conn
+
+    def _reader(self) -> sqlite3.Connection:
+        """当前线程的读连接：创建线程用 ``_read_conn``，其他线程各用一个自己的。"""
+        if self._shared_memory_connection or threading.get_ident() == self._owner_thread_id:
+            return self._read_conn
+        local = self._thread_local
+        conn = getattr(local, "conn", None)
+        if conn is not None and getattr(local, "generation", -1) == self._read_generation:
+            return conn
+        conn = self._create_read_connection(cache_kib=2048)
+        local.conn, local.generation = conn, self._read_generation
+        with self._thread_read_lock:
+            # 顺带关掉已退出线程留下的连接（线程池的线程常驻，一次性线程才会留下）
+            for ident, (thread, stale) in list(self._thread_read_conns.items()):
+                if not thread.is_alive():
+                    self._thread_read_conns.pop(ident, None)
+                    _close_quietly(stale)
+            previous = self._thread_read_conns.get(threading.get_ident())
+            if previous is not None and previous[1] is not conn:
+                _close_quietly(previous[1])
+            self._thread_read_conns[threading.get_ident()] = (threading.current_thread(), conn)
+        return conn
+
+    def _close_thread_readers(self) -> None:
+        with self._thread_read_lock:
+            self._read_generation += 1
+            for _thread, conn in self._thread_read_conns.values():
+                _close_quietly(conn)
+            self._thread_read_conns.clear()
 
     def assert_raw_write_allowed(self) -> None:
         """原始代理不得等待并越过另一个线程正在持有的事务。"""
@@ -233,8 +277,8 @@ class ConnectionManager:
                     self._transaction_owner_thread_id = None
 
     def execute_read(self, sql, params=None):
-        """读操作 — 无锁，走读连接。WAL 保证不被写阻塞。"""
-        return self._read_conn.execute(sql, params or ())
+        """读操作 — 无锁，走当前线程的读连接。WAL 保证不被写阻塞。"""
+        return self._reader().execute(sql, params or ())
 
     def execute(self, sql, params=None):
         """通用 execute — 自动判断读/写路由。兼容旧代码。"""
@@ -265,6 +309,7 @@ class ConnectionManager:
                 self._read_conn.close()
             except Exception:
                 pass
+            self._close_thread_readers()
             self._write_conn = self._create_write_connection()
             self._read_conn = (
                 self._write_conn if self._shared_memory_connection else self._create_read_connection()
@@ -281,6 +326,7 @@ class ConnectionManager:
                 self._read_conn.close()
             except Exception:
                 pass
+            self._close_thread_readers()
 
     def _sync_index_delete(self, ids):
         """删除记忆时同步清除向量索引标记。"""

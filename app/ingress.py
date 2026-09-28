@@ -56,7 +56,7 @@ from ..services.hot_config import HotConfig
 from ..services.memory_index_policy import memory_index_policy_from_settings, select_hot_memory_candidates
 from ..services.maintenance_tokens import maintenance_repair_token
 from ..services.platform_context import PlatformContextManager
-from ..services.inbound_message_handler import InboundMessagePipeline, event_message_id
+from ..services.inbound_message_handler import InboundMessagePipeline, bot_reply_event_id, event_message_id
 from ..services.backup_lifecycle import DatabaseBackupManager
 from ..services.runtime_mode import effective_native_injection_enabled, effective_query_feature, resolve_runtime_mode, runtime_capability_enabled, should_self_heal_advanced_query
 from ..services.compat import build_duplicate_memory_warnings, build_livingmemory_compat_surface, detect_memory_plugins
@@ -646,7 +646,7 @@ class IngressMixin:
             "sender_name": self._get_bot_name(bot_id) if bot_id else self._bot_display_name(bot_db_id),
             "content": bot_text,
             "timestamp": time.time(),
-            "event_id": message_id,
+            "event_id": bot_reply_event_id(message_id, bot_text),
         })
 
         # 兜底：decorating 未跑时，日常观感只进未结算表，不写 metadata.impression。

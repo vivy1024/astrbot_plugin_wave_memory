@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import time
@@ -33,6 +34,19 @@ def event_message_id(event: Any) -> Any:
     if raw in (None, ""):
         raw = getattr(getattr(event, "message_obj", None), "message_id", None)
     return None if raw == "" else raw
+
+
+def bot_reply_event_id(message_id: Any, text: str) -> str | None:
+    """Bot 自己那句话的幂等号，与群友消息的消息号分开。
+
+    AstrBot 的 after_message_sent 拿到的是**触发这次回复的群友消息**的消息号；直接拿它当幂等号，
+    Bot 的回复会和那条群友消息撞键、被当成重放丢掉（线上约七成回复没入库），同一条消息引出的
+    多段回复也会互相覆盖。加 ``self:`` 前缀与正文摘要：同一句话重复投递仍只入库一次。
+    """
+    if message_id in (None, ""):
+        return None
+    digest = hashlib.sha1(str(text or "").encode("utf-8")).hexdigest()[:12]
+    return f"self:{message_id}:{digest}"
 
 
 class InboundMessagePipeline:

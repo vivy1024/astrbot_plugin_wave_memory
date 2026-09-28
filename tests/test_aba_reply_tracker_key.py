@@ -34,3 +34,17 @@ def test_key_is_bot_group_sender():
     key = namespace["reply_tracker_key"]
     assert key("yushu", "398291136", "10000002") == "yushu:398291136:10000002"
     assert key("yushu", "398291136", "1") != key("baizz", "398291136", "1")
+
+
+def test_bot_reply_uses_its_own_idempotency_key():
+    """回复不能拿触发它的群友消息号当幂等号，否则与那条消息撞键被当重放丢弃。"""
+    from services.inbound_message_handler import bot_reply_event_id
+
+    assert _calls(_function("_process_bot_reply"), "bot_reply_event_id") == 1
+    user_message_id = 123456
+    first = bot_reply_event_id(user_message_id, "那是，本座随手推演的法相")
+    second = bot_reply_event_id(user_message_id, "都说了这是赛博法相")
+    assert first != str(user_message_id) and first.startswith("self:123456:")
+    assert first != second  # 同一条消息引出的多段回复各自入库
+    assert first == bot_reply_event_id(user_message_id, "那是，本座随手推演的法相")  # 重复投递仍去重
+    assert bot_reply_event_id(None, "x") is None and bot_reply_event_id("", "x") is None

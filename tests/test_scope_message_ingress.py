@@ -322,7 +322,7 @@ def _load_on_bot_sent():
     methods = [_DropComponentImport().visit(method) for method in methods]
     module = ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[]))
     from domain.scope import RuntimeScope
-    from services.inbound_message_handler import event_message_id
+    from services.inbound_message_handler import bot_reply_event_id, event_message_id
 
     logger = _FakeLogger()
     recorded_errors = []
@@ -334,6 +334,7 @@ def _load_on_bot_sent():
         "Image": _FakeImage,
         "_record_err": lambda source, reason: recorded_errors.append((source, reason)),
         "event_message_id": event_message_id,
+        "bot_reply_event_id": bot_reply_event_id,
         "reply_tracker_key": lambda bot_scope_id, group_id, sender_id: f"{bot_scope_id}:{group_id}:{sender_id}",
     }
     exec(compile(module, str(source_path), "exec"), namespace)
@@ -591,7 +592,10 @@ class ScopeMessageIngressTest(unittest.TestCase):
         self.assertEqual(payload["scope"].session.id, "qq:group:group-event")
         self.assertEqual(payload["group_id"], "group-event")
         self.assertEqual(payload["sender_id"], "bot")
-        self.assertEqual(payload["event_id"], "message-event")
+        # 回复不沿用触发它的群友消息号，否则与那条消息撞幂等键被丢弃
+        from services.inbound_message_handler import bot_reply_event_id
+
+        self.assertEqual(payload["event_id"], bot_reply_event_id("message-event", payload["content"]))
         self.assertEqual(len(recorder.replies), 1)
         _, reply_kwargs = recorder.replies[0]
         self.assertEqual(reply_kwargs["bot_id"], "bot-profile")
