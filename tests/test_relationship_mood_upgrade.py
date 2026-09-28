@@ -131,18 +131,15 @@ def test_relationship_full_history_reaches_provider_request(tmp_path):
         text = req.extra_user_content_parts[0].text
         assert result.injected
         assert "记忆占满预算" in text
-        # 只注入最相关的 8 条（这里即最近 8 条）且摘要截断；预算再小也不截掉这一段
+        # 关系段压缩成自然语言：当前看法截断、近似的旧印象不重复罗列、不带详情；预算再小也不截掉这一段
+        assert len(events) == 30
+        assert "【你和对方】" in text
+        assert "你对对方的看法：完整摘要29" in text
         for i in range(len(events)):
-            assert (f"完整摘要{i:02d}" in text) == (i >= 22)
             assert f"完整详情{i:02d}" not in text
-        assert f"事件#{events[29]}" in text and "另有 22 条" in text
         assert "X" * 250 not in text and "…" in text
-        timeline_start = text.index("印象时间线")
-        assert timeline_start < text.index("完整摘要22") < text.index("完整摘要29")
-        assert text.index("完整摘要29") < text.index("你对这个人的印象：完整摘要29")
-        assert "权重=1" in text
-        assert "权重=0.5" in text
-        assert "权重=0.25" in text
+        assert "权重=" not in text and "事件#" not in text and "来源群=" not in text
+        assert "wave_memory_person_search" in text
         unknown = SimpleNamespace(
             mode="full",
             config={"channels": {"affinity": {"enabled": True}}},

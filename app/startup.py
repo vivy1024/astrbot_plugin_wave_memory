@@ -845,6 +845,10 @@ class StartupMixin:
                     group_name_for=self._get_group_name,
                 )
                 self._spawn(self.daily_diary.loop(), name="wave-memory:learning:daily-diary", owner="learning")
+        # 关系注入据此决定群聊里是否还要提示「该结算了」：记账已启动时交给它回看结算
+        from ..services.impression_timeline import configure_impression_prompting
+
+        configure_impression_prompting(bookkeeping_active=self.post_reply_bookkeeper is not None)
         from ..webui.container import get_container
 
         def _learning_stats() -> dict:

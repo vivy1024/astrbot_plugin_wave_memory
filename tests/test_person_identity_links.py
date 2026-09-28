@@ -86,8 +86,8 @@ def test_linked_accounts_share_attitude_and_impression_timeline(db):
     after = run()
     assert after.status == "hit"
     assert "在群里帮新人解答问题" in after.text, "直播间里认出这是 QQ 群里那位"
-    assert "综合值=29" in after.text, "态度同样合并"
-    assert "综合值=29" not in (before.text or "")
+    assert "「合得来」" in after.text, "态度同样合并"
+    assert "「合得来」" not in (before.text or "")
 
 
 @pytest.fixture
