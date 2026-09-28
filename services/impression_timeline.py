@@ -32,6 +32,26 @@ IMPACT_CAP = 5.0
 
 # 模块级动态上限配置（可由 main.py 从 Social_Settings 注入）
 _DYNAMIC_LIMITS: dict[str, float] = {}
+# 每轮观感标签与结算提示的开关（由启动流程从配置注入）：
+# per_turn_tag=False（默认）时注入不再要求模型每轮写 <<impression>>，定性交给事后记账；
+# bookkeeping_active 表示事后记账已启动（只覆盖群聊）。
+_PROMPTING: dict[str, bool] = {"per_turn_tag": False, "bookkeeping_active": False}
+
+
+def configure_impression_prompting(
+    *,
+    per_turn_tag: bool | None = None,
+    bookkeeping_active: bool | None = None,
+) -> None:
+    """None 表示不改（旧配置缺字段时保持默认：不要求每轮写标签）。"""
+    if per_turn_tag is not None:
+        _PROMPTING["per_turn_tag"] = bool(per_turn_tag)
+    if bookkeeping_active is not None:
+        _PROMPTING["bookkeeping_active"] = bool(bookkeeping_active)
+
+
+def impression_prompting() -> dict[str, bool]:
+    return dict(_PROMPTING)
 
 
 def configure_social_limits(
@@ -560,6 +580,27 @@ def _when_label(item: Mapping[str, Any], *, now: float) -> str:
     return relative
 
 
+def legacy_metadata_items(metadata: Any) -> list[dict[str, Any]]:
+    """正式时间线表不可用时，从旧 metadata 的印象历史与当前印象拼出时间线条目。"""
+    payload = _as_mapping(metadata)
+    stored = payload.get("impression_history")
+    items = [dict(item) for item in stored if isinstance(item, Mapping)] if isinstance(stored, list) else []
+    current_event = payload.get("impression_event") if isinstance(payload.get("impression_event"), Mapping) else {}
+    current_text = str(payload.get("impression") or "").strip()
+    if current_event or current_text:
+        current = {
+            "kind": "impression",
+            "summary": current_text,
+            "detail": current_text,
+            "text": current_text,
+            "event": current_event,
+            "at": payload.get("impression_updated_at"),
+        }
+        if current["summary"] and all(_item_summary(item) != current["summary"] for item in items):
+            items.append(current)
+    return items
+
+
 def impression_timeline_lines(
     metadata: Any,
     *,
@@ -577,21 +618,7 @@ def impression_timeline_lines(
     payload = _as_mapping(metadata)
     items = [item for item in (events or ()) if isinstance(item, Mapping)]
     if not items:
-        stored = payload.get("impression_history")
-        items = [item for item in stored if isinstance(item, Mapping)] if isinstance(stored, list) else []
-        current_event = payload.get("impression_event") if isinstance(payload.get("impression_event"), Mapping) else {}
-        current_text = str(payload.get("impression") or "").strip()
-        if current_event or current_text:
-            current = {
-                "kind": "impression",
-                "summary": current_text,
-                "detail": current_text,
-                "text": current_text,
-                "event": current_event,
-                "at": payload.get("impression_updated_at"),
-            }
-            if current["summary"] and all(_item_summary(item) != current["summary"] for item in items):
-                items.append(current)
+        items = legacy_metadata_items(payload)
     if not items:
         return []
     stamp = _finite(now) if now is not None else time.time()

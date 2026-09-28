@@ -277,9 +277,11 @@ def test_injection_uses_cross_group_affinity_not_current_group():
     result = _run_channel(repo, _channel_ctx(_channel_scope()))
 
     assert result.status == "hit"
-    assert "综合值=27" in result.text, "不得把当前群的 0 当成对该用户的真实态度"
-    assert "综合值=0" not in result.text
-    assert "familiarity=79.5" in result.text
+    # 汇总维度（熟悉 79.5、信任 15、趣味 5、深度 10）→ 合得来；当前群单独只有 trust=2.2 → 陌生人
+    assert "「合得来」" in result.text, "不得把当前群的低分当成对该用户的真实态度"
+    assert "「陌生人」" not in result.text
+    assert "非常熟" in result.text
+    assert "综合值=" not in result.text and "familiarity=" not in result.text, "注入不再输出裸分数"
     assert "跨群关系" not in result.text, "好感度不分群，不应再按群拆分展示"
 
 
@@ -288,7 +290,7 @@ def test_injection_always_aggregates_regardless_of_cross_group_switch():
     repo = _CrossGroupRepo()
     result = _run_channel(repo, _channel_ctx(_channel_scope(), cross_group_enabled=False))
 
-    assert "综合值=27" in result.text, "好感度合并是默认行为，不受开关影响"
+    assert "「合得来」" in result.text, "好感度合并是默认行为，不受开关影响"
     assert repo.summarize_calls == 1
 
 
@@ -343,7 +345,7 @@ def test_private_chat_injection_recognizes_person_with_unified_attitude():
     result = _run_channel(repo, _private_channel_ctx())
 
     assert result.status == "hit"
-    assert "综合值=27" in result.text
+    assert "「合得来」" in result.text
     assert repo.state_scopes == ["private"]
     assert repo.summarize_calls == 1
 
@@ -366,14 +368,22 @@ def test_injection_reads_unsettled_energy_from_cross_group_pool(tmp_path):
         from services.injection.channels.relationship import RelationshipChannel
         import asyncio
 
-        result = asyncio.run(RelationshipChannel(repository=_CrossGroupRepo(), db=db).build(
-            SimpleNamespace(
-                mode="full", config={"channels": {"affinity": {"enabled": True}}},
-                scope=_channel_scope(), sender_id="1", group_id="g1",
-            )
-        ))
+        def build(channel_cfg):
+            return asyncio.run(RelationshipChannel(repository=_CrossGroupRepo(), db=db).build(
+                SimpleNamespace(
+                    mode="full", config={"channels": {"affinity": channel_cfg}},
+                    scope=_channel_scope(), sender_id="1", group_id="g1",
+                )
+            ))
+
+        # 打开每轮观感标签（旧行为）：注入跨群池的能量与观感
+        result = build({"enabled": True, "per_turn_impression_tag": True})
         assert result.status == "hit"
         assert "未结算能量 6.5/" in result.text
         assert "在别的群帮过我" in result.text
+        # 默认关闭：不再要求模型每轮写标签
+        default = build({"enabled": True})
+        assert "<<impression" not in default.text
+        assert "未结算能量" not in default.text
     finally:
         cm.close()

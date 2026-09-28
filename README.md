@@ -186,7 +186,7 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 ├─ jargon（已确认黑话）
 ├─ fewshot（已批准健康风格样本）
 ├─ book_lore（世界观知识）
-├─ affinity（全群累加的好感、印象时间线、人情账、已审事实）
+├─ affinity（全群累加的关系档位与自然语言摘要：印象、走势、共同经历、当下感受）
 ├─ holyman_persona（holyman-skills 风格人格包，默认关闭）
 └─ soul_state（当前群情绪 valence/arousal、关切、时间线）
 ```
@@ -567,12 +567,14 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | impact_cap | 5.0 | 单次交互印象冲击度上限 |
 | affinity_step_cap | 2.0 | 阶段性好感单次调整步长上限 |
 | affinity_hostility_step_cap | 3.0 | 阶段性敌意单次调整步长上限 |
+| per_turn_impression_tag | false | 每轮要求模型在回复末尾写 `<<impression:…>>` 观感标签；默认关闭，定性交给事后记账（私聊/记账未启动时仍会提示结算），开启恢复旧行为 |
 
 ### 好感校准 (Affinity_Settings)
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | manual_adjustment_delta_cap | 20.0 | 管理员手动调整好感单次上限 |
+| relationship_tiers_json | 空 | 关系档位名与阈值覆盖（JSON）；留空用默认档位 敌对/反感/有点烦/亲近/信得过/合得来/常聊/面熟/陌生人，对象按 key 覆盖、数组整体替换 |
 
 ### 自省 (Study_Settings)
 
@@ -796,6 +798,7 @@ Runtime_Settings.runtime_mode = memory_only
 │   ├── outbox_dispatcher.py     # 事务性发件箱派发
 │   ├── persona_composer.py      # 自我人格/信念/经历/风格编排
 │   ├── impression_timeline.py   # 群友印象时间线与指数衰减
+│   ├── relationship_narrative.py # 关系注入的自然语言渲染（档位依据/印象压缩/当下感受）
 │   ├── belief_engine.py         # 信念引擎
 │   ├── belief_emergence.py      # 信念涌现
 │   ├── experience_episodes.py   # 经历片段
