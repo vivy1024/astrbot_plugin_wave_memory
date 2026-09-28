@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   CrosshairIcon,
   LoaderCircleIcon,
   MinusIcon,
   NetworkIcon,
+  OrbitIcon,
   PlusIcon,
   RefreshCwIcon,
   RouteIcon,
@@ -42,9 +43,12 @@ import { humanizeApiError } from '@/lib/reason-label'
 import { cn } from '@/lib/utils'
 import { GraphCanvas, type GraphCanvasHandle } from './GraphCanvas'
 import { KgNodeDetail } from './KgNodeDetail'
+import { ShowcaseErrorBoundary } from './showcase/ShowcaseErrorBoundary'
 import { TagNodeDetail } from './TagNodeDetail'
 import { LAYER_DEPENDENT_KEYS, MAX_NODE_OPTIONS, MIN_WEIGHT_OPTIONS, parseGraphUrl } from './graph-url'
 import { useGraphTheme, useWideLayout } from './use-graph-theme'
+
+const GraphShowcase = lazy(() => import('./showcase/GraphShowcase').then((m) => ({ default: m.GraphShowcase })))
 
 type KgBundle = GraphBundle<KgGraphNode, KgGraphEdge>
 type TagBundle = GraphBundle<TagGraphNode, TagGraphEdge>
@@ -96,7 +100,7 @@ export function GraphPage() {
   const isMobile = useIsMobile()
   const wide = useWideLayout()
   const theme = useGraphTheme()
-  const { botId, sessionId, status: scopeStatus } = useGlobalScope()
+  const { botId, sessionId, status: scopeStatus, payload: scopePayload } = useGlobalScope()
   const url = parseGraphUrl(params, isMobile)
   const scope = useMemo(() => (botId && sessionId ? { bot_id: botId, session_id: sessionId, visibility: 'group' as const } : null), [botId, sessionId])
   const canvasRef = useRef<GraphCanvasHandle>(null)
@@ -126,7 +130,7 @@ export function GraphPage() {
 
   // ---- 数据：按数据层取数，同一参数组合缓存在内存里，切回来不重新请求 ----
   const rankBy = url.layer === 'tags' ? rankByFor(url.view) : null
-  const fetchKey = scope
+  const fetchKey = scope && url.mode === '2d'
     ? url.layer === 'kg'
       ? `kg|${scope.bot_id}|${scope.session_id}`
       : `tags|${scope.bot_id}|${scope.session_id}|${url.maxNodes}|${rankBy}|${rankBy === 'links' ? '' : url.windowHours}`
@@ -367,12 +371,15 @@ export function GraphPage() {
 
   const summary = view?.summary
   const showWindow = url.view === 'new' || url.view === 'current'
+  const showcase = url.mode === '3d'
+  const botName = scopePayload?.bots.find((bot) => bot.db_id === botId)?.name || botId || 'Bot'
 
   return (
     <div
       className="flex flex-col gap-4"
       data-page="graph"
       data-layer={url.layer}
+      data-mode={url.mode}
       data-view={url.view}
       data-state={bundle && !loading && bundle.layer === url.layer ? 'ready' : 'loading'}
     >
@@ -385,6 +392,25 @@ export function GraphPage() {
           <p className="mt-1 text-sm text-muted-foreground">当前群里谁和什么有关、最近在聊什么、新出现了什么。点节点看证据，选两个点找路径。</p>
         </header>
         <div className="flex flex-wrap items-center gap-2">
+          <div role="radiogroup" aria-label="显示方式" className="inline-flex rounded-lg border bg-muted p-[3px]">
+            {([['2d', '平面', '分析关系、查证据、找路径'], ['3d', '3D 展示', '记忆星空与回忆回放']] as const).map(([id, label, hint]) => (
+              <button
+                key={id}
+                type="button"
+                role="radio"
+                aria-checked={url.mode === id}
+                title={hint}
+                onClick={() => setQueryParams({ mode: id === '3d' ? '3d' : null }, false)}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-md px-3 py-1 text-sm font-medium transition-colors',
+                  url.mode === id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {id === '3d' ? <OrbitIcon className="size-3.5" aria-hidden="true" /> : null}{label}
+              </button>
+            ))}
+          </div>
+          {showcase ? null : <>
           <div role="radiogroup" aria-label="数据层" className="inline-flex rounded-lg border bg-muted p-[3px]">
             {LAYERS.map((layer) => (
               <button
@@ -406,8 +432,32 @@ export function GraphPage() {
           <Button type="button" size="sm" variant="outline" disabled={!scope || loading} onClick={() => { cacheRef.current.delete(fetchKey); setReload((value) => value + 1) }}>
             <RefreshCwIcon data-icon="inline-start" aria-hidden="true" className={cn(loading && 'animate-spin')} />刷新
           </Button>
+          </>}
         </div>
       </div>
+
+      {showcase ? (
+        scope ? (
+          <ShowcaseErrorBoundary onFallback2D={() => setQueryParams({ mode: null, replay_hours: null }, false)}>
+          <Suspense fallback={<Skeleton className="h-[72svh] w-full" />}>
+            <GraphShowcase
+              scope={scope}
+              botName={botName}
+              hours={url.showcaseHours}
+              onHoursChange={(hours) => setQueryParams({ replay_hours: hours === 24 ? null : String(hours) })}
+              onOpenIn2D={(nodeId) => {
+                const changes: Record<string, string | null> = { mode: null, layer: 'tags', view: null, replay_hours: null }
+                for (const key of LAYER_DEPENDENT_KEYS) changes[key] = null
+                changes.node = nodeId
+                setQueryParams(changes, false)
+              }}
+            />
+          </Suspense>
+          </ShowcaseErrorBoundary>
+        ) : scopeStatus === 'resolving'
+          ? <Skeleton className="h-[72svh] w-full" />
+          : <Card><CardContent className="p-6 text-sm text-muted-foreground">请先在顶栏选择 Bot 和群。</CardContent></Card>
+      ) : <>
 
       <div className="flex flex-col gap-3 rounded-xl border bg-card p-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -618,6 +668,7 @@ export function GraphPage() {
           ) : null}
         </>
       )}
+      </>}
     </div>
   )
 }

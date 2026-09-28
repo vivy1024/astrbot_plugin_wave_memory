@@ -585,6 +585,76 @@ class InjectionTraceStore:
             result.append(entry)
         return result
 
+    def recall_events(
+        self,
+        *,
+        from_ts: float,
+        to_ts: float,
+        bot_id: str,
+        session_id: str | None = None,
+        limit: int = 300,
+        channels: Iterable[str] = MEMORY_ITEM_CHANNELS,
+    ) -> list[dict[str, Any]]:
+        """时间窗内最近 ``limit`` 次注入各自真正注入了哪些记忆，按时间正序返回（供回忆回放）。
+
+        ``session_id`` 为空时返回该 Bot 全部会话（直播舞台页同时看弹幕与 QQ 群）。
+
+        每条 ``memories`` 按通道内排名去重，只保留 ``details.items``（不含被过滤的条目）。
+        """
+        bot_id = str(bot_id or "").strip()
+        channel_list = [str(name) for name in channels if str(name or "").strip()]
+        if not bot_id or not channel_list:
+            return []
+        where, params = self._query_filter(from_ts=from_ts, to_ts=to_ts, bot_id=bot_id, session_id=session_id)
+        traces = self.conn.execute(
+            f"""SELECT trace_id, timestamp, sender_name, message_preview,
+                       COALESCE(json_extract(metadata_json, '$.runtime_scope.session.id'),
+                                json_extract(metadata_json, '$.runtime_scope.payload.session.id')),
+                       COALESCE(json_extract(metadata_json, '$.source'), 'astrbot'), group_id
+                  FROM injection_traces WHERE {where}
+                 ORDER BY timestamp DESC LIMIT ?""",
+            params + [max(1, min(int(limit), 2000))],
+        ).fetchall()
+        if not traces:
+            return []
+        events: dict[str, dict[str, Any]] = {}
+        for row in traces:
+            events[str(row[0])] = {
+                "trace_id": str(row[0]), "timestamp": float(row[1] or 0.0),
+                "sender_name": row[2] or "", "message_preview": row[3] or "",
+                "session_id": row[4] or None, "source": row[5] or "astrbot", "group_id": row[6] or None,
+                "memories": [],
+            }
+        trace_ids = list(events)
+        channel_placeholders = ",".join("?" * len(channel_list))
+        seen: dict[str, set[int]] = {trace_id: set() for trace_id in trace_ids}
+        for start in range(0, len(trace_ids), 500):
+            chunk = trace_ids[start:start + 500]
+            rows = self.conn.execute(
+                f"""SELECT trace_id, channel, details FROM injection_trace_channels
+                     WHERE trace_id IN ({','.join('?' * len(chunk))}) AND channel IN ({channel_placeholders})
+                     ORDER BY id""",
+                [*chunk, *channel_list],
+            ).fetchall()
+            for trace_id, channel, raw in rows:
+                try:
+                    details = json.loads(raw or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                items = details.get("items") if isinstance(details, dict) else None
+                for rank, item in enumerate(items if isinstance(items, list) else [], start=1):
+                    if not isinstance(item, dict):
+                        continue
+                    memory_id = item.get("id")
+                    if not isinstance(memory_id, int) or isinstance(memory_id, bool) or memory_id in seen[trace_id]:
+                        continue
+                    seen[trace_id].add(memory_id)
+                    events[trace_id]["memories"].append({
+                        "id": memory_id, "channel": channel, "rank": rank,
+                        "score": item.get("score"), "preview": str(item.get("preview") or ""),
+                    })
+        return sorted(events.values(), key=lambda event: (event["timestamp"], event["trace_id"]))
+
     def count(self, **filters: Any) -> int:
         """返回与 ``query`` 完全相同筛选条件的精确总数。"""
         allowed = {

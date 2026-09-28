@@ -111,6 +111,7 @@ export const SECTION_FEATURE: Record<string, FeatureId> = {
   Tag_Settings: 'learning',
   TagWorker_Settings: 'learning',
   Study_Settings: 'learning',
+  Learning_Settings: 'learning',
   Message_Filter: 'learning',
   tag_llm_provider_id: 'learning',
   BookLore_Settings: 'lore',

@@ -9,6 +9,7 @@ from quart import Blueprint, current_app, jsonify, request
 from ..api_contract import current_runtime_scope, error_payload, not_found_payload
 from ..container import get_container
 from ..graph_projection import TAG_GRAPH_LAYERS, build_tag_graph_projection, find_tag_graph_path
+from ..recall_replay import build_recall_replay
 from ..middleware.auth import require_auth
 
 try:
@@ -214,6 +215,50 @@ async def path():
         return jsonify(_decorate_graph(result, scope=scope))
     except ValueError as exc:
         return jsonify(error_payload(str(exc), "Invalid Tag path request")), 400
+
+
+def _trace_store(conn: Any):
+    if conn is None:
+        return None
+    try:
+        from ...services.injection.trace_store import InjectionTraceStore
+    except ImportError:  # pragma: no cover - focused tests import webui as top-level
+        from services.injection.trace_store import InjectionTraceStore
+    store = InjectionTraceStore(conn)
+    store.ensure_schema()
+    return store
+
+
+@tag_graph_bp.route("/replay", methods=["GET"])
+@require_auth
+async def replay():
+    """回忆回放：时间窗内每次注入想起的记忆映射到标签图，供 3D 展示模式逐条回放。
+
+    ``events=bot`` 取该 Bot 全部会话的注入（直播舞台页），``since`` 只返回之后的新事件，
+    ``graph=0`` 不重建标签图（增量轮询用）。
+    """
+    scope = _request_scope()
+    if scope is None:
+        return _scope_failure()
+    container = get_container()
+    conn = getattr(getattr(container, "db", None), "conn", None)
+    try:
+        payload = build_recall_replay(
+            conn=conn,
+            trace_store=_trace_store(conn),
+            scope=scope,
+            hours=_bounded_float(request.args.get("hours"), 24.0, 1.0, 24.0 * 7),
+            limit=_bounded_int(request.args.get("limit"), 300, 1, 1000),
+            max_nodes=_bounded_int(request.args.get("max_nodes"), 400, 50, 1500),
+            all_sessions=str(request.args.get("events") or "").strip() == "bot",
+            since=_bounded_float(request.args.get("since"), 0.0, 0.0, 1e12) or None,
+            include_graph=str(request.args.get("graph") or "1").strip() != "0",
+        )
+    except ValueError as exc:
+        return jsonify(error_payload(str(exc), "Invalid recall replay request")), 400
+    if payload["graph"] is not None:
+        payload["graph"] = _decorate_graph(payload["graph"], scope=scope)
+    return jsonify(payload)
 
 
 __all__ = ["tag_graph_bp"]

@@ -46,12 +46,17 @@ async function collectFiles(dir: string): Promise<string[]> {
  * 服务端 `webui/static_assets.py` 按 Accept-Encoding 直接返回这些文件。
  */
 function precompressAssets() {
+  let buildOutDir = path.resolve(__dirname, '../static/app')
   return {
     name: 'wavememory-precompress-assets',
     apply: 'build' as const,
+    configResolved(config: { root: string; build: { outDir: string } }) {
+      // 跟随 --outDir：临时构建不能去压缩仓库里已提交的 static/app
+      buildOutDir = path.resolve(config.root, config.build.outDir)
+    },
     async closeBundle() {
       // 只有 /static/app/assets/ 由服务端做编码协商，其余文件（index.html 等）不需要预压缩。
-      const outDir = path.resolve(__dirname, '../static/app/assets')
+      const outDir = path.join(buildOutDir, 'assets')
       const files = await collectFiles(outDir)
       const results: Array<{ file: string; raw: number; gzip: number; br: number }> = []
       for (const file of files) {

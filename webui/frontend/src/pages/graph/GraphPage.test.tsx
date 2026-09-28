@@ -34,6 +34,16 @@ vi.mock('@/api/tagGraph', () => ({
   updateTagCommand: api.updateTagCommand,
 }))
 
+vi.mock('./showcase/GraphShowcase', () => ({
+  GraphShowcase: (props: { hours: number; onOpenIn2D(id: string): void; onHoursChange(hours: number): void }) => (
+    <div data-testid="showcase">
+      <span data-testid="showcase-hours">{props.hours}</span>
+      <button type="button" onClick={() => props.onHoursChange(72)}>三天</button>
+      <button type="button" onClick={() => props.onOpenIn2D('tag:7')}>去平面</button>
+    </div>
+  ),
+}))
+
 // 整套 vitest 并行跑时页面首屏（取数 + 建图 + 布局）可能超过默认 1 秒
 configure({ asyncUtilTimeout: 5000 })
 
@@ -217,5 +227,27 @@ describe('GraphPage', () => {
     render(<MemoryRouter initialEntries={['/graph']}><GraphPage /></MemoryRouter>)
     expect(screen.getByText('请先在顶栏选择 Bot 和群。')).toBeVisible()
     expect(api.getKgFull).not.toHaveBeenCalled()
+  })
+
+  it('3D 展示：切换写入 URL、不再取平面图数据；从节点卡片回到平面图的标签层并选中节点', async () => {
+    const user = userEvent.setup()
+    renderPage('layer=kg&node=person%3A1')
+    await waitFor(() => expect(api.getKgFull).toHaveBeenCalledTimes(1))
+    await user.click(screen.getByRole('radio', { name: '3D 展示' }))
+    expect(await screen.findByTestId('showcase')).toBeInTheDocument()
+    expect(currentParams().get('mode')).toBe('3d')
+    expect(screen.queryByRole('radiogroup', { name: '数据层' })).toBeNull()
+    expect(screen.getByTestId('showcase-hours').textContent).toBe('24')
+    await user.click(screen.getByRole('button', { name: '三天' }))
+    expect(currentParams().get('replay_hours')).toBe('72')
+    expect(api.getKgFull).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', { name: '去平面' }))
+    const params = currentParams()
+    expect(params.get('mode')).toBeNull()
+    expect(params.get('replay_hours')).toBeNull()
+    expect(params.get('layer')).toBe('tags')
+    expect(params.get('node')).toBe('tag:7')
+    await waitFor(() => expect(api.getTagGraph).toHaveBeenCalled())
   })
 })

@@ -1,4 +1,4 @@
-import { Suspense } from 'react'
+import { lazy, Suspense } from 'react'
 import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
 
 import { GlobalScopeProvider } from '@/app/global-scope'
@@ -10,6 +10,9 @@ import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Toaster } from '@/components/ui/sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+
+// 直播舞台页：不带侧边栏与顶栏，直接给 OBS 浏览器源用
+const StagePage = lazy(() => import('@/pages/stage/StagePage').then((m) => ({ default: m.StagePage })))
 
 function PageFallback() {
   return (
@@ -73,6 +76,7 @@ export function AppRoutes() {
         <Route path="/explore" element={<RenamedPath to="/graph" set={{ layer: 'kg' }} drop={['embed']} />} />
         <Route path="/login" element={<RenamedPath to={defaultRoute} />} />
       </Route>
+      <Route path="/stage" element={<Suspense fallback={<div className="h-svh bg-black" />}><StagePage /></Suspense>} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   )

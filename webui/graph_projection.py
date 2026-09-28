@@ -7,7 +7,7 @@ import math
 import time
 from collections import defaultdict, deque
 from dataclasses import asdict, is_dataclass
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 import numpy as np
 
@@ -735,6 +735,7 @@ def build_tag_graph_projection(
     min_confidence: float = 0.0, max_nodes: int = 300, include_pulse: bool = False,
     pulse_half_life_hours: float = 72.0, now: float | None = None,
     rank_by: str = "links", recent_window_hours: float = 168.0,
+    focus_tag_weights: Mapping[int, float] | None = None,
 ) -> dict[str, Any]:
     """构造严格 Scope 隔离的正式 Tag 神经云图只读投影。
 
@@ -742,6 +743,9 @@ def build_tag_graph_projection(
     - links（默认，兼容旧行为）：关联记忆条数最多的标签；
     - recent：窗口 recent_window_hours 内关联记忆最多、最近出现过的标签（当前话题）；
     - created：scoped_tags.created_at 最新的标签（新出现）。
+
+    focus_tag_weights（回忆回放用）：这些标签无论排名如何都进入候选，并按权重排在最前面，
+    剩余名额再按 rank_by 补齐。
     """
     requested = tuple(dict.fromkeys(str(layer).strip() for layer in layers if str(layer).strip()))
     invalid = sorted(set(requested) - set(TAG_GRAPH_LAYERS))
@@ -781,6 +785,9 @@ def build_tag_graph_projection(
             return float(r.get("confidence") or 0.0)
     candidate_tags = sorted(tag_rows, key=candidate_key, reverse=True)[:candidate_cap]
     candidate_ids = [int(r["id"]) for r in candidate_tags]
+    focus = {int(tag_id): float(weight) for tag_id, weight in (focus_tag_weights or {}).items() if int(tag_id) in tags}
+    if focus:
+        candidate_ids = list(dict.fromkeys([*sorted(focus, key=lambda tag_id: (-focus[tag_id], tag_id)), *candidate_ids]))
 
     # 2. 链接查询下推 candidate_ids，大幅缩减 link 数量
     links = [row for row in _effective_links(conn, scope, tag_ids=candidate_ids) if row.get("tag_id") is not None]
@@ -935,6 +942,11 @@ def build_tag_graph_projection(
             return (float(tags[tag_id].get("created_at") or 0.0), *_link_rank(tag_id))
     else:
         rank_key = _link_rank
+    if focus:
+        base_rank_key = rank_key
+
+        def rank_key(tag_id: int) -> tuple:
+            return (focus.get(tag_id, 0.0), *base_rank_key(tag_id))
     ranked_ids = sorted(tags, key=rank_key, reverse=True)
     selected_ids = set(ranked_ids[:max(1, min(10_000, int(max_nodes)))])
     edges = [edge for edge in edges if int(str(edge["source"]).split(":", 1)[1]) in selected_ids and int(str(edge["target"]).split(":", 1)[1]) in selected_ids]

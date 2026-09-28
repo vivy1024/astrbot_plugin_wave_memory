@@ -98,6 +98,12 @@ export const SECTION_GROUPS: Record<string, SettingsGroupMeta> = {
     defaultOpen: false,
     bucket: 'always',
   },
+  Learning_Settings: {
+    title: '记账与主动回复',
+    description: '说完话后回看对话记账、每日日记、自动审核、关切驱动的主动回复',
+    defaultOpen: false,
+    bucket: 'always',
+  },
   Study_Settings: {
     title: '自主学习',
     description: '沉淀对话经验的开关与频率',

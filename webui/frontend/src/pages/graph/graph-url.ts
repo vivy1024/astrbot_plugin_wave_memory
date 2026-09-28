@@ -1,4 +1,5 @@
 import type { GraphLayerKind, GraphViewKind } from '@/lib/graph/types'
+import { SHOWCASE_WINDOWS_HOURS } from '@/lib/graph/showcase'
 import { WINDOW_OPTIONS_HOURS } from '@/lib/graph/views'
 
 export const MAX_NODE_OPTIONS = [100, 300, 600, 1000] as const
@@ -6,6 +7,10 @@ export const MIN_WEIGHT_OPTIONS = [0, 0.2, 0.4, 0.6, 0.8] as const
 export const DEFAULT_WINDOW_HOURS = 168
 
 export interface GraphUrlState {
+  /** 2d = 平面分析图；3d = 星空 / 回忆回放展示（只用标签数据）。 */
+  mode: '2d' | '3d'
+  /** 3D 展示读取多少小时内的回忆。 */
+  showcaseHours: number
   layer: GraphLayerKind
   view: GraphViewKind
   windowHours: number
@@ -34,6 +39,8 @@ export function parseGraphUrl(params: URLSearchParams, isMobile: boolean): Graph
   const layerParam = params.get('layer')
   const viewParam = params.get('view') as GraphViewKind | null
   return {
+    mode: params.get('mode') === '3d' ? '3d' : '2d',
+    showcaseHours: pick(params.get('replay_hours'), SHOWCASE_WINDOWS_HOURS, 24),
     layer: layerParam === 'tags' ? 'tags' : 'kg',
     view: viewParam && VIEWS.includes(viewParam) ? viewParam : 'strongest',
     windowHours: pick(params.get('window'), WINDOW_OPTIONS_HOURS, DEFAULT_WINDOW_HOURS),

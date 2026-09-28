@@ -177,3 +177,75 @@ export function updateTagCommand(
     signal,
   })
 }
+
+/** 回忆回放里一次注入想起的一条记忆（最多展示 6 条）。 */
+export interface RecallReplayMemory {
+  id: number
+  channel: string
+  score?: number | null
+  preview: string
+  /** 这条记忆在图上的标签节点 id。 */
+  tags: string[]
+}
+
+/** 一次注入：群友说了一句话，羽书准备回复时想起了哪些记忆。 */
+export interface RecallReplayEvent {
+  trace_id: string
+  timestamp: number
+  sender_name: string
+  message_preview: string
+  memory_count: number
+  /** 这次被想起、且画在图上的标签节点 id（去重）。 */
+  tags: string[]
+  memories: RecallReplayMemory[]
+  /** 注入所在会话（events=bot 时各不相同，如 bilibili:group:房间号）。 */
+  session_id?: string | null
+  /** astrbot（QQ 消息钩子）/ cortico（直播等）。 */
+  source?: string
+  /** 被想起记忆的全部标签名（不限于图上）。 */
+  tag_names?: string[]
+}
+
+export interface RecallReplayPayload {
+  /** graph=0 的增量请求为 null。 */
+  graph: TagGraphPayload | null
+  events: RecallReplayEvent[]
+  window: { from: number; to: number; hours: number }
+  stats: {
+    event_count: number
+    memory_hits: number
+    tagged_memory_hits: number
+    recalled_tags: number
+    recalled_tags_on_graph: number | null
+    events_with_tags: number
+    name_matched_tags?: number
+  }
+  all_sessions?: boolean
+  read_only: true
+  generated_at: number
+}
+
+export function getRecallReplay(
+  scope: TagGraphScope,
+  options: {
+    hours?: number
+    limit?: number
+    maxNodes?: number
+    /** bot = 该 Bot 全部会话的注入（直播舞台页）。 */
+    events?: 'session' | 'bot'
+    /** 只要这个时间（秒）之后的新事件。 */
+    since?: number
+    /** false = 不重建标签图，只取事件。 */
+    graph?: boolean
+    signal?: AbortSignal
+  } = {},
+): Promise<RecallReplayPayload> {
+  const params = scopeQuery(scope)
+  if (options.events === 'bot') params.set('events', 'bot')
+  if (options.since !== undefined) params.set('since', String(options.since))
+  if (options.graph === false) params.set('graph', '0')
+  if (options.hours !== undefined) params.set('hours', String(options.hours))
+  if (options.limit !== undefined) params.set('limit', String(options.limit))
+  if (options.maxNodes !== undefined) params.set('max_nodes', String(options.maxNodes))
+  return fetchJson<RecallReplayPayload>(`/api/tag-graph/replay?${params.toString()}`, { signal: options.signal, timeoutMs: 60_000 })
+}
