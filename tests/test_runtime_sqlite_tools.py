@@ -2,6 +2,7 @@ import json
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -232,7 +233,8 @@ class OtherMutationGuardTest(unittest.TestCase):
                     emotional_weight REAL
                 )"""
             )
-            since = 1782240000.0
+            # 与脚本同一算法（本地时区的 2026-06-24 零点），CI 在 UTC 下也成立
+            since = time.mktime(time.strptime("2026-06-24 00:00:00", "%Y-%m-%d %H:%M:%S"))
             conn.execute(
                 """INSERT INTO memories
                     (group_id, timestamp, sender_id, sender_name, content, memory_type, importance, summary)

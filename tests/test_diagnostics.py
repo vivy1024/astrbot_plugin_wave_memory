@@ -386,7 +386,8 @@ def test_diagnostics_without_sources_is_not_configured_and_creates_nothing(tmp_p
     ).collect()
 
     assert payload["health"] == "not_configured"
-    assert {item["health"] for item in payload["checks"]} == {"not_configured"}
+    # 进程内存读的是宿主 /proc，与有没有数据源无关：Linux 上可读（healthy），Windows 上读不到
+    assert {item["health"] for item in payload["checks"] if item["name"] != "process_memory"} == {"not_configured"}
     assert not (tmp_path / "wave_memory.db").exists()
     assert not (tmp_path / "book_lore.db").exists()
 

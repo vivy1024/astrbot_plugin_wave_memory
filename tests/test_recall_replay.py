@@ -135,7 +135,7 @@ def test_all_sessions_maps_other_session_tags_by_name_and_since_is_incremental()
         for name in ("hot", "OnlyStream")]
     conn.execute(
         """INSERT INTO memories(id,bot_id,session_id,visibility,content,sender_id,sender_name,timestamp,importance,source,version)
-           VALUES (50,'bot-a','bilibili:group:9','group','弹幕里的记忆','u9','观众',9_600,0.5,'chat',1)""")
+           VALUES (50,'bot-a','bilibili:group:9','group','弹幕里的记忆','u9','观众',9600,0.5,'chat',1)""")
     conn.executemany(
         """INSERT INTO scoped_memory_tags(bot_id,session_id,visibility,memory_id,tag_id,position,relevance,created_at)
            VALUES ('bot-a','bilibili:group:9','group',50,?,?,0.9,9600)""", [(other[0], 1), (other[1], 2)])
