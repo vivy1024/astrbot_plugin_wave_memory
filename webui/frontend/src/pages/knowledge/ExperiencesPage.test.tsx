@@ -1,5 +1,5 @@
 import { MemoryRouter } from 'react-router-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ExperiencesPage } from './ExperiencesPage'
@@ -66,5 +66,30 @@ describe('ExperiencesPage 证据链展示', () => {
     expect(screen.getByRole('link', { name: '群友印象时间线' })).toHaveAttribute('href', expect.stringContaining('/people'))
     expect(screen.getByRole('link', { name: 'u1' })).toHaveAttribute('href', expect.stringContaining('/people'))
     expect(screen.getByRole('link', { name: 'u1' })).toHaveAttribute('href', expect.stringContaining('search=u1'))
+  })
+
+  it('日记卡片可以打开全文', async () => {
+    const body = '第一段。' + '很长的正文'.repeat(40) + '\n\nTag: 时雨, vivy'
+    api.listExperiences.mockResolvedValue({
+      items: [{
+        id: 1019,
+        bot_id: 'bot-a',
+        group_id: '1',
+        episode_type: 'daily_diary',
+        trigger_text: '赛博虚空的观猴日常',
+        bot_inner_thought: '围观群友',
+        bot_reply: body,
+        emotional_weight: 6,
+        created_at: 1720000000,
+      }],
+      page: { total: 1, total_status: 'exact', reason_code: null, limit: 18, offset: 0, page: 1, page_count: 1, has_more: false },
+    })
+
+    render(<MemoryRouter initialEntries={['/knowledge/experiences?bot_id=bot-a&session_id=qq%3Agroup%3A1']}><ExperiencesPage /></MemoryRouter>)
+
+    fireEvent.click(await screen.findByRole('button', { name: '查看日记全文' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('赛博虚空的观猴日常')).toBeVisible()
+    expect(within(dialog).getByText((_, el) => el?.tagName === 'P' && el.textContent === body)).toBeVisible()
   })
 })

@@ -11,6 +11,7 @@ import { useCanonicalScopeDefault, usePaginationSearchParams } from '@/hooks/use
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -58,6 +59,7 @@ export function ExperiencesPage() {
   const [episodeTypeDraft, setEpisodeTypeDraft] = useState(episodeTypeParam)
   const [minWeight, setMinWeight] = useState('all')
   const [page, setPage] = useState(1)
+  const [detail, setDetail] = useState<ExperienceEpisode | null>(null)
   const limit = 18
 
   const loadBots = useCallback(async () => scopeOptionsFor(await getScopeOptions(), ['bot']), [])
@@ -351,7 +353,10 @@ export function ExperiencesPage() {
                     </>
                   )}
 
-                  <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-border/40 pt-2 text-xs text-muted-foreground">
+                  <Button variant="outline" size="sm" className="mt-auto self-start" onClick={() => setDetail(item)}>
+                    <BookOpenIcon data-icon="inline-start" aria-hidden="true" />{isDiary ? '查看日记全文' : '查看详情'}
+                  </Button>
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/40 pt-2 text-xs text-muted-foreground">
                     <span className="font-mono">episode:{item.id}</span>
                     {item.reflection_candidate ? <Badge variant="secondary">反思候选</Badge> : null}
                     {sourceMemoryIds(item.source_memory_ids).length ? (
@@ -391,7 +396,49 @@ export function ExperiencesPage() {
           </div>
         </div>
       ) : null}
+
+      <ExperienceDetailDialog item={detail} onOpenChange={(open) => { if (!open) setDetail(null) }} />
     </div>
+  )
+}
+
+function ExperienceDetailDialog({ item, onOpenChange }: { item: ExperienceEpisode | null; onOpenChange: (open: boolean) => void }) {
+  const isDiary = item?.episode_type === 'daily_diary'
+  const memoryIds = item ? sourceMemoryIds(item.source_memory_ids) : []
+  // 日记：trigger_text 是标题、bot_inner_thought 是一句话概括、bot_reply 是正文
+  const sections: Array<[string, string | null | undefined]> = item
+    ? isDiary
+      ? [['主线摘要', item.bot_inner_thought], ['正文', item.bot_reply]]
+      : [['触发', item.trigger_text], ['内心活动', item.bot_inner_thought], ['回复', item.bot_reply], ['用户反馈', item.user_reaction], ['结果', item.outcome]]
+    : []
+  return (
+    <Dialog open={Boolean(item)} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[86vh] max-w-[95vw] flex-col overflow-hidden sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex flex-wrap items-center gap-2 pr-6 leading-snug">
+            {isDiary ? <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400">📖 日记</Badge> : null}
+            <span>{isDiary ? item?.trigger_text || `日记 #${item?.id}` : EPISODE_TYPE_LABELS[item?.episode_type ?? ''] ?? `片段 #${item?.id}`}</span>
+          </DialogTitle>
+          <DialogDescription>
+            episode:{item?.id}
+            {item?.group_id ? ` · 群 ${item.group_id}` : ''}
+            {item?.created_at ? ` · ${formatTime(item.created_at)}` : ''}
+            {typeof item?.emotional_weight === 'number' ? ` · 情感权重 ${item.emotional_weight.toFixed(2)}` : ''}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto pr-1 text-sm">
+          {sections.filter(([, text]) => Boolean(text)).map(([label, text]) => (
+            <section key={label}>
+              <p className="mb-1 text-xs font-medium text-muted-foreground">{label}</p>
+              <p className="whitespace-pre-wrap leading-relaxed">{text}</p>
+            </section>
+          ))}
+          {memoryIds.length ? (
+            <p className="text-xs text-muted-foreground">来源记忆：<span className="font-mono">{memoryIds.join(', ')}</span></p>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
