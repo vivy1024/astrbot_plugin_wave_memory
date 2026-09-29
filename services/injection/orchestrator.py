@@ -340,6 +340,13 @@ class InjectionOrchestrator:
             warning = f"channel exceeded {timeout_ms}ms"
             if warning not in result.warnings:
                 result.warnings.append(warning)
+        # 通道若在构造结果之后才填正文（或自己构造时没给 tokens），这里按正文补估算，
+        # 保证单通道预算、总预算与 trace 的 tokens 列对所有通道都生效。
+        if result.text:
+            if result.tokens <= 0:
+                result.tokens = estimate_injection_tokens(result.text)
+            if result.chars <= 0:
+                result.chars = len(result.text)
         result.latency_ms = round((time.perf_counter() - started) * 1000, 2)
         return result
 
@@ -413,9 +420,11 @@ class InjectionOrchestrator:
                     continue
                 text = result.text
                 for item in duplicate_items:
-                    rendered = str(item.get("rendered_text") or "")
+                    rendered = str(item.get("rendered_text") or "").strip()
                     if rendered:
-                        text = re.sub(rf"(?m)^\\s*{re.escape(rendered)}\\s*\\n?", "", text)
+                        # 只去掉整行（或整段）等于该条目渲染文本的部分，连同行首尾空白与一个换行。
+                        # 旧写法在 raw f-string 里写成 \\s，匹配的是字面反斜杠，去重从未生效。
+                        text = re.sub(rf"(?m)^[ \t]*{re.escape(rendered)}[ \t]*(?:\n|$)", "", text)
                 text = text.strip()
                 if not text:
                     continue
@@ -481,7 +490,7 @@ class InjectionOrchestrator:
     @staticmethod
     def _normalize_dedupe_text(text: str) -> str:
         normalized = unicodedata.normalize("NFKC", str(text or "")).casefold()
-        return re.sub(r"\\s+", " ", normalized).strip()
+        return re.sub(r"\s+", " ", normalized).strip()
 
     def _make_text_part(self, text: str) -> Any:
         if self.text_part_factory:

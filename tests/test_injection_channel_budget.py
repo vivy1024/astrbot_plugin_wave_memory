@@ -149,3 +149,90 @@ def test_safety_guard_is_exempt_from_channel_budget():
     out = _run([guard], _config(memory={"token_budget": 600}))
     assert guard.status == "hit"
     assert out.final_text == guard.text
+
+
+# ── 去重（修复前 \s 写成字面反斜杠，去重从未生效） ───────────────
+
+
+def test_duplicate_item_lines_are_removed_from_later_channels():
+    first_lines = ["- 测试群友 喜欢 苹果", "- 测试群友 住在 虚构市"]
+    facts = InjectionResult.hit(
+        "facts",
+        "<known_facts>\n" + "\n".join(first_lines) + "\n</known_facts>",
+        items=[{"rendered_text": line, "dedupe_key": f"fact|{i}"} for i, line in enumerate(first_lines)],
+    )
+    later_lines = ["- 测试群友 住在 虚构市", "- 测试群友 喜欢 苹果派", "- 测试群友 养了 一只猫"]
+    belief = InjectionResult.hit(
+        "belief",
+        "[相关信念]\n" + "\n".join(later_lines),
+        items=[
+            {"rendered_text": later_lines[0], "dedupe_key": "fact|1"},
+            {"rendered_text": later_lines[1], "dedupe_key": "fact|9"},
+            {"rendered_text": later_lines[2], "dedupe_key": "fact|10"},
+        ],
+    )
+    out = _run([facts, belief], _config(facts={"token_budget": 500}, belief={"token_budget": 500}))
+    assert out.final_text.count("- 测试群友 住在 虚构市") == 1
+    # 只删整行相同的重复条目；「苹果派」与「苹果」只是前缀相同，不受影响
+    assert "- 测试群友 喜欢 苹果派" in out.final_text
+    assert "- 测试群友 养了 一只猫" in out.final_text
+    assert "[相关信念]" in out.final_text
+
+
+def test_channel_whose_items_are_all_duplicates_is_dropped():
+    line = "- 测试群友 喜欢 苹果"
+    first = InjectionResult.hit("facts", f"<known_facts>\n{line}\n</known_facts>", items=[{"rendered_text": line, "dedupe_key": "fact|1"}])
+    second = InjectionResult.hit("belief", f"[相关信念]\n{line}", items=[{"rendered_text": line, "dedupe_key": "fact|1"}])
+    out = _run([first, second], _config(facts={"token_budget": 500}, belief={"token_budget": 500}))
+    assert out.final_text.count(line) == 1
+    assert "[相关信念]" not in out.final_text
+
+
+def test_whole_text_dedupe_ignores_whitespace_differences_only():
+    a = InjectionResult.hit("facts", "同一段  注入\n文本")
+    b = InjectionResult.hit("belief", "同一段 注入 文本")
+    c = InjectionResult.hit("book_lore", "同一段 注入 文本，但多了一句")
+    out = _run([a, b, c], _config(facts={"token_budget": 500}, belief={"token_budget": 500}, book_lore={"token_budget": 500}))
+    assert out.final_text.count("注入") == 2
+    assert "同一段  注入\n文本" in out.final_text
+    assert "同一段 注入 文本，但多了一句" in out.final_text
+
+
+# ── tokens 为 0 的结果按正文补估算 ────────────────────────────
+
+
+class _LateTextChannel:
+    """构造结果后才填正文的通道：tokens / chars 停在 0。"""
+
+    def __init__(self, name: str, text: str):
+        self.name = name
+        self.text = text
+
+    async def build(self, ctx):
+        result = InjectionResult(channel=self.name, status="hit")
+        result.text = self.text
+        return result
+
+
+def test_missing_tokens_are_estimated_so_budgets_and_trace_apply():
+    store = InjectionTraceStore(sqlite3.connect(":memory:"))
+    store.ensure_schema()
+    lines = [f"[其他群友历史] [记忆] 测试群友{i:02d}(09-28 10:{i:02d}): 第{i:02d}条比较长的虚构聊天记录 (relevance: 0.80)" for i in range(10)]
+    long_text = "<wave_memory>\n" + "\n".join(lines) + "\n</wave_memory>"
+    orchestrator = InjectionOrchestrator(
+        channels=[_LateTextChannel("memory", long_text), _LateTextChannel("facts", "<known_facts>\n- 测试群友 喜欢 苹果\n</known_facts>")],
+        config=_config(memory={"token_budget": 60}, facts={"token_budget": 100}),
+        trace_store=store,
+        text_part_factory=lambda text: text,
+    )
+    ctx = InjectionContext(
+        event=None, req=_Req(), message="hello", group_id="20000001", sender_id="10000001",
+        sender_name="测试群友", bot_id="bot-test", bot_profile_id="bot-test", trace_id="trace-late-text",
+    )
+    out = asyncio.run(orchestrator.run(ctx))
+    memory = next(result for result in out.channel_results if result.channel == "memory")
+    assert 0 < memory.tokens <= 60
+    assert memory.chars == len(memory.text)
+    assert any("channel_token_budget_truncated" in warning for warning in memory.warnings)
+    rows = {row["channel"]: row for row in store.get("trace-late-text")["channels"]}
+    assert rows["memory"]["tokens"] > 0 and rows["facts"]["tokens"] > 0
