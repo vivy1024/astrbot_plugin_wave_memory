@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from .holyman_assets import CORE_CURATED_PHRASES, DEFAULT_BLOCKED, content_entries
+from .meme_encyclopedia import normalize_word, phrase_rule_matches
+
+# 按内容屏蔽的原因；梗百科词条不受它约束（质量类屏蔽如残句、实体名仍然生效）
+_CONTENT_BLOCK_REASONS = frozenset({"toxic_or_sensitive"})
 
 
 _DEFAULT_PHRASES = {
@@ -45,6 +49,10 @@ class HolymanReference:
         self._blocked: dict[str, str] = dict(DEFAULT_BLOCKED)
         # 梗百科里人工确认过特异性的短词/字母数字词（如「做局」「8u」），允许参与运行时匹配
         self._extra_matchable: set[str] = set()
+        # 梗百科词条不受“按内容屏蔽”（toxic_or_sensitive）约束：梗照常解释，只加标注
+        self._content_block_overrides: set[str] = set()
+        # 词条的附加匹配规则（按规范化词形索引）：避免「黄油面包」「输入密码的时候」这类误命中
+        self._match_rules: dict[str, tuple[str, tuple[str, ...]]] = {}
         self.reload()
 
     def reload(self) -> None:
@@ -54,6 +62,8 @@ class HolymanReference:
         self._examples = []
         self._blocked = dict(DEFAULT_BLOCKED)
         self._extra_matchable = set()
+        self._content_block_overrides = set()
+        self._match_rules = {}
 
         # 2. Load local high-availability JSON assets (ground truth baseline)
         local_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "holyman"
@@ -144,11 +154,30 @@ class HolymanReference:
         except Exception:
             return
         for word, payload in phrases.items():
-            if word in self._phrases or word in self._blocked:
+            if word in self._phrases:
                 continue
+            if word in self._blocked:
+                # 残句、实体名这类质量屏蔽照旧；按内容屏蔽的词（如「你妈死了」）作为梗照常解释。
+                if self._blocked[word] not in _CONTENT_BLOCK_REASONS:
+                    continue
+                self._content_block_overrides.add(word)
             self._phrases[word] = dict(payload)
             if word in short_words:
                 self._extra_matchable.add(word)
+            regex = str(payload.get("match_regex") or "")
+            context = tuple(str(item) for item in payload.get("match_context") or () if str(item).strip())
+            if regex or context:
+                self._match_rules[normalize_word(word)] = (regex, context)
+
+    def _is_blocked_phrase(self, phrase: str) -> bool:
+        return phrase in self._blocked and phrase not in self._content_block_overrides
+
+    def phrase_rule_ok(self, phrase: str, text: str) -> bool:
+        """词条的附加匹配规则（正则 / 上下文词）；没有规则的词条总是通过。"""
+        rule = self._match_rules.get(normalize_word(phrase))
+        if rule is None:
+            return True
+        return phrase_rule_matches(rule[0], rule[1], text)
 
     @property
     def available(self) -> bool:
@@ -156,7 +185,7 @@ class HolymanReference:
 
     def _is_matchable_phrase(self, phrase: str) -> bool:
         phrase = (phrase or "").strip()
-        if not phrase or phrase in self._MATCH_BLOCKLIST or phrase in self._blocked:
+        if not phrase or phrase in self._MATCH_BLOCKLIST or self._is_blocked_phrase(phrase):
             return False
         lowered = phrase.lower()
         if any(marker.lower() in lowered for marker in self._MATCH_NOISE_MARKERS):
@@ -215,9 +244,9 @@ class HolymanReference:
         context = context or ""
         if not term:
             return self._no_match()
-        if term in self._blocked:
+        if self._is_blocked_phrase(term):
             return self._no_match(term)
-        term_matchable = term not in self._MATCH_BLOCKLIST and term not in self._blocked and self._is_matchable_phrase(term)
+        term_matchable = term not in self._MATCH_BLOCKLIST and not self._is_blocked_phrase(term) and self._is_matchable_phrase(term)
 
         if term_matchable:
             for phrase, explanation in self._phrases.items():
@@ -290,7 +319,7 @@ class HolymanReference:
         for phrase, value in self._phrases.items():
             if not self._is_runtime_phrase(phrase, value) or not self._is_matchable_phrase(phrase):
                 continue
-            matched = phrase in text
+            matched = phrase in text and self.phrase_rule_ok(phrase, text)
             if phrase == "动了XX的蛋糕":
                 matched = re.search(r"动了.{1,12}的蛋糕", text) is not None
             if not matched:

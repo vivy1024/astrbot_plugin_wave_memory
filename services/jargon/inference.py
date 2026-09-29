@@ -139,6 +139,7 @@ class JargonInjector:
                     or self._is_blocked(normalized)
                     or is_identity_contamination(f"{word} {meaning}")
                     or not self._word_explicitly_mentioned(text_lower, word)
+                    or not self._reference_rule_ok(word, source, text)
                 ):
                     continue
                 global_items.append({
@@ -200,8 +201,12 @@ class JargonInjector:
                     break
             bot_id = str(getattr(runtime_scope, "bot_id", "") or "")
             overrides, tombstoned = self._get_bot_jargon_state(bot_id)
-            for word, _meaning, _source, _confidence in self._iter_global_candidates(text, overrides, tombstoned, bot_id):
-                if word and not self._is_blocked(word) and self._word_explicitly_mentioned(text_lower, word):
+            for word, _meaning, source, _confidence in self._iter_global_candidates(text, overrides, tombstoned, bot_id):
+                if (
+                    word and not self._is_blocked(word)
+                    and self._word_explicitly_mentioned(text_lower, word)
+                    and self._reference_rule_ok(word, source, text)
+                ):
                     has_global = True
                     matched_words.append(word)
                     break
@@ -353,6 +358,19 @@ class JargonInjector:
             except Exception:
                 continue
         return result
+
+    def _reference_rule_ok(self, word: str, source: str, text: str) -> bool:
+        """内置梗百科词条可带附加匹配规则（如「黄油」要有游戏语境）；Bot 级自定义词条没有规则。"""
+        if source != "holyman_skills":
+            return True
+        checker = getattr(self._holyman, "phrase_rule_ok", None)
+        if not callable(checker):
+            return True
+        try:
+            return bool(checker(word, text))
+        except Exception as exc:
+            logger.debug("[Jargon] holyman phrase rule failed for %r: %s", word, exc)
+            return True
 
     @staticmethod
     def _word_explicitly_mentioned(text_lower: str, word: str) -> bool:

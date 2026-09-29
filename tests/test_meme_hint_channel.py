@@ -212,3 +212,20 @@ def test_runtime_tiers_include_meme_hint_except_minimal(tier, expected):
 
     allowed = TIER_CHANNELS[tier]
     assert (allowed is None or "meme_hint" in allowed) is expected
+
+
+def test_hints_only_suggest_usable_entries():
+    """用梗提示是“建议用”的范围：冒犯性强、点名真实人物等带标注的词条从不主动建议。"""
+    from services.jargon.meme_encyclopedia import get_meme_knowledge_base
+
+    kb = get_meme_knowledge_base()
+    topics = {topic for entry in kb.encyclopedia_entries() for topic in entry.hint_topics}
+    for topic in topics:
+        for entry in kb.hint_candidates(f"说到{topic}这件事", max_items=2):
+            assert entry.usable and not entry.sensitivity, entry.word
+    assert any(entry.sensitivity for entry in kb.encyclopedia_entries())
+
+
+def test_message_touching_sensitive_content_gets_no_hint():
+    for message in ("丁真今天又上热搜，我还是找不到工作", "你妈死了，找不到工作"):
+        assert _build(MemeHintChannel(), _ctx(message)).status == "empty", message
