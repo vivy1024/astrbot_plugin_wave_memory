@@ -2,7 +2,7 @@
 
 锁定的行为：
 - 画像（Bot Profile 的 mood 段）缺省为中性默认值，越界值被夹到合法区间，旧 Profile 往返不丢字段；
-- 冲 Bot 来的话按情绪词评估，关系好的人的损话更像玩笑、敌意高的人更刺痛；否定词反向；
+- 冲 Bot 来的话只按内容本身（情绪词、笑骂、否定词）评估，不读好感分数；
 - 事件按各自半衰期指数回落，强事件更久；叠加后软饱和，单条事件冲击有上限；
 - 心情跨群/私聊共享，私聊来源的原因在别处只说「私下有件事」；
 - 关系事件增量导入且幂等；事后记账的心情字段解析失败安全忽略；
@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 from types import SimpleNamespace
 
@@ -110,19 +111,15 @@ def test_settings_defaults_clamp_and_profile_round_trip():
 # ─── 冲她来的话 ───
 
 
-def test_directed_message_scoring_with_relationship_and_negation():
+def test_directed_message_scoring_by_content_and_negation():
     praise = score_directed_message("你真可爱，好厉害")
     insult = score_directed_message("你个人机，闭嘴")
     assert praise.kind == "praise" and praise.valence > 0.3
     assert insult.kind == "insult" and insult.valence < -0.3
     assert score_directed_message("今天天气怎么样").is_empty
 
-    friend = score_directed_message("你个人机，闭嘴", closeness=1.0)
-    enemy = score_directed_message("你个人机，闭嘴", hostility=1.0)
-    assert abs(friend.valence) < abs(insult.valence) < abs(enemy.valence), "关系好的损话更像玩笑，敌意高更刺痛"
-    banter = score_directed_message("哈哈你个笨蛋", closeness=0.9)
-    assert banter.kind == "banter" and banter.valence > 0, "熟人的笑骂是斗嘴"
-    assert score_directed_message("你真可爱", hostility=1.0).valence < praise.valence
+    banter = score_directed_message("哈哈你个笨蛋")
+    assert banter.kind == "banter" and insult.valence < banter.valence < 0, "骂里带笑按斗嘴减轻，只看内容本身"
 
     assert score_directed_message("你一点都不可爱").valence < 0, "被否定的夸奖算负面"
     assert score_directed_message("我不讨厌你").valence > 0
@@ -237,26 +234,23 @@ def test_message_spam_is_merged_and_single_event_is_capped(db):
     assert len(events) == 1 and events[0].valence == -0.6, "单条事件冲击有上限"
 
 
-def test_relationship_closeness_uses_stance_when_repository_offers_it(db):
-    class Stance:
-        def __init__(self, closeness):
-            self.closeness = closeness
+def test_directed_message_does_not_read_relationship_scores(db):
+    """冲她来的话只按内容计算心情，不因好感分数打折或加重（分数只给群友看）。"""
 
-        def relationship_stance_for(self, bot_id, subject):
-            return {"available": True, "closeness": self.closeness, "dimensions": {"hostility": 0}}
+    class _ScoreRepo:
+        def __getattr__(self, name):
+            raise AssertionError(f"心情评估不应读取关系仓储：{name}")
 
-    service = _service(db)
-    service.db = SimpleNamespace(bot_mood=db.bot_mood, soul_repository=Stance(1.0))
-    assert service._relationship(_group(), "qq:user:u1") == (1.0, 0.0)
-    service.db = SimpleNamespace(bot_mood=db.bot_mood, soul_repository=Stance(-0.5))
-    assert service._relationship(_group(), "qq:user:u1") == (0.0, 0.5)
-    # 没有 relationship_stance_for 时按跨群五维汇总
     scope = _group("g1", "u1")
-    db.soul_repository.record_relationship_event(scope, event_type="bot_attacked", dimension="hostility",
-                                                 delta=8, reason="骂人", created_at=NOW - HOUR)
-    service.db = db
-    closeness, hostility = service._relationship(scope, "qq:user:u1")
-    assert closeness == 0.0 and hostility == pytest.approx(0.2)
+    service = _service(db)
+    service.db = SimpleNamespace(bot_mood=db.bot_mood, soul_repository=_ScoreRepo())
+    event_id = service.observe_message(scope, content="你个人机，闭嘴", sender_name="阿青", directed=True, now=NOW)
+    assert event_id is not None
+    event = db.bot_mood.list_events("bot-a", since=0)[0]
+    assert event.valence == pytest.approx(score_directed_message("你个人机，闭嘴").valence)
+    assert event.cause.startswith("阿青说你")
+    (raw,) = db.bot_mood.cm.execute_read("SELECT evidence FROM bot_mood_events WHERE id=?", (event_id,)).fetchone()
+    assert set(json.loads(raw)) == {"kind", "matched"}, "证据里不再记亲疏/敌意分数"
 
 
 def test_relationship_events_are_imported_once_with_cursor(db):

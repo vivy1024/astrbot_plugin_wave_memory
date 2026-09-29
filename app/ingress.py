@@ -373,9 +373,8 @@ class IngressMixin:
             nonlocal decision
             if service is None:
                 return True
-            # Read-only signals; absent feedback or relationship remains unknown.
+            # Read-only signals; absent feedback remains unknown. Affinity scores are not read here.
             relevance = None
-            relationship = None
             feedback = None
             backlog = 0
             if service.settings(scope.bot_id, scope.session.id)["mode"] != "off" and not direct:
@@ -384,13 +383,6 @@ class IngressMixin:
                 if callable(interesting):
                     try:
                         relevance = 1.0 if interesting(message) else 0.0
-                    except Exception:
-                        pass
-                repository = getattr(getattr(self, "db", None), "soul_repository", None)
-                read_stance = getattr(repository, "relationship_stance_for", None)
-                if callable(read_stance) and scope.subject_principal_id:
-                    try:
-                        relationship = read_stance(scope.bot_id, scope.subject_principal_id)
                     except Exception:
                         pass
                 # Only this conversation's pending ingress buffers contribute.
@@ -417,7 +409,7 @@ class IngressMixin:
                 platform_allowed=allowed if not direct else not bool(getattr(event, "call_llm", False)),
                 stopped=bool((callable(getattr(event, "is_stopped", None)) and event.is_stopped())
                              or getattr(event, "stopped", False) or getattr(event, "_force_stopped", False)),
-                relevance=relevance, relationship=relationship, backlog=backlog, feedback=feedback,
+                relevance=relevance, backlog=backlog, feedback=feedback,
                 concern=concern is not None,
                 cooldown_remaining=followup_gate.get("remaining", 0.0),
                 candidate_gate=followup_gate.get("reason"),
