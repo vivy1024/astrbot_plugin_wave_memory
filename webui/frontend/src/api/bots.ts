@@ -66,6 +66,24 @@ export function emptyMood(): MoodDto {
   }
 }
 
+/** 角色经历设置（Bot Profile 的 character_experience 段；见 domain/character_experience.py）。没有这一段 = 关闭 */
+export interface CharacterExperienceDto {
+  enabled: boolean
+  /** 当前时间点（时间线阶段 key）；空 = 不限，能想起所有阶段 */
+  current_stage: string
+  top_k: number
+  max_chars: number
+  min_score: number
+  /** 记忆表里已由角色经历接管的旧来源值（这些旧行不再走普通记忆召回） */
+  legacy_sources: string[]
+  /** 书设库里属于她个人经历的笔记类别（不当世界观书设注入） */
+  lore_categories: string[]
+}
+
+export function emptyCharacterExperience(): CharacterExperienceDto {
+  return { enabled: false, current_stage: '', top_k: 3, max_chars: 600, min_score: 0.35, legacy_sources: [], lore_categories: [] }
+}
+
 export interface BotProfileDto {
   db_id: string
   name: string
@@ -87,6 +105,8 @@ export interface BotProfileDto {
   persona: PersonaDto
   /** 旧后端没有这一段；编辑器按 emptyMood() 补齐 */
   mood?: MoodDto
+  /** 旧后端没有这一段；编辑器按 emptyCharacterExperience() 补齐 */
+  character_experience?: CharacterExperienceDto
   channels: Record<string, Record<string, unknown>>
   tools_allow: string[]
   tools_deny: string[]
@@ -121,6 +141,8 @@ export const BOT_MODEL_TASKS = [
   { id: 'bookkeeping', label: '事后记账' },
   { id: 'diary', label: '每日日记' },
   { id: 'portrait', label: '关系小传（预留）' },
+  { id: 'belief_reflection', label: '信念反思' },
+  { id: 'character_experience', label: '角色经历' },
 ] as const
 
 export interface BotHistoryEntry {
@@ -198,6 +220,7 @@ export function emptyBot(dbId = ''): BotProfileDto {
       lore_corpus: '',
     },
     mood: emptyMood(),
+    character_experience: emptyCharacterExperience(),
     channels: {},
     tools_allow: [],
     tools_deny: [],

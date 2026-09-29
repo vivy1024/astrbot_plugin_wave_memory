@@ -108,6 +108,27 @@ describe('BotsPage 模型覆盖', () => {
   })
 })
 
+describe('BotsPage 角色经历', () => {
+  it('角色经历标签页默认关闭，保存时带上 character_experience 段', async () => {
+    const user = userEvent.setup()
+    api.saveBot.mockResolvedValue({ ok: true, item: { ...yushu, version: 4 } })
+    render(<MemoryRouter initialEntries={['/bots?bot=yushu&tab=character']}><BotsPage /></MemoryRouter>)
+    const toggle = await screen.findByRole('switch', { name: '启用角色经历' })
+    expect(toggle).not.toBeChecked()
+    await user.click(toggle)
+    const topK = screen.getByLabelText('每次最多想起几条（1~10）')
+    await user.clear(topK)
+    await user.type(topK, '5')
+    await user.type(screen.getByLabelText('接管的旧记忆来源（逗号分隔）'), 'demo_source')
+    expect(screen.getByRole('link', { name: '打开角色经历工作台' })).toHaveAttribute('href', '/knowledge/character-experience?bot_id=yushu')
+    await user.click(screen.getByRole('button', { name: /保存/ }))
+    await waitFor(() => expect(api.saveBot).toHaveBeenCalled())
+    const [, item, version] = api.saveBot.mock.calls[0]
+    expect(version).toBe(3)
+    expect(item.character_experience).toMatchObject({ enabled: true, current_stage: '', top_k: 5, legacy_sources: ['demo_source'] })
+  })
+})
+
 describe('BotsPage 深链接', () => {
   it('?bot= 直接打开对应 Bot', async () => {
     render(<MemoryRouter initialEntries={['/bots?bot=yushu&tab=behavior']}><BotsPage /></MemoryRouter>)

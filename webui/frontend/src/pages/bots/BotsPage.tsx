@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { DownloadIcon, PlusIcon, RefreshCwIcon, SaveIcon, Trash2Icon, UploadIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
   BOT_MODEL_TASKS,
   emptyBot,
+  emptyCharacterExperience,
   emptyMood,
   exportBots,
   getBot,
@@ -18,6 +19,7 @@ import {
   type BotDetailPayload,
   type BotListPayload,
   type BotProfileDto,
+  type CharacterExperienceDto,
   type MoodDto,
 } from '@/api/bots'
 import { isRequestCancelled } from '@/api/client'
@@ -162,6 +164,38 @@ function MoodEditor({ mood, onChange }: { mood: MoodDto; onChange: (next: MoodDt
   )
 }
 
+/** 角色经历：进群之前「过去的人生」的召回设置。没开启的 Bot 完全不会想起角色经历。 */
+function CharacterExperienceEditor({ value, onChange, dbId, isNew }: {
+  value: CharacterExperienceDto; onChange: (next: CharacterExperienceDto) => void; dbId: string; isNew: boolean
+}) {
+  const set = <K extends keyof CharacterExperienceDto>(key: K, next: CharacterExperienceDto[K]) => onChange({ ...value, [key]: next })
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      <Field className="gap-1">
+        <FieldLabel htmlFor="bot-ce-enabled">启用角色经历</FieldLabel>
+        <Switch id="bot-ce-enabled" checked={value.enabled} onCheckedChange={(next) => set('enabled', next)} />
+        <FieldDescription>书中角色、原创角色进群之前的经历。开启后她会在话题相关时想起自己的过去；只有她自己看得到，别的 Bot 完全看不到。</FieldDescription>
+      </Field>
+      <TextField id="bot-ce-stage" label="当前时间点（阶段 key）" value={value.current_stage} onChange={(v) => set('current_stage', v.trim())}
+        placeholder="留空 = 不限" hint="只会想起这个阶段及之前的经历（避免剧透）。在角色经历工作台的时间线里点「设为当前时间点」更方便。" />
+      <NumberField id="bot-ce-topk" label="每次最多想起几条（1~10）" value={value.top_k} min={1} max={10} onChange={(v) => set('top_k', Math.round(v))} />
+      <NumberField id="bot-ce-chars" label="注入上限（字）" value={value.max_chars} min={100} max={4000} onChange={(v) => set('max_chars', Math.round(v))}
+        hint="一次注入的经历正文总字数上限。" />
+      <NumberField id="bot-ce-score" label="最低相似度（0~1）" value={value.min_score} min={0} max={1} onChange={(v) => set('min_score', v)}
+        hint="话题和经历的向量相似度低于它就不想起；关键词直接命中的放宽一些。" />
+      <TextField id="bot-ce-legacy" label="接管的旧记忆来源（逗号分隔）" value={csv(value.legacy_sources)} onChange={(v) => set('legacy_sources', fromCsv(v))}
+        hint="记忆表里已经迁进角色经历的旧来源值（如 v5 的 bzz_experience）。这些旧行不再走普通记忆召回，避免同一条经历出现两次。" />
+      <TextField id="bot-ce-lore" label="个人经历书设类别（逗号分隔）" value={csv(value.lore_categories)} onChange={(v) => set('lore_categories', fromCsv(v))}
+        hint="书设库里属于她个人经历的笔记类别；书设通道不把它们当世界观注入。" />
+      <div className="md:col-span-2 text-sm text-muted-foreground">
+        {isNew ? '保存 Bot 后可以在角色经历工作台里导入、提取或编写她的经历。' : (
+          <Link className="underline" to={{ pathname: '/knowledge/character-experience', search: `?bot_id=${encodeURIComponent(dbId)}` }}>打开角色经历工作台</Link>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function withModel(models: Record<string, string> | undefined, task: string, value: string): Record<string, string> {
   const next = { ...(models ?? {}) }
   if (value) next[task] = value
@@ -183,7 +217,7 @@ function ModelFields({ draft, onChange }: { draft: BotProfileDto; onChange: (nex
     <div className="space-y-2 rounded-lg border p-3 md:col-span-2">
       <FieldLabel>模型</FieldLabel>
       <FieldDescription>
-        只作用于以这个 Bot 口吻产出的任务：内心判断、事后记账、每日日记、关系小传。优先级：按任务覆盖 → 默认模型 → 配置中心「模型分工」 → 所属默认；前面的不可用时依次回退。保存后立即生效。
+        只作用于以这个 Bot 口吻产出的任务：内心判断、事后记账、每日日记、关系小传、信念反思、角色经历。优先级：按任务覆盖 → 默认模型 → 配置中心「模型分工」 → 所属默认；前面的不可用时依次回退。保存后立即生效。
       </FieldDescription>
       <div className="grid gap-3 md:grid-cols-2">
         <TextField id="bot-model" label="默认模型" value={draft.model} onChange={(v) => onChange({ ...draft, model: v })}
@@ -273,6 +307,7 @@ function BotEditor({ draft, onChange, isNew, initialTab = 'identity' }: { draft:
         <TabsTrigger value="persona">人设</TabsTrigger>
         <TabsTrigger value="behavior">行为</TabsTrigger>
         <TabsTrigger value="mood">心情</TabsTrigger>
+        <TabsTrigger value="character">角色经历</TabsTrigger>
         <TabsTrigger value="advanced">通道与工具</TabsTrigger>
       </TabsList>
       <TabsContent value="identity" className="grid gap-4 md:grid-cols-2">
@@ -299,8 +334,8 @@ function BotEditor({ draft, onChange, isNew, initialTab = 'identity' }: { draft:
         <TextField id="bot-self-terms" label="额外自称词（逗号分隔）" value={csv(draft.persona.self_terms)} onChange={(v) => setPersona('self_terms', fromCsv(v))}
           hint="名字和别名之外、指代这个 Bot 的词，用于身份安全检测。" />
         <TextField id="bot-diary" label="日记署名" value={draft.persona.diary_signature} onChange={(v) => setPersona('diary_signature', v)} hint="留空用显示名。" />
-        <TextField id="bot-exp-source" label="第一人称经历来源" value={draft.persona.experience_source} onChange={(v) => setPersona('experience_source', v)}
-          hint="这个 Bot 自己经历的记忆 source 值。" />
+        <TextField id="bot-exp-source" label="第一人称经历来源（旧版）" value={draft.persona.experience_source} onChange={(v) => setPersona('experience_source', v)}
+          hint="旧版：记忆表里这个 Bot 自己经历的 source 值。进群之前的经历请用「角色经历」标签页。" />
         <Field className="gap-1">
           <FieldLabel htmlFor="bot-guard">身份安全防护</FieldLabel>
           <Switch id="bot-guard" checked={draft.persona.identity_guard_enabled} onCheckedChange={(value) => setPersona('identity_guard_enabled', value)} />
@@ -333,6 +368,9 @@ function BotEditor({ draft, onChange, isNew, initialTab = 'identity' }: { draft:
       </TabsContent>
       <TabsContent value="mood">
         <MoodEditor mood={draft.mood ?? emptyMood()} onChange={(next) => set('mood', next)} />
+      </TabsContent>
+      <TabsContent value="character">
+        <CharacterExperienceEditor value={draft.character_experience ?? emptyCharacterExperience()} onChange={(next) => set('character_experience', next)} dbId={draft.db_id} isNew={isNew} />
       </TabsContent>
       <TabsContent value="advanced" className="grid gap-4 md:grid-cols-2">
         <TextField id="bot-tools-allow" label="只开放这些工具（逗号分隔）" value={csv(draft.tools_allow)} onChange={(v) => set('tools_allow', fromCsv(v))} hint="留空表示全部开放。" />

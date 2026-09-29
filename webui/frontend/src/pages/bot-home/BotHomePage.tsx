@@ -162,6 +162,7 @@ const CHANNEL_LABELS: Record<string, string> = {
   soul_state: '心智状态',
   meme_hint: '用梗提示',
   book_lore: '书设',
+  character_experience: '角色经历',
   belief: '信念',
   jargon: '黑话',
   fewshot: '风格范例',
