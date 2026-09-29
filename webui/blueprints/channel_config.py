@@ -82,6 +82,7 @@ _CHANNEL_DESCRIPTORS = {
     "fts5": ("全文原词命中（FTS5），与向量记忆分开", ["fts_memories"], "medium", "/diagnostics/indexes"),
     "affinity": ("印象摘要、印象时间线与关系分数一起注入", ["relationship_projection"], "medium", "/people"),
     "soul_state": ("注入当前 Scope 的 Mood、Concern、Timeline 与 Soul 状态", ["soul_repository"], "high", "/soul"),
+    "character_experience": ("启用了角色经历的 Bot 想起自己进群之前的经历（只召回当前时间点及之前的阶段；按 Bot 在 Bot 资料里开启）", ["character_experiences"], "medium", "/knowledge/character-experience"),
 }
 
 

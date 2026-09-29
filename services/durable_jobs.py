@@ -330,12 +330,17 @@ class DurableJobRunner:
         *,
         poll_interval: float = 1.0,
         lease_seconds: float = 60.0,
+        task_name: str = "wave-memory:durable-job-runner",
+        owner: str = "durable-jobs",
     ) -> None:
         self.service = service
         self.handlers = dict(handlers)
         self.poll_interval = max(0.05, float(poll_interval))
         self.lease_seconds = max(1.0, float(lease_seconds))
         self.lease_owner = f"job-runner-{uuid.uuid4().hex}"
+        # 多个执行器共用同一张任务表：各自只认领自己登记的 kind，任务名 / owner 在 TaskSupervisor 里必须唯一。
+        self.task_name = str(task_name)
+        self.owner = str(owner)
         self._running = False
         self._task = None
 
@@ -347,9 +352,9 @@ class DurableJobRunner:
             self._task = asyncio.create_task(self._loop())
         else:
             self._task = supervisor.start(
-                "wave-memory:durable-job-runner",
+                self.task_name,
                 self._loop(),
-                owner="durable-jobs",
+                owner=self.owner,
             )
         return self._task
 

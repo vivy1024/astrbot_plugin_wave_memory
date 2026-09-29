@@ -161,8 +161,9 @@ describe('配置文案不暴露实现术语', () => {
     // 关系小传新增 Learning_Settings 7 项（relationship_portrait_enabled 与 portrait_* 六项）；
     // 模型分工 10 项（每个后台大模型任务一项）；
     // Jargon_Settings 用梗提示的群聊/私聊/直播三个场合开关（+3）；
-    // 信念反思 5 项（belief_reflection_enabled / _every_n_days、belief_form_min_days、belief_decay_days、belief_max_active）。
-    expect(total).toBe(178)
+    // 信念反思 5 项（belief_reflection_enabled / _every_n_days、belief_form_min_days、belief_decay_days、belief_max_active）；
+    // 角色经历的模型分工 1 项（Model_Routing_Settings.character_experience）。
+    expect(total).toBe(179)
     expect(noType).toEqual([])
   })
 

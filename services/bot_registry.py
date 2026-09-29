@@ -132,10 +132,14 @@ class BotRegistry:
         enabled = [p for p in all_profiles.values() if p.enabled]
         self.by_db_id.clear()
         self.by_db_id.update({p.db_id: p for p in enabled})
+        # 角色经历接管的旧来源、个人经历书设类别按全部 Bot（含停用的）登记：
+        # Bot 停用或关掉角色经历后，这些内容也不能回流到别的 Bot 的记忆召回或世界观书设里。
         return bot_identity.publish(
             sender_ids=[sid for p in enabled for sid in p.self_ids],
             identity_terms=[term for p in enabled for term in p.identity_terms],
             experience_sources=[p.experience_source for p in enabled if p.experience_source],
+            taken_over_sources=[s for p in all_profiles.values() for s in p.character_experience.legacy_sources],
+            personal_lore_categories=[c for p in all_profiles.values() for c in p.character_experience.lore_categories],
         )
 
     # ------------------------------------------------------------------ 订阅

@@ -10,8 +10,10 @@ from types import SimpleNamespace
 from typing import Any
 
 try:
+    from ....domain import bot_identity
     from ....domain.scope import RuntimeScope, subject_local_id
 except ImportError:  # 兼容独立测试/插件顶级加载
+    from domain import bot_identity
     from domain.scope import RuntimeScope, subject_local_id
 
 from ...identity_safety import is_identity_contamination
@@ -285,6 +287,15 @@ class FTS5Channel:
             return f"(({local}) OR (({grant_sql}) AND {grant_safe}))", tuple(params) + grant_params
         return local, tuple(params)
 
+    @staticmethod
+    def _exclude_taken_over(predicate: str, params: tuple[Any, ...], *, columns: set[str], alias: str = "m") -> tuple[str, tuple[Any, ...]]:
+        """已由某个 Bot 的角色经历接管的旧来源不再原词召回（内容已迁进她的角色经历，避免重复与串 Bot）。"""
+        taken = sorted(bot_identity.taken_over_sources())
+        if not taken or "source" not in columns:
+            return predicate, params
+        placeholders = ",".join("?" for _ in taken)
+        return f"({predicate}) AND COALESCE({alias}.source, '') NOT IN ({placeholders})", (*params, *taken)
+
     async def build(self, ctx: Any) -> InjectionResult:
         started = time.perf_counter()
         mode = str(getattr(ctx, "mode", "full") or "full")
@@ -370,6 +381,7 @@ class FTS5Channel:
             return []
         grant_ids = self._grant_ids_for_scope(scope)
         predicate, params = self._scope_predicate(scope, columns=columns, grant_ids=grant_ids)
+        predicate, params = self._exclude_taken_over(predicate, params, columns=columns)
         visibility_expr = self._column_expr(columns, "visibility")
         origin_expr = (
             "COALESCE(m.origin_fingerprint, '')"
@@ -461,6 +473,7 @@ class FTS5Channel:
             return []
         ids = list(grant_ids) if grant_ids is not None else self._grant_ids_for_scope(scope)
         predicate, scope_params = self._scope_predicate(scope, columns=columns, grant_ids=ids)
+        predicate, scope_params = self._exclude_taken_over(predicate, scope_params, columns=columns)
         conditions = " OR ".join(["m.content LIKE ?"] * len(words))
         params = [f"%{word}%" for word in words]
         visibility_expr = self._column_expr(columns, "visibility")

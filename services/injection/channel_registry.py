@@ -139,10 +139,11 @@ class ChannelRegistry:
 
 
 def builtin_channel_specs() -> list[ChannelSpec]:
-    """内置 12 个通道。v5 的 holyman_persona 风格通道已下线，同位置换成默认关闭的 meme_hint。"""
+    """内置 13 个通道。v5 的 holyman_persona 风格通道已下线，同位置换成默认关闭的 meme_hint；角色经历在最后。"""
     from ..persona_composer import PersonaComposer
     from .channels.belief import BeliefChannel
     from .channels.book_lore import BookLoreChannel
+    from .channels.character_experience import CharacterExperienceChannel
     from .channels.facts import FactsChannel
     from .channels.fewshot import FewShotChannel
     from .channels.fts5 import FTS5Channel
@@ -189,6 +190,15 @@ def builtin_channel_specs() -> list[ChannelSpec]:
                 embedding_service=d.embedding_service,
                 lore_db_path=d.lore_db_path,
                 catalog_scope=d.book_lore_catalog_scope,
+                profile_lookup=lambda bot_id: d.bot_registry.get(bot_id),
+            ),
+        ),
+        # 角色经历：只对在 Bot 资料里开启了角色经历的 Bot 生效（停用的 Bot 取不到 Profile，同样不生效）。
+        ChannelSpec(
+            "character_experience",
+            lambda d, b: CharacterExperienceChannel(
+                service=getattr(d, "character_experience", None),
+                embedding_service=d.embedding_service,
                 profile_lookup=lambda bot_id: d.bot_registry.get(bot_id),
             ),
         ),

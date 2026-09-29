@@ -195,12 +195,16 @@ def test_scope_noise_and_inactive_rows_are_excluded():
 def test_durable_sources_and_types_outrank_expired_core_chat():
     """chat_hot_days is a score half-life now: stale chat stays eligible but
     ranks strictly below durable knowledge instead of being hard-excluded."""
+    from domain import bot_identity
+
     connection = _connection()
+    # 第一人称经历来源不再写死：由 Bot 资料的 persona.experience_source 登记（这里模拟某个 Bot 登记了它）
+    bot_identity.publish(experience_sources=["demo_experience"])
     try:
         expired = NOW - 31 * 86_400
         _insert_memory(connection, 1, source="core", timestamp=expired)
         _tag(connection, 1)
-        _insert_memory(connection, 2, source="bzz_experience", timestamp=expired)
+        _insert_memory(connection, 2, source="demo_experience", timestamp=expired)
         _tag(connection, 2)
         _insert_memory(connection, 3, source="core", memory_type="knowledge", timestamp=expired)
         _tag(connection, 3)
@@ -219,6 +223,7 @@ def test_durable_sources_and_types_outrank_expired_core_chat():
         fresh = _score_like(by_id[1], now=NOW, timestamp=NOW)
         assert by_id[1].score < fresh * 0.55
     finally:
+        bot_identity.publish()
         connection.close()
 
 

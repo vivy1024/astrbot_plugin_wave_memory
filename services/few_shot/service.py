@@ -117,7 +117,8 @@ class FewShotService:
 
         # 获取最近 7 天的 bot 回复
         seven_days_ago = int(now) - 7 * 86400
-        sources = ["bot_reply", *sorted(bot_identity.experience_sources())]
+        # 已由角色经历接管的旧经历来源（Bot 配置 character_experience.legacy_sources）不再当风格候选
+        sources = ["bot_reply", *sorted(bot_identity.experience_sources() - bot_identity.taken_over_sources())]
         placeholders = ",".join("?" for _ in sources)
         rows = self._db.conn.execute(
             f"""SELECT id, content FROM memories

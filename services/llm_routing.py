@@ -149,6 +149,13 @@ TASKS: tuple[TaskSpec, ...] = (
         consumers=("信念反思（每日日记之后）",),
         bot_overridable=True,
     ),
+    TaskSpec(
+        "character_experience", "角色经历", "meta",
+        "角色经历工作台手动发起：从原著把角色出场的场景写成她的第一人称记忆；按设定起草人生时间线、再展开成第一人称经历。",
+        "[CharacterExperience]",
+        consumers=("角色经历：从原著提取", "角色经历：按设定起草时间线", "角色经历：按时间线展开经历"),
+        bot_overridable=True,
+    ),
 )
 
 TASK_BY_ID: dict[str, TaskSpec] = {spec.id: spec for spec in TASKS}

@@ -9,9 +9,11 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from ..domain import bot_identity
     from ..domain.scope import CatalogScope, validate_formal_command_scope
     from ..services.identity_safety import is_identity_contamination
 except ImportError:
+    from domain import bot_identity
     from domain.scope import CatalogScope, validate_formal_command_scope
     from services.identity_safety import is_identity_contamination
 
@@ -157,6 +159,8 @@ class BookLoreSearchService:
                         ))
 
                 if "notes" in allowed_res and hasattr(self.index, "search_notes"):
+                    # 角色的个人经历笔记（各 Bot 的 character_experience.lore_categories）不是世界观书设
+                    personal = bot_identity.personal_lore_categories()
                     for nid, score in (self.index.search_notes(vector, k=top_k * 2) or []):
                         if score < min_score:
                             continue
@@ -164,7 +168,7 @@ class BookLoreSearchService:
                             "SELECT id, title, content, book_name, arc, category, source_file FROM book_notes WHERE id = ?",
                             (str(nid),),
                         ).fetchone()
-                        if not row:
+                        if not row or str(row["category"] or "") in personal:
                             continue
                         content = str(row["content"] or "")[:1000]
                         if is_identity_contamination(f"{row['title']} {content}"):

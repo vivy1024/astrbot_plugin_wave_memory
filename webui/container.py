@@ -86,6 +86,8 @@ class ServiceContainer:
         self.relationship_portrait: Any = None
         # 书设工作台（services.book_lore_workbench.BookLoreWorkbench）；书设没加载时为 None。
         self.book_lore_workbench: Any = None
+        # 角色经历（services.character_experience.CharacterExperienceService）：角色经历工作台用。
+        self.character_experience: Any = None
 
         # ─── 认证 ───
         self.password: str = ""
