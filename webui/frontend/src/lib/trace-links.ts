@@ -111,7 +111,8 @@ export function traceItemLink(channel: string, item: LinkFields, ctx: TraceLinkC
       return { to: href('/facts', { ...scope, search: term }), label: term ? '在事实页查找' : '打开事实页', precise: false }
     }
     case 'belief':
-      return { to: href('/beliefs', scope), label: '打开信念页', precise: false }
+      // 看法属于 Bot 本人，不按群
+      return { to: href('/beliefs', { bot_id: ctx.botId || undefined }), label: '打开看法页', precise: false }
     case 'jargon': {
       const word = text(link.word ?? item.word)
       return { to: href('/jargon', { ...scope, search: word }), label: word ? `查找黑话「${word}」` : '打开黑话页', precise: false }

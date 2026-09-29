@@ -259,6 +259,38 @@ describe('BotHomePage', () => {
     expect(screen.getByText('我是羽书，我记住了')).toBeVisible()
   })
 
+  it('「她最近形成或改变的看法」列出最近的状态变化并链到看法页', async () => {
+    const now = Date.now() / 1000
+    api.getBotHome.mockResolvedValue(payload({
+      beliefs: {
+        status: 'ready', reason_code: null, held: 3, counts: { formed: 2, stable: 1, sprout: 1 },
+        items: [{
+          event_id: 9, belief_id: 21, event_type: 'confirmed', from_status: 'sprout', to_status: 'formed', change_label: '形成了',
+          reason: '又冷场了', occurred_at: now - 3600, content: '我讲冷笑话群里大多不接，他们更吃玩梗', category: 'group', current_status: 'formed',
+        }],
+      },
+    }))
+    renderPage()
+    const card = await screen.findByTestId('bot-home-beliefs')
+    expect(within(card).getByText('她最近形成或改变的看法')).toBeVisible()
+    expect(within(card).getByText('现在有 3 条已形成的看法，聊到相关话题时会浮现')).toBeVisible()
+    expect(within(card).getByText('形成了')).toBeVisible()
+    expect(within(card).getByText('又冷场了')).toBeVisible()
+    const link = linkParams(within(card).getByText('我讲冷笑话群里大多不接，他们更吃玩梗'))
+    expect(link.path).toBe('/beliefs')
+    expect(Object.fromEntries(link.params)).toEqual({ bot_id: 'yushu' })
+  })
+
+  it('旧后端没有看法区块、或还没有看法时给出说明', async () => {
+    api.getBotHome.mockResolvedValue(payload())
+    const { unmount } = renderPage()
+    expect(within(await screen.findByTestId('bot-home-beliefs')).getByText('后端还没有提供这一块。')).toBeVisible()
+    unmount()
+    api.getBotHome.mockResolvedValue(payload({ beliefs: { status: 'ready', reason_code: null, items: [], counts: {}, held: 0 } }))
+    renderPage()
+    expect(within(await screen.findByTestId('bot-home-beliefs')).getByText('还没有形成看法')).toBeVisible()
+  })
+
   it('没有选 Bot 时提示选择，不发请求', () => {
     renderPage('/bot-home')
     expect(screen.getByText('先选一个 Bot')).toBeVisible()

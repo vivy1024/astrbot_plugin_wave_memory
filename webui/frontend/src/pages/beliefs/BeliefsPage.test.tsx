@@ -1,163 +1,164 @@
 import { MemoryRouter } from 'react-router-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { BeliefGroup, BeliefItem, BeliefsResponse } from '@/api/beliefs'
 import { setViewport } from '@/test/setup'
 import { BeliefsPage } from './BeliefsPage'
 
 const mocks = vi.hoisted(() => ({
   listBeliefs: vi.fn(),
-  getBeliefEvidence: vi.fn(),
-  batchTransitionBeliefs: vi.fn(),
-  approveBelief: vi.fn(),
-  archiveBelief: vi.fn(),
-  getScopeOptions: vi.fn(),
-  fetchJson: vi.fn(),
+  vetoBelief: vi.fn(),
+  restoreBelief: vi.fn(),
 }))
 
 vi.mock('@/api/beliefs', () => ({
   listBeliefs: mocks.listBeliefs,
-  getBeliefEvidence: mocks.getBeliefEvidence,
-  batchTransitionBeliefs: mocks.batchTransitionBeliefs,
-  approveBelief: mocks.approveBelief,
-  archiveBelief: mocks.archiveBelief,
-}))
-vi.mock('@/api/client', () => ({ fetchJson: mocks.fetchJson }))
-vi.mock('@/api/options', () => ({
-  getScopeOptions: mocks.getScopeOptions,
-  scopeOptionsFor: (_payload: unknown, kinds: string[]) => kinds.includes('bot')
-    ? [{ value: 'bot-real', label: '真实 Bot', kind: 'bot', description: 'Bot ID bot-real' }]
-    : [{ value: 'qq:group:42', label: '群 42', kind: 'session', description: 'bot-real · group · runtime' }],
+  vetoBelief: mocks.vetoBelief,
+  restoreBelief: mocks.restoreBelief,
 }))
 
-const page = { total: 1, total_status: 'exact', reason_code: null, limit: 25, offset: 0, page: 1, page_count: 1, has_more: false }
 const available = { available: true, reason_code: null }
-const disabled = { available: false, reason_code: 'command_unavailable' }
-const belief = {
-  id: 21,
-  belief_key: 'care-for-pets',
-  content: '要温柔对待宠物',
-  type: 'world_view',
-  status: 'pending',
-  confidence: 0.82,
-  confidence_components: { evidence: 0.9, consistency: 0.8 },
-  confidence_policy_version: 'belief-v2',
-  confidence_evidence: { support_windows: 2 },
-  gating: { decision: 'direct', reason_code: 'relationship_direct', trust: 80, hostility: 10, subjects: ['qq:user:u1'], policy_version: 'relationship-gating-v1', review_required: false, unknown_subjects: [], relationship_revisions: { 'qq:user:u1': 1 } },
-  anchor_sentence: '它们也会害怕',
-  evidence_health: 'available',
-  quarantine_reason: null,
-  bot_id: 'bot-real',
-  session_id: 'qq:group:42',
-  visibility: 'group',
-  evidence: [{ type: 'memory', id: '31', source_scope: 'qq:group:42', availability: 'available', summary: '来源消息', object_ref: null }],
-  object_ref: { ref: 'opaque-belief-21', kind: 'belief', locator: 21, scope_key: 'qq:group:42', version: 2 },
-  revision: 2,
-  actions: {
-    approve: available,
-    archive: available,
-    restore: disabled,
-    delete: disabled,
-  },
-  updated_at: 1000,
-} as const
+const unavailable = (reason: string) => ({ available: false, reason_code: reason })
+
+function belief(overrides: Partial<BeliefItem>): BeliefItem {
+  return {
+    id: 21,
+    key: 'belief:21',
+    legacy: false,
+    bot_id: 'bot-demo',
+    content: '我讲冷笑话群里大多不接，他们更吃玩梗',
+    category: 'group',
+    category_label: '关于群',
+    status: 'formed',
+    status_label: '已形成',
+    strength: 0.72,
+    support_days: 2,
+    support_dates: ['2026-09-21', '2026-09-24'],
+    confirm_runs: 2,
+    challenge_count: 0,
+    triggers: ['冷笑话', '玩梗'],
+    experience_phrase: '来自 9 月下旬的两次经历',
+    first_seen_at: 1_790_000_000,
+    last_confirmed_at: 1_790_200_000,
+    revision: 3,
+    evidence: [
+      { diary_id: 12, date: '2026-09-24', session_id: 'qq:group:g1', group_name: '摸鱼测试群', title: '冷笑话又冷场', polarity: 'support' },
+      { diary_id: 11, date: '2026-09-21', session_id: 'qq:group:g1', group_name: '摸鱼测试群', title: '第一次讲冷笑话', polarity: 'support' },
+    ],
+    history: [
+      { id: 1, event_type: 'sprouted', label: '萌芽', from_status: null, to_status: 'sprout', from_label: null, to_label: '萌芽', reason: '第一次冷场', actor: 'reflection', occurred_at: 1_790_000_000, evidence: [] },
+      { id: 2, event_type: 'confirmed', label: '被印证', from_status: 'sprout', to_status: 'formed', from_label: '萌芽', to_label: '已形成', reason: '又冷场了', actor: 'reflection', occurred_at: 1_790_200_000, evidence: [] },
+    ],
+    actions: { veto: available, restore: unavailable('belief_not_vetoed') },
+    ...overrides,
+  }
+}
+
+function group(status: BeliefGroup['status'], label: string, items: BeliefItem[]): BeliefGroup {
+  return { status, label, description: `${label}的说明`, count: items.length, items }
+}
+
+function response(): BeliefsResponse {
+  const vetoed = belief({ id: 22, key: 'belief:22', content: '冷笑话是最好的笑话', status: 'vetoed', status_label: '已否决', revision: 5,
+    actions: { veto: unavailable('belief_already_vetoed'), restore: available } })
+  const legacy = belief({ id: 7, key: 'legacy:7', legacy: true, content: '测试群友甲偏爱射击游戏', category: null, category_label: null,
+    status: 'legacy_archived', status_label: '已归档（旧版人物判断）', legacy_type_label: '人物判断', legacy_status: 'active',
+    session_id: 'qq:group:g1', revision: undefined, evidence: [], history: [],
+    actions: { veto: unavailable('legacy_readonly'), restore: unavailable('legacy_readonly') } })
+  return {
+    bot_id: 'bot-demo',
+    groups: [
+      group('sprout', '萌芽', [belief({ id: 23, key: 'belief:23', content: '直播时我更喜欢盖房子', status: 'sprout', status_label: '萌芽' })]),
+      group('formed', '已形成', [belief({})]),
+      group('stable', '稳固', []),
+      group('shaken', '动摇中', []),
+      group('faded', '已淡出', []),
+      group('vetoed', '已否决', [vetoed]),
+      group('legacy_archived', '已归档（旧版人物判断）', [legacy]),
+    ],
+    counts: { sprout: 1, formed: 1, stable: 0, shaken: 0, faded: 0, vetoed: 1, legacy_archived: 1 },
+    policy: { form_min_days: 2, stable_min_days: 4, decay_days: 30, max_active: 20 },
+    reflection: { enabled: true, every_n_days: 1, last_run: { id: 1, run_date: '2026-09-28', status: 'succeeded', attempts: 1, diary_ids: [12], counts: {}, error: '', started_at: 1, finished_at: 2 }, recent_runs: [] },
+    capabilities: { veto: available, restore: available, create: unavailable('belief_formed_by_reflection_only'), edit: unavailable('x'), physical_delete: unavailable('y') },
+    generated_at: 1_790_300_000,
+  }
+}
 
 beforeEach(() => {
   setViewport(1280)
   vi.clearAllMocks()
-  mocks.getScopeOptions.mockResolvedValue({ bots: [], sessions: [], channels: [], generated_at: 1, source: { health: 'healthy', reason_code: null } })
-  mocks.listBeliefs.mockResolvedValue({
-    items: [belief],
-    page,
-    scope: { kind: 'RuntimeScope', payload: {} },
-    capabilities: {
-      lifecycle: { ...available, actions: ['approve', 'archive'] },
-      batch_lifecycle: { ...available, actions: ['approve', 'archive'] },
-      evidence: available,
-      create: { available: false, reason_code: 'anchored_belief_command_unavailable' },
-      edit: { available: false, reason_code: 'belief_edit_command_unavailable' },
-      physical_delete: { available: false, reason_code: 'physical_delete_disabled' },
-      select_all_matching: { available: false, reason_code: 'object_ref_batch_required' },
-    },
-  })
-  mocks.getBeliefEvidence.mockResolvedValue({
-    ok: true,
-    belief: { id: 21, content: belief.content, type: belief.type, revision: 2 },
-    scope: { kind: 'RuntimeScope', payload: {} },
-    anchor: { id: 31, group_id: '42', sender_id: 'u1', sender_name: '用户甲', content: '它们也会害怕', timestamp: 1000, role: 'anchor' },
-    messages: [
-      { id: 30, group_id: '42', sender_id: 'u2', sender_name: '用户乙', content: '前文消息', timestamp: 990, role: 'before' },
-      { id: 31, group_id: '42', sender_id: 'u1', sender_name: '用户甲', content: '它们也会害怕', timestamp: 1000, role: 'anchor' },
-    ],
-    memories: [],
-    relationship_events: [],
-    episodes: [],
-    used_fallback: false,
-    reason_code: null,
-  })
-  mocks.batchTransitionBeliefs.mockResolvedValue({ ok: true, operation: { kind: 'belief.batch.approve', status: 'succeeded' }, transitioned_count: 1, items: [{ id: 21, status: 'active' }] })
-  mocks.approveBelief.mockResolvedValue({ ok: true, operation: { status: 'succeeded' } })
-  mocks.archiveBelief.mockResolvedValue({ ok: true, operation: { status: 'succeeded' } })
+  mocks.listBeliefs.mockResolvedValue(response())
+  mocks.vetoBelief.mockResolvedValue({ ok: true, operation: { kind: 'belief.veto', status: 'succeeded' }, revision: 4 })
+  mocks.restoreBelief.mockResolvedValue({ ok: true, operation: { kind: 'belief.restore', status: 'succeeded' }, revision: 6 })
 })
 
-function renderPage() {
-  return render(<MemoryRouter initialEntries={['/beliefs?bot_id=bot-real&session_id=qq%3Agroup%3A42&visibility=group']}><BeliefsPage /></MemoryRouter>)
+function renderPage(entry = '/beliefs?bot_id=bot-demo') {
+  return render(<MemoryRouter initialEntries={[entry]}><BeliefsPage /></MemoryRouter>)
 }
 
-describe('BeliefsPage scoped 审核恢复', () => {
-  it('使用当前 Scope 与 ObjectRef 打开聊天证据，保留不可用的多阶层级', async () => {
-    const user = userEvent.setup()
+describe('BeliefsPage 信念 v2', () => {
+  it('按 Bot 读取并按状态分组，默认落在「已形成」', async () => {
     renderPage()
-
-    await user.click(await screen.findByRole('button', { name: '证据' }))
-
-    await waitFor(() => expect(mocks.getBeliefEvidence).toHaveBeenCalledWith(expect.objectContaining({ id: 21, object_ref: expect.objectContaining({ ref: 'opaque-belief-21' }) }), { bot_id: 'bot-real', session_id: 'qq:group:42', visibility: 'group' }, 15, 15))
-    expect(await screen.findByText('前文消息')).toBeVisible()
-    expect(screen.getByText('信念来源锚点')).toBeVisible()
-    expect(screen.getByRole('tab', { name: '关系变化' })).toBeDisabled()
-    expect(screen.getByRole('tab', { name: '自省独白' })).toBeDisabled()
+    expect(await screen.findByText('我讲冷笑话群里大多不接，他们更吃玩梗')).toBeVisible()
+    expect(mocks.listBeliefs).toHaveBeenCalledWith('bot-demo')
+    for (const label of ['萌芽', '已形成', '稳固', '动摇中', '已淡出', '已否决', '已归档（旧版人物判断）']) {
+      expect(screen.getByRole('tab', { name: new RegExp(label.replace(/[（）]/g, '.')) })).toBeInTheDocument()
+    }
+    expect(screen.getByRole('tab', { name: /已形成/ })).toHaveAttribute('data-state', 'active')
+    expect(screen.getByText('每天日记后反思')).toBeVisible()
+    expect(screen.getByText('2026-09-28')).toBeVisible()
+    expect(screen.getByText('来自 9 月下旬的两次经历')).toBeVisible()
+    expect(screen.getByText('冷笑话')).toBeVisible()
   })
 
-  it('详情展示关系门禁与 evidence-v1 保护说明', async () => {
+  it('展开后显示依据日记与变化历史', async () => {
     const user = userEvent.setup()
     renderPage()
-
-    await user.click(await screen.findByRole('button', { name: '查看信念 21 详情' }))
-
-    expect(await screen.findByText('关系门禁')).toBeVisible()
-    expect(screen.getByText('关系门禁：自动放行')).toBeVisible()
-    expect(screen.getByText(/高信任仅表示可以跳过人工复核/)).toBeVisible()
+    await user.click(await screen.findByText('依据日记与变化历史'))
+    const evidence = document.querySelector('[data-slot="belief-evidence"]') as HTMLElement
+    expect(within(evidence).getByText('冷笑话又冷场')).toBeVisible()
+    expect(within(evidence).getByText('日记 #12')).toBeVisible()
+    const history = document.querySelector('[data-slot="belief-history"]') as HTMLElement
+    expect(within(history).getByText('被印证')).toBeVisible()
+    expect(within(history).getByText('萌芽 → 已形成')).toBeVisible()
+    expect(within(history).getByText('又冷场了')).toBeVisible()
   })
 
-  it('当前页选择后批量通过会提交逐项 ObjectRef，不启用跨页猜测', async () => {
+  it('一键否决带上版本号，完成后重新读取', async () => {
     const user = userEvent.setup()
     renderPage()
-
-    await user.click(await screen.findByRole('checkbox', { name: '选择当前页全部信念' }))
-    expect(screen.getByText(/跨页全部匹配暂不可用/)).toBeVisible()
-    await user.click(screen.getByRole('button', { name: '批量确认通过' }))
-
-    await waitFor(() => expect(mocks.batchTransitionBeliefs).toHaveBeenCalledWith([expect.objectContaining({ id: 21, revision: 2, object_ref: expect.objectContaining({ ref: 'opaque-belief-21' }) })], 'approve', { bot_id: 'bot-real', session_id: 'qq:group:42', visibility: 'group' }))
+    await user.click(await screen.findByRole('button', { name: '否决看法 21' }))
+    await waitFor(() => expect(mocks.vetoBelief).toHaveBeenCalledWith(expect.objectContaining({ id: 21, revision: 3 }), 'bot-demo'))
+    await waitFor(() => expect(mocks.listBeliefs).toHaveBeenCalledTimes(2))
   })
 
-  it('新建与物理删除保持可见禁用', async () => {
+  it('已否决的可以恢复；旧版人物判断只读', async () => {
     const user = userEvent.setup()
-    renderPage()
+    renderPage('/beliefs?bot_id=bot-demo&status=vetoed')
+    await user.click(await screen.findByRole('button', { name: '恢复看法 22' }))
+    await waitFor(() => expect(mocks.restoreBelief).toHaveBeenCalledWith(expect.objectContaining({ id: 22, revision: 5 }), 'bot-demo'))
 
-    expect(await screen.findByRole('button', { name: '新增信念' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '通过信念 21' })).toBeVisible()
-    expect(screen.getByRole('button', { name: '归档信念 21' })).toBeVisible()
-
-    await user.click(screen.getByRole('checkbox', { name: '选择信念 21' }))
-    expect(screen.getByRole('button', { name: '批量删除' })).toBeDisabled()
+    await user.click(screen.getByRole('tab', { name: /已归档/ }))
+    const card = await screen.findByText('测试群友甲偏爱射击游戏')
+    const article = card.closest('article') as HTMLElement
+    expect(article).toHaveAttribute('data-legacy', 'true')
+    expect(within(article).getByText('旧版人物判断')).toBeVisible()
+    expect(within(article).getByText('原状态：已生效')).toBeVisible()
+    expect(within(article).queryByRole('button')).not.toBeInTheDocument()
   })
 
-  it('窄屏降级为信念卡片，不保留桌面表格', async () => {
+  it('没有选 Bot 时提示先选 Bot，不发请求', async () => {
+    renderPage('/beliefs')
+    expect(await screen.findByText('先选一个 Bot')).toBeVisible()
+    expect(mocks.listBeliefs).not.toHaveBeenCalled()
+  })
+
+  it('窄屏同样是卡片，不出现表格', async () => {
     setViewport(375)
     renderPage()
-
-    expect(await screen.findByText('要温柔对待宠物')).toBeVisible()
+    expect(await screen.findByText('我讲冷笑话群里大多不接，他们更吃玩梗')).toBeVisible()
     expect(document.querySelector('article[data-slot="belief-card"]')).toBeInTheDocument()
     expect(document.querySelector('table')).not.toBeInTheDocument()
   })

@@ -44,7 +44,7 @@ export const test = base.extend<FrontendFixtures>({
       '/api/learning-center/promotions': { items: [], total: 0 },
       '/api/learning-center/few-shot': { items: [], total: 0 },
       '/api/learning-center/experiences': { items: [], total: 0 },
-      '/api/beliefs': { ...emptyPage, scope: { kind: 'RuntimeScope', payload: null }, capabilities: { lifecycle: unavailable, batch_lifecycle: unavailable, evidence: unavailable, create: unavailable, edit: unavailable, physical_delete: unavailable, select_all_matching: unavailable } },
+      '/api/beliefs': { bot_id: '', groups: [], counts: {}, policy: { form_min_days: 2, stable_min_days: 4, decay_days: 30, max_active: 20 }, reflection: { enabled: false, every_n_days: null, last_run: null, recent_runs: [] }, capabilities: { veto: unavailable, restore: unavailable, create: unavailable, edit: unavailable, physical_delete: unavailable }, generated_at: 0 },
       '/api/jargon': { ...emptyPage, scope: { kind: 'RuntimeScope', payload: null }, capabilities: { review: unavailable, batch_review: unavailable, edit: unavailable, archive: unavailable, evidence: unavailable, create: unavailable, delete: unavailable, toggle_global: unavailable, select_all_matching: unavailable } },
       '/api/jargon/blocklist': { items: [], total: 0 },
       '/api/people': emptyPage,

@@ -9,18 +9,18 @@ const read = (relative: string) => readFileSync(resolve(ROOT, relative), 'utf-8'
 const readPlugin = (relative: string) => readFileSync(resolve(PLUGIN_ROOT, relative), 'utf-8')
 
 describe('全站审计回归锁：后端词语不直接暴露', () => {
-  it('Beliefs 页的门禁与拒绝原因走 humanizeReason，不裸渲染 code', () => {
+  it('看法页的操作原因走 humanizeReason，不裸渲染 code，也不再有按好感的门禁', () => {
     const page = read('src/pages/beliefs/BeliefsPage.tsx')
-    // 关系门禁区块：英文标签已改中文
+    // 信念 v2 不按对方好感门禁：页面不再出现信任度/敌意
     expect(page).not.toContain('>trust {')
     expect(page).not.toContain('>hostility {')
-    expect(page).toContain('信任度')
-    expect(page).toContain('敌意')
-    // 内部术语 evidence-v1 不再出现在可见文案里
+    expect(page).not.toContain('gating')
+    // 内部术语 evidence-v1 不出现在可见文案里
     expect(page).not.toContain('evidence-v1')
     // 原因经映射后再渲染
-    expect(page).toContain("humanizeReason(item.gating.reason_code")
-    expect(page).toContain("humanizeReason(item.actions.approve.reason_code")
+    expect(page).toContain("humanizeReason(item.actions.veto.reason_code")
+    expect(page).toContain("humanizeReason(item.actions.restore.reason_code")
+    expect(page).toContain('humanizeApiError(reason')
   })
 
   it('维护页错误状态不打印 error_code 标签', () => {
@@ -80,15 +80,12 @@ describe('全站审计回归锁：请求竞态守卫', () => {
     expect(page.match(/!== \w+RequestRef\.current/g)?.length).toBeGreaterThanOrEqual(6)
   })
 
-  it('信念详情用序号守卫，且 ref 声明在正确组件内', () => {
+  it('看法列表用序号守卫，且 ref 声明在页面组件内', () => {
     const page = read('src/pages/beliefs/BeliefsPage.tsx')
-    const dialogIndex = page.indexOf('function BeliefEvidenceDialog')
-    const refIndex = page.indexOf('const detailRequest = useRef(0)')
     const pageIndex = page.indexOf('export function BeliefsPage')
-    // ref 必须在 BeliefEvidenceDialog 内、BeliefsPage 之前
-    expect(refIndex).toBeGreaterThan(dialogIndex)
-    expect(refIndex).toBeLessThan(pageIndex)
-    expect(page).toContain('if (request !== detailRequest.current) return')
+    const refIndex = page.indexOf('const listRequest = useRef(0)')
+    expect(refIndex).toBeGreaterThan(pageIndex)
+    expect(page).toContain('if (request !== listRequest.current) return')
   })
 })
 
