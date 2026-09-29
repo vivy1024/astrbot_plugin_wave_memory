@@ -1232,6 +1232,250 @@ async def list_person_timeline():
         return jsonify(error_payload("person_timeline_unavailable", "Person timeline is unavailable", retryable=True)), 503
 
 
+# ─── 关系小传：Bot 为每个人写的小传（按 Bot + 人物保存，关联账号合并读取） ───
+
+_PORTRAIT_ERROR_STATUS = {
+    "portrait_version_conflict": 409,
+    "portrait_edited_by_admin": 409,
+    "portrait_not_found": 404,
+    "portrait_service_unavailable": 503,
+    "portrait_store_unavailable": 503,
+    "portrait_llm_failed": 503,
+}
+
+
+def _portrait_modules():
+    try:
+        from ...engine.db.relationship_portrait_repo import PortraitConflict, PortraitError
+        from ...services import relationship_portrait as portraits
+        from ...services.identity_safety import is_identity_contamination
+    except ImportError:  # pragma: no cover
+        from engine.db.relationship_portrait_repo import PortraitConflict, PortraitError
+        from services import relationship_portrait as portraits
+        from services.identity_safety import is_identity_contamination
+    return portraits, PortraitConflict, PortraitError, is_identity_contamination
+
+
+def _portrait_error(code: str, message: str = ""):
+    status = _PORTRAIT_ERROR_STATUS.get(code, 422)
+    return jsonify(error_payload(code, message or code, retryable=status == 503)), status
+
+
+def _portrait_settings(portraits: Any) -> Any:
+    service = getattr(get_container(), "relationship_portrait", None)
+    settings = getattr(service, "settings", None)
+    if settings is not None:
+        return settings
+    config = getattr(get_container(), "plugin_config", None) or {}
+    return portraits.PortraitSettings.from_config(config.get("Learning_Settings") if isinstance(config, Mapping) else None)
+
+
+def _portrait_person(scope: RuntimeScope, user_id: str) -> list[str]:
+    portraits = _portrait_modules()[0]
+    principal = f"{scope.session.platform_id}:user:{user_id}"
+    return portraits.linked_user_ids(_connection(), scope.bot_id, user_id, principal=principal)
+
+
+def _portrait_view(db: Any, scope: RuntimeScope, user_id: str) -> dict[str, Any]:
+    """管理台人物详情里的小传：正文、状态、所用模型、依据范围、之后新增的记录数与开关状态。"""
+    portraits = _portrait_modules()[0]
+    repo = db.relationship_portraits
+    ids = _portrait_person(scope, user_id)
+    portrait = repo.find(bot_id=scope.bot_id, user_ids=ids)
+    cursor = int((portrait or {}).get("reviewed_through_event_id") or 0)
+    stats = portraits.non_private_stats(db, bot_id=scope.bot_id, user_ids=ids, after_event_id=cursor)
+    service = getattr(get_container(), "relationship_portrait", None)
+    settings = _portrait_settings(portraits)
+    owner = str((portrait or {}).get("user_id") or user_id)
+    return {
+        "user_id": user_id,
+        "user_ids": ids,
+        "owner_user_id": owner,
+        "version": int((portrait or {}).get("version") or 0),
+        "item": portrait if portrait and portrait.get("content") else None,
+        "last_error": (portrait or {}).get("last_error") or None,
+        "last_error_at": (portrait or {}).get("last_error_at"),
+        "history_count": len(repo.history(bot_id=scope.bot_id, user_id=owner)) if portrait else 0,
+        "timeline": {
+            "non_private_total": stats["total"],
+            "max_event_id": stats["max_event_id"],
+            "new_since_portrait": stats["new_events"],
+            "new_relational_since_portrait": stats["new_relational"],
+        },
+        "settings": {
+            "auto_enabled": bool(getattr(service, "enabled", False)),
+            "injection_enabled": portraits.portrait_injection_enabled(),
+            "service_available": service is not None,
+            "max_chars": int(settings.max_chars),
+            "min_events": int(settings.min_events),
+        },
+    }
+
+
+def _portrait_request_context():
+    scope = _request_scope()
+    if scope is None or scope.session is None or scope.visibility != "group":
+        return None, None, (jsonify(error_payload("scope_required", "A complete group RuntimeScope is required")), 400)
+    db = getattr(get_container(), "db", None)
+    if db is None or getattr(db, "relationship_portraits", None) is None:
+        return None, None, _portrait_error("portrait_store_unavailable", "关系小传存储未初始化")
+    return scope, db, None
+
+
+def _expected_version(body: Mapping[str, Any]):
+    raw = body.get("version")
+    if raw is None:
+        return None, (jsonify(error_payload("version_required", "保存必须带上读到的 version（还没有小传时用 0）")), 400)
+    if isinstance(raw, bool):
+        return None, (jsonify(error_payload("invalid_version", "version 必须是整数")), 400)
+    try:
+        return int(raw), None
+    except (TypeError, ValueError):
+        return None, (jsonify(error_payload("invalid_version", "version 必须是整数")), 400)
+
+
+def _portrait_mutation(kind: str, db: Any, scope: RuntimeScope, user_id: str):
+    view = _portrait_view(db, scope, user_id)
+    return jsonify(mutation_response(
+        operation_kind=kind,
+        operation_id=f"{scope.bot_id}:{view['owner_user_id']}:v{view['version']}",
+        status="succeeded",
+        revision=view["version"],
+        item=view,
+        include_item=True,
+    ))
+
+
+@people_bp.route("/people/portrait", methods=["GET"])
+@require_auth
+async def get_relationship_portrait():
+    scope, db, failure = _portrait_request_context()
+    if failure is not None:
+        return failure
+    user_id = str(request.args.get("user_id") or "").strip()
+    if not user_id:
+        return jsonify(error_payload("user_id_required", "user_id is required")), 400
+    try:
+        return jsonify(_portrait_view(db, scope, user_id))
+    except Exception as exc:
+        return jsonify(error_payload("portrait_unavailable", str(exc), retryable=True)), 503
+
+
+@people_bp.route("/people/portrait/history", methods=["GET"])
+@require_auth
+async def list_relationship_portrait_history():
+    scope, db, failure = _portrait_request_context()
+    if failure is not None:
+        return failure
+    user_id = str(request.args.get("user_id") or "").strip()
+    if not user_id:
+        return jsonify(error_payload("user_id_required", "user_id is required")), 400
+    try:
+        limit = int(request.args.get("limit") or 10)
+    except (TypeError, ValueError):
+        return jsonify(error_payload("invalid_pagination", "limit 必须是整数")), 400
+    repo = db.relationship_portraits
+    portrait = repo.find(bot_id=scope.bot_id, user_ids=_portrait_person(scope, user_id))
+    owner = str((portrait or {}).get("user_id") or user_id)
+    items = repo.history(bot_id=scope.bot_id, user_id=owner, limit=limit)
+    return jsonify({"items": items, "owner_user_id": owner, "current_version": int((portrait or {}).get("version") or 0)})
+
+
+@people_bp.route("/people/portrait/commands/save", methods=["POST"])
+@require_auth
+async def save_relationship_portrait():
+    """管理员手改小传：带读到的版本号，不一致返回 409；保存后状态为 edited，后台不再自动覆盖。"""
+    scope, db, failure = _portrait_request_context()
+    if failure is not None:
+        return failure
+    portraits, PortraitConflict, PortraitError, is_identity_contamination = _portrait_modules()
+    body = await request.get_json(silent=True) or {}
+    user_id = str(body.get("user_id") or "").strip()
+    if not user_id:
+        return jsonify(error_payload("user_id_required", "user_id is required")), 422
+    expected, version_error = _expected_version(body)
+    if version_error is not None:
+        return version_error
+    content = " ".join(str(body.get("content") or "").split())
+    if not content:
+        return _portrait_error("portrait_content_required", "小传正文不能为空")
+    max_chars = int(_portrait_settings(portraits).max_chars)
+    if len(content) > max_chars:
+        return _portrait_error("portrait_too_long", f"小传最多 {max_chars} 字，当前 {len(content)} 字")
+    if is_identity_contamination(content):
+        return _portrait_error("identity_contamination", "小传里有会被身份安全规则拦下的内容，注入时会被过滤")
+    repo = db.relationship_portraits
+    portrait = repo.find(bot_id=scope.bot_id, user_ids=_portrait_person(scope, user_id))
+    owner = str((portrait or {}).get("user_id") or user_id)
+    try:
+        repo.save_content(
+            bot_id=scope.bot_id,
+            user_id=owner,
+            content=content,
+            status="edited",
+            expected_version=expected,
+            edited_by=str(body.get("edited_by") or "webui"),
+        )
+    except PortraitConflict as exc:
+        return _portrait_error(exc.code, str(exc))
+    except PortraitError as exc:
+        return _portrait_error(exc.code, str(exc))
+    return _portrait_mutation("people.portrait.save", db, scope, user_id)
+
+
+@people_bp.route("/people/portrait/commands/regenerate", methods=["POST"])
+@require_auth
+async def regenerate_relationship_portrait():
+    """管理员点重新生成：调用模型写一版（改过的也覆盖，旧版本留档）；不占每日自动生成名额。"""
+    scope, db, failure = _portrait_request_context()
+    if failure is not None:
+        return failure
+    service = getattr(get_container(), "relationship_portrait", None)
+    if service is None:
+        return _portrait_error("portrait_service_unavailable", "没有可用的模型，无法生成关系小传")
+    body = await request.get_json(silent=True) or {}
+    user_id = str(body.get("user_id") or "").strip()
+    if not user_id:
+        return jsonify(error_payload("user_id_required", "user_id is required")), 422
+    expected, version_error = _expected_version(body)
+    if version_error is not None:
+        return version_error
+    result = await service.regenerate(
+        scope.bot_id, user_id, expected_version=expected,
+        principal=f"{scope.session.platform_id}:user:{user_id}",
+    )
+    if not result.get("ok"):
+        code = str(result.get("code") or "portrait_generation_failed")
+        return _portrait_error(code, code)
+    return _portrait_mutation("people.portrait.regenerate", db, scope, user_id)
+
+
+@people_bp.route("/people/portrait/commands/keep", methods=["POST"])
+@require_auth
+async def keep_relationship_portrait():
+    """管理员选择保留当前小传：清掉「有新记录待更新」，之后的新记录从现在算起。"""
+    scope, db, failure = _portrait_request_context()
+    if failure is not None:
+        return failure
+    portraits, PortraitConflict, PortraitError, _ = _portrait_modules()
+    body = await request.get_json(silent=True) or {}
+    user_id = str(body.get("user_id") or "").strip()
+    if not user_id:
+        return jsonify(error_payload("user_id_required", "user_id is required")), 422
+    expected, version_error = _expected_version(body)
+    if version_error is not None:
+        return version_error
+    try:
+        portraits.keep_portrait(
+            db, bot_id=scope.bot_id, user_ids=_portrait_person(scope, user_id), expected_version=expected,
+        )
+    except PortraitConflict as exc:
+        return _portrait_error(exc.code, str(exc))
+    except PortraitError as exc:
+        return _portrait_error(exc.code, str(exc))
+    return _portrait_mutation("people.portrait.keep", db, scope, user_id)
+
+
 @people_bp.route("/people", methods=["GET"])
 @require_auth
 async def list_people():
