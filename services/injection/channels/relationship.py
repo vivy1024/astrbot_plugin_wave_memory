@@ -196,7 +196,15 @@ class RelationshipChannel:
                     relationship_injection_summary_snippet,
                 )
                 from services.relationship_narrative import affinity_score_line, shared_experience_lines
+            try:
+                from ...relationship_portrait import load_portrait_for, portrait_injection_enabled
+                from ...impression_timeline import portrait_injection_lines
+            except ImportError:  # pragma: no cover
+                from services.relationship_portrait import load_portrait_for, portrait_injection_enabled
+                from services.impression_timeline import portrait_injection_lines
+            portrait: Mapping[str, Any] | None = None
             if db is not None and sender_id and group_id:
+                linked_ids = self._linked_user_ids(conn, scope, sender_id)
                 timeline_events = await self._run_sync(
                     load_timeline_events, db,
                     bot_id=scope.bot_id,
@@ -206,8 +214,13 @@ class RelationshipChannel:
                     connection=conn,
                     strict=True,
                     viewer_scene=scene,
-                    user_ids=self._linked_user_ids(conn, scope, sender_id),
+                    user_ids=linked_ids,
                 )
+                if portrait_injection_enabled():
+                    # 关系小传只由非私聊事件生成，任何场合可见；关联账号合并读取
+                    portrait = await self._run_sync(
+                        load_portrait_for, db, bot_id=scope.bot_id, user_ids=linked_ids, connection=conn,
+                    )
             unsettled = {"energy": 0.0, "traces": []}
             if db is not None and sender_id:
                 # 与结算工具读同一份：本场合行 + 跨群行合并、按时间衰减并封顶
@@ -225,15 +238,31 @@ class RelationshipChannel:
                 _mapping(context_config.get("Inject_Settings")).get("timeline_decay_half_life_days"),
             )
             energy = float(unsettled.get("energy") or 0.0)
-            # 1. 印象：时间线摘要（按半衰期挑选、最多 8 条、按时间排序）+ 最近一条印象。
-            #    关系由模型读印象时间线自己判断；分数只在后面附一行次要参考，不带态度或档位。
-            rendered_lines = await asyncio.to_thread(
-                injection_lines, impression_meta,
-                history=history,
-                now=float(getattr(ctx, "now", 0.0) or time.time()),
-                events=timeline_events,
-                half_life_days=half_life_days,
-            )
+            # 1. 印象：有关系小传时 = 小传 + 最近几条原始记录（私聊场合另附本私聊的）+ 话题命中的旧事 + 查询提示；
+            #    没有小传时 = 时间线摘要（按半衰期挑选、最多 8 条、按时间排序）+ 最近一条印象。
+            #    关系由模型读印象自己判断；分数只在后面附一行次要参考，不带态度或档位。
+            now = float(getattr(ctx, "now", 0.0) or time.time())
+            if portrait:
+                # 消息钩子已按规则门注入过同一类「印象线索」时不再重复
+                event_cue = getattr(getattr(ctx, "event", None), "_wave_memory_timeline_cue", None)
+                rendered_lines = await asyncio.to_thread(
+                    portrait_injection_lines, portrait,
+                    events=timeline_events,
+                    now=now,
+                    scene=scene,
+                    message=str(getattr(ctx, "message", "") or ""),
+                    include_cue=not isinstance(event_cue, Mapping),
+                )
+            else:
+                rendered_lines = []
+            if not rendered_lines:
+                rendered_lines = await asyncio.to_thread(
+                    injection_lines, impression_meta,
+                    history=history,
+                    now=now,
+                    events=timeline_events,
+                    half_life_days=half_life_days,
+                )
             parts: list[str] = []
             filtered_lines: list[str] = []
 
@@ -277,7 +306,9 @@ class RelationshipChannel:
             per_turn_tag = _as_bool(cfg.get("per_turn_impression_tag"), prompting["per_turn_tag"])
             if per_turn_tag:
                 add(unsettled_energy_line(impression_meta, energy=energy, traces=visible_traces))
-            if not any(line.startswith("最近关系线索：") or line.startswith("印象时间线") for line in parts):
+            if not any(
+                line.startswith(("最近关系线索：", "印象时间线", "关系小传")) for line in parts
+            ):
                 anchor = meaningful_event_anchor(history)
                 reason = str((anchor or {}).get("reason") or "").strip()
                 event_type = str((anchor or {}).get("event_type") or "").strip()

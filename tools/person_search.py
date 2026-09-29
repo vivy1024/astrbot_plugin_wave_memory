@@ -245,13 +245,15 @@ class WaveMemoryPersonSearchTool(FunctionTool[AstrAgentContext]):
         total = page["total"]
         next_offset = offset + len(items) if items and offset + len(items) < total else None
         place = "跨群" if cross_group else "当前群"
-        parts = [
-            f"【{display_name}】{place}人物时间线",
-            f"QQ: {qq_id}",
+        parts = [f"【{display_name}】{place}人物时间线", f"QQ: {qq_id}"]
+        if offset == 0 and event_id is None:
+            # 第一页开头附上关系小传：只由非私聊事件生成，任何场合可见
+            parts.extend(self._portrait_lines(scope, qq_id))
+        parts.extend([
             f"total: {total}",
             f"offset: {offset}",
             f"next_offset: {next_offset if next_offset is not None else 'null'}",
-        ]
+        ])
         if not items:
             parts.append("未找到符合条件的人物时间线事件")
         for event in items:
@@ -263,6 +265,35 @@ class WaveMemoryPersonSearchTool(FunctionTool[AstrAgentContext]):
                 f"详情: {event['detail']}",
             ])
         return "\n".join(parts)
+
+    def _portrait_lines(self, scope: RuntimeScope, qq_id: str) -> list[str]:
+        """该人（含管理员确认的关联账号）的关系小传；功能未开启或还没有小传时为空。"""
+        try:
+            from ..services.impression_timeline import portrait_header_line
+            from ..services.relationship_portrait import (
+                linked_user_ids,
+                load_portrait_for,
+                portrait_injection_enabled,
+            )
+        except ImportError:  # pragma: no cover - direct tools imports in isolated tests
+            from services.impression_timeline import portrait_header_line
+            from services.relationship_portrait import (
+                linked_user_ids,
+                load_portrait_for,
+                portrait_injection_enabled,
+            )
+        if not portrait_injection_enabled() or scope.session is None:
+            return []
+        conn = getattr(self.db, "conn", None)
+        principal = f"{scope.session.platform_id}:user:{qq_id}"
+        try:
+            ids = linked_user_ids(conn, scope.bot_id, qq_id, principal=principal)
+            portrait = load_portrait_for(self.db, bot_id=scope.bot_id, user_ids=ids)
+        except Exception:
+            return []
+        if not portrait:
+            return []
+        return [portrait_header_line(portrait), " ".join(str(portrait.get("content") or "").split())]
 
     def _scope_memory_filter(
         self,

@@ -749,6 +749,126 @@ def injection_lines(
     return lines
 
 
+# 有关系小传时附带的原始记录：非私聊的印象/好感类最近几条（只按时间），私聊场合另附该私聊的最近几条
+PORTRAIT_RECENT_EVENTS = 5
+PORTRAIT_PRIVATE_EVENTS = 5
+PORTRAIT_RECENT_KINDS = frozenset({"impression", "affinity", "milestone", "social_anchor"})
+PORTRAIT_HEADER_PREFIX = "关系小传"
+_PRIVATE_PREFIX = "private:"
+
+
+def _portrait_date(portrait: Mapping[str, Any]) -> str:
+    for key in ("generated_at", "updated_at"):
+        value = _finite(portrait.get(key))
+        if value is not None and value >= _REAL_UNIX_TS:
+            try:
+                return time.strftime("%Y-%m-%d", time.localtime(value))
+            except (OverflowError, OSError, ValueError):
+                continue
+    return ""
+
+
+def portrait_header_line(portrait: Mapping[str, Any] | None) -> str:
+    """小传的表头：标明是 Bot 自己写的、正文里的「你」指 Bot，以及更新日期与依据的事件范围。"""
+    payload = _as_mapping(portrait)
+    date = _portrait_date(payload)
+    basis = int(_finite(payload.get("source_max_event_id")) or 0)
+    notes = [note for note in (f"{date} 更新" if date else "", f"依据截至事件#{basis}" if basis > 0 else "") if note]
+    return f"{PORTRAIT_HEADER_PREFIX}（你自己写的，正文里的「你」就是你" + (f"；{'，'.join(notes)}" if notes else "") + "）："
+
+
+def _event_line(item: Mapping[str, Any], *, now: float, max_summary_chars: int = TIMELINE_INJECT_SUMMARY_CHARS) -> str:
+    summary = _injection_summary(item)
+    if not summary:
+        return ""
+    summary = summary.replace("\r\n", " / ").replace("\n", " / ").replace("\r", " / ")
+    if max_summary_chars and len(summary) > max_summary_chars:
+        summary = summary[:max_summary_chars] + "…"
+    event_id = str(item.get("id") or "")
+    identity = f"事件#{event_id} " if event_id else ""
+    return f"- {identity}{_when_label(item, now=now) or '时间未知'} {summary}"
+
+
+def _time_order(row: Mapping[str, Any]) -> tuple[float, int]:
+    try:
+        event_id = int(row.get("id") or 0)
+    except (TypeError, ValueError):
+        event_id = 0
+    return _item_timestamp(row), event_id
+
+
+def _latest(items: Sequence[Mapping[str, Any]], limit: int) -> list[Mapping[str, Any]]:
+    """最近 limit 条（只按时间，不按类别加权），按时间从早到晚排好。"""
+    ordered = sorted(items, key=_time_order, reverse=True)[: max(0, limit)]
+    return sorted(ordered, key=_time_order)
+
+
+def portrait_injection_lines(
+    portrait: Mapping[str, Any] | None,
+    *,
+    events: Sequence[Any] | None = None,
+    now: float | None = None,
+    scene: str = "",
+    message: str = "",
+    include_cue: bool = True,
+    recent_limit: int = PORTRAIT_RECENT_EVENTS,
+    private_limit: int = PORTRAIT_PRIVATE_EVENTS,
+) -> list[str]:
+    """有关系小传时的关系段：小传（标注更新日期）+ 最近几条非私聊的印象/好感类原始记录（只按时间）
+    + 私聊场合该私聊可见的最近原始记录 + 话题命中的旧事线索 + 查询提示。
+
+    ``events`` 必须是当前场合可见的时间线（其他私聊的已由仓储滤掉）；小传本身只由非私聊事件生成，
+    任何场合可见。不含好感分数、维度数值、态度或档位。没有小传正文时返回空列表（调用方沿用规则摘要）。"""
+    payload = _as_mapping(portrait)
+    content = " ".join(str(payload.get("content") or "").split())
+    if not content:
+        return []
+    stamp = _finite(now) if now is not None else time.time()
+    if stamp is None:
+        stamp = time.time()
+    items = [item for item in (events or ()) if isinstance(item, Mapping)]
+    lines = [portrait_header_line(payload), content]
+
+    shown: set[str] = set()
+    public = [
+        item for item in items
+        if not str(item.get("group_id") or "").startswith(_PRIVATE_PREFIX)
+        and str(item.get("kind") or "") in PORTRAIT_RECENT_KINDS
+        and _injection_summary(item)
+    ]
+    latest_public = _latest(public, recent_limit)
+    recent = [line for item in latest_public if (line := _event_line(item, now=stamp))]
+    if recent:
+        lines.append("最近的印象记录（早→近）：")
+        lines.extend(recent)
+        shown.update(str(item.get("id") or "") for item in latest_public)
+
+    scene_key = str(scene or "")
+    if scene_key.startswith(_PRIVATE_PREFIX):
+        private = [
+            item for item in items
+            if str(item.get("group_id") or "") == scene_key and _injection_summary(item)
+        ]
+        picked = _latest(private, private_limit)
+        private_lines = [line for item in picked if (line := _event_line(item, now=stamp))]
+        if private_lines:
+            lines.append("这段私聊里的记录（只在这段私聊里可见，早→近）：")
+            lines.extend(private_lines)
+            shown.update(str(item.get("id") or "") for item in picked)
+
+    if include_cue and message:
+        hit = match_timeline_cue(items, message)
+        if hit and str(hit.get("event_id") or "") not in shown:
+            cue = timeline_cue_prompt(hit)
+            if cue:
+                lines.extend(cue.split("\n"))
+
+    lines.append(
+        "更早的交往用 wave_memory_person_search(query_type=timeline, person=当前人物, query=关键词 或 event_id=编号) 查。"
+    )
+    return lines
+
+
 def parse_impression_mark(raw: str) -> tuple[str, float]:
     """Parse `观感 | impact: 3` or a bare impression sentence. Empty/none marks are dropped."""
     text = str(raw or "").strip().replace("\n", " ")
