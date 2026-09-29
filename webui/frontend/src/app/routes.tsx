@@ -8,6 +8,7 @@ import {
   DatabaseIcon,
   FlaskConicalIcon,
   DownloadIcon,
+  Gamepad2Icon,
   GaugeIcon,
   FeatherIcon,
   MessageSquareTextIcon,
@@ -39,6 +40,7 @@ const JargonPage = lazy(() => import('@/pages/jargon/JargonPage').then((m) => ({
 const SoulPage = lazy(() => import('@/pages/soul/SoulPage').then((m) => ({ default: m.SoulPage })))
 const BookLorePage = lazy(() => import('@/pages/knowledge/BookLorePage').then((m) => ({ default: m.BookLorePage })))
 const BookLoreWorkbenchPage = lazy(() => import('@/pages/knowledge/BookLoreWorkbenchPage').then((m) => ({ default: m.BookLoreWorkbenchPage })))
+const GameKnowledgePage = lazy(() => import('@/pages/knowledge/GameKnowledgePage').then((m) => ({ default: m.GameKnowledgePage })))
 const ExperiencesPage = lazy(() => import('@/pages/knowledge/ExperiencesPage').then((m) => ({ default: m.ExperiencesPage })))
 const FewShotPage = lazy(() => import('@/pages/knowledge/FewShotPage').then((m) => ({ default: m.FewShotPage })))
 const FactsPage = lazy(() => import('@/pages/knowledge/FactsPage').then((m) => ({ default: m.FactsPage })))
@@ -81,6 +83,7 @@ export const appRoutes: AppRoute[] = [
   { path: '/graph', scope: 'session', title: '关系图谱', description: '知识图谱与标签共现：最强关系、新出现、当前话题与路径', group: 'memory', icon: NetworkIcon, element: GraphPage },
   { path: '/knowledge/book-lore', title: '书设定', description: '独立只读语料、解析与本地化', group: 'memory', icon: BookOpenIcon, element: BookLorePage },
   { path: '/knowledge/book-lore/workbench', title: '书设工作台', description: '新章节导入、笔记编辑、检索索引补齐，保存即生效', group: 'memory', icon: NotebookPenIcon, element: BookLoreWorkbenchPage },
+  { path: '/knowledge/games', title: '游戏知识库', description: '按游戏分库的攻略常识：知识卡、词条、导入与草稿审核，直播时按游戏注入', group: 'memory', icon: Gamepad2Icon, element: GameKnowledgePage },
   { path: '/import', title: '导入', description: '从来源预检并导入记忆', group: 'memory', icon: DownloadIcon, element: ImportPage },
   // 认知：她对人和世界的理解
   { path: '/people', scope: 'session', scopeAllows: { legacy: true }, title: '人物与关系', description: '按 Bot、群和用户查看画像与好感', group: 'cognition', icon: UsersIcon, element: PeoplePage },

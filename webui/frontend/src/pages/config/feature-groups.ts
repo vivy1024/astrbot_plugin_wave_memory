@@ -67,9 +67,9 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
   {
     id: 'lore',
     title: '书设与知识',
-    description: '书设语料库的位置，以及事实注入的条数与衰减。',
-    symptoms: ['书设', '设定', '事实', '知识'],
-    links: [{ label: '书设工作台', to: '/knowledge/book-lore/workbench' }],
+    description: '书设语料库的位置，以及事实注入的条数与衰减；游戏攻略知识在游戏知识库里管理。',
+    symptoms: ['书设', '设定', '事实', '知识', '游戏攻略'],
+    links: [{ label: '书设工作台', to: '/knowledge/book-lore/workbench' }, { label: '游戏知识库', to: '/knowledge/games' }],
     defaultOpen: false,
   },
   {
