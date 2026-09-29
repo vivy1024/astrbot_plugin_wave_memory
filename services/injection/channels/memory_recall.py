@@ -24,6 +24,8 @@ _DEFAULT_SOURCE_FILTER = [
     "experience",
     "lore",
     "book_lore",
+    # Bot 自己的游戏经历（Runtime API 的 game_event，内容带 [我的世界] 这类前缀）
+    "game_event",
 ]
 
 

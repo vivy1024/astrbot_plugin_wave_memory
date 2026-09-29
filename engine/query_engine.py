@@ -1563,6 +1563,8 @@ class QueryEngine:
         produced on the first reply.
         """
         sender_id = str(memory.get("sender_id") or "").strip()
+        if str(memory.get("source") or "") == "game_event":
+            return "[你的游戏经历] "
         if sender_id and sender_id in bot_id_set:
             return "[你的历史回复] "
         if str(memory.get("source") or "") == "bot" or sender_id == "bot":

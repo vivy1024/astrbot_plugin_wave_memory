@@ -29,6 +29,7 @@ _DURABLE_SOURCES = frozenset({
     "oni_lore",
     "knowledge",
     "experience",
+    "game_event",
 })
 
 # Rows counted against the live soft cap.  Quarantine/noise/deleted are excluded.

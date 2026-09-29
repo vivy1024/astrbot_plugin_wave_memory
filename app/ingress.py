@@ -57,6 +57,7 @@ from ..services.memory_index_policy import memory_index_policy_from_settings, se
 from ..services.maintenance_tokens import maintenance_repair_token
 from ..services.platform_context import PlatformContextManager
 from ..services.inbound_message_handler import InboundMessagePipeline, bot_reply_event_id, event_message_id
+from ..services.game_events import GameEventError, game_event_payload
 from ..services.backup_lifecycle import DatabaseBackupManager
 from ..services.runtime_mode import effective_native_injection_enabled, effective_query_feature, resolve_runtime_mode, runtime_capability_enabled, should_self_heal_advanced_query
 from ..services.compat import build_duplicate_memory_warnings, build_livingmemory_compat_surface, detect_memory_plugins
@@ -670,10 +671,13 @@ class IngressMixin:
         message_id=None,
         bot_self_id: str = "",
         group_name: str | None = None,
+        timestamp: float | None = None,
     ) -> None:
         """Bot 自己说出的话：入库、互动计数、未结算印象、自省记录。
 
         AstrBot 的 after_message_sent 与 Runtime API（Cortico 的 qq.self / 直播口播）共用这一段。
+        ``timestamp``：Runtime API 批量补写时带上说话的时刻，与同会话的弹幕按先后交错；
+        AstrBot 钩子不传，用入库时刻。
         """
         group_id = runtime_scope.session.conversation_id
         if runtime_scope.visibility == "group":
@@ -708,13 +712,17 @@ class IngressMixin:
             except Exception:
                 pass
 
+        try:
+            spoken_at = float(timestamp) if timestamp not in (None, "") else 0.0
+        except (TypeError, ValueError):
+            spoken_at = 0.0
         await self.writer.enqueue({
             "scope": runtime_scope,
             "group_id": group_id,
             "sender_id": "bot",
             "sender_name": self._get_bot_name(bot_id) if bot_id else self._bot_display_name(bot_db_id),
             "content": bot_text,
-            "timestamp": time.time(),
+            "timestamp": spoken_at if 0 < spoken_at < float("inf") else time.time(),
             "event_id": bot_reply_event_id(message_id, bot_text),
         })
 
@@ -771,9 +779,10 @@ class IngressMixin:
     async def ingest_observation(self, observation: dict, runtime_scope: RuntimeScope) -> dict:
         """宿主无关的写入入口：Runtime API 的一条观察走与 AstrBot 消息钩子相同的处理。
 
-        ``kind``：``message``（别人说的话，默认）、``self``（Bot 自己说的话）。
-        别人说的话进 InboundMessagePipeline（记住/忘记/teach、入库、黑话积累、纠错自省、
-        好感触达）；Bot 自己的话进 ``_process_bot_reply``。``event_id`` 用平台原始消息号，
+        ``kind``：``message``（别人说的话，默认）、``danmaku``（弹幕）、``self``（Bot 自己说的话）、
+        ``game_event``（Bot 自己的游戏经历）。别人说的话进 InboundMessagePipeline（记住/忘记/teach、
+        入库、黑话积累、纠错自省、好感触达）；Bot 自己的话进 ``_process_bot_reply``；游戏经历进
+        ``_process_game_event``（只入库，不走群友处理）。``event_id`` 用平台原始消息号，
         与 AstrBot 路径同会话同消息号去重。
         """
         if runtime_scope.visibility not in {"group", "private"} or runtime_scope.session is None:
@@ -793,8 +802,11 @@ class IngressMixin:
                 message_id=event_id,
                 bot_self_id=profile.qq_id if profile else "",
                 group_name=group_name,
+                timestamp=observation.get("timestamp"),
             )
             return {"status": "accepted", "kind": "self"}
+        if kind == "game_event":
+            return await self._process_game_event(observation, runtime_scope)
         if kind not in {"message", "danmaku"}:
             return {"status": "rejected", "error": f"unknown_kind:{kind}"}
         principal = runtime_scope.subject_principal_id or ""
@@ -821,6 +833,19 @@ class IngressMixin:
             bot_id=profile.qq_id if profile else "",
         )
         return {"status": "accepted", "kind": kind}
+
+    async def _process_game_event(self, observation: dict, runtime_scope: RuntimeScope) -> dict:
+        """Bot 自己的游戏经历：按她的经历入库（source=game_event），不走群友处理与 Bot 回复流程。"""
+        try:
+            item = game_event_payload(
+                observation,
+                runtime_scope,
+                bot_name=self._bot_display_name(runtime_scope.bot_id),
+            )
+        except GameEventError as exc:
+            return {"status": "rejected", "error": exc.code}
+        await self.writer.enqueue(item)
+        return {"status": "accepted", "kind": "game_event"}
 
     def _get_bot(self, bot_id: str) -> Optional[BotProfile]:
         """通过 QQ 号获取 Bot 配置，未找到返回 None。"""
