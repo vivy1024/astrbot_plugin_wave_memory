@@ -317,6 +317,36 @@ def test_edited_portrait_is_not_overwritten_until_admin_regenerates(db):
     assert repo.history(bot_id=BOT, user_id=USER)[0]["content"] == "管理员改写的小传。", "改过的版本留档可回看"
 
 
+def test_admin_regenerate_from_another_event_loop_runs_on_plugin_loop(db):
+    """管理台在自己的线程/事件循环里调用：模型调用与串行锁都转回插件的事件循环执行。"""
+    import threading
+
+    for i in range(3):
+        _event(db, summary=f"第{i}条印象")
+    home = asyncio.new_event_loop()
+    worker = threading.Thread(target=home.run_forever, daemon=True)
+    worker.start()
+    calls: list[int] = []
+
+    class _ThreadLLM(_LLM):
+        async def text_chat(self, **kwargs):
+            calls.append(threading.get_ident())
+            return await super().text_chat(**kwargs)
+
+    async def build():
+        return RelationshipPortraitService(db, _ThreadLLM(), settings=_settings())
+
+    try:
+        service = asyncio.run_coroutine_threadsafe(build(), home).result(timeout=5)
+        result = asyncio.run(service.regenerate(BOT, USER, expected_version=0))
+        assert result["ok"] and result["item"]["version"] == 1
+        assert calls == [worker.ident], "模型调用发生在插件的事件循环线程"
+    finally:
+        home.call_soon_threadsafe(home.stop)
+        worker.join(timeout=5)
+        home.close()
+
+
 def test_identity_contamination_is_rejected_and_backs_off(db):
     for i in range(3):
         _event(db, summary=f"第{i}条印象", at=NOW - (i + 1) * DAY)

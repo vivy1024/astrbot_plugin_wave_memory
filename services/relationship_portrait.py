@@ -496,6 +496,11 @@ class RelationshipPortraitService:
         self._lock = asyncio.Lock()
         self._day = ""
         self._runs_today = 0
+        # 插件的事件循环：模型客户端与串行锁属于它；管理台在自己的线程与事件循环里调用时转回这里执行
+        try:
+            self._home_loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            self._home_loop = None
 
     @property
     def repo(self) -> Any:
@@ -767,7 +772,24 @@ class RelationshipPortraitService:
     async def regenerate(
         self, bot_id: str, user_id: str, *, expected_version: int | None, principal: str | None = None,
     ) -> dict[str, Any]:
-        """管理台「重新生成」：管理员改过的也覆盖（旧版本留档）；不占每日自动生成的名额。"""
+        """管理台「重新生成」：管理员改过的也覆盖（旧版本留档）；不占每日自动生成的名额。
+
+        管理台跑在自己的线程与事件循环里；模型客户端与串行锁属于插件的事件循环，跨循环时转过去执行。"""
+        home = self._home_loop
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:  # pragma: no cover - always called from a coroutine
+            current = None
+        if home is not None and home is not current and home.is_running() and not home.is_closed():
+            future = asyncio.run_coroutine_threadsafe(
+                self._regenerate(bot_id, user_id, expected_version=expected_version, principal=principal), home,
+            )
+            return await asyncio.wrap_future(future)
+        return await self._regenerate(bot_id, user_id, expected_version=expected_version, principal=principal)
+
+    async def _regenerate(
+        self, bot_id: str, user_id: str, *, expected_version: int | None, principal: str | None = None,
+    ) -> dict[str, Any]:
         repo = self.repo
         if repo is None:
             return {"ok": False, "code": "portrait_service_unavailable"}
