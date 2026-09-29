@@ -156,8 +156,24 @@ class MemoryRecallChannelTest(unittest.TestCase):
         expected = list(_DEFAULT_SOURCE_FILTER) + sorted(bot_identity.experience_sources())
         self.assertEqual(query_engine.query_calls[0]["source_filter"], expected)
         self.assertIn("chat", query_engine.query_calls[0]["source_filter"])
-        # 各 Bot 的第一人称经历来源（含 v5 历史来源）总是在默认过滤里。
-        self.assertIn(bot_identity.LEGACY_EXPERIENCE_SOURCE, query_engine.query_calls[0]["source_filter"])
+        # v5 写死的 bzz_experience 已去掉：没有 Bot 登记时不在默认过滤里。
+        self.assertNotIn("bzz_experience", query_engine.query_calls[0]["source_filter"])
+
+    def test_configured_experience_sources_join_filter_unless_taken_over(self):
+        from domain import bot_identity
+        from services.injection.channels.memory_recall import MemoryRecallChannel, _DEFAULT_SOURCE_FILTER
+
+        memories = [{"id": 302, "content": "普通群聊记忆", "score": 0.8, "source": "chat", "timestamp": 1}]
+        query_engine = FakeQueryEngine(memories)
+        channel = MemoryRecallChannel(query_engine=query_engine)
+        # 旧版 persona.experience_source 登记的来源照旧进默认过滤；已由角色经历接管的来源不再进。
+        bot_identity.publish(experience_sources=["demo_exp", "old_exp"], taken_over_sources=["old_exp"])
+        try:
+            asyncio.run(channel.build(self._ctx()))
+        finally:
+            bot_identity.publish()
+        source_filter = query_engine.query_calls[0]["source_filter"]
+        self.assertEqual(source_filter, list(_DEFAULT_SOURCE_FILTER) + ["demo_exp"])
 
 
 if __name__ == "__main__":

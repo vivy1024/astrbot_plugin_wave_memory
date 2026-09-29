@@ -28,8 +28,8 @@ except ImportError:  # pragma: no cover - 仓库测试直接导入
 
 DEFAULT_BOOK = "没钱修什么仙"
 CHAPTER_CATEGORY = "章节事件"
-# 注入与检索时不当作世界观书设用的类别（白真真的个人经历另有记忆通道）
-PERSONAL_CATEGORIES = ("白真真经历",)
+# 不当作世界观书设用的「个人经历」类别不再写死在这里：由各 Bot 的角色经历设置登记
+# （``character_experience.lore_categories``，运行时经 domain.bot_identity.personal_lore_categories() 读取）。
 EMBED_TEXT_CHARS = 3000
 EMBED_BATCH = 16
 MAX_IMPORT_CHAPTERS = 200
@@ -95,6 +95,49 @@ def _embed_text(note: dict[str, Any]) -> str:
     return f"{note.get('title') or ''}\n{str(note.get('content') or '')[:EMBED_TEXT_CHARS]}"
 
 
+# ─── 原文读取（书设工作台与角色经历工作台共用）─────────────────────────
+# 只允许读插件数据目录与既有 novel_docs 目录下的 .txt；路径先 resolve 再比对，``..`` 与符号链接绕不出去。
+
+def resolve_source_roots(source_roots: Sequence[str]) -> list[str]:
+    return [str(Path(root).resolve()) for root in source_roots if root]
+
+
+def safe_source_path(path: str, source_roots: Sequence[str]) -> Path:
+    """校验并返回允许读取的原文路径；不在允许目录下或不是 .txt 文件时抛 ``BookLoreWriteError``。"""
+    resolved = Path(str(path or "")).resolve()
+    if not any(str(resolved) == root or str(resolved).startswith(root + os.sep) for root in source_roots):
+        raise BookLoreWriteError("path_not_allowed", "只能读取插件数据目录或小说目录下的文件")
+    if resolved.suffix.lower() != ".txt" or not resolved.is_file():
+        raise BookLoreWriteError("not_a_text_file", f"不是可读的 .txt 文件: {resolved.name}")
+    return resolved
+
+
+def read_source_text(path: Path) -> str:
+    raw = path.read_bytes()
+    for encoding in ("utf-8-sig", "gb18030"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def list_text_sources(source_roots: Sequence[str], *, min_size: int = 50_000) -> list[Path]:
+    """允许目录下的小说原文（跳过几十 KB 以下的零碎文本）。"""
+    found: list[Path] = []
+    for root in source_roots:
+        base = Path(root)
+        if not base.is_dir():
+            continue
+        for path in sorted(base.glob("*.txt")):
+            try:
+                if path.stat().st_size >= min_size:
+                    found.append(path)
+            except OSError:
+                continue
+    return found
+
+
 class BookLoreWorkbench:
     def __init__(
         self,
@@ -109,7 +152,7 @@ class BookLoreWorkbench:
         self.writer = BookLoreWriter(lore_db_path, dimension=dimension)
         self.index = index
         self.embedding = embedding_service
-        self.source_roots = [str(Path(root).resolve()) for root in source_roots if root]
+        self.source_roots = resolve_source_roots(source_roots)
         self.default_book = default_book
         self._lock = asyncio.Lock()
         # 原文切章结果按 (修改时间, 大小) 缓存：13 MB 的原文每次概览都重切太慢
@@ -146,64 +189,48 @@ class BookLoreWorkbench:
     # ------------------------------------------------------------------ 原文扫描
 
     def _safe_path(self, path: str) -> Path:
-        resolved = Path(path).resolve()
-        if not any(str(resolved) == root or str(resolved).startswith(root + os.sep) for root in self.source_roots):
-            raise BookLoreWriteError("path_not_allowed", "只能读取插件数据目录或小说目录下的文件")
-        if resolved.suffix.lower() != ".txt" or not resolved.is_file():
-            raise BookLoreWriteError("not_a_text_file", f"不是可读的 .txt 文件: {resolved.name}")
-        return resolved
+        return safe_source_path(path, self.source_roots)
 
     def _read(self, path: Path) -> str:
-        raw = path.read_bytes()
-        for encoding in ("utf-8-sig", "gb18030"):
-            try:
-                return raw.decode(encoding)
-            except UnicodeDecodeError:
-                continue
-        return raw.decode("utf-8", errors="replace")
+        return read_source_text(path)
 
     def scan_sources(self) -> list[dict[str, Any]]:
         """列出允许目录下的小说原文，以及它们比书设库多出来的章节。"""
         known = self.writer.chapter_numbers()
         found: list[dict[str, Any]] = []
-        for root in self.source_roots:
-            base = Path(root)
-            if not base.is_dir():
+        # 小说原文至少几十 KB；零碎文本由 list_text_sources 跳过
+        for path in list_text_sources(self.source_roots):
+            try:
+                stat = path.stat()
+                cached = self._scan_cache.get(str(path))
+                if cached and cached[0] == stat.st_mtime and cached[1] == stat.st_size:
+                    numbers, latest_title = cached[2], cached[3]
+                else:
+                    chapters = split_chapters(self._read(path))
+                    numbers = [c["number"] for c in chapters]
+                    latest_title = chapters[-1]["title"] if chapters else ""
+                    self._scan_cache[str(path)] = (stat.st_mtime, stat.st_size, numbers, latest_title)
+            except OSError:
                 continue
-            for path in sorted(base.glob("*.txt")):
-                try:
-                    stat = path.stat()
-                    if stat.st_size < 50_000:  # 小说原文至少几十 KB；跳过零碎文本
-                        continue
-                    cached = self._scan_cache.get(str(path))
-                    if cached and cached[0] == stat.st_mtime and cached[1] == stat.st_size:
-                        numbers, latest_title = cached[2], cached[3]
-                    else:
-                        chapters = split_chapters(self._read(path))
-                        numbers = [c["number"] for c in chapters]
-                        latest_title = chapters[-1]["title"] if chapters else ""
-                        self._scan_cache[str(path)] = (stat.st_mtime, stat.st_size, numbers, latest_title)
-                except OSError:
-                    continue
-                if len(numbers) < 3:
-                    continue
-                # 「新章节」只算比库里最新一章更靠后的。早期章节由 GraphRAG 社区摘要覆盖，没有逐章笔记，
-                # 不能当成未入库（线上第 1–900 章就是这种情况，一键导入会重复收录并白耗向量调用）。
-                latest_known = max(known) if known else 0
-                missing = [n for n in numbers if n > latest_known]
-                earlier_gaps = [n for n in numbers if n <= latest_known and n not in known]
-                found.append({
-                    "path": str(path),
-                    "name": path.name,
-                    "size": stat.st_size,
-                    "modified_at": stat.st_mtime,
-                    "chapters": len(numbers),
-                    "latest_chapter": max(numbers),
-                    "latest_title": latest_title,
-                    "new_chapters": len(missing),
-                    "new_range": [min(missing), max(missing)] if missing else None,
-                    "earlier_without_notes": len(earlier_gaps),
-                })
+            if len(numbers) < 3:
+                continue
+            # 「新章节」只算比库里最新一章更靠后的。早期章节由 GraphRAG 社区摘要覆盖，没有逐章笔记，
+            # 不能当成未入库（线上第 1–900 章就是这种情况，一键导入会重复收录并白耗向量调用）。
+            latest_known = max(known) if known else 0
+            missing = [n for n in numbers if n > latest_known]
+            earlier_gaps = [n for n in numbers if n <= latest_known and n not in known]
+            found.append({
+                "path": str(path),
+                "name": path.name,
+                "size": stat.st_size,
+                "modified_at": stat.st_mtime,
+                "chapters": len(numbers),
+                "latest_chapter": max(numbers),
+                "latest_title": latest_title,
+                "new_chapters": len(missing),
+                "new_range": [min(missing), max(missing)] if missing else None,
+                "earlier_without_notes": len(earlier_gaps),
+            })
         return found
 
     def preview_text(self, text: str) -> list[dict[str, Any]]:
@@ -352,8 +379,11 @@ class BookLoreWorkbench:
 __all__ = [
     "BookLoreWorkbench",
     "CHAPTER_CATEGORY",
-    "PERSONAL_CATEGORIES",
     "chapter_note",
     "chinese_number",
+    "list_text_sources",
+    "read_source_text",
+    "resolve_source_roots",
+    "safe_source_path",
     "split_chapters",
 ]

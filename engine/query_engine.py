@@ -279,6 +279,18 @@ class QueryEngine:
         self.enable_geodesic = config.get("enable_geodesic_rerank", True)
 
     @staticmethod
+    def _drop_taken_over_sources(memories: list[dict]) -> list[dict]:
+        """已由某个 Bot 的角色经历接管的旧来源（``character_experience.legacy_sources``）不再走普通记忆召回。
+
+        这些行的内容已经迁进该 Bot 的角色经历，由角色经历通道按她自己的时间点召回；
+        这里剔除，避免同一条经历出现两次、也避免别的 Bot 经无归属的旧行读到它。
+        """
+        taken = bot_identity.taken_over_sources()
+        if not taken:
+            return memories
+        return [memory for memory in memories if str(memory.get("source") or "") not in taken]
+
+    @staticmethod
     def _memory_scope(scope: Any) -> RuntimeScope | None:
         """Return a resolved canonical group/private memory Scope only."""
         if not isinstance(scope, RuntimeScope) or scope.visibility not in {"group", "private"}:
@@ -864,6 +876,7 @@ class QueryEngine:
             self._trace_record(collector, "final", {"result_count": 0, "ids": [], "cold": cold_details})
             return []
 
+        memories = self._drop_taken_over_sources(memories)
         normalized_source_filter = [source_filter] if isinstance(source_filter, str) else list(source_filter or [])
         if normalized_source_filter:
             memories = [memory for memory in memories if memory.get("source", "live") in normalized_source_filter]
@@ -1331,6 +1344,7 @@ class QueryEngine:
             all_candidates[memory_id] = float(cold_distance)
             memories.append(cold_memory)
 
+        memories = self._drop_taken_over_sources(memories)
         if not memories:
             return []
 
@@ -1475,7 +1489,7 @@ class QueryEngine:
         ordered = self._prefer_current_group_and_dedupe(memories, current_group_id=current_group_id)
 
         # 按 source 分组
-        your_memories = []  # 各 Bot 的第一人称经历（Profile.persona.experience_source）
+        your_memories = []  # （旧版）各 Bot 登记的第一人称经历来源（Profile.persona.experience_source）
         world_knowledge = []  # book_lore — 书设常识
         chat_memories = []  # live 及其他 — 群聊记忆
 

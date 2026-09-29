@@ -106,6 +106,10 @@ class StartupMixin:
 
         # 长修复只通过 durable Maintenance jobs 执行；启动时仅排队，不直接重建。
         self.maintenance_job_runner.start(self.task_supervisor)
+        # 角色经历的提取 / 编写任务：单独的执行器，重启后自动接着跑没做完的任务。
+        character_runner = getattr(self, "character_experience_job_runner", None)
+        if character_runner is not None:
+            character_runner.start(self.task_supervisor)
         if await self._has_pending_vector_backfill():
             await self._queue_vector_backfill(reason="startup_missing_vectors")
         if (
@@ -567,6 +571,13 @@ class StartupMixin:
             logger.debug(f"[WaveMemory] maintenance job runner stop error: {e}")
 
         try:
+            character_runner = getattr(self, "character_experience_job_runner", None)
+            if character_runner is not None:
+                character_runner.stop()
+        except Exception as e:
+            logger.debug(f"[WaveMemory] character experience job runner stop error: {e}")
+
+        try:
             if hasattr(self, 'tag_worker') and self.tag_worker:
                 self.tag_worker.stop()
         except Exception as e:
@@ -990,6 +1001,8 @@ class StartupMixin:
             "belief_reflection": getattr(self, "belief_reflection", None) is not None,
             # 标签审计每次维护任务现建审计器、现解析模型：配了模型就能跑，从不需要重启。
             "tag_audit": True,
+            # 角色经历同理：工作台每次发起任务时现解析模型（含按 Bot 覆盖）。
+            "character_experience": getattr(self, "character_experience", None) is not None,
             "meta_thinking": getattr(self, "meta_thinking", None) is not None,
             "bookkeeping": getattr(self, "post_reply_bookkeeper", None) is not None,
             "diary": getattr(self, "daily_diary", None) is not None,
@@ -1018,7 +1031,7 @@ class StartupMixin:
                 logger.info(
                     f"[WaveMemory] 模型分工: Bot {profile.db_id} 的模型覆盖生效 "
                     f"model={getattr(profile, 'model', '') or '-'} models={overrides or '-'}"
-                    "（只作用于内心判断、事后记账、每日日记、关系小传、信念反思）"
+                    "（只作用于内心判断、事后记账、每日日记、关系小传、信念反思、角色经历）"
                 )
 
     def _belief_reflection_llm(self, bot_id: str = ""):

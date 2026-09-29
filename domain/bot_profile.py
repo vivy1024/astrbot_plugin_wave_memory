@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from .character_experience import CharacterExperienceSettings
 from .mood_policy import MoodSettings
 
 PROFILE_SCHEMA_VERSION = 2
@@ -28,7 +29,7 @@ RESERVED_DB_IDS = frozenset({"bot", "default", "system", "all", "none"})
 
 # 允许按 Bot 覆盖模型的后台任务：只有以 Bot 自己口吻/视角产出内容的任务。
 # 任务 id 与 services/llm_routing.py 的 TASKS 一致（那边有测试核对）。
-BOT_MODEL_TASKS = ("meta_thinking", "bookkeeping", "diary", "portrait", "belief_reflection")
+BOT_MODEL_TASKS = ("meta_thinking", "bookkeeping", "diary", "portrait", "belief_reflection", "character_experience")
 
 
 class BotProfileError(ValueError):
@@ -145,7 +146,8 @@ class PersonaSettings:
     lore_lines: list[str] = field(default_factory=list)
     # 书设标题，例如「羽书出自《某书》」。
     lore_title: str = ""
-    # 第一人称经历记忆的 source 值；v5 历史数据使用 bzz_experience。
+    # （旧版）第一人称经历记忆在记忆表里的 source 值。新的「角色经历」是独立功能，
+    # 见 Bot Profile 的 character_experience 段；这里只为旧配置保留。
     experience_source: str = ""
     # 自省输出里需要剥掉的前缀（如「角色名：」），名字本身会自动加入。
     reflection_prefixes: list[str] = field(default_factory=list)
@@ -206,7 +208,7 @@ class BotProfile:
     interest_keywords: list[str] = field(default_factory=list)
     # ---- v6 ----
     enabled: bool = True
-    # 这个 Bot 的默认模型：只作用于 BOT_MODEL_TASKS（内心判断、事后记账、每日日记、关系小传、信念反思），
+    # 这个 Bot 的默认模型：只作用于 BOT_MODEL_TASKS（内心判断、事后记账、每日日记、关系小传、信念反思、角色经历），
     # 优先级低于下面按任务的覆盖、高于全局「模型分工」。留空跟随全局。
     model: str = ""
     # 按任务的模型覆盖 {任务 id: provider id}，只有 BOT_MODEL_TASKS 里的任务生效。
@@ -216,6 +218,9 @@ class BotProfile:
     persona: PersonaSettings = field(default_factory=PersonaSettings)
     # 心情画像：基线、敏感度、恢复半衰期、群氛围权重、疲劳、说话倾向（见 domain/mood_policy.py）。
     mood: MoodSettings = field(default_factory=MoodSettings)
+    # 角色经历：进群之前「过去的人生」的召回设置（是否启用、当前时间点、召回条数、注入上限等）；
+    # 没有这一段 = 关闭（见 domain/character_experience.py）。
+    character_experience: CharacterExperienceSettings = field(default_factory=CharacterExperienceSettings)
     # 注入通道覆盖：{通道名: {enabled/budget_tokens/...}}，叠加在全局通道配置之上。
     channels: dict[str, dict[str, Any]] = field(default_factory=dict)
     # 工具开关：allow 非空时只开放列出的工具；deny 里的工具总是关闭。
@@ -316,6 +321,7 @@ class BotProfile:
             bindings=bindings,
             persona=PersonaSettings.from_dict(data.get("persona")),
             mood=MoodSettings.from_dict(data.get("mood")),
+            character_experience=CharacterExperienceSettings.from_dict(data.get("character_experience")),
             channels={str(k): dict(v) for k, v in channels.items() if isinstance(v, dict)},
             tools_allow=_text_list(data.get("tools_allow")),
             tools_deny=_text_list(data.get("tools_deny")),

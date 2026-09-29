@@ -30,7 +30,7 @@ except ImportError:  # top-level import in isolated tests
 # 通道名以 channel.name 为准（关系通道叫 affinity）。
 TIER_CHANNELS: dict[str, frozenset[str] | None] = {
     "full": None,
-    "light": frozenset({"safety", "memory", "fts5", "facts", "persona", "belief", "jargon", "meme_hint", "affinity", "soul_state"}),
+    "light": frozenset({"safety", "memory", "fts5", "facts", "persona", "belief", "jargon", "meme_hint", "affinity", "soul_state", "character_experience"}),
     "minimal": frozenset({"safety", "memory", "fts5", "facts", "affinity"}),
 }
 

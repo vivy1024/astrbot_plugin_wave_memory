@@ -185,13 +185,20 @@ def test_book_lore_channel_adds_note_hit_and_skips_personal_notes(tmp_path):
         async def get_embedding(self, text):
             return np.array([1, 0, 0, 0], dtype=np.float32)
 
+    from domain import bot_identity
+
     channel = BookLoreChannel(book_lore_index=index, embedding_service=_Emb(), lore_store=_Store(),
                               catalog_scope=CatalogScope("book-lore", "default", "current"))
     scope = RuntimeScope("yushu", "group", SessionRef("羽书:group:1", "羽书", "group", "1"), subject_principal_id="羽书:user:u")
     ctx = InjectionContext(event=None, req=None, message="最新章节怎么样了", group_id="1", sender_id="u", sender_name="u",
                            bot_id="yushu", bot_profile_id="yushu", scope=scope,
                            config={"channels": {"book_lore": {"top_k": 1, "min_score": 0.35}}})
-    result = asyncio.run(channel.build(ctx))
+    # 个人经历类别不再写死：由某个 Bot 的角色经历设置（character_experience.lore_categories）登记
+    bot_identity.publish(personal_lore_categories=["白真真经历"])
+    try:
+        result = asyncio.run(channel.build(ctx))
+    finally:
+        bot_identity.publish()
     assert result.status == "hit"
     assert "第961章 绝望中的希望：张羽看着加密信息。" in result.text  # 去掉了重复的标题行
     assert "白真真" not in result.text

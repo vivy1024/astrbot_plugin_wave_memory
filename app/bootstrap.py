@@ -758,6 +758,19 @@ class BootstrapMixin:
             self.write_gateway.jobs,
             maintenance_handlers,
         )
+        # 角色经历：进群之前「过去的人生」（独立功能，按 Bot 在 Bot 资料里开启）。它的后台任务
+        # 一次可能调用模型几百次，用单独的执行器跑，不堵住索引重建等维护任务；构造时顺带做一次性旧数据迁移。
+        self.character_experience = self._build_character_experience_service()
+        self.character_experience_job_runner = (
+            DurableJobRunner(
+                self.write_gateway.jobs,
+                self.character_experience.job_handlers(),
+                lease_seconds=300.0,
+                task_name="wave-memory:character-experience-jobs",
+                owner="character-experience-jobs",
+            )
+            if self.character_experience is not None else None
+        )
 
         # 服务占位（initialize 中实际创建，防止消息先到时 AttributeError）
         self.jargon_service = None
@@ -960,6 +973,7 @@ class BootstrapMixin:
         get_container().ingress_health = self.ingress_health
         get_container().tag_worker_getter = lambda: getattr(self, "tag_worker", None)
         get_container().book_lore_workbench = self._build_book_lore_workbench()
+        get_container().character_experience = getattr(self, "character_experience", None)
         get_container().observation_ingestor = self.ingest_observation
 
     def _build_book_lore_workbench(self):
@@ -980,6 +994,61 @@ class BootstrapMixin:
         except Exception as exc:
             logger.warning(f"[WaveMemory] 书设工作台初始化失败: {exc}")
             return None
+
+    def _character_experience_llm(self, bot_id: str = ""):
+        """角色经历任务用的模型客户端：走模型分工的 ``character_experience`` 任务（按 Bot 覆盖用 for_bot）。"""
+        routing = getattr(self, "llm_routing", None)
+        if routing is None or not routing.available("character_experience"):
+            return None
+        client = routing.client("character_experience")
+        return client.for_bot(bot_id) if bot_id else client
+
+    def _character_experience_model_status(self, bot_id: str) -> dict:
+        routing = getattr(self, "llm_routing", None)
+        if routing is None:
+            return {"available": False}
+        resolution = routing.resolve("character_experience", bot_id or None)
+        return {
+            "available": routing.available("character_experience") and bool(resolution.chain),
+            "primary": resolution.primary,
+            "chain": list(resolution.chain),
+            "source": resolution.source,
+            "source_label": resolution.source_label,
+        }
+
+    def _build_character_experience_service(self):
+        """角色经历服务 + 一次性旧数据迁移（v5 白真真的 bzz_experience → Bot baizz 的角色经历，幂等、失败不阻止启动）。"""
+        repo = getattr(self.db, "character_experiences", None)
+        if repo is None:
+            return None
+        try:
+            from ..services.character_experience import CharacterExperienceService
+
+            data_root = os.path.dirname(os.path.dirname(self.data_dir))  # <AstrBot>/data
+            service = CharacterExperienceService(
+                repo=repo,
+                registry=self.bot_registry,
+                embedding_service=self.embedding_service,
+                llm_for=self._character_experience_llm,
+                llm_status=self._character_experience_model_status,
+                jobs=lambda: getattr(getattr(self, "write_gateway", None), "jobs", None),
+                # 原文只从插件数据目录与 novel_docs 读（与书设工作台同一套路径限制）
+                source_roots=[self.data_dir, os.path.join(os.path.dirname(data_root), "novel_docs")],
+                lore_db_path=getattr(self, "lore_db_path", "") or os.path.join(self.data_dir, "book_lore.db"),
+                dimension=self.dimension,
+            )
+        except Exception as exc:
+            logger.warning(f"[WaveMemory] 角色经历服务初始化失败: {exc}")
+            _record_err("CharacterExperience", exc)
+            return None
+        if getattr(self.bot_registry, "attached", False):
+            try:
+                service.migrate_legacy()
+            except Exception as exc:
+                # 迁移是纯增量的：失败只记日志，下次启动再试；旧数据不受影响。
+                logger.warning(f"[WaveMemory] 角色经历旧数据迁移失败（下次启动重试）: {exc}")
+                _record_err("CharacterExperienceMigration", exc)
+        return service
 
     def _setup_service_registry(self) -> None:
         """登记可在 9876 上单独启停的后台服务（getter 每次读当前实例，热插拔后也准确）。"""
@@ -1005,6 +1074,9 @@ class BootstrapMixin:
                         description="好感触达/衰减、表达模式聚合；停止前会先落盘缓冲"),
             ServiceSpec("maintenance_jobs", "维护任务执行器", lambda: getattr(self, "maintenance_job_runner", None),
                         owner="durable-jobs", description="执行索引重建、回填等可恢复任务"),
+            ServiceSpec("character_experience_jobs", "角色经历任务执行器", lambda: getattr(self, "character_experience_job_runner", None),
+                        owner="character-experience-jobs",
+                        description="执行角色经历的从原著提取、按设定编写与补算向量任务（可中断、可续跑）"),
         ):
             registry.register(spec)
         self.service_registry = registry

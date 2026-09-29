@@ -254,7 +254,9 @@ class MemoryRecallChannel:
         exclude_sources = recall_cfg.get("exclude_sources")
         source_filter = recall_cfg.get("source_filter")
         if source_filter is None and not exclude_sources:
-            source_filter = list(_DEFAULT_SOURCE_FILTER) + sorted(bot_identity.experience_sources())
+            # 各 Bot 登记的（旧版）第一人称经历来源；已由角色经历接管的来源不再走这里（QueryEngine 也会兜底剔除）。
+            experience = bot_identity.experience_sources() - bot_identity.taken_over_sources()
+            source_filter = list(_DEFAULT_SOURCE_FILTER) + sorted(experience)
         return await self.query_engine.query(
             text=getattr(ctx, "message", ""),
             group_id=getattr(ctx, "group_id", None),

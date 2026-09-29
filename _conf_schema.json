@@ -46,7 +46,7 @@
   },
   "Model_Routing_Settings": {
     "description": "模型分工",
-    "hint": "给每个后台大模型任务单独指定模型。留空 = 跟随它原来的默认（标签一族跟 tag_llm_provider_id + 回退链，内心判断/事后记账/日记/关系小传跟 MetaThinking_Settings.default_model）。指定后该模型在前，失败时依次回退到原来的默认链；可填逗号分隔的多个 ID。在 9876 保存后立即生效，不用重启。内心判断、事后记账、每日日记、关系小传还可以在 Bot 管理里按 Bot 覆盖。向量模型不在这里。",
+    "hint": "给每个后台大模型任务单独指定模型。留空 = 跟随它原来的默认（标签一族跟 tag_llm_provider_id + 回退链，内心判断/事后记账/日记/关系小传跟 MetaThinking_Settings.default_model）。指定后该模型在前，失败时依次回退到原来的默认链；可填逗号分隔的多个 ID。在 9876 保存后立即生效，不用重启。内心判断、事后记账、每日日记、关系小传、信念反思、角色经历还可以在 Bot 管理里按 Bot 覆盖。向量模型不在这里。",
     "type": "object",
     "items": {
       "tag": {
@@ -115,6 +115,13 @@
       "belief_reflection": {
         "description": "信念反思",
         "hint": "每日日记写完后的信念反思（Learning_Settings.belief_reflection_enabled）。留空跟随 MetaThinking_Settings.default_model。可按 Bot 覆盖。",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+      },
+      "character_experience": {
+        "description": "角色经历",
+        "hint": "角色经历工作台手动发起的任务：从原著把角色出场的场景写成第一人称记忆、按设定起草人生时间线并展开成经历（每次运行前需确认预计调用次数）。留空跟随 MetaThinking_Settings.default_model（MetaThinking 未运行时跟标签模型链）。可按 Bot 覆盖。",
         "type": "string",
         "default": "",
         "_special": "select_provider"

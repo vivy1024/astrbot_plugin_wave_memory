@@ -119,6 +119,9 @@ export function traceItemLink(channel: string, item: LinkFields, ctx: TraceLinkC
     }
     case 'fewshot':
       return { to: href('/knowledge/style-examples', scope), label: '打开风格样例', precise: false }
+    case 'character_experience':
+      // 角色经历属于 Bot 本人，不按群
+      return { to: href('/knowledge/character-experience', { bot_id: ctx.botId || undefined }), label: '打开角色经历工作台', precise: false }
     case 'book_lore': {
       const title = text(link.title)
       const tab = link.community_id ? 'communities' : link.note_id ? 'notes' : undefined

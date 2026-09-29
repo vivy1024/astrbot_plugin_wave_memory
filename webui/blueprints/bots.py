@@ -83,6 +83,7 @@ def _counts(db_id: str) -> dict[str, Any]:
     for key, sql in (
         ("user_profiles", "SELECT COUNT(*) FROM user_profiles WHERE bot_id=?"),
         ("experience_episodes", "SELECT COUNT(*) FROM experience_episodes WHERE bot_id=?"),
+        ("character_experiences", "SELECT COUNT(*) FROM character_experiences WHERE bot_id=?"),
     ):
         try:
             row = db.conn.execute(sql, (db_id,)).fetchone()

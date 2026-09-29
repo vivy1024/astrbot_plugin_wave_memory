@@ -15,10 +15,12 @@ from ..channel_base import InjectionResult
 from .safety import is_channel_allowed_in_mode
 
 try:
+    from ....domain import bot_identity
     from ....domain.bot_profile import bot_catalog_scope
     from ....domain.scope import CatalogScope, validate_formal_command_scope
     from ....engine.external_book_lore import ExternalBookLoreStore
 except ImportError:  # pragma: no cover - direct services imports in isolated tests
+    from domain import bot_identity
     from domain.bot_profile import bot_catalog_scope
     from domain.scope import CatalogScope, validate_formal_command_scope
     from engine.external_book_lore import ExternalBookLoreStore
@@ -64,8 +66,14 @@ def _channel_cfg(ctx: Any) -> Mapping[str, Any]:
 # 除社区摘要外，按相似度再取几条书设笔记（章节事件、人物、世界观……）。社区摘要来自 6 月的
 # GraphRAG 快照，之后的新章节只在笔记里，不查笔记的话最新剧情永远进不了对话。
 NOTES_TOP_K = 1
-# 不当作世界观书设注入的笔记类别（白真真的个人经历走她自己的记忆通道）
-PERSONAL_NOTE_CATEGORIES = frozenset({"白真真经历"})
+
+
+def personal_note_categories() -> frozenset[str]:
+    """不当作世界观书设注入的笔记类别：各 Bot 角色经历设置里登记的个人经历类别（``lore_categories``）。
+
+    这些笔记是某个角色的第一人称经历，由她自己的角色经历通道召回，不能当成所有 Bot 共用的世界观。
+    """
+    return bot_identity.personal_lore_categories()
 
 
 def _note_text(row: Mapping[str, Any]) -> str:
@@ -224,12 +232,13 @@ class BookLoreChannel:
             return []
         rows = {str(row.get("id")): row for row in store.notes_by_ids([nid for nid, _ in hits], scope=catalog_scope)}
         picked: list[dict[str, Any]] = []
+        personal = personal_note_categories()
         for note_id, score in hits:
             if len(picked) >= NOTES_TOP_K:
                 break
             score = float(score or 0.0)
             row = rows.get(str(note_id))
-            if row is None or str(row.get("category") or "") in PERSONAL_NOTE_CATEGORIES:
+            if row is None or str(row.get("category") or "") in personal:
                 continue
             if score < min_score:
                 filtered.append({"note_id": note_id, "score": score, "filter_reason": "min_score", "filter_channel": "book_lore"})
