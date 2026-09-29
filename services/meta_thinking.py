@@ -12,7 +12,8 @@ from typing import Optional, Any
 
 import logging; logger = logging.getLogger("wavememory")
 
-from .llm_fallback import LLMFallbackClient, build_provider_chain, parse_provider_ids, provider_ids_from_config
+from .llm_fallback import LLMFallbackClient
+from .llm_routing import legacy_meta_chain
 from .identity_safety import is_identity_contamination, prepend_identity_safety_system_prompt
 
 
@@ -45,6 +46,7 @@ class MetaThinking:
         config: dict | None = None,
         global_fallback_ids: str | list[str] | None = None,
         extra_interests: list[str] = None,
+        llm_client: Any = None,
     ):
         self.db = db
         self.context = context
@@ -71,14 +73,15 @@ class MetaThinking:
         # 兴趣词：基础通用词 + 从 bot 配置注入的关键词
         self.FIXED_INTERESTS = self._BASE_INTERESTS | frozenset(extra_interests or [])
 
-        # Provider 链：优先 default_model，fallback 到旧格式 provider_1/2/3
-        default_model = self.config.get("default_model", "")
-        meta_fallback_ids = (
-            provider_ids_from_config(self.config, prefix="provider_")
-            or parse_provider_ids(self.config.get("provider_fallback_ids", ""))
-        )
-        self.provider_ids = build_provider_chain(default_model, meta_fallback_ids or parse_provider_ids(global_fallback_ids))
-        self.llm = LLMFallbackClient(self.context, self.provider_ids, log_prefix="[MetaThinking]")
+        # Provider 链：插件启动时由模型分工（services.llm_routing，任务 meta_thinking）注入路由客户端；
+        # 单独构造时沿用旧逻辑：优先 default_model，fallback 到旧格式 provider_1/2/3。
+        if llm_client is None:
+            llm_client = LLMFallbackClient(
+                self.context,
+                legacy_meta_chain(self.config, global_fallback_ids),
+                log_prefix="[MetaThinking]",
+            )
+        self.llm = llm_client
 
         # @ 频率追踪
         self._at_timestamps: dict[str, list[float]] = {}  # sender_id → [timestamps]
@@ -91,6 +94,18 @@ class MetaThinking:
         # 兴趣关键词（从 DB 加载高频标签 + 固定词）
         self._interest_keywords: set[str] = set(self.FIXED_INTERESTS)
         self._load_interest_keywords()
+
+    @property
+    def provider_ids(self) -> list[str]:
+        """当前回退链（路由客户端按模型分工现读）。"""
+        return list(getattr(self.llm, "provider_ids", None) or [])
+
+    def _llm_for(self, bot_id: str | None = None):
+        """按 Bot 取客户端：路由客户端支持按 Bot 覆盖模型（Bot Profile 的 model / models）。"""
+        qq_id = bot_id or self.bot_qq_id
+        db_id = self.bot_db_ids.get(qq_id, "") if qq_id else ""
+        for_bot = getattr(self.llm, "for_bot", None)
+        return for_bot(db_id) if callable(for_bot) and db_id else self.llm
 
     def update_bots(
         self,
@@ -285,7 +300,7 @@ QQ：{sender_id}
 
         # 调用 LLM
         try:
-            response = await self._call_llm(prompt)
+            response = await self._call_llm(prompt, bot_id=bot_id)
             result = self._parse_response(response)
 
             # 更新标签/印象/好感度
@@ -448,10 +463,10 @@ QQ：{sender_id}
             return start <= hour <= end
         return hour >= start or hour <= end
 
-    async def _call_llm(self, prompt: str, system_prompt: str | None = None) -> str:
+    async def _call_llm(self, prompt: str, system_prompt: str | None = None, bot_id: str | None = None) -> str:
         """调用 LLM，带配置化 fallback。"""
         system_prompt = prepend_identity_safety_system_prompt(system_prompt, always=True)
-        resp = await self.llm.text_chat(prompt=prompt, system_prompt=system_prompt, contexts=[])
+        resp = await self._llm_for(bot_id).text_chat(prompt=prompt, system_prompt=system_prompt, contexts=[])
         return resp.completion_text
 
     async def generate_proactive_reply(
@@ -487,7 +502,7 @@ QQ：{sender_id}
 {inner_thought}
 
 直接说你想说的话，简短自然。只参与安全公开话题；不要解释为什么要说话，不要提及关系分数、内部门禁或私人信息，不要把挑衅或攻击当作风格。"""
-        resp = await self.llm.text_chat(prompt=prompt, system_prompt=prepend_identity_safety_system_prompt(None, always=True), contexts=[])
+        resp = await self._llm_for(bot_id).text_chat(prompt=prompt, system_prompt=prepend_identity_safety_system_prompt(None, always=True), contexts=[])
         reply = resp.completion_text.strip()
         if is_identity_contamination(reply):
             logger.warning("[MetaThinking] Contaminated proactive reply blocked")

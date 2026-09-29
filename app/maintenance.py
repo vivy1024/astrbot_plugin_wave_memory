@@ -554,8 +554,13 @@ class MaintenanceMixin:
         """Run LLM Tag audit as a resumable durable job, never in an SSE request."""
         from ..services.tag_auditor import TagAuditor
 
-        provider_id = str(request.payload.get("provider_id") or self.tag_llm_provider_id or "")
-        if not provider_id:
+        # 模型分工（任务 tag_audit）：按运行时的模型分工解析回退链；路由不可用时沿用旧的单个 provider。
+        routing = getattr(self, "llm_routing", None)
+        provider_ids = routing.chain("tag_audit") if routing is not None else []
+        if not provider_ids:
+            legacy_provider = str(request.payload.get("provider_id") or self.tag_llm_provider_id or "")
+            provider_ids = [legacy_provider] if legacy_provider else []
+        if not provider_ids:
             raise RuntimeError("tag_audit_provider_not_configured")
         strategy = str(request.payload.get("strategy", "mixed"))
         if strategy not in {"mixed", "low_quality", "high_freq"}:
@@ -565,7 +570,9 @@ class MaintenanceMixin:
         auditor = TagAuditor(
             db=self.db,
             context=self.context,
-            provider_id=provider_id,
+            provider_id=provider_ids[0],
+            provider_ids=provider_ids,
+            llm_stats=routing.stats("tag_audit") if routing is not None else None,
         )
 
         async def _publish(suggestion):

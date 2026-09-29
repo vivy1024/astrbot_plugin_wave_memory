@@ -379,9 +379,10 @@ def build_tag_runtime_payload(container) -> dict:
     """Describe live Tag extraction/index capabilities without exposing paths or IDs."""
     extractor = getattr(container, "tag_extractor", None)
     index = getattr(container, "tag_index", None)
+    routing = getattr(container, "llm_routing", None)
     provider_configured = bool(
         str((getattr(container, "plugin_config", None) or {}).get("tag_llm_provider_id", "")).strip()
-    )
+    ) or bool(routing is not None and routing.chain("tag"))
     index_available = index is not None
     try:
         index_count = max(0, int(getattr(index, "count", 0))) if index_available else 0
@@ -628,7 +629,10 @@ async def trigger_audit():
     if strategy not in {"mixed", "low_quality", "high_freq"}:
         return jsonify({"ok": False, "error": "invalid_audit_strategy"}), 400
     total_count = max(10, min(2000, int(request.args.get("total_count", 500))))
-    provider_id = str((c.plugin_config or {}).get("tag_llm_provider_id", ""))
+    # 模型分工（任务 tag_audit）：维护任务运行时按当前模型分工解析回退链；这里只确认有模型可用。
+    routing = getattr(c, "llm_routing", None)
+    chain = routing.chain("tag_audit") if routing is not None else []
+    provider_id = chain[0] if chain else str((c.plugin_config or {}).get("tag_llm_provider_id", ""))
     if not provider_id:
         return jsonify({"ok": False, "error": "tag_audit_provider_not_configured"}), 409
     jobs = getattr(c, "durable_jobs", None)

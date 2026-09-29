@@ -26,6 +26,10 @@ BINDING_HOSTS = ("astrbot", "cortico", "bilibili")
 # 不能作为 db_id 的保留值：会和库内哨兵、默认值混淆。
 RESERVED_DB_IDS = frozenset({"bot", "default", "system", "all", "none"})
 
+# 允许按 Bot 覆盖模型的后台任务：只有以 Bot 自己口吻/视角产出内容的任务。
+# 任务 id 与 services/llm_routing.py 的 TASKS 一致（那边有测试核对）。
+BOT_MODEL_TASKS = ("meta_thinking", "bookkeeping", "diary", "portrait")
+
 
 class BotProfileError(ValueError):
     """Profile 数据不合法；``code`` 供 API 返回稳定错误码。"""
@@ -164,6 +168,18 @@ class PersonaSettings:
         )
 
 
+def _model_map(value: Any) -> dict[str, str]:
+    """任务 → provider 的覆盖表；空值丢弃。未知任务名原样保留（新版本的任务），由路由层决定是否生效。"""
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, raw in value.items():
+        task, provider = _text(key), _text(raw)
+        if task and provider:
+            out[task] = provider
+    return out
+
+
 def _lines(value: Any) -> list[str]:
     if value is None:
         return []
@@ -190,7 +206,11 @@ class BotProfile:
     interest_keywords: list[str] = field(default_factory=list)
     # ---- v6 ----
     enabled: bool = True
+    # 这个 Bot 的默认模型：只作用于 BOT_MODEL_TASKS（内心判断、事后记账、每日日记、关系小传），
+    # 优先级低于下面按任务的覆盖、高于全局「模型分工」。留空跟随全局。
     model: str = ""
+    # 按任务的模型覆盖 {任务 id: provider id}，只有 BOT_MODEL_TASKS 里的任务生效。
+    models: dict[str, str] = field(default_factory=dict)
     session_prefix: str = ""
     bindings: list[BotBinding] = field(default_factory=list)
     persona: PersonaSettings = field(default_factory=PersonaSettings)
@@ -291,6 +311,7 @@ class BotProfile:
             interest_keywords=_text_list(data.get("interest_keywords")),
             enabled=_bool(data.get("enabled"), True),
             model=_text(data.get("model")),
+            models=_model_map(data.get("models")),
             session_prefix=_text(data.get("session_prefix")),
             bindings=bindings,
             persona=PersonaSettings.from_dict(data.get("persona")),
@@ -315,6 +336,7 @@ def profile_from_legacy_config(cfg: Any) -> BotProfile:
 
 __all__ = [
     "BINDING_HOSTS",
+    "BOT_MODEL_TASKS",
     "PROFILE_SCHEMA_VERSION",
     "BotBinding",
     "BotProfile",

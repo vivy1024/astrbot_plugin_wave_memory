@@ -4,7 +4,7 @@
 
 1. ``builtin``   代码内置默认值（schema default、通道默认、热参数默认）
 2. ``static``    AstrBot 6185 静态配置（``astrbot_plugin_wave_memory_config.json``）
-3. ``bot``       Bot Profile 自带的覆盖（目前是注入通道覆盖）
+3. ``bot``       Bot Profile 自带的覆盖（注入通道覆盖、模型覆盖）
 4. ``override``  9876 保存的覆盖（热参数数据库覆盖、通道分层配置）
 
 本模块只做只读汇总，不改任何配置。
@@ -123,9 +123,48 @@ def channel_rows(default_config: Any, effective_config: Any) -> list[dict[str, A
     return rows
 
 
+def _bot_model_rows(profile: Any) -> list[dict[str, Any]]:
+    """Bot 的模型覆盖（模型分工）：默认模型与按任务覆盖，只对 Bot 口吻任务生效。"""
+    try:
+        from ..llm_routing import BOT_OVERRIDABLE_TASKS, TASK_BY_ID
+    except ImportError:  # 单测里插件根目录是顶层包
+        from services.llm_routing import BOT_OVERRIDABLE_TASKS, TASK_BY_ID
+
+    rows: list[dict[str, Any]] = []
+    db_id = getattr(profile, "db_id", "")
+    name = getattr(profile, "name", "") or db_id
+    model = str(getattr(profile, "model", "") or "").strip()
+    if model:
+        rows.append(_row(
+            key=f"bot:{db_id}.model",
+            layer="bot",
+            title=f"{name} 的默认模型（内心判断/事后记账/日记/关系小传）",
+            scope=f"bot:{db_id}",
+            default="",
+            effective=model,
+            source=f"bot_profiles.{db_id}",
+            apply_mode="hot",
+        ))
+    for task, value in sorted((getattr(profile, "models", None) or {}).items()):
+        spec = TASK_BY_ID.get(task)
+        rows.append(_row(
+            key=f"bot:{db_id}.models.{task}",
+            layer="bot",
+            title=f"{name} 的模型覆盖 · {spec.title if spec else task}",
+            scope=f"bot:{db_id}",
+            default="",
+            effective=value,
+            source=f"bot_profiles.{db_id}",
+            apply_mode="hot",
+            warning=None if task in BOT_OVERRIDABLE_TASKS else f"任务 {task} 不支持按 Bot 覆盖模型，这一项不生效",
+        ))
+    return rows
+
+
 def bot_rows(profiles: Iterable[Any], default_config: Any) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for profile in profiles:
+        rows.extend(_bot_model_rows(profile))
         for name, patch in sorted((getattr(profile, "channels", None) or {}).items()):
             base = default_config.channels.get(name)
             for field, value in sorted((patch or {}).items()):

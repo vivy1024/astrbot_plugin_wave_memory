@@ -142,6 +142,14 @@ class BootstrapMixin:
         self.tag_llm_provider_id = self.config.get("tag_llm_provider_id", "")
         # 所有 LLM 子系统共用的回退链；单渠道 503/402 不应让后台能力整体停产。
         self.llm_fallback_provider_ids = self.config.get("llm_fallback_provider_ids", "")
+        # 模型分工：各后台大模型任务的回退链集中在这里解析（Model_Routing_Settings 留空 = 跟随原默认）。
+        from ..services.llm_routing import LLMRouter
+
+        self.llm_routing = LLMRouter(
+            self.config,
+            context=context,
+            profile_lookup=lambda db_id: self.bot_registry.get(db_id),
+        )
         self.tag_extraction_enabled = tag_cfg.get("tag_extraction_enabled", True)
         self.max_tags = int(tag_cfg.get("max_tags_per_message", 10))
         self.enable_auto_inject = effective_native_injection_enabled(
@@ -655,9 +663,9 @@ class BootstrapMixin:
             write_gateway=self.write_gateway,
         )
 
-        # Tag 提取器
+        # Tag 提取器（模型分工任务 tag；回退链按当前配置现解析）
         self.tag_extractor = None
-        if self.tag_extraction_enabled and self.tag_llm_provider_id:
+        if self.tag_extraction_enabled and self.llm_routing.available("tag"):
             self.tag_extractor = TagExtractor(
                 context=context,
                 provider_id=self.tag_llm_provider_id,
@@ -667,6 +675,8 @@ class BootstrapMixin:
                 embedding_service=self.embedding_service,
                 tag_index=self.tag_catalog_index,
                 provider_fallback_ids=self.llm_fallback_provider_ids,
+                chain_resolver=self.llm_routing.resolver("tag"),
+                llm_stats=self.llm_routing.stats("tag"),
             )
 
         # 异步写入器（带 source 分层门控）
