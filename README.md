@@ -9,7 +9,7 @@
 
 **给长期群 Bot 用的记忆层：记住这个群说过什么、谁是谁、关系好不好；回复时把相关记忆和其他通道一起注入。**
 
-v5 起，事实 / 黑话 / 信念 / 风格不再靠后台定时盲抽，而是对话现场由模型调工具提审，管理台人工审核后再注入。日常检索仍只依赖 Embedding，本地 SQLite 毫秒级召回。
+v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现场由模型调工具提审，管理台人工审核后再注入；v5.2 起信念（Bot 自己的看法）改为每日日记之后由 Bot 反思经历形成。日常检索仍只依赖 Embedding，本地 SQLite 毫秒级召回。
 
 [快速开始](#快速开始) · [为什么选我们](#为什么选我们) · [适合谁](#适合谁不适合谁) · [检索引擎](#-检索引擎) · [灵魂系统](#-灵魂系统) · [WebUI](#-webui-管理面板) · [Releases](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
 
@@ -23,7 +23,7 @@ v5 起，事实 / 黑话 / 信念 / 风格不再靠后台定时盲抽，而是�
 - **记住群友**：昵称、别名、好感度与事实；同一用户在不同群累加的情感和事实自动合并（不跨 Bot），记忆检索受跨群开关控制。
 - **像群友一样说话**：本群黑话和 Bot 回复风格由现场工具提审，管理台通过后才注入。
 - **有心情和关系**：印象时间线、五维好感（跨群累加）；人情账可写备忘但不注入账单。关切是人味临场发挥，不再按字数截句入库。
-- **事实要原话，信念要二次审**：提事实必须带群友原话；黑话只用来听懂原话，反串不升格为认真事实。信念必须挂至少两条已审事实。
+- **事实要原话，看法从经历里来**：提事实必须带群友原话；黑话只用来听懂原话，反串不升格为认真事实。信念（Bot 自己的看法）只来自她对自己日记与回复效果的反思，要在不同日子里被印证才形成。
 - **能看见一次回复用了什么**：注入观测台按通道列出命中、跳过、错误和最终文本；反过来，每条记忆也能查到被哪些回复用过。
 - **说完话会自己记账**：对话停下后回看这段，交给正式工具记印象与好感、事实、黑话、人情、关切；每晚写一篇当天的日记。
 - **中文管理台 + 关系图谱**：Bot 主页、记忆、人物、标签、事实、黑话、心智都在 9876 端口；关系图谱有平面分析和 3D「记忆星空 / 回忆回放」，另有给直播用的舞台页。
@@ -43,7 +43,6 @@ v5 起，事实 / 黑话 / 信念 / 风格不再靠后台定时盲抽，而是�
      ↓
 大模型现场感知并触发自主提审工具 (Function Calling)
      ├─ 提审事实 (wave_memory_propose_fact)：必须附带群友原话 (source_quote)，反串不升格为客观事实
-     ├─ 提审信念 (wave_memory_propose_belief)：信念必须锚定至少 2 条当前群已审核的事实，拒绝无根虚妄感悟
      ├─ 提审黑话 (wave_memory_mark_cultural_moment)：沉淀本群真实高频梗，配合 Holyman 词典只读理解
      ├─ 亲笔日记 (wave_memory_record_diary_episode)：Bot 记录成长大事件，自动钉入经历时间线
      └─ 人情与好感 (wave_memory_note_social_anchor / record_social_impression)：动态结算群友账本
@@ -74,14 +73,14 @@ v5 起，事实 / 黑话 / 信念 / 风格不再靠后台定时盲抽，而是�
    - 不想要人格时只开记忆注入；已有人格插件时可以只当记忆后端
 
 4. **按 Bot 和群隔离，能审计**  
-   A 群的梗和好感不会当成 B 群的。管理台能看见「这句话用了哪些通道、为什么跳过」，黑话/信念/风格要审核后才进人格。
+   A 群的梗和好感不会当成 B 群的。管理台能看见「这句话用了哪些通道、为什么跳过」，黑话/风格要审核后才进人格，看法可以在管理台一键否决。
 
 ### 限制
 
 - **不是轻量插件**：要比「只塞最近 N 条」更占磁盘和内存；十万级记忆大约 1.7GB SQLite + 几百 MB 索引。
 - **必须配 Embedding**；学黑话、打标签、风格范例还要配 Tag LLM。没有这两个，完整能力起不来。
 - **单机本地库**：数据在这台 AstrBot 上，不能开箱多机共享一份云端记忆。
-- **主要面向 QQ 群**（aiocqhttp）。私聊可以记录印象、人情备忘、关切、经历和提审事实，但具体内容只在该私聊可见；群文化、黑话、信念提审仍只在群里进行；未绑定 Bot 身份的会话只能看。
+- **主要面向 QQ 群**（aiocqhttp）。私聊可以记录印象、人情备忘、关切、经历和提审事实，但具体内容只在该私聊可见；群文化、黑话提审仍只在群里进行，信念反思只读群聊日记；未绑定 Bot 身份的会话只能看。
 - **管理台是独立 9876 端口**，不是 AstrBot 自带设置页。
 - **不会替你写完整人设**，也不会自动改其他插件的配置。
 
@@ -90,7 +89,7 @@ v5 起，事实 / 黑话 / 信念 / 风格不再靠后台定时盲抽，而是�
 | 选 WaveMemory | 另找轻量方案 |
 |---------------|--------------|
 | 要长期陪聊群 Bot，记得住群史、黑话、群友关系 | 只要最近几轮上下文或一句摘要 |
-| 想自己审核黑话 / 信念 / 风格再注入 | 不想维护 Embedding 和本地索引 |
+| 想自己审核黑话 / 风格再注入、看法可随时否决 | 不想维护 Embedding 和本地索引 |
 | 已经有人格插件，需要一个可隔离的记忆后端 | 需要多机共享、云端托管的记忆服务 |
 | 能接受单独开一个中文管理台做排查 | 只想在 AstrBot 设置里勾一个开关 |
 
@@ -181,13 +180,13 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 ├─ memory（五阶段语义召回）
 ├─ fts5（人名/专有名词精确命中）
 ├─ facts（三元组事实，本群与全群都可见）
-├─ persona（自我人格 / 精选自我经历 / 已审信念）
-├─ belief（已审核信念）
+├─ persona（自我人格 / 精选自我经历）
+├─ belief（她从经历里反思形成的看法：已形成/稳固，话题相关时浮现 1–2 条）
 ├─ jargon（已确认黑话）
 ├─ fewshot（已批准健康风格样本）
 ├─ book_lore（世界观知识）
-├─ affinity（全群累加的关系档位与自然语言摘要：印象、走势、共同经历、当下感受）
-├─ holyman_persona（holyman-skills 风格人格包，默认关闭）
+├─ affinity（关系小传或印象时间线摘要为主 · 共同交往锚点 · 末尾一行好感分数仅供参考）
+├─ meme_hint（用梗提示：话题相关时提示 1–2 个可以用的梗，默认关闭）
 └─ soul_state（Bot 本人此刻的心情：情绪词 + 1–2 条最近原因 + 可选说话倾向；近期时间线，不含群日记）
 ```
 
@@ -216,9 +215,9 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 
 | 模块 | 功能 |
 |------|------|
-| PersonaComposer | 编排自我人格、精选自我经历与审核信念；不塞虚假的群友刻板画像 |
-| BeliefEngine | 维护已审核稳定判断；只注入当前群 active 信念 |
-| 现场提审工具 | 印象 / 人情 / 黑话 / 事实 / 信念由主对话 LLM 按需调用，进入 pending 审核 |
+| PersonaComposer | 编排自我人格与精选自我经历；不塞虚假的群友刻板画像 |
+| BeliefEngine / BeliefReflection | 每日日记之后按 Bot 反思经历，形成、印证、动摇、淡出看法；只在话题相关时注入已形成/稳固的看法 |
+| 现场提审工具 | 印象 / 人情 / 黑话 / 事实由主对话 LLM 按需调用，进入 pending 审核 |
 | BotMoodService | 心情 v2：一个 Bot 一份心情，跨群/私聊共享。冲她来的话（按情绪词 + 关系加权）、关系事件、事后记账顺带给出的心情影响、群氛围（小权重）作为带来源的情绪事件，按半衰期向画像基线回落，可选疲劳；`soul_state` 通道注入情绪词与原因，不输出裸数字，私聊来源的原因在别处只说「私下有件事」。画像见下方「Bot 心情画像」 |
 | SubjectiveTime | 代码仅初始化保留，经历时间线注入直接来源于 Bot 亲笔日记（`scoped_soul_timeline`） |
 | ConcernTracker | 关切只读展示；v5 不再从入站消息截词入库 |
@@ -243,7 +242,7 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 |------|------|
 | SelfReflect | 接收群友纠正信号 → 搜索历史记忆与知识 → 内化为高权重自省记忆 |
 | DreamService | 6h 周期离线联想，强化近期重要记忆 |
-| 现场感知提审 | 彻底废除定时抽取盲抽，事实/信念/黑话改由现场对话大模型精准提审 |
+| 现场感知提审 | 彻底废除定时抽取盲抽，事实/黑话改由现场对话大模型精准提审；看法改由每日反思形成 |
 
 ### 文化融入
 
@@ -277,7 +276,7 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 | 记忆库 | 记忆 / 标签 / 导入 | 按 Bot 和群查看、编辑记忆（详情里能看到被哪些回复用过）；标签覆盖与质量；从来源预检导入 |
 | 记忆库 | 关系图谱 | 知识图谱与标签两个数据层；「最强关系 / 新出现 / 当前话题 / 全部」四种视图，搜索、两点找路径；**3D 展示**：记忆星空（越亮 = 最近越常被想起）与回忆回放（逐条重放真实回复想起了什么） |
 | 记忆库 | 书设定 / 书设工作台 | 书设语料只读浏览；新章节导入、笔记编辑、检索索引补齐 |
-| 认知 | 人物与关系 / 事实 / 信念 / 黑话与口癖 / 经历片段 / 风格样例 / 心智状态 | 群友画像与好感、印象时间线；事实必须带原话；模型提审的候选经人工批准后才入库 |
+| 认知 | 人物与关系 / 事实 / 看法 / 黑话与口癖 / 经历片段 / 风格样例 / 心智状态 | 群友画像与好感、印象时间线与关系小传；事实必须带原话；模型提审的候选经人工批准后才入库 |
 | 系统 | 配置中心 / Bot 管理 / 服务与扩展 / 维护任务 / 索引诊断 / 生态兼容 | 按功能查找配置与各层来源；Bot 新增编辑保存即热生效；后台服务启停；可恢复任务；索引探针诊断 |
 | — | 登录 | 管理台访问鉴权（`webui_password`） |
 
@@ -327,7 +326,7 @@ v5.0.0 彻底收敛了历史堆叠的工具集，常驻工具数量减半，释�
 | **`wave_memory_note_concern`** | **灵魂关切管理**：记录并推进 Bot 挂在心上的未决事件（群友生病/考试/约定等） | full，群 Scope |
 | **`wave_memory_mark_cultural_moment`** | **文化时刻标记**：现场提审本群特色黑话梗（jargon）或高光风骨回复（style），进入审核工作台 | full，群 Scope |
 | **`wave_memory_propose_fact`** | **客观事实提审**：发现群友新事实，自动反查当轮真实消息 ID 并绑定 `source_quote` 证据入库 | full，群 Scope |
-| **`wave_memory_propose_belief`** | **稳定信念提审**：基于至少 2 条已审核事实提纯稳定认知判断，杜绝无根虚妄感悟 | full，群 Scope |
+| **`wave_memory_meme_lookup`** | **梗百科**：看不懂梗或想接梗时查释义与例句（含神言语料），敏感条目带分寸标注 | 随黑话能力开关 |
 | **`wave_memory_note_episode`** | **群经历大事件**：记录解决群体问题或关系转折的重大经历片段，自动锚定记忆 | full，群 Scope |
 | **`wave_memory_record_diary_episode`** | **Bot 亲笔日记**：记录今日生活随笔与心智历程，带 6 小时冷却并钉入经历时间线主干 | full，群 Scope |
 | **`wave_memory_facts`** | **事实库直查**：直接查验某人某事的确定性已知客观属性（三元组） | allowed |
@@ -396,7 +395,7 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| enable_holyman_persona | false | 启用 holyman-skills 风格人格包（可选） |
+| enable_holyman_persona | false | 已废弃，不再生效：神人包改作梗百科（理解参考 + `wave_memory_meme_lookup` + 用梗提示，见 Jargon_Settings） |
 | timeline_days | 0 | 历史时间窗（天，兼容保留） |
 | timeline_decay_half_life_days | 21 | 印象时间线指数权重半衰期（天） |
 | soul_timeline_max_items | 3 | Bot 经历日记时间线注入条数 |
@@ -505,6 +504,9 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | min_messages | 10 | 黑话候选消息数门限 |
 | confidence_threshold | 0.5 | 推断置信度门限 |
 | max_inject | 3 | 单次回复最大注入黑话数 |
+| meme_hint_group | true | 用梗提示：群聊场合（`meme_hint` 通道本身默认关闭，需在通道配置或 Bot 通道覆盖里开启） |
+| meme_hint_private | false | 用梗提示：私聊场合 |
+| meme_hint_live | false | 用梗提示：直播 / Runtime API（`/context/prepare`）场合 |
 
 ### 记账与学习 (Learning_Settings)
 
@@ -518,7 +520,7 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | expression_learning_enabled | false | 同一次事后记账提取群友情景表达，先人工审核，批准后才可用于风格注入 |
 | reply_rules_mode | off | off 保持原行为；shadow 仅记录建议；enforce 筛选已获准的回复候选，不能新增宿主权限 |
 | reply_rules_json | `{}` | JSON 阈值与 Bot/会话覆盖：score_threshold、reply_window_seconds、max_recent_replies、backoff_base_seconds、backoff_max_seconds；bots/groups 使用稳定 Bot ID 和完整会话 ID |
-| auto_approve_enabled | false | 自动审核：带原话与来源记忆的事实、引用 ≥2 条已批准事实的信念、被多人多次使用的黑话直接生效；关闭时全部进待审 |
+| auto_approve_enabled | false | 自动审核：带原话与来源记忆的事实、被多人多次使用的黑话直接生效；关闭时全部进待审（信念不走审核，见信念反思） |
 | jargon_auto_min_memories | 3 | 黑话自动生效最少出现条数 |
 | jargon_auto_min_senders | 2 | 黑话自动生效最少使用人数 |
 | proactive_reply_enabled | false | 关切驱动的主动回复：有未了关切的人在群里说话时，没点名也主动问一句；关闭时只在本来就要回复此人时附提示 |
@@ -527,12 +529,24 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | proactive_group_max_per_hour | 3 | 同一群每小时最多主动回复次数 |
 | proactive_quiet_hours | 1-7 | 静默时段（起-止，小时）；起止相同表示不设 |
 | concern_stale_days | 30 | 关切无进展多少天后自动过期 |
-| post_reply_bookkeeping_enabled | true | 事后记账：对话停下后回看这段，交给正式工具记印象与好感结算、事实、黑话、人情、关切、信念 |
+| post_reply_bookkeeping_enabled | true | 事后记账：对话停下后回看这段，交给正式工具记印象与好感结算、事实、黑话、人情、关切 |
 | bookkeeping_delay_seconds | 90 | 对话停下多久后记账（秒） |
 | bookkeeping_session_cooldown_seconds | 600 | 同一群两次记账最小间隔（秒） |
 | bookkeeping_daily_limit | 150 | 每天最多记账次数 |
 | daily_diary_enabled | true | 每日日记：每晚为当天说过话的每个群写一篇，写入经历时间线与记忆库 |
 | daily_diary_hour | 23 | 几点之后写日记（0-23） |
+| relationship_portrait_enabled | false | 关系小传：Bot 读一个人公开场合的印象时间线，以自己的视角写小传；关系注入以小传为主。关闭时沿用时间线规则摘要；私聊记录不进小传 |
+| portrait_min_new_events | 3 | 自上次小传后新增多少条印象/好感记录就重写 |
+| portrait_refresh_days | 7 | 距上次小传满多少天且期间有新记录时重写 |
+| portrait_min_events | 3 | 公开记录少于多少条不写小传 |
+| portrait_max_chars | 300 | 小传最多字数 |
+| portrait_max_per_round | 3 | 每次检查（每 30 分钟）最多写几个人 |
+| portrait_daily_limit | 30 | 每天最多自动写几次（管理台手动重新生成不计） |
+| belief_reflection_enabled | false | 信念反思：每日日记写完后，每个 Bot 回想各群日记（不读私聊）与回复反馈，形成、印证或放下自己的看法 |
+| belief_reflection_every_n_days | 1 | 每几天反思一次；1 = 每天日记写完后一次 |
+| belief_form_min_days | 2 | 看法在多少个不同日子里得到支持并被再次印证才算形成 |
+| belief_decay_days | 30 | 多少天没被印证就降一级（稳固→形成→动摇→淡出） |
+| belief_max_active | 20 | 每个 Bot 同时有效的看法上限，超出时最弱的淡出 |
 
 ### 风格学习 (FewShot_Settings)
 
@@ -601,7 +615,6 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | manual_adjustment_delta_cap | 20.0 | 管理员手动调整好感单次上限 |
-| relationship_tiers_json | 空 | 关系档位名与阈值覆盖（JSON）；留空用默认档位 敌对/反感/有点烦/亲近/信得过/合得来/常聊/面熟/陌生人，对象按 key 覆盖、数组整体替换 |
 
 ### 自省 (Study_Settings)
 
@@ -639,6 +652,23 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 |--------|--------|------|
 | livingmemory_alias_tools_enabled | false | 启用 LivingMemory 别名工具映射 |
 | compat_only_auto_inject_enabled | false | 兼容模式下强行启用原生注入 |
+
+### 模型分工 (Model_Routing_Settings)
+
+每个后台大模型任务可以单独指定模型（填 provider id，可逗号分隔多个），失败再回退到它原来的默认链；留空时行为与改造前完全一致。9876 保存即生效；Bot 管理里还可按 Bot 覆盖以 Bot 口吻产出的任务（内心判断、事后记账、每日日记、关系小传、信念反思）。
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| tag | （空） | 标签提取、回填与导入打标签；留空跟随 tag_llm_provider_id + 回退链 |
+| jargon | （空） | 黑话候选校验与含义推断；留空跟随标签模型链 |
+| fewshot | （空） | 风格样例提取与漂移检查；留空跟随标签模型链 |
+| self_reflect | （空） | 纠错自省；留空跟随标签模型链 |
+| tag_audit | （空） | 标签质量审计维护任务；留空只用 tag_llm_provider_id（不走回退链） |
+| meta_thinking | （空） | 内心判断（MetaThinking）；留空跟随 MetaThinking_Settings.default_model |
+| bookkeeping | （空） | 事后记账（表达学习、回复反馈、心情影响搭同一次调用）；留空跟随 MetaThinking 默认模型 |
+| diary | （空） | 每日日记；留空跟随 MetaThinking 默认模型 |
+| portrait | （空） | 关系小传；留空跟随 MetaThinking 默认模型 |
+| belief_reflection | （空） | 信念反思；留空跟随 MetaThinking 默认模型 |
 
 ### MetaThinking (MetaThinking_Settings)
 
