@@ -53,6 +53,7 @@ from .db.person_identity_repo import PersonIdentityRepo
 from .db.bot_profile_repo import BotProfileRepo
 from .db.bot_mood_repo import BotMoodRepository
 from .db.bot_belief_repo import BotBeliefRepository
+from .db.game_knowledge_repo import GameKnowledgeRepo
 from .db.config_override_repo import ConfigOverrideRepo
 from .db.scoped_soul_repo import ScopedSoulRepository
 from .db.shared_memory_grant_repo import SharedMemoryGrantRepository
@@ -136,6 +137,8 @@ class WaveMemoryDB:
             self._bot_mood = BotMoodRepository(self._cm)
             # 信念 v2：一个 Bot 自己的看法 + 状态变化历史 + 反思进度（纯增量建表）
             self._bot_beliefs = BotBeliefRepository(self._cm)
+            # 游戏知识库：按游戏分库的攻略常识，所有 Bot 共用（纯增量建表）
+            self._game_knowledge = GameKnowledgeRepo(self._cm)
             self._config_overrides = ConfigOverrideRepo(self._cm)
             self._fewshot_repository = ScopedFewShotRepository(self._cm, ensure_schema=False)
             self._injection_metrics = InjectionMetricStore(self._cm)
@@ -198,6 +201,11 @@ class WaveMemoryDB:
     def bot_beliefs(self) -> BotBeliefRepository:
         """信念 v2 仓储：Bot 本人从经历里形成的看法、历史与反思进度。"""
         return self._bot_beliefs
+
+    @property
+    def game_knowledge(self) -> GameKnowledgeRepo:
+        """游戏知识库仓储：游戏库、知识卡、词条（所有 Bot 共用，不按会话分）。"""
+        return self._game_knowledge
 
     @property
     def config_overrides(self) -> ConfigOverrideRepo:
