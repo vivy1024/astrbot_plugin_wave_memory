@@ -1,0 +1,658 @@
+{
+  "format": "wavememory.game_knowledge",
+  "format_version": 1,
+  "pack": {
+    "id": "minecraft_starter",
+    "title": "我的世界起始包",
+    "description": "Java 版生存前期常识（按服务端 1.20.6 起草）：第一夜、床与重生点、食物、常见怪物、河边、摔落、岩浆、洞穴照明、工具升级等。由模型根据通用生存知识离线起草，导入后全部是草稿，审核后再启用。数值条件假定 Cortico 在 state 里发送 time_of_day（night/day）、health（0–20）、food（0–20）、dimension，键名不同时请在管理台改条件。",
+    "force_status": "draft"
+  },
+  "game": {
+    "id": "minecraft",
+    "name": "我的世界",
+    "aliases": ["Minecraft", "MC", "我的世界Java版"],
+    "description": "我的世界 Java 版生存模式（服务端 1.20.6）。"
+  },
+  "cards": [
+    {
+      "key": "mc_day_one",
+      "title": "开局第一天做什么",
+      "stage": "前期",
+      "points": [
+        "先撸树拿原木，做木板和工作台，再做木镐",
+        "用木镐挖圆石，尽快换成石镐、石剑和石斧",
+        "顺手收集食物（动物、苹果、小麦种子）和羊毛，羊毛能做床",
+        "太阳下山前找好或搭好过夜的地方"
+      ],
+      "pitfalls": [
+        "别一上来跑太远，天黑前容易回不来",
+        "第一晚之前，工具、食物和庇护所比到处探索更重要"
+      ],
+      "trigger": {"keywords": ["开局", "第一天", "刚开始玩", "新存档", "从零开始"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_first_night",
+      "title": "第一夜怎么过",
+      "stage": "前期",
+      "points": [
+        "有羊毛就做床，天黑后直接睡，能跳过夜晚",
+        "没床就挖进山里，或用方块围一个封闭的小屋，把出入口堵上",
+        "屋里插火把保持光亮",
+        "夜里可以在屋里挖矿、整理背包、烧东西，等天亮再出门"
+      ],
+      "pitfalls": [
+        "别在野外乱跑，夜里敌对生物很多",
+        "墙和屋顶都要封严，蜘蛛会爬墙"
+      ],
+      "trigger": {"keywords": ["第一夜", "第一晚", "第一个晚上", "过夜", "怎么过夜"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_bed_spawn",
+      "title": "床与重生点",
+      "stage": "前期",
+      "points": [
+        "床用三块羊毛和三块木板合成，羊毛可以剪羊或打羊获得",
+        "在床上睡过（右键床）会把重生点设到床边，死后从床边复活",
+        "只有夜里或雷雨天才能睡觉",
+        "附近有怪物时睡不了，先把周围清干净或封好"
+      ],
+      "pitfalls": [
+        "床被拆掉或被挡住时，会回到世界出生点复活",
+        "在下界和末地用床会爆炸"
+      ],
+      "trigger": {"keywords": ["床", "睡觉", "睡床", "重生点", "复活点", "出生点"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_bed_explodes",
+      "title": "下界和末地别用床",
+      "stage": "中期",
+      "points": [
+        "下界和末地里右键床会直接爆炸，不能拿来睡觉或设重生点",
+        "想在下界设重生点要用重生锚，并用荧石给它充能"
+      ],
+      "pitfalls": [
+        "重生锚只能在下界用，在主世界和末地用也会爆炸"
+      ],
+      "trigger": {
+        "keywords": ["床", "睡觉", "重生点", "复活点"],
+        "conditions": ["必须 dimension in the_nether, nether, minecraft:the_nether, the_end, end, minecraft:the_end"]
+      },
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_food",
+      "title": "吃什么、怎么不挨饿",
+      "stage": "前期",
+      "points": [
+        "牛、猪、羊、鸡的生肉用熔炉或营火烤熟再吃，更顶饱",
+        "面包用三个小麦合成，小麦种子在草丛里打草就能掉",
+        "橡树和深色橡树的树叶会掉苹果",
+        "饱食度比较高时才会自然回血，饿着不回血"
+      ],
+      "pitfalls": [
+        "腐肉吃了很可能中饥饿效果，只在没东西吃时应急",
+        "生鸡肉有概率让人中饥饿效果，最好烤熟",
+        "饱食度掉光会开始掉血"
+      ],
+      "trigger": {"keywords": ["饿了", "饥饿", "饱食度", "吃什么", "没吃的", "食物"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_food_low",
+      "title": "饱食度见底",
+      "stage": "前期",
+      "points": [
+        "饱食度只剩三个鸡腿左右时就跑不起来了，先吃东西",
+        "优先吃熟肉、面包这类顶饱的食物"
+      ],
+      "pitfalls": [
+        "饿到底会持续掉血，别拖着不吃"
+      ],
+      "trigger": {"keywords": [], "conditions": ["food <= 6"]},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_low_health",
+      "title": "血量低先撤",
+      "stage": "前期",
+      "points": [
+        "先脱离战斗，退到安全的地方，或者往墙里挖个洞把自己封住",
+        "吃东西把饱食度补高，才能慢慢回血",
+        "有金苹果可以吃一个应急，它能短时间回血并给吸收护盾"
+      ],
+      "pitfalls": [
+        "残血别硬打，也别在高处或岩浆边上移动"
+      ],
+      "trigger": {"keywords": [], "conditions": ["health <= 6"]},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_night_outside",
+      "title": "夜里在外面",
+      "stage": "前期",
+      "points": [
+        "夜里敌对生物会在黑暗处大量生成，装备不好就回屋或睡觉",
+        "在外面尽量走亮的地方，边走边插火把",
+        "带一面盾牌，能挡正面的箭和攻击"
+      ],
+      "pitfalls": [
+        "别往黑的地方钻，野外过夜一定要把自己封起来"
+      ],
+      "trigger": {"keywords": ["夜晚", "天黑", "入夜", "夜里"], "conditions": ["time_of_day == night"]},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_creeper",
+      "title": "苦力怕",
+      "stage": "前期",
+      "points": [
+        "苦力怕靠近后会发出嘶嘶声，停一下就爆炸",
+        "听到嘶声马上后退拉开距离，离开范围它就不炸了",
+        "用剑把它击退，或者用弓箭远程打",
+        "苦力怕怕猫和豹猫，会躲着它们走"
+      ],
+      "pitfalls": [
+        "爆炸会炸坏方块，别让它靠近家",
+        "被闪电劈中的苦力怕爆炸威力更大",
+        "苦力怕白天不会被太阳烧死"
+      ],
+      "trigger": {"keywords": ["苦力怕", "爬行者", "creeper", "嘶嘶"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_zombie",
+      "title": "僵尸",
+      "stage": "前期",
+      "points": [
+        "僵尸在夜里和黑暗处出现，白天在阳光下会着火（戴着头盔的不会）",
+        "它只会近战，用剑边打边后退就行",
+        "僵尸村民可以用虚弱药水加金苹果治好，治好的村民交易会打折"
+      ],
+      "pitfalls": [
+        "小僵尸跑得快、目标小，别小看",
+        "困难难度下僵尸会破坏木门"
+      ],
+      "trigger": {"keywords": ["僵尸", "zombie", "小僵尸", "僵尸村民"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_skeleton",
+      "title": "骷髅",
+      "stage": "前期",
+      "points": [
+        "骷髅会远程射箭，先躲到方块后面挡箭，再找机会贴近打",
+        "举盾能挡住箭",
+        "白天在阳光下会着火",
+        "打死会掉骨头和箭，骨头能做骨粉"
+      ],
+      "pitfalls": [
+        "别站在空旷处跟骷髅对射，被连续击退容易掉下高处"
+      ],
+      "trigger": {"keywords": ["骷髅", "skeleton", "射箭", "被射"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_spider",
+      "title": "蜘蛛",
+      "stage": "前期",
+      "points": [
+        "蜘蛛会爬墙，庇护所的墙和屋顶要封好",
+        "在明亮的地方蜘蛛一般不主动攻击，打它才会反击",
+        "打死可能掉线和蜘蛛眼，线能做弓和钓鱼竿"
+      ],
+      "pitfalls": [
+        "废弃矿井里的洞穴蜘蛛有毒",
+        "蜘蛛网会让人走不动"
+      ],
+      "trigger": {"keywords": ["蜘蛛", "spider", "洞穴蜘蛛", "蜘蛛网"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_enderman",
+      "title": "末影人",
+      "stage": "前期",
+      "points": [
+        "别盯着末影人的脸看，对视会把它惹怒",
+        "戴上雕刻过的南瓜头就能正眼看它而不被激怒",
+        "末影人怕水，碰到水会受伤并瞬移走",
+        "躲到只有两格高的地方，它进不来",
+        "打死会掉末影珍珠，以后找要塞要用"
+      ],
+      "pitfalls": [
+        "惹怒后它会瞬移过来打人，伤害不低，装备差时别惹"
+      ],
+      "trigger": {"keywords": ["末影人", "enderman", "小黑"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_drowned",
+      "title": "溺尸与河边",
+      "stage": "前期",
+      "points": [
+        "河流和海洋里会有溺尸，夜里和水下暗处更常见",
+        "有的溺尸拿着三叉戟，会从远处投掷，伤害很高",
+        "夜里别在河边或水里逗留，过河尽量白天走或者搭桥"
+      ],
+      "pitfalls": [
+        "在水里打架很吃亏：动作慢，还要憋气"
+      ],
+      "trigger": {"keywords": ["溺尸", "drowned", "河边", "河里", "海边", "三叉戟"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_fall",
+      "title": "摔落伤害",
+      "stage": "前期",
+      "points": [
+        "从高处跳下会受摔落伤害，太高会直接摔死",
+        "落进水里不会受摔落伤害",
+        "落在干草块上伤害会大大减轻",
+        "下山、下坑时挖台阶，或者放梯子、脚手架慢慢下"
+      ],
+      "pitfalls": [
+        "别在悬崖边疾跑，也别背对边缘打架",
+        "跳下深坑前先看清下面是什么"
+      ],
+      "trigger": {"keywords": ["摔死", "摔落", "掉下去", "跳下去", "悬崖", "高处"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_lava",
+      "title": "岩浆",
+      "stage": "前期",
+      "points": [
+        "挖矿时岩浆多在低处，看到橙色的光就要当心",
+        "随身带一桶水：着火时把水倒在脚下能灭火",
+        "水浇到岩浆上会变成黑曜石或圆石，也可以用方块把岩浆堵住"
+      ],
+      "pitfalls": [
+        "掉进岩浆的物品会被烧掉",
+        "别站在岩浆上方挖脚下的方块",
+        "下界的岩浆流得更快更远"
+      ],
+      "trigger": {"keywords": ["岩浆", "熔岩", "lava", "着火", "烧死"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_dig_down",
+      "title": "别直着往下挖",
+      "stage": "前期",
+      "points": [
+        "往下挖用阶梯式挖法：往前挖一格再往下挖一格",
+        "每往下一层先看清下面是什么再踩上去"
+      ],
+      "pitfalls": [
+        "直着挖脚下，可能掉进洞穴、岩浆或者怪堆里",
+        "头顶是沙子或沙砾时别乱挖，塌下来会被埋住窒息"
+      ],
+      "trigger": {"keywords": ["往下挖", "直着挖", "挖脚下", "竖着挖", "垂直挖"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_cave_light",
+      "title": "洞穴照明",
+      "stage": "前期",
+      "points": [
+        "走过的地方插火把，照亮之后那里就基本不会再刷怪",
+        "火把用木棍加煤炭或木炭合成，木炭是用熔炉烧原木得到的",
+        "习惯把火把插在同一侧的墙上，回来时顺着火把找路"
+      ],
+      "pitfalls": [
+        "洞穴很容易迷路，进去前记下入口坐标",
+        "照亮之前已经生成的怪还在，别放松"
+      ],
+      "trigger": {"keywords": ["洞穴", "矿洞", "火把", "照明", "太黑", "下矿"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_mob_spawning",
+      "title": "刷怪与光照",
+      "stage": "前期",
+      "points": [
+        "1.18 以后，大多数敌对生物只在方块光照为 0 的完全黑暗处生成",
+        "把家周围和常走的路都照亮，就能大大减少刷怪",
+        "按 F3 可以看到当前位置的光照信息"
+      ],
+      "pitfalls": [
+        "雷雨天和夜里天空变暗，没照亮的空地一样会刷怪"
+      ],
+      "trigger": {"keywords": ["刷怪", "怪物生成", "光照", "亮度", "防刷怪"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_tool_tiers",
+      "title": "工具升级路线",
+      "stage": "前期",
+      "points": [
+        "镐的顺序：木镐 → 石镐 → 铁镐 → 钻石镐 → 下界合金镐",
+        "铁矿要用石镐或更好的镐挖",
+        "金矿、钻石矿、红石矿、绿宝石矿要用铁镐或更好的镐",
+        "黑曜石和远古残骸要用钻石镐或更好的镐"
+      ],
+      "pitfalls": [
+        "镐的等级不够时，矿挖掉了也不掉东西",
+        "下界合金装备要在锻造台上用钻石装备加下界合金锭升级，1.20 起还需要下界合金升级锻造模板"
+      ],
+      "trigger": {"keywords": ["工具", "镐子", "木镐", "石镐", "铁镐", "钻石镐", "下界合金", "挖不动"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_iron",
+      "title": "铁",
+      "stage": "前期",
+      "points": [
+        "铁矿石在山体和洞穴里很常见，用石镐以上就能挖",
+        "挖出来的是粗铁，放进熔炉烧成铁锭",
+        "铁能做铁镐、铁甲、盾牌和水桶"
+      ],
+      "pitfalls": [
+        "在山里挖矿别只顾着挖，注意脚下和身后"
+      ],
+      "trigger": {"keywords": ["铁矿", "铁锭", "粗铁", "缺铁", "没铁"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_diamond",
+      "title": "钻石",
+      "stage": "中期",
+      "points": [
+        "钻石在很深的地下更多，越接近世界底部越常见",
+        "深层的石头是深板岩，挖起来比普通石头慢",
+        "要用铁镐或更好的镐挖"
+      ],
+      "pitfalls": [
+        "深处岩浆很多，挖之前先看清周围",
+        "下去前带好水桶、火把和食物"
+      ],
+      "trigger": {"keywords": ["钻石", "diamond", "钻石矿", "挖钻石"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_furnace",
+      "title": "熔炉与燃料",
+      "stage": "前期",
+      "points": [
+        "熔炉用八块圆石合成",
+        "燃料可以用煤炭、木炭、木头、木板，岩浆桶烧得最久",
+        "高炉专门烧矿石，烟熏炉专门烤食物，速度都比熔炉快"
+      ],
+      "pitfalls": [
+        "烧东西要放燃料，别空等"
+      ],
+      "trigger": {"keywords": ["熔炉", "冶炼", "燃料", "煤炭", "木炭", "高炉"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_armor",
+      "title": "护甲与盾牌",
+      "stage": "前期",
+      "points": [
+        "前期先凑一套铁甲，性价比高",
+        "盾牌用六块木板和一个铁锭合成，举盾能挡住正面的大部分攻击",
+        "盔甲会掉耐久，快坏之前可以用铁砧修"
+      ],
+      "pitfalls": [
+        "被斧头砍中时盾牌会暂时失效"
+      ],
+      "trigger": {"keywords": ["护甲", "盔甲", "铁甲", "盾牌", "防具"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_lost",
+      "title": "迷路了怎么回家",
+      "stage": "前期",
+      "points": [
+        "按 F3 能看到自己的 XYZ 坐标，出门前记下家的坐标",
+        "指南针指向世界出生点，不是床",
+        "用磁石可以让指南针指向磁石所在的位置",
+        "沿路插火把或放方块做标记"
+      ],
+      "pitfalls": [
+        "服务器开了简化调试信息时，F3 不显示坐标"
+      ],
+      "trigger": {"keywords": ["迷路", "找不到家", "回家", "坐标", "指南针"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_death_items",
+      "title": "死亡后找回东西",
+      "stage": "前期",
+      "points": [
+        "死后背包里的东西和一部分经验会掉在死亡地点",
+        "尽快回去捡，掉落物过一段时间就会消失",
+        "追溯指针（回响碎片加指南针合成）能指向上次死亡的位置"
+      ],
+      "pitfalls": [
+        "死在岩浆里的东西大多已经烧没了",
+        "回去捡东西时带好装备，别在同一个地方再死一次"
+      ],
+      "trigger": {"keywords": ["死亡", "死掉", "掉东西", "东西掉了", "死亡点", "捡回来"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_gravel",
+      "title": "沙子与沙砾",
+      "stage": "前期",
+      "points": [
+        "沙子和沙砾会往下掉，挖它们下面的方块要小心",
+        "被一柱沙砾挡住时，在最下面放一个火把，再挖掉底部的沙砾，上面的会掉下来变成掉落物"
+      ],
+      "pitfalls": [
+        "头顶的沙砾塌下来会把人埋住窒息"
+      ],
+      "trigger": {"keywords": ["沙砾", "沙子", "塌方", "被埋", "窒息"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_underwater",
+      "title": "水下与憋气",
+      "stage": "前期",
+      "points": [
+        "在水下会消耗氧气条，用完开始掉血",
+        "在水下放一扇门，门那一格能换气",
+        "水下呼吸药水和海龟壳能延长水下时间"
+      ],
+      "pitfalls": [
+        "在水下挖掘很慢",
+        "别在水下和溺尸硬打"
+      ],
+      "trigger": {"keywords": ["水下", "溺水", "憋气", "潜水", "氧气条"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_nether",
+      "title": "去下界",
+      "stage": "中期",
+      "points": [
+        "下界传送门用黑曜石搭成矩形框，再用打火石点燃",
+        "身上至少穿一件金护甲，猪灵就不会主动攻击",
+        "恶魂的火球可以用武器或箭打回去",
+        "带上防火药水更安全"
+      ],
+      "pitfalls": [
+        "下界不能用床，床会爆炸",
+        "下界岩浆湖多、地形险，别在边缘疾跑",
+        "打了一只僵尸猪灵，附近的会一起围上来"
+      ],
+      "trigger": {"keywords": ["下界", "地狱", "nether", "下界传送门", "传送门", "黑曜石"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_enchanting",
+      "title": "附魔",
+      "stage": "中期",
+      "points": [
+        "附魔台用书、钻石和黑曜石合成",
+        "每次附魔要消耗青金石和经验等级",
+        "在附魔台周围摆书架（中间空一格）能附出更高等级的魔咒",
+        "铁砧可以把附魔书上的魔咒加到装备上"
+      ],
+      "pitfalls": [
+        "书架和附魔台之间那一格被方块挡住就不算数"
+      ],
+      "trigger": {"keywords": ["附魔", "附魔台", "书架", "青金石", "附魔书"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_village",
+      "title": "村庄与村民",
+      "stage": "前期",
+      "points": [
+        "村庄里常有床、农田和箱子，适合当早期补给点",
+        "村民可以用绿宝石交易，给没工作的村民放一个工作站方块他就会有职业",
+        "夜里僵尸会袭击村庄，保护好村民"
+      ],
+      "pitfalls": [
+        "打村民会被铁傀儡攻击",
+        "被僵尸打死的村民可能变成僵尸村民，难度越高越容易"
+      ],
+      "trigger": {"keywords": ["村庄", "村民", "交易", "绿宝石", "铁傀儡"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_raid",
+      "title": "袭击与不祥之兆",
+      "stage": "中期",
+      "points": [
+        "杀死举着旗帜的灾厄队长会得到不祥之兆效果（1.20.6）",
+        "带着不祥之兆进村庄会触发袭击，灾厄村民会一波一波地来",
+        "不想打袭击的话，喝牛奶能清掉不祥之兆"
+      ],
+      "pitfalls": [
+        "卫道士伤害很高，唤魔者会召唤恼鬼",
+        "喝牛奶会清掉身上所有的药水效果"
+      ],
+      "trigger": {"keywords": ["袭击", "灾厄", "掠夺者", "不祥之兆", "卫道士", "唤魔者"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_phantom",
+      "title": "幻翼",
+      "stage": "前期",
+      "points": [
+        "连续好几个游戏日不睡觉，夜里就会有幻翼从天上俯冲下来",
+        "睡一觉就能重置，最省事的办法是按时睡觉",
+        "幻翼白天在阳光下会着火"
+      ],
+      "pitfalls": [
+        "幻翼从高处俯冲，在开阔地很难躲"
+      ],
+      "trigger": {"keywords": ["幻翼", "phantom", "失眠", "好久没睡"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_thunderstorm",
+      "title": "雷雨天",
+      "stage": "前期",
+      "points": [
+        "雷雨天白天也能睡觉",
+        "雷雨时天空变暗，白天也可能刷怪"
+      ],
+      "pitfalls": [
+        "闪电可能引起火灾，木头房子要注意",
+        "闪电劈中村民、猪或苦力怕会让它们变成别的生物"
+      ],
+      "trigger": {"keywords": ["雷雨", "打雷", "闪电", "暴风雨"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_end",
+      "title": "末地与末影龙",
+      "stage": "后期",
+      "points": [
+        "末影之眼用末影珍珠和烈焰粉合成，扔出去会飞向要塞的方向",
+        "要塞里的末地传送门框放满末影之眼后会激活",
+        "打末影龙前先打掉柱子上的末地水晶，被铁栏围着的要爬上去或用弓箭打",
+        "带上方块、弓箭、水桶和南瓜头（防末影人）"
+      ],
+      "pitfalls": [
+        "末地不能用床，床会爆炸",
+        "掉进虚空会直接死，东西也拿不回来"
+      ],
+      "trigger": {"keywords": ["末地", "末影龙", "末影之眼", "要塞", "末地传送门", "屠龙"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_storage",
+      "title": "箱子与储物",
+      "stage": "前期",
+      "points": [
+        "箱子用八块木板合成，两个箱子并排放会变成大箱子",
+        "末影箱里的东西在任何一个末影箱都能取出来，适合出门随身带"
+      ],
+      "pitfalls": [
+        "箱子上方有实心方块挡着就打不开"
+      ],
+      "trigger": {"keywords": ["箱子", "储物", "背包满了", "装不下"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_crafting",
+      "title": "合成与工作台",
+      "stage": "前期",
+      "points": [
+        "工作台用四块木板合成，放下后能用三乘三的合成格",
+        "背包里自带二乘二的小合成格",
+        "配方书会记录解锁过的配方，点它可以自动摆好材料"
+      ],
+      "pitfalls": [
+        "有些配方要先拿到对应材料才会出现在配方书里"
+      ],
+      "trigger": {"keywords": ["合成表", "配方", "工作台", "合成格"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    },
+    {
+      "key": "mc_farming",
+      "title": "种地",
+      "stage": "前期",
+      "points": [
+        "用锄头把泥土或草方块耕成耕地，靠近水的耕地会保持湿润，作物长得更快",
+        "小麦种子在草丛里打草就能掉",
+        "骨粉能催熟作物",
+        "胡萝卜和马铃薯可以从村庄的农田里拿到"
+      ],
+      "pitfalls": [
+        "在耕地上跳会把耕地踩回泥土",
+        "作物要有足够的光照才会长"
+      ],
+      "trigger": {"keywords": ["种地", "种田", "农田", "耕地", "小麦", "骨粉"], "conditions": []},
+      "source": "WaveMemory 我的世界起始包（模型起草，未审核）"
+    }
+  ],
+  "terms": [
+    {"key": "mc_t_creeper", "term": "苦力怕", "aliases": ["Creeper", "爬行者"], "explanation": "靠近玩家后会爆炸的绿色敌对生物，爆炸会破坏方块。", "related": ["mc_creeper"]},
+    {"key": "mc_t_zombie", "term": "僵尸", "aliases": ["Zombie"], "explanation": "夜里常见的近战敌对生物，白天在阳光下会着火。", "related": ["mc_zombie"]},
+    {"key": "mc_t_skeleton", "term": "骷髅", "aliases": ["Skeleton"], "explanation": "会射箭的远程敌对生物，白天在阳光下会着火。", "related": ["mc_skeleton"]},
+    {"key": "mc_t_spider", "term": "蜘蛛", "aliases": ["Spider"], "explanation": "会爬墙的敌对生物，在明亮处通常不主动攻击。", "related": ["mc_spider"]},
+    {"key": "mc_t_enderman", "term": "末影人", "aliases": ["Enderman", "小黑"], "explanation": "高个子的中立生物，被直视会被激怒，怕水，会瞬移。", "related": ["mc_enderman"]},
+    {"key": "mc_t_drowned", "term": "溺尸", "aliases": ["Drowned"], "explanation": "水里的僵尸变种，有的拿着三叉戟，会远程投掷。", "related": ["mc_drowned"]},
+    {"key": "mc_t_phantom", "term": "幻翼", "aliases": ["Phantom"], "explanation": "玩家连续几天不睡觉时，夜里从天上俯冲攻击的飞行敌对生物。", "related": ["mc_phantom"]},
+    {"key": "mc_t_piglin", "term": "猪灵", "aliases": ["Piglin"], "explanation": "下界的生物；玩家身上穿着金护甲时不主动攻击，可以用金锭和它以物换物。", "related": ["mc_nether"]},
+    {"key": "mc_t_zombified_piglin", "term": "僵尸猪灵", "aliases": ["Zombified Piglin", "僵尸猪人"], "explanation": "下界的中立生物，打了一只，附近的会一起围上来。", "related": ["mc_nether"]},
+    {"key": "mc_t_ghast", "term": "恶魂", "aliases": ["Ghast"], "explanation": "下界会飞的大型敌对生物，会吐火球，火球可以打回去。", "related": ["mc_nether"]},
+    {"key": "mc_t_blaze", "term": "烈焰人", "aliases": ["Blaze"], "explanation": "下界要塞里的敌对生物，打死掉烈焰棒，烈焰棒能做成烈焰粉。", "related": ["mc_end"]},
+    {"key": "mc_t_ender_dragon", "term": "末影龙", "aliases": ["Ender Dragon"], "explanation": "末地的首领；打败后会出现回主世界的传送门。", "related": ["mc_end"]},
+    {"key": "mc_t_hunger", "term": "饱食度", "aliases": ["饥饿值"], "explanation": "屏幕上的鸡腿图标；太低时不能疾跑、不自然回血，掉光会扣血。", "related": ["mc_food", "mc_food_low"]},
+    {"key": "mc_t_spawn_point", "term": "重生点", "aliases": ["复活点"], "explanation": "死后复活的位置；在床上睡过会设到床边，否则是世界出生点。", "related": ["mc_bed_spawn"]},
+    {"key": "mc_t_nether", "term": "下界", "aliases": ["Nether", "地狱"], "explanation": "通过黑曜石传送门进入的维度，岩浆多，不能用床。", "related": ["mc_nether"]},
+    {"key": "mc_t_end", "term": "末地", "aliases": ["The End"], "explanation": "通过要塞里的末地传送门进入的维度，末影龙在这里。", "related": ["mc_end"]},
+    {"key": "mc_t_obsidian", "term": "黑曜石", "aliases": ["Obsidian"], "explanation": "水浇到岩浆源上形成的方块，要钻石镐才能挖，用来搭下界传送门、做附魔台。", "related": ["mc_nether", "mc_enchanting"]},
+    {"key": "mc_t_deepslate", "term": "深板岩", "aliases": ["Deepslate"], "explanation": "地下深处的石头，比普通石头更难挖。", "related": ["mc_diamond"]},
+    {"key": "mc_t_netherite", "term": "下界合金", "aliases": ["Netherite"], "explanation": "比钻石更好的材料，用下界的远古残骸炼成；装备要在锻造台上从钻石装备升级。", "related": ["mc_tool_tiers"]},
+    {"key": "mc_t_ancient_debris", "term": "远古残骸", "aliases": ["Ancient Debris"], "explanation": "下界深处的稀有矿石，要钻石镐挖，烧出来是下界合金碎片。", "related": ["mc_tool_tiers"]},
+    {"key": "mc_t_lapis", "term": "青金石", "aliases": ["Lapis Lazuli"], "explanation": "蓝色的矿物，附魔时要消耗。", "related": ["mc_enchanting"]},
+    {"key": "mc_t_redstone", "term": "红石", "aliases": ["Redstone"], "explanation": "用来做电路和机关的矿物，要铁镐以上才能挖。", "related": ["mc_tool_tiers"]},
+    {"key": "mc_t_emerald", "term": "绿宝石", "aliases": ["Emerald"], "explanation": "和村民交易用的货币。", "related": ["mc_village"]},
+    {"key": "mc_t_ender_pearl", "term": "末影珍珠", "aliases": ["Ender Pearl"], "explanation": "末影人掉落的物品，扔出去能传送到落点（会受一点伤害），也是做末影之眼的材料。", "related": ["mc_enderman", "mc_end"]},
+    {"key": "mc_t_eye_of_ender", "term": "末影之眼", "aliases": ["Eye of Ender"], "explanation": "末影珍珠加烈焰粉合成，用来找要塞、激活末地传送门。", "related": ["mc_end"]},
+    {"key": "mc_t_spawner", "term": "刷怪笼", "aliases": ["Spawner"], "explanation": "地牢、废弃矿井等地方会不断生成怪物的方块。", "related": ["mc_mob_spawning"]},
+    {"key": "mc_t_biome", "term": "生物群系", "aliases": ["Biome"], "explanation": "森林、沙漠、雪原这类地形和气候各不相同的区域。", "related": []},
+    {"key": "mc_t_smithing_table", "term": "锻造台", "aliases": ["Smithing Table"], "explanation": "用来把钻石装备升级成下界合金、给盔甲加纹饰的方块。", "related": ["mc_tool_tiers"]},
+    {"key": "mc_t_iron_golem", "term": "铁傀儡", "aliases": ["Iron Golem"], "explanation": "保护村庄的大型生物，会攻击伤害村民的玩家。", "related": ["mc_village"]},
+    {"key": "mc_t_illager", "term": "灾厄村民", "aliases": ["Illager"], "explanation": "掠夺者、卫道士、唤魔者等敌对的村民，会发起袭击。", "related": ["mc_raid"]},
+    {"key": "mc_t_f3", "term": "F3 调试界面", "aliases": ["F3"], "explanation": "Java 版按 F3 显示坐标、朝向、光照等信息。", "related": ["mc_lost", "mc_mob_spawning"]}
+  ]
+}
