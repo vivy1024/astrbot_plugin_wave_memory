@@ -4,7 +4,8 @@
 不读库、不依赖服务层，便于单测与在不同宿主里复用：
 
 - ``MoodSettings``：Bot Profile 里的 ``mood`` 段（基线、敏感度、半衰期、群氛围权重、疲劳、说话倾向）；
-- ``score_directed_message``：冲 Bot 来的一句话（@/回复/私聊）按情绪词给出冲击，再由关系加权；
+- ``score_directed_message``：冲 Bot 来的一句话（@/回复/私聊）只按内容本身（情绪词、否定、笑骂）给出冲击，
+  不读关系分数；群聊里「损话是玩笑还是冒犯」由事后记账那次调用回看整段对话给出的心情影响体现；
 - ``RELATIONSHIP_EVENT_IMPULSES``：正式关系事件（被夸/被攻击/深谈……）对心情的冲击；
 - ``compose_mood``：基线 + 各事件按各自半衰期指数回落后的叠加，软饱和到合法区间；
 - ``mood_word``：把 valence/arousal/疲劳映射成通用情绪词（开心/烦躁/委屈/疲惫……），不输出裸数字。
@@ -177,7 +178,7 @@ INSULT_WORDS = (
     "丑", "煞笔", "沙比", "傻子", "白痴", "低能",
 )
 TEASE_WORDS = ("哈哈", "笑死", "xswl", "doge", "狗头", "🤣", "😂", "整活", "逗你", "斗嘴")
-# 不经关系缓冲的强攻击（与 MetaThinking 的极端攻击识别同口径）。
+# 强攻击（与 MetaThinking 的极端攻击识别同口径）。
 EXTREME_ATTACK = re.compile(r"(你[妈马]|nmsl|死[全妈]|全家|操你|fuck\s*you|滚去死|杀了你|弄死你)", re.IGNORECASE)
 _NEGATIONS = ("不", "没", "别", "非")
 
@@ -232,14 +233,11 @@ def _negated_count(text: str, words: Iterable[str]) -> int:
 def score_directed_message(
     text: str,
     settings: MoodSettings | None = None,
-    *,
-    closeness: float = 0.0,
-    hostility: float = 0.0,
 ) -> MessageImpact:
-    """冲 Bot 来的一句话对她心情的冲击。
+    """冲 Bot 来的一句话对她心情的冲击，只看这句话本身；返回的冲击已乘画像敏感度。
 
-    ``closeness``（0~1，关系越好越大）让损话更像玩笑；``hostility``（0~1）让敌意高的人的话更刺痛、
-    夸奖更不可信。返回的冲击已乘画像敏感度。
+    不按好感分数给损话打折或加重：分数只是给群友玩的数字，不能替 Bot 判断「这是玩笑还是冒犯」。
+    群聊里的关系语境由事后记账回看整段对话时给出的心情影响（``parse_bookkeeping_mood``）体现。
     """
     settings = settings or MoodSettings()
     body = str(text or "")[:500]
@@ -259,8 +257,6 @@ def score_directed_message(
     if not (praise or insult or tease or extreme):
         return MessageImpact("none", 0.0, 0.0, 0.0)
 
-    closeness = max(0.0, min(1.0, float(closeness or 0.0)))
-    hostility = max(0.0, min(1.0, float(hostility or 0.0)))
     valence = 0.22 * min(praise, 3) - 0.30 * min(insult, 3) + 0.06 * min(tease, 2)
     arousal = 0.06 * min(praise, 3) + 0.15 * min(insult, 3) + 0.08 * min(tease, 2)
     kind = "praise" if valence > 0 else "insult" if valence < 0 else "tease"
@@ -272,36 +268,12 @@ def score_directed_message(
         valence -= 0.5
         arousal += 0.25
         kind = "extreme"
-    if valence < 0 and not extreme:
-        # 关系好的人的损话更像玩笑；敌意高的人的话更刺痛。
-        valence *= (1.0 - 0.65 * closeness * (1.0 - hostility)) * (1.0 + 0.8 * hostility)
-        if closeness >= 0.5 and hostility < 0.2 and tease:
-            valence = abs(valence) * 0.3
-            kind = "banter"
-    elif valence < 0:
-        valence *= 1.0 + 0.5 * hostility
-    elif valence > 0:
-        valence *= (1.0 + 0.3 * closeness) * (1.0 - 0.6 * hostility)
     sensitivity = settings.sensitivity
     valence = max(-1.0, min(1.0, valence * sensitivity))
     arousal = max(-1.0, min(1.0, arousal * sensitivity))
     intensity = max(0.0, min(1.0, abs(valence) / 0.5 + (0.5 if extreme else 0.0)))
     matched = [*praise_matched, *insult_matched, *tease_matched][:6]
     return MessageImpact(kind, round(valence, 4), round(arousal, 4), round(intensity, 4), matched)
-
-
-def relationship_closeness(merged_affinity: Any, merged_dimensions: Mapping[str, Any] | None = None) -> tuple[float, float]:
-    """跨群汇总关系 → (亲近度 0~1, 敌意 0~1)。affinity ≥ 60 视为亲密，hostility ≥ 40 视为敌意很高。"""
-    try:
-        affinity = float(merged_affinity or 0.0)
-    except (TypeError, ValueError):
-        affinity = 0.0
-    dims = merged_dimensions if isinstance(merged_dimensions, Mapping) else {}
-    try:
-        hostility = float(dims.get("hostility") or 0.0)
-    except (TypeError, ValueError):
-        hostility = 0.0
-    return max(0.0, min(1.0, affinity / 60.0)), max(0.0, min(1.0, hostility / 40.0))
 
 
 # ─── 关系事件 → 心情 ────────────────────────────────────────────
@@ -607,7 +579,6 @@ __all__ = [
     "mood_word",
     "night_active",
     "parse_bookkeeping_mood",
-    "relationship_closeness",
     "relationship_event_impulse",
     "score_directed_message",
     "speaking_hint",

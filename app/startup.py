@@ -772,10 +772,11 @@ class StartupMixin:
         await asyncio.to_thread(self.epa.initialize)
 
     def _init_learning_services(self) -> None:
-        """记账与学习：自动审核、关切主动跟进、事后记账、每日日记（Learning_Settings）。
+        """记账与学习：自动审核、关切主动跟进、事后记账、每日日记、关系小传（Learning_Settings）。
 
         两个会改变羽书行为的开关默认关闭：auto_approve_enabled（事实/信念/黑话有证据时直接生效，
         不等人审）、proactive_reply_enabled（惦记的人出现时没点名也主动开口）。
+        新增模型消耗的关系小传（relationship_portrait_enabled）同样默认关闭。
         """
         from ..services.auto_review import AutoReviewer, set_auto_reviewer
         from ..services.concern_followup import ConcernFollowupService
@@ -879,6 +880,7 @@ class StartupMixin:
         learning_llm = getattr(meta, "llm", None) if meta is not None else None
         if learning_llm is None and self._llm_chain():
             learning_llm = LLMFallbackClient(context=self.context, provider_ids=self._llm_chain(), log_prefix="[Learning]")
+        self._learning_llm = learning_llm
         self.post_reply_bookkeeper = None
         self.daily_diary = None
         if learning_llm is None:
@@ -902,6 +904,40 @@ class StartupMixin:
                     group_name_for=self._get_group_name,
                 )
                 self._spawn(self.daily_diary.loop(), name="wave-memory:learning:daily-diary", owner="learning")
+        # 关系小传：服务对象只要有模型就创建（管理台可手动生成/编辑）；后台自动生成与注入使用小传
+        # 只在 relationship_portrait_enabled 开启时生效（关闭时关系注入完全沿用印象时间线规则摘要）
+        from ..services.relationship_portrait import (
+            PortraitSettings,
+            RelationshipPortraitService,
+            configure_portrait_injection,
+        )
+
+        portrait_settings = PortraitSettings.from_config(cfg)
+        self.relationship_portrait = None
+        portrait_llm = self._portrait_llm()
+        if portrait_llm is not None:
+            try:
+                self.relationship_portrait = RelationshipPortraitService(
+                    self.db, portrait_llm,
+                    settings=portrait_settings,
+                    llm_for=self._portrait_llm,
+                    bot_ids_for=lambda: [p.db_id for p in self.bot_registry.all() if p.db_id],
+                    bot_name_for=self._bot_display_name,
+                )
+                if self.relationship_portrait.enabled:
+                    self._spawn(
+                        self.relationship_portrait.loop(),
+                        name="wave-memory:learning:relationship-portrait",
+                        owner="learning",
+                    )
+            except Exception as e:
+                logger.warning(f"[WaveMemory] RelationshipPortrait init failed: {e}")
+                _record_err("RelationshipPortrait", e)
+                self.relationship_portrait = None
+        elif portrait_settings.enabled:
+            logger.warning("[WaveMemory] 关系小传已开启但没有可用的 LLM Provider，未启动；注入沿用印象时间线摘要")
+        configure_portrait_injection(enabled=portrait_settings.enabled and self.relationship_portrait is not None)
+
         # 关系注入据此决定群聊里是否还要提示「该结算了」：记账已启动时交给它回看结算
         from ..services.impression_timeline import configure_impression_prompting
 
@@ -910,6 +946,7 @@ class StartupMixin:
         get_container().expression_policy = self.expression_policy
         get_container().reply_feedback_service = self.reply_feedback_service
         get_container().reply_decision = self.reply_decision
+        get_container().relationship_portrait = self.relationship_portrait
 
         def _learning_stats() -> dict:
             def _of(service) -> dict | None:
@@ -923,16 +960,27 @@ class StartupMixin:
                 "proactive_reply": _of(self.concern_followup),
                 "bookkeeping": _of(self.post_reply_bookkeeper),
                 "daily_diary": _of(self.daily_diary),
+                "relationship_portrait": _of(getattr(self, "relationship_portrait", None)),
                 "mood": _of(getattr(self, "mood_service", None)),
             }
 
         get_container().learning_stats_getter = _learning_stats
         logger.info(
-            "[WaveMemory] 记账与学习: auto_approve=%s proactive_reply=%s bookkeeping=%s daily_diary=%s",
+            "[WaveMemory] 记账与学习: auto_approve=%s proactive_reply=%s bookkeeping=%s daily_diary=%s "
+            "relationship_portrait=%s",
             bool(self.auto_reviewer and self.auto_reviewer.enabled),
             bool(self.concern_followup and self.concern_followup.enabled),
             self.post_reply_bookkeeper is not None, self.daily_diary is not None,
+            bool(self.relationship_portrait and self.relationship_portrait.enabled),
         )
+
+    def _portrait_llm(self, bot_id: str = ""):
+        """关系小传用的模型客户端（text_chat 接口）。
+
+        目前与事后记账、每日日记共用同一个 learning_llm；合并「模型分工」后改为
+        ``llm_routing.resolve("portrait", bot_id)``（任务 id ``portrait`` 已预留），只改这一处。
+        """
+        return getattr(self, "_learning_llm", None)
 
     async def _mood_tick_loop(self) -> None:
         """心情维护：每 10 分钟增量导入关系事件、清理过期情绪事件、刷新快照（在线程里跑，不占事件循环）。"""

@@ -868,7 +868,7 @@
   },
   "Learning_Settings": {
     "description": "记账与学习",
-    "hint": "事后记账、每日日记、自动审核与关切驱动的主动回复",
+    "hint": "事后记账、每日日记、关系小传、自动审核与关切驱动的主动回复",
     "type": "object",
     "items": {
       "fact_timezone": {
@@ -993,6 +993,55 @@
         "description": "几点之后写日记（0-23）",
         "type": "int",
         "default": 23
+      },
+      "relationship_portrait_enabled": {
+        "description": "关系小传",
+        "type": "bool",
+        "default": false,
+        "restart_required": true,
+        "hint": "开启后：羽书读完一个人在群里等公开场合的印象时间线，用自己的视角写一段不超过设定字数的关系小传；聊天时关系段以小传为主，附最近几条原始记录，更早的可用人物检索工具查全部。私聊里记下的内容不会写进小传。会额外调用模型，默认关闭。修改后重启插件生效。"
+      },
+      "portrait_min_new_events": {
+        "description": "关系小传：新增多少条印象或好感记录后重写",
+        "type": "int",
+        "default": 3,
+        "restart_required": true,
+        "hint": "自上次小传之后，新增的印象、好感结算、里程碑、人情往来记录达到这个数就重写。修改后重启插件生效。"
+      },
+      "portrait_refresh_days": {
+        "description": "关系小传：最长多少天刷新一次（天）",
+        "type": "float",
+        "default": 7.0,
+        "restart_required": true,
+        "hint": "距上次小传超过这么多天、且期间有新记录时也重写一次。修改后重启插件生效。"
+      },
+      "portrait_min_events": {
+        "description": "关系小传：公开场合记录少于多少条不写",
+        "type": "int",
+        "default": 3,
+        "restart_required": true,
+        "hint": "记录太少的人不写小传，聊天时沿用原来的时间线摘要。修改后重启插件生效。"
+      },
+      "portrait_max_chars": {
+        "description": "关系小传：最多多少字",
+        "type": "int",
+        "default": 300,
+        "restart_required": true,
+        "hint": "超出的部分会被截掉。修改后重启插件生效。"
+      },
+      "portrait_max_per_round": {
+        "description": "关系小传：每次检查最多写几个人",
+        "type": "int",
+        "default": 3,
+        "restart_required": true,
+        "hint": "每 30 分钟检查一次，一个一个写，不并发。修改后重启插件生效。"
+      },
+      "portrait_daily_limit": {
+        "description": "关系小传：每天最多自动写几次",
+        "type": "int",
+        "default": 30,
+        "restart_required": true,
+        "hint": "达到上限后当天不再自动写；管理台里手动重新生成不受限制。修改后重启插件生效。"
       }
     }
   },
@@ -1177,12 +1226,6 @@
         "default": 20.0,
         "min": 1.0,
         "max": 50.0
-      },
-      "relationship_tiers_json": {
-        "description": "关系档位名与阈值（JSON，可选）",
-        "hint": "留空使用默认档位：敌对/反感/有点烦/亲近/信得过/合得来/常聊/面熟/陌生人（读时从五维推导，不改存量数值）。填 JSON 对象按档位 key 覆盖，如 {\"close\": {\"label\": \"挚友\"}, \"regular\": {\"when\": [{\"familiarity\": [50, null]}]}}；填 JSON 数组则整体替换档位表（按顺序第一个命中生效）。条件写成 {维度: [下限, 上限]}，维度可用 familiarity/trust/fun/depth/hostility 与 rapport（fun+depth）。非法时启动日志告警并回退默认。",
-        "type": "string",
-        "default": ""
       }
     }
   },

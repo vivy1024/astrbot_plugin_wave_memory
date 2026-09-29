@@ -22,6 +22,7 @@ import {
   type RelationshipItem,
 } from '@/api/people'
 import { RelationshipCalibrationPanel } from '@/components/relationship/RelationshipCalibrationPanel'
+import { RelationshipPortraitPanel } from '@/components/relationship/RelationshipPortraitPanel'
 import { RelationshipRadarCard } from '@/components/relationship/RelationshipRadarCard'
 import { RelationshipTrajectoryCard } from '@/components/relationship/RelationshipTrajectoryCard'
 import { PaginationControls, QueryState, DeclarativeDataTable, ScopeSelect, usePaginationSearchParams, type PageResponse } from '@/components/shared'
@@ -406,12 +407,6 @@ function PersonDetail({ item, relationship, relationshipError, query, onChanged 
     <div className="grid grid-cols-2 gap-3 rounded-lg border p-3.5">
       <div><span className="mb-0.5 block text-xs text-muted-foreground">互动数</span><span className="font-mono font-medium">{interactionCount(item) ?? '未记录'}</span></div>
       <div><span className="mb-0.5 block text-xs text-muted-foreground">好感</span>
-        {relationship?.tier_label ? (
-          <Badge variant="outline" className={`mr-1.5 text-xs ${
-            relationship.tier_polarity === 'negative' ? 'border-blue-500/60 text-blue-600 dark:text-blue-400' :
-            relationship.tier_polarity === 'positive' ? 'border-rose-500/60 text-rose-600 dark:text-rose-400' : ''
-          }`} title="关系档位：由熟悉、信任、趣味、深度、敌意五维推导">{relationship.tier_label}</Badge>
-        ) : null}
         {actualAffinity !== null ? (
           <Badge className={`text-xs font-mono font-semibold ${
             actualAffinity >= 15 ? 'bg-rose-500 text-white' :
@@ -427,6 +422,11 @@ function PersonDetail({ item, relationship, relationshipError, query, onChanged 
       </div>
       <div className="col-span-2"><span className="mb-1.5 block text-xs text-muted-foreground">登记别名</span><div className="flex flex-wrap gap-1">{aliases.length ? aliases.map((alias) => <Badge key={alias} variant="outline" className="font-normal">{alias}</Badge>) : <span className="text-muted-foreground">未登记别名</span>}</div></div>
     </div>
+
+    <RelationshipPortraitPanel
+      query={{ bot_id: query.bot_id, session_id: query.session_id, visibility: 'group' }}
+      userId={item.user_id}
+    />
 
     {impression || (Array.isArray(item.metadata?.impression_history) && item.metadata.impression_history.length > 0) || (Array.isArray(item.metadata?.impression_ledger) && item.metadata.impression_ledger.length > 0) ? (
       <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] p-3.5">

@@ -202,13 +202,13 @@ def test_timeline_injection_is_full_and_labels_age():
     assert "完整软件开发详情" not in body
     assert body.index("介绍 健身软件开发") < body.index("计划切换使用 城3.1") < body.index("说了 喜欢伊芙")
     assert "事件#11" in body
-    assert "来源群=g1" in body
-    assert "权重=0.5" in "\n".join(impression_timeline_lines({}, events=[{"id": 1, "summary": "半衰期", "occurred_at": now - 21 * 86400}], now=now))
+    # 只保留事件编号与日期：不再注入来源群号与每行的权重数值
+    assert "来源群" not in body and "g1" not in body
+    assert "权重=" not in body and "每 21 天减半" in body
     may_weight = timeline_decay_weight(events[0], now=now, half_life_days=21)
     july_weight = timeline_decay_weight(events[1], now=now, half_life_days=21)
     assert may_weight is not None and july_weight is not None
     assert may_weight < july_weight
-    assert f"权重={may_weight:.6g}" in body
     assert "时间未知" in body
     assert "昨天" in body
     assert "3天前" in body

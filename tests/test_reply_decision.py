@@ -82,8 +82,9 @@ def test_relevance_question_noise_and_unknown_feedback_are_explainable():
     svc = ReplyDecisionService({"mode": "enforce", "backoff_base_seconds": 0})
     result = svc.decide(signals())
     assert result["allow"] and result["score"] == 65
-    assert result["factors"]["feedback"] == 0 and result["factors"]["relationship"] == 0
-    assert {"feedback_unknown", "relationship_unknown", "question_request"} <= set(result["reasons"])
+    assert result["factors"]["feedback"] == 0 and "relationship" not in result["factors"]
+    assert {"feedback_unknown", "question_request"} <= set(result["reasons"])
+    assert not any(reason.startswith("relationship") for reason in result["reasons"])
     assert not svc.decide(signals(message="!!!"))["allow"]
     assert not svc.decide(signals(candidate=False, concern=True))["allow"]
     assert svc.decide(signals(message="我的纸桥已经搭好了", relevance=None, concern=True))["allow"]
@@ -98,14 +99,15 @@ def test_only_explicit_feedback_changes_score():
     assert svc.decide(signals(feedback="positive"))["factors"]["feedback"] == 10
 
 
-def test_relationship_boundaries_and_missing_values():
+def test_affinity_scores_are_not_a_reply_signal():
+    """好感分数只给群友玩：开口判断没有关系分数项，也不按分数拦截。"""
+    assert "relationship" not in ReplySignals.__dataclass_fields__
     svc = ReplyDecisionService({"mode": "enforce", "backoff_base_seconds": 0})
-    hostile = {"dimensions": {"trust": 20, "hostility": 70, "depth": 50}}
-    result = svc.decide(signals(relationship=hostile))
-    assert not result["allow"] and "relationship_boundary" in result["reasons"]
-    assert svc.decide(signals(relationship={}))["allow"]
-    trusted = {"dimensions": {"trust": 80, "hostility": 5, "depth": 50}}
-    assert svc.decide(signals(relationship=trusted))["score"] == 75
+    result = svc.decide(signals())
+    assert result["allow"] and result["score"] == 65
+    assert set(result["factors"]) == {
+        "relevance", "question_request", "noise", "concern", "feedback", "backlog", "recent_replies",
+    }
 
 
 def test_reply_frequency_uses_sent_history_and_full_scope():
@@ -387,19 +389,17 @@ def test_ingress_pipeline_receives_original_wake_before_rules(followup, no_netwo
     assert not followup.recently_followed(1)
 
 
-def test_real_relation_signal_uses_canonical_bot_and_subject(followup):
-    calls = []
-
-    def stance(bot, subject):
-        calls.append((bot, subject))
-        return {"available": True, "dimensions": {"trust": 80, "hostility": 3, "depth": 50}}
+def test_ingress_does_not_read_relationship_scores(followup):
+    class _ScoreRepo:
+        def __getattr__(self, name):
+            raise AssertionError(f"开口判断不应读取关系仓储：{name}")
 
     p = plugin(followup, "enforce")
-    p.db.soul_repository = SimpleNamespace(relationship_stance_for=stance)
+    p.db.soul_repository = _ScoreRepo()
     event = Event()
     apply(p, event)
-    assert calls == [("bot-sample", "testnet:user:visitor")]
-    assert event._wave_memory_reply_decision["factors"]["relationship"] == 10
+    factors = event._wave_memory_reply_decision["factors"]
+    assert "relevance" in factors and "relationship" not in factors
 
 
 def test_missing_service_keeps_legacy_followup_but_platform_veto_still_applies(followup):

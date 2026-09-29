@@ -58,10 +58,12 @@ def test_channel_appends_evidence_summary():
     assert result.status == "hit"
     assert "历史关系摘要" in result.text
     assert "3786" in result.text
-    assert "综合值" not in result.text
+    assert "综合值" not in result.text and "好感度" not in result.text
+    assert result.text.index("历史关系摘要") < result.text.index("好感分数（群友互动用的数值，仅供参考")
 
 
-def test_channel_without_summary_still_works():
+def test_channel_without_impression_or_summary_injects_only_score_line():
+    """只有好感分数、没有印象与关系线索时只注入一行分数，并标明仅供参考；不拿分数凑关系描述。"""
     state = {
         "relationship": {
             "affinity": 1,
@@ -83,13 +85,14 @@ def test_channel_without_summary_still_works():
     )
     result = asyncio.run(ch.build(ctx))
     assert result.status == "hit"
+    assert result.text == "好感分数（群友互动用的数值，仅供参考，你还没有记下对 ta 的印象，理解对方要看实际相处）：综合 1"
     assert "历史关系摘要" not in result.text
     assert "未了人情账" not in result.text
     assert "往来小事" not in result.text
     assert "关系行为指导" not in result.text
 
 
-def test_channel_puts_impression_before_status_and_skips_message_seen_noise():
+def test_channel_injects_impression_timeline_and_skips_message_seen_noise():
     class _Conn:
         def execute(self, sql, params=None):
             class _Row:
@@ -132,13 +135,16 @@ def test_channel_puts_impression_before_status_and_skips_message_seen_noise():
     )
     result = asyncio.run(ch.build(ctx))
     assert result.status == "hit"
-    assert result.text.startswith("【你和对方】算「面熟」")
-    assert "你对对方的看法：愿意核对事实" in result.text
-    assert "深夜长谈" in result.text
+    assert result.text.startswith("印象时间线")
+    assert "你对这个人的印象：愿意核对事实" in result.text
+    assert result.text.index("印象时间线") < result.text.index("你对这个人的印象")
     assert "好感 5→12" not in result.text
     assert "看见一条群友消息" not in result.text
-    assert result.text.index("【你和对方】") < result.text.index("你对对方的看法")
-    assert "综合值" not in result.text
+    for noise in ("综合值", "态度=", "familiarity", "【你和对方】", "面熟"):
+        assert noise not in result.text
+    assert result.text.splitlines()[-1] == (
+        "好感分数（群友互动用的数值，仅供参考，理解对方以上面的印象为准）：综合 12；熟悉 10"
+    ), "分数在印象之后"
 
 
 def test_channel_injects_settlement_hint_when_energy_full():
@@ -199,6 +205,9 @@ def test_channel_injects_settlement_hint_when_energy_full():
     assert "wave_memory_record_social_impression" in result.text
     assert "wave_memory_propose_fact" not in result.text
     assert "关系行为指导" not in result.text
-    assert result.text.index("【你和对方】") < result.text.index("【该结算了】")
+    first, last = result.text.splitlines()
+    assert first.startswith("好感分数（群友互动用的数值，仅供参考，你还没有记下对 ta 的印象"), "没有印象时只有一行分数"
+    assert last.startswith("【该结算了】"), "结算提示固定在末尾"
+    assert "综合值" not in result.text and "familiarity" not in result.text
     # 默认不要求每轮写标签；未接事后记账时仍提示在回复里结算
     assert "<<impression" not in result.text

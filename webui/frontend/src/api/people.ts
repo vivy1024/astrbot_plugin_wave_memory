@@ -77,11 +77,6 @@ export interface RelationshipItem {
   person: PersonItem
   affinity: number | null
   state: 'known' | 'unknown' | string
-  /** 从五维推导的关系档位（读时计算，如「合得来」）；旧后端没有这些字段。 */
-  tier?: string
-  tier_label?: string
-  tier_polarity?: 'positive' | 'neutral' | 'negative' | string
-  closeness?: number
   revision: number | null
   values: Record<string, RelationshipValue> | null
   evidence: unknown[]
@@ -236,6 +231,117 @@ export interface PersonTimelinePage extends PageResponse<PersonTimelineEventItem
 
 export function getPersonTimeline(query: PersonTimelineQuery, signal?: AbortSignal): Promise<PersonTimelinePage> {
   return fetchJson<PersonTimelinePage>(`/api/people/timeline${queryString(query)}`, { signal })
+}
+
+/** 关系小传：Bot 以自己的视角为这个人写的一段小传（只由公开场合的记录生成）。 */
+export interface RelationshipPortraitItem {
+  bot_id: string
+  user_id: string
+  content: string
+  version: number
+  status: 'auto' | 'edited' | string
+  source_max_event_id: number
+  source_event_count: number
+  provider: string
+  edited_by: string
+  generated_at: number | null
+  reviewed_through_event_id: number
+  reviewed_at: number | null
+  pending_update: boolean
+  pending_since: number | null
+  last_error: string
+  last_error_at: number | null
+  last_attempt_at: number | null
+  created_at: number
+  updated_at: number
+}
+
+export interface RelationshipPortraitView {
+  user_id: string
+  user_ids: string[]
+  owner_user_id: string
+  version: number
+  item: RelationshipPortraitItem | null
+  last_error: string | null
+  last_error_at: number | null
+  history_count: number
+  timeline: {
+    non_private_total: number
+    max_event_id: number
+    new_since_portrait: number
+    new_relational_since_portrait: number
+  }
+  settings: {
+    auto_enabled: boolean
+    injection_enabled: boolean
+    service_available: boolean
+    max_chars: number
+    min_events: number
+  }
+}
+
+export interface RelationshipPortraitHistoryItem {
+  id: number
+  bot_id: string
+  user_id: string
+  version: number
+  content: string
+  status: 'auto' | 'edited' | string
+  source_max_event_id: number
+  source_event_count: number
+  provider: string
+  edited_by: string
+  generated_at: number | null
+  replaced_at: number
+  replaced_by: string
+}
+
+export interface RelationshipPortraitQuery {
+  bot_id: string
+  session_id: string
+  visibility: 'group'
+}
+
+export interface RelationshipPortraitMutation {
+  ok: boolean
+  operation: { kind: string; status: string; id?: string }
+  revision: number
+  item: RelationshipPortraitView
+}
+
+export function getRelationshipPortrait(
+  query: RelationshipPortraitQuery & { user_id: string },
+  signal?: AbortSignal,
+): Promise<RelationshipPortraitView> {
+  return fetchJson<RelationshipPortraitView>(`/api/people/portrait${queryString(query)}`, { signal })
+}
+
+export function getRelationshipPortraitHistory(
+  query: RelationshipPortraitQuery & { user_id: string; limit?: number },
+): Promise<{ items: RelationshipPortraitHistoryItem[]; owner_user_id: string; current_version: number }> {
+  return fetchJson(`/api/people/portrait/history${queryString(query)}`)
+}
+
+export function saveRelationshipPortrait(
+  query: RelationshipPortraitQuery,
+  payload: { user_id: string; version: number; content: string },
+): Promise<RelationshipPortraitMutation> {
+  return fetchJson<RelationshipPortraitMutation>(`/api/people/portrait/commands/save${queryString(query)}`, { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function regenerateRelationshipPortrait(
+  query: RelationshipPortraitQuery,
+  payload: { user_id: string; version: number },
+): Promise<RelationshipPortraitMutation> {
+  // 要等模型写完，给足时间
+  return fetchJson<RelationshipPortraitMutation>(`/api/people/portrait/commands/regenerate${queryString(query)}`, { method: 'POST', body: JSON.stringify(payload), timeoutMs: 120000 })
+}
+
+export function keepRelationshipPortrait(
+  query: RelationshipPortraitQuery,
+  payload: { user_id: string; version: number },
+): Promise<RelationshipPortraitMutation> {
+  return fetchJson<RelationshipPortraitMutation>(`/api/people/portrait/commands/keep${queryString(query)}`, { method: 'POST', body: JSON.stringify(payload) })
 }
 
 export interface LegacyPeopleQuery {

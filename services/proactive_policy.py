@@ -63,22 +63,6 @@ def proactive_event_allowed(event: Any) -> bool:
     return True
 
 
-def reply_relationship_signal(snapshot: Any) -> dict[str, Any]:
-    """Known boundaries affect optional replies; absent relationships are neutral.
-
-    Keep evaluate_proactive_policy's stronger admission contract unchanged.
-    This is a scoring signal for already-admitted event-driven candidates.
-    """
-    if snapshot is None or not _snapshot_available(snapshot):
-        return {"score": 0.0, "blocked": False, "reason_code": "relationship_unknown"}
-    dims = _snapshot_dimensions(snapshot)
-    if dims["trust"] < QUARANTINE_TRUST_BELOW or dims["hostility"] >= QUARANTINE_HOSTILITY_MIN:
-        return {"score": -30.0, "blocked": True, "reason_code": "relationship_boundary"}
-    if dims["trust"] >= DIRECT_TRUST_MIN and dims["hostility"] < DIRECT_HOSTILITY_MAX:
-        return {"score": 10.0, "blocked": False, "reason_code": "relationship_trusted"}
-    return {"score": 0.0, "blocked": False, "reason_code": "relationship_neutral"}
-
-
 def _finite(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
@@ -399,6 +383,5 @@ __all__ = [
     "SUPPORTED_BEHAVIORS",
     "evaluate_proactive_policy",
     "proactive_event_allowed",
-    "reply_relationship_signal",
     "relationship_behavior_guidance",
 ]

@@ -3,6 +3,10 @@
 This service filters an *existing* reply candidate. A high score never grants
 platform permission or creates a wake-up. Only confirmed sends enter frequency
 history; missing feedback is neutral, not a failed interaction.
+
+Affinity/relationship scores are deliberately not a factor: those numbers are
+for players, not a verdict on the relationship. How the bot treats someone
+comes from the impression timeline the model reads, not from score thresholds.
 """
 
 from __future__ import annotations
@@ -16,10 +20,9 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
-from .proactive_policy import reply_relationship_signal
 
-
-POLICY_VERSION = "reply-rules-v1"
+# v2：去掉按好感分数加减分/拦截的 relationship 因子。
+POLICY_VERSION = "reply-rules-v2"
 _QUESTION = re.compile(r"[?？]|(?:请问|能否|可以帮|请帮|帮忙|怎么|如何|为什么)|\b(?:how|why|what|help|please|could|can you)\b", re.I)
 _NOISE = re.compile(r"(?:[哈呵嘿嘻啊哦嗯]{1,12}|[6８8]{3,}|(?:ha){2,}|lol+|ok|好的|收到|\[(?:表情|图片|动画表情)\])", re.I)
 
@@ -64,7 +67,6 @@ class ReplySignals:
     self_message: bool = False
     relevance: float | None = None
     concern: bool = False
-    relationship: Any = None
     backlog: int = 0
     cooldown_remaining: float = 0.0
     # Fixed reason codes supplied by the existing followup service.
@@ -205,9 +207,6 @@ class ReplyDecisionService:
         factors["concern"] = 45.0 if signals.concern else 0.0
         if signals.concern:
             reasons.append("concern_candidate")
-        relationship = reply_relationship_signal(signals.relationship)
-        factors["relationship"] = relationship["score"]
-        reasons.append(relationship["reason_code"])
         feedback = signals.feedback if signals.feedback in ("positive", "negative") else None
         factors["feedback"] = 10.0 if feedback == "positive" else -15.0 if feedback == "negative" else 0.0
         reasons.append(f"feedback_{feedback}" if feedback else "feedback_unknown")
@@ -240,7 +239,7 @@ class ReplyDecisionService:
             reasons.append("cooldown" if signals.cooldown_remaining > 0 else "suppression_backoff")
             # Arrivals inside the interval never slide its expiry forward.
             return finish(False)
-        allow = not noise and not relationship["blocked"] and recent < cfg["max_recent_replies"] and score >= cfg["score_threshold"]
+        allow = not noise and recent < cfg["max_recent_replies"] and score >= cfg["score_threshold"]
         reasons.append("score_pass" if allow else "recent_reply_limit" if recent >= cfg["max_recent_replies"] else "score_below_threshold" if score < cfg["score_threshold"] else "rule_suppressed")
         if allow:
             state.streak = 0

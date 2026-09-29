@@ -6,6 +6,7 @@ Formal history lives in ``person_timeline_events``. Unsettled energy lives in
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -444,18 +445,14 @@ def clear_impression(metadata: Any, *, reason: str, now: float | None = None, ac
 
 
 def _format_event(event: Mapping[str, Any] | None) -> str:
+    """注入用的关系线索：事件类型 + 理由；不带维度名与增量数值。"""
     payload = _as_mapping(event)
     event_type = str(payload.get("event_type") or "互动").strip()
     reason = str(payload.get("reason") or "").strip()
-    dimension = str(payload.get("dimension") or "").strip()
-    delta = _finite(payload.get("delta"))
     parts = [event_type]
     if reason:
         parts.append(reason[:80])
-    if dimension and delta is not None:
-        sign = "+" if delta > 0 else ""
-        parts.append(f"{dimension}{sign}{delta:g}")
-    return "：".join(parts[:2]) + (f"（{parts[2]}）" if len(parts) > 2 else "")
+    return "：".join(parts)
 
 
 
@@ -534,6 +531,24 @@ def _item_summary(item: Mapping[str, Any], *, fallback_text: str = "") -> str:
     return str(item.get("summary") or "").strip()
 
 
+# 摘要里夹带的好感数值：结算里程碑结尾的「，好感从 15 升至 16」、旧账本迁移的「joke fun+1：…」、
+# 观感标签残留的「| impact: 3」。注入只去掉这些数值片段，其余文字保持记录原样。
+_AFFINITY_TAIL = re.compile(r"[，,]\s*好感从\s*-?\d+(?:\.\d+)?\s*(?:跃迁)?(?:升至|降至|保持在)\s*-?\d+(?:\.\d+)?\s*$")
+_LEDGER_DELTA = re.compile(r"^([A-Za-z_.]+)\s+(?:familiarity|trust|fun|depth|hostility)\s*[+-]?\d+(?:\.\d+)?(?=：|$)")
+_IMPACT_TAIL = re.compile(r"\s*[|｜]\s*impact\s*[:：]?\s*[\d.]+\s*$", re.I)
+
+
+def _injection_summary(item: Mapping[str, Any]) -> str:
+    """注入用摘要：记录自己的 summary 去掉好感/维度数值片段后的文字。"""
+    text = _item_summary(item)
+    if not text:
+        return ""
+    text = _IMPACT_TAIL.sub("", text)
+    text = _AFFINITY_TAIL.sub("", text)
+    text = _LEDGER_DELTA.sub(lambda match: match.group(1), text)
+    return text.strip()
+
+
 def _item_detail(item: Mapping[str, Any]) -> str:
     detail = str(item.get("detail") or "").strip()
     if detail:
@@ -601,6 +616,34 @@ def legacy_metadata_items(metadata: Any) -> list[dict[str, Any]]:
     return items
 
 
+def select_timeline_events(
+    items: Sequence[Mapping[str, Any]],
+    *,
+    now: float,
+    half_life_days: Any = None,
+    max_events: int | None = TIMELINE_INJECT_MAX_EVENTS,
+) -> tuple[list[Mapping[str, Any]], int]:
+    """挑出要注入的时间线条目，返回（按时间先后排好的入选条目, 未入选条数）。
+
+    当前挑法：时间衰减权重（每 half_life_days 天减半）× 事件类别分量（_TIMELINE_KIND_WEIGHT），
+    取最高的 max_events 条。挑选方式只在这里决定，渲染不关心怎么挑。
+    """
+    rows = [item for item in items if isinstance(item, Mapping)]
+    omitted = 0
+    if max_events is not None and len(rows) > max_events:
+        half_life = normalize_timeline_half_life(half_life_days)
+
+        def rank(row: Mapping[str, Any]) -> float:
+            weight = timeline_decay_weight(row, now=now, half_life_days=half_life) or 0.0
+            return weight * _TIMELINE_KIND_WEIGHT.get(str(row.get("kind") or ""), 1.0)
+
+        kept = sorted(rows, key=rank, reverse=True)[: max(1, int(max_events))]
+        omitted = len(rows) - len(kept)
+        rows = kept
+    rows.sort(key=lambda row: (_item_timestamp(row), str(row.get("id") or "")))
+    return rows, omitted
+
+
 def impression_timeline_lines(
     metadata: Any,
     *,
@@ -611,10 +654,11 @@ def impression_timeline_lines(
     max_events: int | None = TIMELINE_INJECT_MAX_EVENTS,
     max_summary_chars: int = TIMELINE_INJECT_SUMMARY_CHARS,
 ) -> list[str]:
-    """印象时间线注入：按「时间权重 × 事件分量」挑最相关的 max_events 条，按时间顺序每条一行。
+    """印象时间线注入：由 select_timeline_events 挑出最多 max_events 条，按时间顺序每条一行。
 
     过去全量注入、不受预算约束，交往越多提示越长（线上平均 7 千字、最长 2 万字），
-    夹在其中的结算提示与记账提醒被淹没。完整时间线仍可用 wave_memory_person_search 查。"""
+    夹在其中的结算提示与记账提醒被淹没。每行只有事件编号、日期与记录自己的摘要（截断），
+    不带权重数值、来源群号或好感数值；完整时间线与详情用 wave_memory_person_search 查。"""
     payload = _as_mapping(metadata)
     items = [item for item in (events or ()) if isinstance(item, Mapping)]
     if not items:
@@ -625,43 +669,29 @@ def impression_timeline_lines(
     if stamp is None:
         stamp = time.time()
     half_life = normalize_timeline_half_life(half_life_days)
-    items = [item for item in items if _item_summary(item)]
-    omitted = 0
-    if max_events is not None and len(items) > max_events:
-        def rank(row: Mapping[str, Any]) -> float:
-            weight = timeline_decay_weight(row, now=stamp, half_life_days=half_life) or 0.0
-            return weight * _TIMELINE_KIND_WEIGHT.get(str(row.get("kind") or ""), 1.0)
-        kept = sorted(items, key=rank, reverse=True)[: max(1, int(max_events))]
-        omitted = len(items) - len(kept)
-        items = kept
+    items = [item for item in items if _injection_summary(item)]
+    selected, omitted = select_timeline_events(
+        items, now=stamp, half_life_days=half_life, max_events=max_events,
+    )
+    if not selected:
+        return []
+    picked = f"挑选最相关的 {len(selected)} 条，另有 {omitted} 条较早或次要" if omitted else "早→近"
     lines = [
-        f"印象时间线（{'挑选最相关的 ' + str(len(items)) + ' 条，另有 ' + str(omitted) + ' 条较早或次要' if omitted else '早→近'}；"
-        f"时间权重每 {half_life:g} 天减半）：旧事仅作背景，不据此改写关系分数；"
-        "详情用 wave_memory_person_search(query_type=timeline, person=当前人物, event_id=编号)。",
+        f"印象时间线（{picked}；时间权重每 {half_life:g} 天减半）：旧事仅作背景；"
+        "详情用 wave_memory_person_search(query_type=timeline, person=当前人物, event_id=编号) 查。",
     ]
-    header_count = len(lines)
     # query 仅为旧调用兼容保留；自动注入不筛选历史，也不拼接详情。
-    for item in sorted(items, key=lambda row: (_item_timestamp(row), str(row.get("id") or ""))):
-        summary = _item_summary(item)
-        if not summary:
-            continue
-        weight = timeline_decay_weight(item, now=stamp, half_life_days=half_life)
-        weight_text = f"{weight:.6g}" if weight is not None else "未知"
-        if weight == 0.0:
-            age_days = max(0.0, (stamp - _item_timestamp(item)) / 86400.0)
-            weight_text = f"2^(-{age_days:.6g}/{half_life:.6g})"
+    for item in selected:
+        summary = _injection_summary(item)
         when = _when_label(item, now=stamp) or "时间未知"
         event_id = str(item.get("id") or "")
         identity = f"事件#{event_id} " if event_id else ""
-        group_id = str(item.get("group_id") or "").strip()
-        if group_id:
-            identity += f"来源群={group_id} "
         # 每条一行、截断摘要；详情保留在正式仓库供按需读取。
         summary = summary.replace("\r\n", " / ").replace("\n", " / ").replace("\r", " / ")
         if max_summary_chars and len(summary) > max_summary_chars:
             summary = summary[:max_summary_chars] + "…"
-        lines.append(f"- {identity}{when} [权重={weight_text}] {summary}")
-    return lines if len(lines) > header_count else []
+        lines.append(f"- {identity}{when} {summary}")
+    return lines
 
 
 def injection_lines(
@@ -674,10 +704,14 @@ def injection_lines(
     half_life_days: Any = None,
     summary_only: bool = False,
 ) -> list[str]:
+    """关系注入里的印象部分：印象时间线 + 最近一条印象；没有时间线时附最近关系线索与查阅提示。
+
+    不含好感分数、维度数值或态度档位：关系由模型读印象时间线自己判断；分数由关系通道在印象之后
+    另附一行次要参考（见 relationship_narrative.affinity_score_line）。"""
     payload = _as_mapping(metadata)
     lines: list[str] = []
 
-    # 1. 默认包含规范的印象时间线摘要列表
+    # 1. 印象时间线摘要列表
     timeline = impression_timeline_lines(
         payload,
         now=now,
@@ -688,7 +722,7 @@ def injection_lines(
     if timeline:
         lines.extend(timeline)
 
-    # 2. 当前最新印象定性
+    # 2. 最近一条印象（存档，非实时判断）
     stamp = _finite(now) if now is not None else time.time()
     stamp = stamp if stamp is not None else time.time()
     current_item = next((
@@ -697,13 +731,11 @@ def injection_lines(
             key=_item_timestamp, reverse=True,
         ) if str(item.get("kind") or "") in {"impression", "affinity"}
     ), {"summary": payload.get("impression"), "at": payload.get("impression_updated_at")})
-    current = _item_summary(current_item)
+    current = _injection_summary(current_item)
     if len(current) > TIMELINE_INJECT_SUMMARY_CHARS:
         current = current[:TIMELINE_INJECT_SUMMARY_CHARS] + "…"
     if current:
-        weight = timeline_decay_weight(current_item, now=stamp, half_life_days=half_life_days)
-        weight_text = f"{weight:.6g}" if weight is not None else "未知"
-        lines.append(f"你对这个人的印象：{current}（最近存档，{_when_label(current_item, now=stamp)}；时间权重={weight_text}，非实时判断）")
+        lines.append(f"你对这个人的印象：{current}（最近一条，{_when_label(current_item, now=stamp)}；非实时判断）")
 
     # 3. 最近关系线索
     event = payload.get("impression_event") if isinstance(payload.get("impression_event"), Mapping) else meaningful_event_anchor(history)
@@ -714,6 +746,126 @@ def injection_lines(
     # 4. 查阅全貌的提示：时间线表头已含，没有时间线时才单独附带
     if lines and not timeline:
         lines.append("（如需查阅交往全貌或历史借还，可自主调用 wave_memory_person_search(query_type='timeline', person=...) 查看）")
+    return lines
+
+
+# 有关系小传时附带的原始记录：非私聊的印象/好感类最近几条（只按时间），私聊场合另附该私聊的最近几条
+PORTRAIT_RECENT_EVENTS = 5
+PORTRAIT_PRIVATE_EVENTS = 5
+PORTRAIT_RECENT_KINDS = frozenset({"impression", "affinity", "milestone", "social_anchor"})
+PORTRAIT_HEADER_PREFIX = "关系小传"
+_PRIVATE_PREFIX = "private:"
+
+
+def _portrait_date(portrait: Mapping[str, Any]) -> str:
+    for key in ("generated_at", "updated_at"):
+        value = _finite(portrait.get(key))
+        if value is not None and value >= _REAL_UNIX_TS:
+            try:
+                return time.strftime("%Y-%m-%d", time.localtime(value))
+            except (OverflowError, OSError, ValueError):
+                continue
+    return ""
+
+
+def portrait_header_line(portrait: Mapping[str, Any] | None) -> str:
+    """小传的表头：标明是 Bot 自己写的、正文里的「你」指 Bot，以及更新日期与依据的事件范围。"""
+    payload = _as_mapping(portrait)
+    date = _portrait_date(payload)
+    basis = int(_finite(payload.get("source_max_event_id")) or 0)
+    notes = [note for note in (f"{date} 更新" if date else "", f"依据截至事件#{basis}" if basis > 0 else "") if note]
+    return f"{PORTRAIT_HEADER_PREFIX}（你自己写的，正文里的「你」就是你" + (f"；{'，'.join(notes)}" if notes else "") + "）："
+
+
+def _event_line(item: Mapping[str, Any], *, now: float, max_summary_chars: int = TIMELINE_INJECT_SUMMARY_CHARS) -> str:
+    summary = _injection_summary(item)
+    if not summary:
+        return ""
+    summary = summary.replace("\r\n", " / ").replace("\n", " / ").replace("\r", " / ")
+    if max_summary_chars and len(summary) > max_summary_chars:
+        summary = summary[:max_summary_chars] + "…"
+    event_id = str(item.get("id") or "")
+    identity = f"事件#{event_id} " if event_id else ""
+    return f"- {identity}{_when_label(item, now=now) or '时间未知'} {summary}"
+
+
+def _time_order(row: Mapping[str, Any]) -> tuple[float, int]:
+    try:
+        event_id = int(row.get("id") or 0)
+    except (TypeError, ValueError):
+        event_id = 0
+    return _item_timestamp(row), event_id
+
+
+def _latest(items: Sequence[Mapping[str, Any]], limit: int) -> list[Mapping[str, Any]]:
+    """最近 limit 条（只按时间，不按类别加权），按时间从早到晚排好。"""
+    ordered = sorted(items, key=_time_order, reverse=True)[: max(0, limit)]
+    return sorted(ordered, key=_time_order)
+
+
+def portrait_injection_lines(
+    portrait: Mapping[str, Any] | None,
+    *,
+    events: Sequence[Any] | None = None,
+    now: float | None = None,
+    scene: str = "",
+    message: str = "",
+    include_cue: bool = True,
+    recent_limit: int = PORTRAIT_RECENT_EVENTS,
+    private_limit: int = PORTRAIT_PRIVATE_EVENTS,
+) -> list[str]:
+    """有关系小传时的关系段：小传（标注更新日期）+ 最近几条非私聊的印象/好感类原始记录（只按时间）
+    + 私聊场合该私聊可见的最近原始记录 + 话题命中的旧事线索 + 查询提示。
+
+    ``events`` 必须是当前场合可见的时间线（其他私聊的已由仓储滤掉）；小传本身只由非私聊事件生成，
+    任何场合可见。不含好感分数、维度数值、态度或档位。没有小传正文时返回空列表（调用方沿用规则摘要）。"""
+    payload = _as_mapping(portrait)
+    content = " ".join(str(payload.get("content") or "").split())
+    if not content:
+        return []
+    stamp = _finite(now) if now is not None else time.time()
+    if stamp is None:
+        stamp = time.time()
+    items = [item for item in (events or ()) if isinstance(item, Mapping)]
+    lines = [portrait_header_line(payload), content]
+
+    shown: set[str] = set()
+    public = [
+        item for item in items
+        if not str(item.get("group_id") or "").startswith(_PRIVATE_PREFIX)
+        and str(item.get("kind") or "") in PORTRAIT_RECENT_KINDS
+        and _injection_summary(item)
+    ]
+    latest_public = _latest(public, recent_limit)
+    recent = [line for item in latest_public if (line := _event_line(item, now=stamp))]
+    if recent:
+        lines.append("最近的印象记录（早→近）：")
+        lines.extend(recent)
+        shown.update(str(item.get("id") or "") for item in latest_public)
+
+    scene_key = str(scene or "")
+    if scene_key.startswith(_PRIVATE_PREFIX):
+        private = [
+            item for item in items
+            if str(item.get("group_id") or "") == scene_key and _injection_summary(item)
+        ]
+        picked = _latest(private, private_limit)
+        private_lines = [line for item in picked if (line := _event_line(item, now=stamp))]
+        if private_lines:
+            lines.append("这段私聊里的记录（只在这段私聊里可见，早→近）：")
+            lines.extend(private_lines)
+            shown.update(str(item.get("id") or "") for item in picked)
+
+    if include_cue and message:
+        hit = match_timeline_cue(items, message)
+        if hit and str(hit.get("event_id") or "") not in shown:
+            cue = timeline_cue_prompt(hit)
+            if cue:
+                lines.extend(cue.split("\n"))
+
+    lines.append(
+        "更早的交往用 wave_memory_person_search(query_type=timeline, person=当前人物, query=关键词 或 event_id=编号) 查。"
+    )
     return lines
 
 
@@ -1104,7 +1256,8 @@ def timeline_cue_prompt(hit: Mapping[str, Any] | None) -> str:
     """最多两行。明确不是必须回复的指令。"""
     if not isinstance(hit, Mapping):
         return ""
-    summary = str(hit.get("summary") or "").strip()
+    # 与关系注入同口径：去掉摘要里夹带的好感/维度数值
+    summary = _injection_summary(hit)
     if not summary:
         return ""
     when = _when_label(hit, now=time.time())

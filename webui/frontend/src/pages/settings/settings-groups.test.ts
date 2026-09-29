@@ -155,8 +155,10 @@ describe('配置文案不暴露实现术语', () => {
       }
     }
     // 129 + 共现传播核新增的 cooccurrence_kernel / cooccurrence_min_support（41e0ece8、2277b1e6）
-    // + Learning_Settings 15 项，以及事实策略、回复反馈、表达学习、开口规则 6 项。
-    expect(total).toBe(154)
+    // + Learning_Settings 15 项，以及事实策略、回复反馈、表达学习、开口规则 6 项；
+    // 撤掉关系档位后移除 Affinity_Settings.relationship_tiers_json（-1）；
+    // 关系小传新增 Learning_Settings 7 项（relationship_portrait_enabled 与 portrait_* 六项）。
+    expect(total).toBe(160)
     expect(noType).toEqual([])
   })
 

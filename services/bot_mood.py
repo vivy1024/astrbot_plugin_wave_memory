@@ -4,7 +4,7 @@ v5.1 之前的心情是「当前群最近 30 分钟的关键词统计」，按�
 心情，在 A 群被骂、B 群照样开心，也和发生在她身上的事无关。这里改成：
 
 - **一份心情**：按 bot_id 存事件流水（``bot_mood_events``），所有群与私聊共享；
-- **事件驱动**：冲她来的话（@/回复/私聊，按情绪词 + 关系加权）、正式关系事件（被夸/被攻击/深谈……）、
+- **事件驱动**：冲她来的话（@/回复/私聊，只按这句话本身的情绪词，不读好感分数）、正式关系事件（被夸/被攻击/深谈……）、
   事后记账那次 LLM 调用顺带给出的「这段对话对你心情的影响」、群氛围（小权重），每条带来源与时间；
 - **惯性与回归**：当前心情 = 画像基线 + Σ 事件冲击 × 0.5^(经过时间/半衰期)，强事件半衰期更长；
   可选疲劳（一段时间回复太多、深夜）；
@@ -49,7 +49,6 @@ try:
         fatigue_level,
         night_active,
         parse_bookkeeping_mood,
-        relationship_closeness,
         relationship_event_impulse,
         score_directed_message,
         speaking_hint,
@@ -72,7 +71,6 @@ except ImportError:  # pragma: no cover - focused tests import top-level package
         fatigue_level,
         night_active,
         parse_bookkeeping_mood,
-        relationship_closeness,
         relationship_event_impulse,
         score_directed_message,
         speaking_hint,
@@ -236,20 +234,17 @@ class BotMoodService:
         self.sync_relationship_events(scope.bot_id, now=timestamp)
         if not directed:
             return None
-        first_pass = score_directed_message(content, settings)
-        if first_pass.is_empty:
-            return None
-        subject = str(scope.subject_principal_id or "")
-        closeness, hostility = self._relationship(scope, subject)
-        impact = score_directed_message(content, settings, closeness=closeness, hostility=hostility)
+        # 只按这句话本身评估，不读好感分数：玩笑还是冒犯不由分数替她判断（群聊里由事后记账回看整段对话给出心情影响）。
+        impact = score_directed_message(content, settings)
         if impact.is_empty:
             return None
+        subject = str(scope.subject_principal_id or "")
         name = self._name_for(scope.bot_id, subject, sender_name)
         quote = _quote(content)
         quoted = f"「{quote}」" if quote else ""
         templates = {
             "praise": f"{name}夸你{quoted}",
-            "insult": (f"{name}又冲你来{quoted}" if hostility >= 0.5 else f"{name}说你{quoted}"),
+            "insult": f"{name}说你{quoted}",
             "banter": f"{name}跟你斗嘴{quoted}",
             "tease": f"{name}逗你{quoted}",
             "extreme": f"{name}对你恶语相向",
@@ -265,10 +260,7 @@ class BotMoodService:
             subject_name=name,
             session_id=scope.session.id,
             visibility=scope.visibility,
-            evidence={
-                "kind": impact.kind, "matched": impact.matched,
-                "closeness": round(closeness, 3), "hostility": round(hostility, 3),
-            },
+            evidence={"kind": impact.kind, "matched": impact.matched},
             created_at=timestamp,
             merge_seconds=MESSAGE_MERGE_SECONDS,
         )
@@ -277,35 +269,6 @@ class BotMoodService:
         else:
             self._count("merged")
         return event_id
-
-    def _relationship(self, scope: RuntimeScope, subject: str) -> tuple[float, float]:
-        """(亲近度 0~1, 敌意 0~1)。优先用仓储的关系姿态（有就用），否则按跨群五维汇总简化计算。"""
-        repo = getattr(self.db, "soul_repository", None)
-        if not subject or repo is None:
-            return 0.0, 0.0
-        stance_for = getattr(repo, "relationship_stance_for", None)
-        if callable(stance_for):
-            try:
-                stance = stance_for(scope.bot_id, subject)
-            except Exception:
-                stance = None
-            if isinstance(stance, Mapping) and stance.get("available"):
-                try:
-                    closeness = max(-1.0, min(1.0, float(stance.get("closeness") or 0.0)))
-                except (TypeError, ValueError):
-                    closeness = 0.0
-                _unused, hostility = relationship_closeness(0, stance.get("dimensions"))
-                return max(0.0, closeness), max(hostility, max(0.0, -closeness))
-        summarize = getattr(repo, "summarize_cross_group_relationship", None)
-        if not callable(summarize):
-            return 0.0, 0.0
-        try:
-            summary = summarize(scope, subject_principal_id=subject)
-        except Exception:
-            return 0.0, 0.0
-        if not isinstance(summary, Mapping) or not summary.get("available"):
-            return 0.0, 0.0
-        return relationship_closeness(summary.get("merged_affinity"), summary.get("merged_dimensions"))
 
     # ─── 输入：群氛围（小权重） ───
 

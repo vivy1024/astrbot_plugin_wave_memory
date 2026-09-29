@@ -36,6 +36,9 @@ vi.mock('@/api/people', async (importOriginal) => {
 })
 
 vi.mock('@/components/relationship/RelationshipCalibrationPanel', () => ({ RelationshipCalibrationPanel: () => null }))
+vi.mock('@/components/relationship/RelationshipPortraitPanel', () => ({
+  RelationshipPortraitPanel: ({ userId }: { userId: string }) => <div data-testid="portrait-panel">{userId}</div>,
+}))
 vi.mock('@/components/relationship/RelationshipRadarCard', () => ({ RelationshipRadarCard: () => null }))
 vi.mock('@/components/relationship/RelationshipTrajectoryCard', () => ({ RelationshipTrajectoryCard: () => null }))
 vi.mock('@/components/ui/sheet', () => ({
@@ -192,6 +195,8 @@ describe('PeoplePage impression 可见化', () => {
     await user.click(screen.getByRole('button', { name: '查看 甲 详情' }))
 
     await waitFor(() => expect(screen.getByText('Bot 当前印象')).toBeInTheDocument())
+    // 关系小传面板放在当前印象之前，按该人物读取
+    expect(screen.getByTestId('portrait-panel')).toHaveTextContent('u1')
     // 列表摘要列与详情卡片各渲染一份当前印象
     expect(screen.getAllByText('说话谨慎但常帮着整理群聊记录的人。曾纠正过我两次事实错误。').length).toBeGreaterThanOrEqual(2)
     expect(screen.getByText(/我眼中的他；下方可按类型与关键词浏览/)).toBeInTheDocument()
