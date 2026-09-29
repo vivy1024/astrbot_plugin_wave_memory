@@ -152,7 +152,7 @@ const CHANNEL_LABELS: Record<string, string> = {
   facts: '事实',
   persona: '人格画像',
   soul_state: '心智状态',
-  holyman_persona: '人设语料',
+  meme_hint: '用梗提示',
   book_lore: '书设',
   belief: '信念',
   jargon: '黑话',

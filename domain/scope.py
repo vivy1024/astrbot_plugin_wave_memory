@@ -431,8 +431,8 @@ COMMAND_SCOPE_MATRIX: Mapping[str, ScopeRequirement] = MappingProxyType({
     # 人格与信念属于 Bot 本人，群聊与私聊都注入。
     "belief.inject": ScopeRequirement(("runtime",), ("group", "private")),
     "persona.inject": ScopeRequirement(("runtime",), ("group", "private")),
-    # 可选风格人格包：与 persona.inject 同为会话内的注入，默认关闭由通道配置决定。
-    "holyman_persona.inject": ScopeRequirement(("runtime",), ("group", "private")),
+    # 用梗提示只读静态梗百科，群聊与私聊都可用；默认关闭与场合开关由通道配置决定。
+    "meme_hint.inject": ScopeRequirement(("runtime",), ("group", "private")),
     "affinity.update": ScopeRequirement(("runtime",), ("group",), subject_required=True),
     # 私聊里同样会形成对当前私聊对象的印象与好感；具体内容只在该私聊可见。
     "social_impression.record": ScopeRequirement(("runtime",), ("group", "private"), subject_required=True),

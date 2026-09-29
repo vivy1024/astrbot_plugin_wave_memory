@@ -130,7 +130,7 @@ export function traceItemLink(channel: string, item: LinkFields, ctx: TraceLinkC
     case 'soul_state':
       return { to: href('/soul', scope), label: '打开心智状态', precise: false }
     default:
-      // persona / holyman_persona / safety 等来自人设包或规则，没有可浏览的对象页
+      // persona / meme_hint / safety 等来自人设或静态资产与规则，没有可浏览的对象页
       return null
   }
 }

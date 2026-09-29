@@ -58,7 +58,7 @@ describe('trace-links 链接规则', () => {
     expect(traceItemLink('fewshot', {}, ctx)?.to.startsWith('/knowledge/style-examples?')).toBe(true)
     expect(traceItemLink('soul_state', {}, { botId: 'yushu' })?.to).toBe('/soul?bot_id=yushu')
     expect(traceItemLink('persona', {}, ctx)).toBeNull()
-    expect(traceItemLink('holyman_persona', {}, ctx)).toBeNull()
+    expect(traceItemLink('meme_hint', {}, ctx)).toBeNull()
   })
 
   it('通道、记忆、观测台链接格式', () => {

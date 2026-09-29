@@ -23,10 +23,10 @@ describe('配置定位规则', () => {
   })
 
   it('注入通道跳到通道配置对应通道与字段', () => {
-    const location = locateConfig('channel:holyman_persona.enabled')
-    expect(location).toMatchObject({ target: 'channels', pathname: '/channels', params: { channel: 'holyman_persona', field: 'enabled' } })
-    expect(location.label).toBe('通道配置 · holyman_persona')
-    expect(locationHref(location)).toBe('/channels?channel=holyman_persona&field=enabled')
+    const location = locateConfig('channel:meme_hint.enabled')
+    expect(location).toMatchObject({ target: 'channels', pathname: '/channels', params: { channel: 'meme_hint', field: 'enabled' } })
+    expect(location.label).toBe('通道配置 · meme_hint')
+    expect(locationHref(location)).toBe('/channels?channel=meme_hint&field=enabled')
   })
 
   it('Channel_Settings 是通道配置的底层存储，也跳通道配置', () => {

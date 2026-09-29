@@ -155,8 +155,9 @@ describe('配置文案不暴露实现术语', () => {
       }
     }
     // 129 + 共现传播核新增的 cooccurrence_kernel / cooccurrence_min_support（41e0ece8、2277b1e6）
-    // + Learning_Settings 15 项，以及事实策略、回复反馈、表达学习、开口规则 6 项。
-    expect(total).toBe(154)
+    // + Learning_Settings 15 项，以及事实策略、回复反馈、表达学习、开口规则 6 项，
+    // + Jargon_Settings 用梗提示的群聊/私聊/直播三个场合开关。
+    expect(total).toBe(157)
     expect(noType).toEqual([])
   })
 

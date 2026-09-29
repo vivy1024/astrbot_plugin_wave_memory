@@ -36,12 +36,15 @@ class HolymanReference:
     _ENGLISH_ALLOWLIST = {"Ciallo", "Ciallo～", "Galgame", "NGA", "KPL", "CSGO", "CNCS", "DeepSeek", "AstraAI", "Bilibili"}
     _SHORT_SUBSTRING_ALLOWLIST = {"原神", "黄油", "神人", "抽象", "狗粉丝", "孙笑川", "急了", "鼠鼠", "叠甲", "丁真"}
 
-    def __init__(self, root_path: str | None = None, max_examples: int = 3):
+    def __init__(self, root_path: str | None = None, max_examples: int = 3, knowledge_base: Any = None):
         self.root_path = Path(root_path) if root_path else None
         self.max_examples = max_examples
+        self._knowledge_base = knowledge_base
         self._phrases: dict[str, Any] = {}
         self._examples: list[str] = []
         self._blocked: dict[str, str] = dict(DEFAULT_BLOCKED)
+        # 梗百科里人工确认过特异性的短词/字母数字词（如「做局」「8u」），允许参与运行时匹配
+        self._extra_matchable: set[str] = set()
         self.reload()
 
     def reload(self) -> None:
@@ -50,6 +53,7 @@ class HolymanReference:
         self._phrases = dict(_DEFAULT_PHRASES)
         self._examples = []
         self._blocked = dict(DEFAULT_BLOCKED)
+        self._extra_matchable = set()
 
         # 2. Load local high-availability JSON assets (ground truth baseline)
         local_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "holyman"
@@ -120,9 +124,31 @@ class HolymanReference:
             except Exception:
                 pass
 
-        # 3. Load from optional root path git clone if configured and valid
+        # 3. 梗百科扩充词条：只并入 runtime_match 的词条释义（例句只经查询工具返回），
+        #    精选词条与已有资产优先，屏蔽词不并入。
+        self._merge_encyclopedia()
+
+        # 4. Load from optional root path git clone if configured and valid
         if self.root_path and self.root_path.exists():
             self._load(self.root_path)
+
+    def _merge_encyclopedia(self) -> None:
+        kb = self._knowledge_base
+        if kb is None:
+            from .meme_encyclopedia import get_meme_knowledge_base
+
+            kb = get_meme_knowledge_base()
+        try:
+            phrases = kb.runtime_phrases()
+            short_words = kb.short_match_words()
+        except Exception:
+            return
+        for word, payload in phrases.items():
+            if word in self._phrases or word in self._blocked:
+                continue
+            self._phrases[word] = dict(payload)
+            if word in short_words:
+                self._extra_matchable.add(word)
 
     @property
     def available(self) -> bool:
@@ -137,6 +163,8 @@ class HolymanReference:
             return False
         if phrase.startswith("|") or phrase.endswith("|") or "```" in phrase:
             return False
+        if phrase in self._extra_matchable:
+            return len(phrase) <= 30
         if re.fullmatch(r"[A-Za-z0-9 /_().~↑↓<>=*:-]+", phrase) and phrase not in self._ENGLISH_ALLOWLIST:
             return False
         if re.fullmatch(r"[\u4e00-\u9fff]{2,3}", phrase) and phrase not in _DEFAULT_PHRASES and phrase not in {"急了", "典", "绷", "鼠鼠", "叠甲", "丁真", "原神", "黄油", "神人", "抽象", "狗粉丝", "孙笑川", "别急", "那咋了"}:
