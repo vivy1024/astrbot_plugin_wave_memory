@@ -74,13 +74,27 @@ def _build_settings_payload(container, schema: Mapping | None = None) -> dict:
     )
 
 
+_ROUTING_SERVICE = "llm_routing"
+_ROUTING_TITLE = "模型分工"
+
+
+def _routing(container):
+    """模型分工路由（services.llm_routing.LLMRouter）；插件未就绪时为 None。"""
+    routing = getattr(container, "llm_routing", None)
+    return routing if routing is not None and callable(getattr(routing, "reload", None)) else None
+
+
 def _service_for(container):
-    """配置路径 → 保存后会被重建的后台服务名（服务注册表未就绪时返回 None）。"""
+    """配置路径 → 保存后会被重建（或原地重载）的后台服务名（都未就绪时返回 None）。"""
     services = getattr(container, "service_registry", None)
     rebuildable = getattr(services, "rebuildable", None)
-    if not callable(rebuildable):
+    mapping = dict(rebuildable()) if callable(rebuildable) else {}
+    routing = _routing(container)
+    if routing is not None:
+        # 模型分工保存后原地重载各任务的回退链，生效方式与「重建服务」一致（有效值快照随之更新）。
+        mapping[_ROUTING_SERVICE] = tuple(routing.config_paths())
+    if not mapping:
         return None
-    mapping = rebuildable()
 
     def lookup(path: str):
         for name, keys in mapping.items():
@@ -92,18 +106,26 @@ def _service_for(container):
 
 
 async def _reconfigure_services(container, changed_fields: list[str]) -> dict[str, dict]:
-    """只重建受这次改动影响、且支持按配置重建的后台服务。"""
+    """只重建受这次改动影响、且支持按配置重建的后台服务；模型分工原地重载。"""
+    results: dict[str, dict] = {}
     services = getattr(container, "service_registry", None)
     affected_by = getattr(services, "affected_by", None)
-    if not callable(affected_by):
-        return {}
-    results: dict[str, dict] = {}
-    for name, paths in affected_by(changed_fields).items():
-        try:
-            item = await services.reconfigure(name)
-            results[name] = {"action": item.get("action"), "fields": paths, "title": item.get("title") or name}
-        except Exception as exc:
-            results[name] = {"action": "failed", "fields": paths, "error": str(exc)}
+    if callable(affected_by):
+        for name, paths in affected_by(changed_fields).items():
+            try:
+                item = await services.reconfigure(name)
+                results[name] = {"action": item.get("action"), "fields": paths, "title": item.get("title") or name}
+            except Exception as exc:
+                results[name] = {"action": "failed", "fields": paths, "error": str(exc)}
+    routing = _routing(container)
+    if routing is not None:
+        paths = [path for path in changed_fields if routing.affected_by(path)]
+        if paths:
+            try:
+                routing.reload(getattr(container, "plugin_config", None) or {})
+                results[_ROUTING_SERVICE] = {"action": "reloaded", "fields": paths, "title": _ROUTING_TITLE}
+            except Exception as exc:
+                results[_ROUTING_SERVICE] = {"action": "failed", "fields": paths, "error": str(exc), "title": _ROUTING_TITLE}
     return results
 
 
@@ -462,7 +484,7 @@ async def get_config_schema():
 @require_auth
 async def update_config_full():
     """事务式保存 schema 配置，并分别报告保存值与运行时有效值。"""
-    from ...services.hot_config import HotConfig
+    HotConfig = _service_module("services.hot_config").HotConfig
 
     c = get_container()
     cfg = c.plugin_config
@@ -584,7 +606,7 @@ async def update_config_full():
     if hot_updates:
         message += " 已完成热配置回读。"
     if service_results:
-        labels = {"rebuilt": "已按新配置重建", "created": "已创建并启动", "disabled": "已按配置停止", "failed": "重建失败"}
+        labels = {"rebuilt": "已按新配置重建", "created": "已创建并启动", "disabled": "已按配置停止", "reloaded": "已按新配置生效", "failed": "重建失败"}
         message += " " + "；".join(
             f"{r.get('title') or name}{labels.get(r['action'], r['action'])}" for name, r in service_results.items()
         ) + "。"
@@ -609,25 +631,37 @@ async def update_config_full():
     })
 
 
+def _astrbot_providers(container) -> list[dict]:
+    """AstrBot 当前可见的 provider（只含宿主真实返回的，不补配置里的 id）。"""
+    context = getattr(getattr(container, "embedding_service", None), "context", None)
+    if context is None:
+        context = getattr(getattr(container, "llm_routing", None), "context", None)
+    if context is None:
+        raise RuntimeError("AstrBot 上下文未就绪")
+    embed_id = (getattr(container, "plugin_config", None) or {}).get("embedding_provider_id", "")
+    providers: list[dict] = []
+    seen_ids: set[str] = set()
+    for prov in context.get_all_providers():
+        try:
+            meta = prov.meta()
+            if meta.id not in seen_ids:
+                ptype = "embedding" if meta.id == embed_id else (meta.type or "unknown")
+                providers.append({"id": meta.id, "model": meta.model or "", "type": ptype})
+                seen_ids.add(meta.id)
+        except Exception:
+            pass
+    return providers
+
+
 @config_bp.route("/providers", methods=["GET"])
 @require_auth
 async def list_providers():
     """列出可用的 LLM/Embedding Provider。"""
     c = get_container()
     try:
-        providers = []
-        seen_ids = set()
+        providers = _astrbot_providers(c)
+        seen_ids = {item["id"] for item in providers}
         embed_id = c.plugin_config.get("embedding_provider_id", "")
-        all_provs = c.embedding_service.context.get_all_providers()
-        for prov in all_provs:
-            try:
-                meta = prov.meta()
-                if meta.id not in seen_ids:
-                    ptype = "embedding" if meta.id == embed_id else (meta.type or "unknown")
-                    providers.append({"id": meta.id, "model": meta.model or "", "type": ptype})
-                    seen_ids.add(meta.id)
-            except Exception:
-                pass
         if embed_id and embed_id not in seen_ids:
             providers.insert(0, {"id": embed_id, "model": embed_id.split("/")[-1] if "/" in embed_id else embed_id, "type": "embedding"})
             seen_ids.add(embed_id)
@@ -637,3 +671,56 @@ async def list_providers():
         return jsonify({"providers": providers})
     except Exception as e:
         return jsonify({"providers": [], "error": str(e)})
+
+
+def build_llm_routing_payload(container) -> dict:
+    """模型分工总览：各任务当前生效的回退链、来源、调用统计，外加向量模型（只读）。"""
+    cfg = getattr(container, "plugin_config", None) or {}
+    embedding = getattr(container, "embedding_service", None)
+    snapshot = getattr(container, "settings_effective_config_snapshot", None)
+    running_cfg = snapshot if isinstance(snapshot, Mapping) else cfg
+    embedding_payload = {
+        "key": "embedding_provider_id",
+        "provider_id": str(getattr(embedding, "provider_id", "") or running_cfg.get("embedding_provider_id", "") or ""),
+        "saved": str(cfg.get("embedding_provider_id", "") or ""),
+        "dimension": getattr(embedding, "dimension", None) or running_cfg.get("embedding_dimension"),
+        "apply_mode": "restart",
+        "note": "向量模型决定记忆的向量空间，不在模型分工范围；换模型要重新向量化并重启。",
+    }
+    try:
+        providers = _astrbot_providers(container)
+        providers_error = None
+    except Exception as exc:
+        providers, providers_error = [], str(exc)
+    routing = getattr(container, "llm_routing", None)
+    if routing is None or not callable(getattr(routing, "describe", None)):
+        return {
+            "available": False,
+            "error": "模型分工未就绪（插件还没完成初始化，或版本不含该功能）",
+            "tasks": [],
+            "families": {},
+            "piggyback": [],
+            "embedding": embedding_payload,
+            "providers": providers,
+            "providers_error": providers_error,
+        }
+    registry = getattr(container, "bot_registry", None)
+    try:
+        bots = registry.all() if registry is not None else []
+    except Exception:
+        bots = []
+    known = [item["id"] for item in providers] if providers_error is None else None
+    return {
+        "available": True,
+        **routing.describe(bots=bots, known_providers=known),
+        "embedding": embedding_payload,
+        "providers": providers,
+        "providers_error": providers_error,
+    }
+
+
+@config_bp.route("/config/llm-routing", methods=["GET"])
+@require_auth
+async def get_llm_routing():
+    """只读：模型分工当前生效情况（修改走系统配置「模型分工」与 Bot 管理）。"""
+    return jsonify(build_llm_routing_payload(get_container()))

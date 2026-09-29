@@ -78,7 +78,10 @@ export interface BotProfileDto {
   exclude_sources: string[]
   interest_keywords: string[]
   enabled: boolean
+  /** 该 Bot 的默认模型：只作用于 BOT_MODEL_TASKS（Bot 口吻任务） */
   model: string
+  /** 按任务的模型覆盖 {任务 id: provider id}；旧后端没有这一段 */
+  models?: Record<string, string>
   session_prefix: string
   bindings: BotBindingDto[]
   persona: PersonaDto
@@ -108,7 +111,17 @@ export interface BotListPayload {
   items: BotProfileDto[]
   status: BotRegistryStatus
   binding_hosts: BindingHost[]
+  /** 允许按 Bot 覆盖模型的任务 id（旧后端没有） */
+  model_tasks?: string[]
 }
+
+/** 允许按 Bot 覆盖模型的任务：只有以 Bot 自己口吻产出内容的任务（与 domain/bot_profile.py 一致）。 */
+export const BOT_MODEL_TASKS = [
+  { id: 'meta_thinking', label: '内心判断' },
+  { id: 'bookkeeping', label: '事后记账' },
+  { id: 'diary', label: '每日日记' },
+  { id: 'portrait', label: '关系小传（预留）' },
+] as const
 
 export interface BotHistoryEntry {
   version: number
@@ -170,6 +183,7 @@ export function emptyBot(dbId = ''): BotProfileDto {
     interest_keywords: [],
     enabled: true,
     model: '',
+    models: {},
     session_prefix: '',
     bindings: [],
     persona: {

@@ -34,10 +34,10 @@ except Exception:  # pragma: no cover
         return func
 
 try:
-    from domain.bot_profile import BINDING_HOSTS, BotProfile, BotProfileError
+    from domain.bot_profile import BINDING_HOSTS, BOT_MODEL_TASKS, BotProfile, BotProfileError
     from services.config.channel_config import apply_channel_overrides, build_default_channel_config
 except ImportError:  # pragma: no cover - AstrBot 包导入路径
-    from ...domain.bot_profile import BINDING_HOSTS, BotProfile, BotProfileError
+    from ...domain.bot_profile import BINDING_HOSTS, BOT_MODEL_TASKS, BotProfile, BotProfileError
     from ...services.config.channel_config import apply_channel_overrides, build_default_channel_config
 
 from ..api_contract import error_payload
@@ -102,6 +102,7 @@ async def list_bots():
         "items": [_item(p) for p in registry.all(include_disabled=True)],
         "status": registry.status(),
         "binding_hosts": list(BINDING_HOSTS),
+        "model_tasks": list(BOT_MODEL_TASKS),
     })
 
 
@@ -143,6 +144,13 @@ async def save_bot(db_id: str):
         data.setdefault("origin", existing.origin)
     try:
         profile = BotProfile.from_dict(data)
+        unknown_models = sorted(set(profile.models) - set(BOT_MODEL_TASKS))
+        if unknown_models:
+            # 只有以 Bot 口吻产出的任务能按 Bot 覆盖模型；其他任务在系统配置「模型分工」里改。
+            return jsonify(error_payload(
+                "invalid_models",
+                f"这些任务不能按 Bot 覆盖模型：{', '.join(unknown_models)}；可覆盖的任务：{', '.join(BOT_MODEL_TASKS)}",
+            )), 400
         if profile.channels:
             # 通道覆盖在注入时严格校验，非法值会让该 Bot 的注入整体失败；保存时先拦住。
             try:

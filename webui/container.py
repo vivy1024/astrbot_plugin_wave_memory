@@ -69,6 +69,8 @@ class ServiceContainer:
         self.observation_ingestor: Any = None
         # 后台服务注册表（services.service_registry.ServiceRegistry）：9876「服务与扩展」页用。
         self.service_registry: Any = None
+        # 模型分工（services.llm_routing.LLMRouter）：各后台大模型任务的回退链；配置中心「模型分工」用。
+        self.llm_routing: Any = None
         # 扩展热重载入口（WaveMemoryPlugin.reload_extensions）。
         self.extension_reloader: Any = None
         # 入站消息接收/被拒统计（services.ingress_health.IngressHealth）。

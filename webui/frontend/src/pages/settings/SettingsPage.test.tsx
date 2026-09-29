@@ -54,6 +54,43 @@ function renderPage() {
   return render(<MemoryRouter><UnsavedChangesProvider><SettingsPage /></UnsavedChangesProvider></MemoryRouter>)
 }
 
+describe('SettingsPage Provider 下拉', () => {
+  it('默认值为空的 Provider 项可以选回「留空」：模型分工留空即跟随所属默认', async () => {
+    api.providers.mockResolvedValue({ providers: [{ id: 'provider-a', name: 'a', model: 'ma' }, { id: 'provider-b', name: 'b', model: 'mb' }] })
+    api.getSchema.mockResolvedValue({
+      groups: [{
+        key: 'Model_Routing_Settings', kind: 'object', description: '模型分工', hint: '',
+        items: [{ key: 'diary', type: 'string', special: 'select_provider', description: '每日日记', hint: '留空跟随默认', ...state, default: '', saved: 'provider-b', effective: 'provider-b', value: 'provider-b', apply_mode: 'service' }],
+      }],
+      warnings: [],
+    })
+    api.saveFull.mockResolvedValue({ ok: true, saved: true, message: '配置已保存。', schema: { groups: [], warnings: [] } })
+    const user = userEvent.setup()
+    renderPage()
+
+    const trigger = await screen.findByRole('combobox', { name: '修改 每日日记' })
+    expect(trigger).toHaveTextContent('provider-b')
+    await user.click(trigger)
+    expect(screen.getByRole('option', { name: 'provider-a (ma)' })).toBeVisible()
+    await user.click(screen.getByRole('option', { name: '留空：跟随所属默认' }))
+    expect(screen.getByRole('combobox', { name: '修改 每日日记' })).toHaveTextContent('留空：跟随所属默认')
+    await user.click(screen.getByRole('button', { name: '保存配置' }))
+    expect(api.saveFull).toHaveBeenCalledWith({ Model_Routing_Settings: { diary: '' } })
+  })
+
+  it('默认值非空的 Provider 项不提供「留空」', async () => {
+    api.providers.mockResolvedValue({ providers: [{ id: 'provider-a', name: 'a', model: 'ma' }] })
+    api.getSchema.mockResolvedValue({
+      groups: [{ key: 'some_provider', kind: 'scalar', type: 'string', special: 'select_provider', description: '某模型', hint: '', ...state, default: 'provider-a', saved: 'provider-a', effective: 'provider-a', value: 'provider-a' }],
+      warnings: [],
+    })
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(await screen.findByRole('combobox', { name: '修改 某模型' }))
+    expect(screen.queryByRole('option', { name: /留空/ })).not.toBeInTheDocument()
+  })
+})
+
 describe('SettingsPage 分区降级与数值草稿', () => {
   it('Provider 请求失败仍显示 schema 和 hot 主能力，并明确降级状态', async () => {
     const user = userEvent.setup()

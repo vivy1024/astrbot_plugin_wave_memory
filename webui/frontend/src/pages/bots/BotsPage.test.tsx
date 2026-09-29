@@ -16,6 +16,7 @@ const api = vi.hoisted(() => ({
 }))
 
 vi.mock('@/api/bots', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/api/bots')>()), ...api }))
+vi.mock('@/api/config', () => ({ listProviders: async () => ({ providers: [{ id: 'nug/meta', name: 'meta', model: 'gemini' }] }) }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const yushu = { ...emptyBot('yushu'), name: '羽书', qq_id: '2500447291', version: 3, origin: 'config', self_ids: ['2500447291'] }
@@ -84,6 +85,26 @@ describe('BotsPage 心情画像', () => {
     expect(mood.sensitivity).toBe(1.5)
     expect(mood.speaking_hints).toEqual({ 烦躁: '句子变短' })
     expect(mood.half_life_minutes).toBe(0)
+  })
+})
+
+describe('BotsPage 模型覆盖', () => {
+  it('行为标签页填默认模型与按任务覆盖，清空的任务不保存', async () => {
+    const user = userEvent.setup()
+    api.saveBot.mockResolvedValue({ ok: true, item: { ...yushu, version: 4 } })
+    render(<MemoryRouter initialEntries={['/bots?bot=yushu&tab=behavior']}><BotsPage /></MemoryRouter>)
+    const model = await screen.findByLabelText('默认模型')
+    await user.type(model, 'nug/meta')
+    await user.type(screen.getByLabelText('模型 · 每日日记'), 'nug/diary')
+    const bookkeeping = screen.getByLabelText('模型 · 事后记账')
+    await user.type(bookkeeping, 'x')
+    await user.clear(bookkeeping)
+    expect(screen.getByLabelText('模型 · 关系小传（预留）')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /保存/ }))
+    await waitFor(() => expect(api.saveBot).toHaveBeenCalled())
+    const item = api.saveBot.mock.calls[0][1]
+    expect(item.model).toBe('nug/meta')
+    expect(item.models).toEqual({ diary: 'nug/diary' })
   })
 })
 

@@ -214,7 +214,10 @@ class DailyDiaryService:
             bot_name=bot_name, date=date, group_name=self.group_name_for(scope.bot_id, group_id) or group_id,
             topics=self._topics(group_id, date), own_lines=own, notes=self._notes(scope, start),
         )
-        response = await self.llm.text_chat(
+        # 模型分工：路由客户端按这个 Bot 的模型覆盖选链（Bot Profile 的 model / models.diary）
+        for_bot = getattr(self.llm, "for_bot", None)
+        llm = for_bot(scope.bot_id) if callable(for_bot) else self.llm
+        response = await llm.text_chat(
             prompt=prompt, system_prompt=prepend_identity_safety_system_prompt(None, always=True), contexts=[],
         )
         match = re.search(r"\{.*\}", str(getattr(response, "completion_text", "") or ""), re.S)

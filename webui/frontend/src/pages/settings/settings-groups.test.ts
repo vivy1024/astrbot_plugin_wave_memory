@@ -99,7 +99,8 @@ describe('系统配置页：分组与折叠', () => {
     const sections = Object.entries(schema)
       .filter(([, value]) => value && typeof value === 'object' && 'items' in value)
       .map(([key]) => key)
-    expect(sections.length).toBe(27)
+    // 27 + 模型分工 Model_Routing_Settings
+    expect(sections.length).toBe(28)
     // 顶层标量字段（Embedding 模型、备份数量等）也要有分组，否则会挤进「其他设置」
     const scalars = Object.entries(schema)
       .filter(([, value]) => value && typeof value === 'object' && !('items' in value) && 'type' in value)
@@ -145,7 +146,7 @@ describe('配置文案不暴露实现术语', () => {
   it('schema 结构未被文案改动破坏', () => {
     const schema = JSON.parse(read('../../_conf_schema.json')) as Record<string, { items?: Record<string, { type?: string }> }>
     const sections = Object.entries(schema).filter(([, v]) => v && typeof v === 'object' && 'items' in v)
-    expect(sections.length).toBe(27)
+    expect(sections.length).toBe(28)
     const noType: string[] = []
     let total = 0
     for (const [section, group] of sections) {
@@ -157,8 +158,9 @@ describe('配置文案不暴露实现术语', () => {
     // 129 + 共现传播核新增的 cooccurrence_kernel / cooccurrence_min_support（41e0ece8、2277b1e6）
     // + Learning_Settings 15 项，以及事实策略、回复反馈、表达学习、开口规则 6 项；
     // 撤掉关系档位后移除 Affinity_Settings.relationship_tiers_json（-1）；
-    // 关系小传新增 Learning_Settings 7 项（relationship_portrait_enabled 与 portrait_* 六项）。
-    expect(total).toBe(160)
+    // 关系小传新增 Learning_Settings 7 项（relationship_portrait_enabled 与 portrait_* 六项）；
+    // 模型分工 10 项（每个后台大模型任务一项）。
+    expect(total).toBe(170)
     expect(noType).toEqual([])
   })
 

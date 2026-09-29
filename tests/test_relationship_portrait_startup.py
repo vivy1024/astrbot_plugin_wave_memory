@@ -69,6 +69,13 @@ def plugin(tmp_path):
     item.context = None
     item.write_gateway = None
     item.meta_thinking = SimpleNamespace(llm=SimpleNamespace(text_chat=None))
+    # 模型分工：关系小传走 portrait 任务，默认跟 MetaThinking 一族（default_model）
+    from services.llm_routing import LLMRouter
+
+    item.llm_routing = LLMRouter(
+        {"MetaThinking_Settings": {"default_model": "meta-model"}},
+        profile_lookup=lambda _db_id: None,
+    )
     item.spawned = []
 
     def spawn(coro, *, name=None, owner="plugin"):
@@ -101,8 +108,11 @@ def test_portrait_is_off_by_default_but_available_for_admin(plugin):
     plugin._init_learning_services()
     service = plugin.relationship_portrait
     assert isinstance(service, RelationshipPortraitService) and service.enabled is False
-    assert service.llm is plugin.meta_thinking.llm, "与事后记账/日记共用 learning_llm"
-    assert plugin._portrait_llm("yushu") is plugin.meta_thinking.llm
+    routing = plugin.llm_routing
+    assert service.llm is routing.client("portrait"), "走模型分工的 portrait 任务"
+    assert routing.chain("portrait") == ["meta-model"], "留空时跟 MetaThinking 默认模型一族"
+    per_bot = plugin._portrait_llm("yushu")
+    assert per_bot.bot_id == "yushu" and per_bot.provider_ids == ["meta-model"]
     assert "wave-memory:learning:relationship-portrait" not in [name for name, _owner in plugin.spawned]
     assert portrait_injection_enabled() is False, "关闭时注入完全沿用规则摘要"
     assert get_container().relationship_portrait is service
@@ -121,7 +131,11 @@ def test_enabled_portrait_starts_loop_under_learning_owner(plugin):
 
 
 def test_enabled_without_llm_keeps_rule_summary(plugin):
+    from services.llm_routing import LLMRouter
+
     plugin.meta_thinking = None
+    plugin.llm_routing = LLMRouter({}, profile_lookup=lambda _db_id: None)
+    plugin.llm_routing.set_meta_thinking_active(False)  # 启动流程按 MetaThinking 是否创建来设置
     plugin.config = {"Learning_Settings": {"relationship_portrait_enabled": True}}
     plugin._init_learning_services()
     assert plugin.relationship_portrait is None

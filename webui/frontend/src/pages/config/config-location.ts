@@ -9,6 +9,7 @@
  *   - `hot:<param>`                        实时热参数     → 系统配置「实时热参数」
  *   - `channel:<name>.<field>`             注入通道       → 通道配置
  *   - `bot:<db_id>.channels.<name>.<field>` Bot 通道覆盖  → Bot 管理「通道与工具」
+ *   - `bot:<db_id>.model` / `bot:<db_id>.models.<任务>` Bot 模型覆盖 → Bot 管理「行为」
  * 特例：
  *   - `Channel_Settings.*` 是通道配置的底层存储，由通道配置页写入 → 通道配置
  *   - `MetaThinking_BotN.*` 是 v5 旧槽位，Bot 首次迁移进 bot_profiles 后注册表不再读取 → Bot 管理
@@ -119,7 +120,10 @@ export function locateConfig(rawKey: string, context: LocateContext = {}): Confi
     const dot = rest.indexOf('.')
     const dbId = dot > 0 ? rest.slice(0, dot) : rest
     const tail = dot > 0 ? rest.slice(dot + 1) : ''
-    return botLocation(dbId || undefined, tail.startsWith('channels.') ? 'advanced' : undefined)
+    const tab: BotEditorTab | undefined = tail.startsWith('channels.')
+      ? 'advanced'
+      : tail === 'model' || tail.startsWith('models.') ? 'behavior' : undefined
+    return botLocation(dbId || undefined, tab)
   }
 
   const dot = key.indexOf('.')

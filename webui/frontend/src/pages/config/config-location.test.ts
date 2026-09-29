@@ -43,6 +43,12 @@ describe('配置定位规则', () => {
     expect(locationHref(location)).toBe('/bots?bot=yushu&tab=advanced')
   })
 
+  it('Bot 模型覆盖跳到 Bot 管理对应 Bot 的「行为」；模型分工键跳到系统配置「保存即生效」', () => {
+    expect(locateConfig('bot:bot_a.models.diary')).toMatchObject({ target: 'bots', params: { bot: 'bot_a', tab: 'behavior' } })
+    expect(locationHref(locateConfig('bot:bot_a.model'))).toBe('/bots?bot=bot_a&tab=behavior')
+    expect(locateConfig('Model_Routing_Settings.diary', { applyMode: 'service' }).params).toEqual({ key: 'Model_Routing_Settings.diary', tab: 'static' })
+  })
+
   it('MetaThinking_BotN 旧槽位跳到 Bot 管理，并提示改旧槽位不生效', () => {
     const ids = legacyBotIdsFrom([
       { key: 'MetaThinking_Bot1.db_id', effective: 'yushu' },

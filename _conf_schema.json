@@ -32,17 +32,94 @@
   "tag_llm_provider_id": {
     "description": "自省标签提取大模型 (Tag LLM)",
     "type": "string",
-    "hint": "用于对聊天记录分析并提炼标签、事实三元组（Subject-Predicate-Object）的大模型 ID。留空则只用向量搜索，不生成知识图谱、黑话和心智信念。",
+    "hint": "标签一族后台任务的默认模型：标签提取、黑话、风格样例、纠错自省、信念、标签审计。「模型分工」里单独指定了的任务优先用自己的模型、失败再回退到这里。留空且各任务也没单独指定时，只用向量搜索，不生成知识图谱、黑话和心智信念。",
     "default": "",
     "_special": "select_provider",
     "restart_required": true
   },
   "llm_fallback_provider_ids": {
     "description": "LLM 回退模型链",
-    "hint": "逗号分隔多个 provider ID，按顺序尝试。主模型（Tag LLM）不可用时依次回退。记忆整合、标签提取、黑话、信念、自主学习、自省共用此链。示例：伞云智联/grok-4.5, paidyun/grok-4.5, gemini/gemini-3.5-flash",
+    "hint": "逗号分隔多个 provider ID，按顺序尝试。标签一族（标签提取、黑话、风格样例、纠错自省、信念）的主模型不可用时依次回退；标签审计不走这条链。MetaThinking 没运行时，事后记账与每日日记也用它。示例：伞云智联/grok-4.5, paidyun/grok-4.5, gemini/gemini-3.5-flash",
     "type": "string",
     "default": "",
     "restart_required": true
+  },
+  "Model_Routing_Settings": {
+    "description": "模型分工",
+    "hint": "给每个后台大模型任务单独指定模型。留空 = 跟随它原来的默认（标签一族跟 tag_llm_provider_id + 回退链，内心判断/事后记账/日记/关系小传跟 MetaThinking_Settings.default_model）。指定后该模型在前，失败时依次回退到原来的默认链；可填逗号分隔的多个 ID。在 9876 保存后立即生效，不用重启。内心判断、事后记账、每日日记、关系小传还可以在 Bot 管理里按 Bot 覆盖。向量模型不在这里。",
+    "type": "object",
+    "items": {
+      "tag": {
+        "description": "标签提取",
+        "hint": "后台打标签、标签回填、导入时打标签（导入字段映射校验只用首选模型）。留空跟随 tag_llm_provider_id + 回退链。",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+      },
+      "jargon": {
+        "description": "黑话挖掘",
+        "hint": "黑话候选校验与含义推断。留空跟随 tag_llm_provider_id + 回退链。",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+      },
+      "fewshot": {
+        "description": "风格样例",
+        "hint": "说话风格样例提取与漂移检查（读取已审核样例不调模型）。留空跟随 tag_llm_provider_id + 回退链。",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+      },
+      "self_reflect": {
+        "description": "纠错自省",
+        "hint": "Bot 被纠正后写自省记录。留空跟随 tag_llm_provider_id + 回退链。",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+      },
+      "belief": {
+        "description": "信念引擎",
+        "hint": "当前版本信念引擎不发起模型调用（信念由对话中的模型现场提审），这里预留。留空跟随 tag_llm_provider_id + 回退链。",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+      },
+      "tag_audit": {
+        "description": "标签审计",
+        "hint": "标签页手动触发的标签质量审计。留空跟随 tag_llm_provider_id（旧行为：只用它，不走回退链）。",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+      },
+      "meta_thinking": {
+        "description": "内心判断",
+        "hint": "MetaThinking 的回复判断与主动插话（当前入站流程只用兴趣词匹配，未发起模型调用）。留空跟随 MetaThinking_Settings.default_model。可按 Bot 覆盖。",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+      },
+      "bookkeeping": {
+        "description": "事后记账",
+        "hint": "回复后回看对话，结算印象与好感、关切、事实；表达学习、回复反馈、心情影响搭在同一次调用里。留空跟随 MetaThinking_Settings.default_model（MetaThinking 未运行时跟标签模型链）。可按 Bot 覆盖。",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+      },
+      "diary": {
+        "description": "每日日记",
+        "hint": "每天按群以 Bot 口吻写一篇日记。留空跟随 MetaThinking_Settings.default_model（MetaThinking 未运行时跟标签模型链）。可按 Bot 覆盖。",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+      },
+      "portrait": {
+        "description": "关系小传",
+        "hint": "为每个群友写关系摘要（预留，功能上线后生效）。留空跟随 MetaThinking_Settings.default_model。可按 Bot 覆盖。",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+      }
+    }
   },
   "WebUI_Settings": {
     "description": "管理控制台",
@@ -638,7 +715,7 @@
       },
       "default_model": {
         "description": "默认模型",
-        "hint": "未在 Bot 配置中指定时使用；留空则使用 tag_llm_provider_id。",
+        "hint": "MetaThinking 一族（内心判断、事后记账、每日日记、关系小传）的默认模型；「模型分工」里单独指定、或 Bot 管理里按 Bot 覆盖的优先。留空时只用旧回退配置（通常为空，即这些任务没有可用模型）。",
         "type": "string",
         "default": "",
         "_special": "select_provider",
@@ -720,6 +797,7 @@
       },
       "model": {
         "description": "模型（留空用全局默认）",
+        "hint": "迁移进 Bot 管理后成为该 Bot 的默认模型，只作用于内心判断、事后记账、每日日记、关系小传。",
         "type": "string",
         "default": "",
         "_special": "select_provider",
@@ -790,6 +868,7 @@
       },
       "model": {
         "description": "模型（留空用全局默认）",
+        "hint": "迁移进 Bot 管理后成为该 Bot 的默认模型，只作用于内心判断、事后记账、每日日记、关系小传。",
         "type": "string",
         "default": "",
         "_special": "select_provider",

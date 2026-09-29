@@ -203,15 +203,21 @@ export const SECTION_GROUPS: Record<string, SettingsGroupMeta> = {
   },
   tag_llm_provider_id: {
     title: '标签分析模型',
-    description: '用于从聊天里提炼标签的大模型',
+    description: '标签、黑话、风格样例、自省等后台任务的默认模型；模型分工里单独指定的任务优先',
     defaultOpen: true,
     bucket: 'restart',
   },
   llm_fallback_provider_ids: {
     title: '模型回退链',
-    description: '主模型不可用时按顺序尝试的备用模型',
+    description: '标签分析模型不可用时按顺序尝试的备用模型',
     defaultOpen: false,
     bucket: 'restart',
+  },
+  Model_Routing_Settings: {
+    title: '模型分工',
+    description: '给每个后台大模型任务单独指定模型；留空跟随原来的默认，保存即生效',
+    defaultOpen: true,
+    bucket: 'always',
   },
   backup_max_count: {
     title: '备份保留数量',

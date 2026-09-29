@@ -289,13 +289,9 @@ class StartupMixin:
 
         # 黑话系统 (US-4.1~4.5)：memory_only/compat_only 强制关闭，避免黑话学习/注入越过纯记忆边界。
         jargon_cfg = self.config.get("Jargon_Settings", {})
-        if runtime_capability_enabled(self.runtime_mode, "jargon", jargon_cfg.get("enabled", True)) and self.tag_llm_provider_id:
+        if runtime_capability_enabled(self.runtime_mode, "jargon", jargon_cfg.get("enabled", True)) and self.llm_routing.available("jargon"):
             try:
-                jargon_llm = LLMFallbackClient(
-                    context=self.context,
-                    provider_ids=self._llm_chain(),
-                    log_prefix="[Jargon]",
-                )
+                jargon_llm = self.llm_routing.client("jargon")
                 self.jargon_service = JargonService(
                     db=self.db, llm_client=jargon_llm, enabled=True,
                     config=jargon_cfg,
@@ -322,11 +318,7 @@ class StartupMixin:
             fewshot_enabled = True
         if runtime_capability_enabled(self.runtime_mode, "fewshot", fewshot_enabled):
             try:
-                fewshot_llm = LLMFallbackClient(
-                    context=self.context,
-                    provider_ids=self._llm_chain(),
-                    log_prefix="[FewShot]",
-                ) if self.tag_llm_provider_id else None
+                fewshot_llm = self.llm_routing.client("fewshot") if self.llm_routing.available("fewshot") else None
                 self.few_shot_service = FewShotService(
                     db=self.db, llm_client=fewshot_llm,
                     embedding_service=self.embedding_service, enabled=True,
@@ -360,6 +352,7 @@ class StartupMixin:
                     config=meta_cfg,
                     global_fallback_ids=self.config.get("meta_thinking_fallback_ids", ""),
                     extra_interests=maps["extra_interests"],
+                    llm_client=self.llm_routing.client("meta_thinking"),
                 )
                 self.meta_thinking._plugin_config = self.config  # 好感度约束需要顶层 config
             except Exception as e:
@@ -368,6 +361,8 @@ class StartupMixin:
                 self.meta_thinking = None
         else:
             self.meta_thinking = None
+        # 事后记账/日记/关系小传：MetaThinking 在运行时跟它一族，否则沿用旧逻辑改用标签模型链。
+        self.llm_routing.set_meta_thinking_active(self.meta_thinking is not None)
 
         # 启动做梦系统
         if self._create_dream_service() is not None:
@@ -386,13 +381,9 @@ class StartupMixin:
         study_cfg = self.config.get("Study_Settings", {}) or {}
         # 自省系统（检测纠正 → 记录，所有 bot 共用）：纯记忆模式关闭自省学习后台能力。
         reflect_bot = experience_bot or (list(_registry.values())[0] if _registry else None)
-        if runtime_capability_enabled(self.runtime_mode, "self_reflect", study_cfg.get("self_reflect_enabled", True)) and self.tag_llm_provider_id and reflect_bot:
+        if runtime_capability_enabled(self.runtime_mode, "self_reflect", study_cfg.get("self_reflect_enabled", True)) and self.llm_routing.available("self_reflect") and reflect_bot:
             try:
-                reflect_llm = LLMFallbackClient(
-                    context=self.context,
-                    provider_ids=self._llm_chain(),
-                    log_prefix="[SelfReflect]",
-                )
+                reflect_llm = self.llm_routing.client("self_reflect")
                 self.self_reflect = SelfReflectService(
                     db=self.db,
                     memory_index=self.memory_index,
@@ -420,12 +411,8 @@ class StartupMixin:
         soul_bot_id = soul_bot.db_id if soul_bot else ""
         # 信念引擎（提取在 consolidation 内触发，注入在 on_llm_request）
         try:
-            if runtime_capability_enabled(self.runtime_mode, "belief", True) and self.tag_llm_provider_id and soul_bot_id:
-                belief_llm = LLMFallbackClient(
-                    context=self.context,
-                    provider_ids=self._llm_chain(),
-                    log_prefix="[BeliefEngine]",
-                )
+            if runtime_capability_enabled(self.runtime_mode, "belief", True) and self.llm_routing.available("belief") and soul_bot_id:
+                belief_llm = self.llm_routing.client("belief")
                 self.belief_engine = BeliefEngine(
                     db=self.db,
                     llm_client=belief_llm,
@@ -503,6 +490,11 @@ class StartupMixin:
         )
 
         self._init_learning_services()
+        try:
+            self._publish_llm_routing()
+        except Exception as e:  # 只影响 9876 展示，不能拖垮启动
+            logger.warning(f"[WaveMemory] 模型分工状态登记失败: {e}")
+            _record_err("LLMRouting", e)
 
         # 新编排器影子链路：只写 trace，不改真实 ProviderRequest。
         self._setup_injection_shadow_pipeline()
@@ -527,12 +519,12 @@ class StartupMixin:
         missing_bot_profile_reason = "未配置 Bot Profile（在 9876「Bot 管理」页添加 Bot）"
         self_reflect_off_reason = (
             "SelfReflect 未启用" if not runtime_capability_enabled(self.runtime_mode, "self_reflect", study_cfg.get("self_reflect_enabled", True))
-            else "tag_llm_provider_id 未配置" if not self.tag_llm_provider_id
+            else "tag_llm_provider_id 未配置（模型分工也未单独指定）" if not self.llm_routing.available("self_reflect")
             else missing_bot_profile_reason if not reflect_bot
             else "SelfReflect 初始化失败或未启用"
         )
         soul_off_reason = (
-            "tag_llm_provider_id 未配置" if not self.tag_llm_provider_id
+            "tag_llm_provider_id 未配置（模型分工也未单独指定）" if not self.llm_routing.available("belief")
             else missing_bot_profile_reason if not soul_bot_id
             else "belief_engine 初始化失败或未启用"
         )
@@ -876,19 +868,19 @@ class StartupMixin:
             _record_err("ConcernFollowup", e)
             self.concern_followup = None
 
-        meta = getattr(self, "meta_thinking", None)
-        learning_llm = getattr(meta, "llm", None) if meta is not None else None
-        if learning_llm is None and self._llm_chain():
-            learning_llm = LLMFallbackClient(context=self.context, provider_ids=self._llm_chain(), log_prefix="[Learning]")
-        self._learning_llm = learning_llm
+        # 模型分工：事后记账与每日日记各自一个任务（默认都跟 MetaThinking 一族；MetaThinking 未运行时
+        # 沿用旧逻辑改用标签模型链）。改造前两者共用 meta_thinking.llm，新键留空时回退链不变。
+        routing = self.llm_routing
+        bookkeeping_llm = routing.client("bookkeeping") if routing.available("bookkeeping") else None
+        diary_llm = routing.client("diary") if routing.available("diary") else None
         self.post_reply_bookkeeper = None
         self.daily_diary = None
-        if learning_llm is None:
+        if bookkeeping_llm is None and diary_llm is None:
             logger.warning("[WaveMemory] 事后记账/每日日记未启动：没有可用的 LLM Provider")
         else:
-            if _flag("post_reply_bookkeeping_enabled", True):
+            if _flag("post_reply_bookkeeping_enabled", True) and bookkeeping_llm is not None:
                 self.post_reply_bookkeeper = PostReplyBookkeeper(
-                    self.db, self.tool_registry, learning_llm,
+                    self.db, self.tool_registry, bookkeeping_llm,
                     delay_seconds=_num("bookkeeping_delay_seconds", 90.0),
                     session_cooldown_seconds=_num("bookkeeping_session_cooldown_seconds", 600.0),
                     daily_limit=int(_num("bookkeeping_daily_limit", 150)),
@@ -896,9 +888,9 @@ class StartupMixin:
                     mood_recorder=getattr(getattr(self, "mood_service", None), "record_bookkeeping", None),
                     feedback_recorder=self.reply_feedback_service.record_bookkeeping,
                 )
-            if _flag("daily_diary_enabled", True):
+            if _flag("daily_diary_enabled", True) and diary_llm is not None:
                 self.daily_diary = DailyDiaryService(
-                    self.db, self.tool_registry, learning_llm, self.writer,
+                    self.db, self.tool_registry, diary_llm, self.writer,
                     hour=int(_num("daily_diary_hour", 23)),
                     bot_name_for=self._bot_display_name,
                     group_name_for=self._get_group_name,
@@ -975,12 +967,60 @@ class StartupMixin:
         )
 
     def _portrait_llm(self, bot_id: str = ""):
-        """关系小传用的模型客户端（text_chat 接口）。
+        """关系小传用的模型客户端（text_chat 接口），走模型分工的 ``portrait`` 任务。
 
-        目前与事后记账、每日日记共用同一个 learning_llm；合并「模型分工」后改为
-        ``llm_routing.resolve("portrait", bot_id)``（任务 id ``portrait`` 已预留），只改这一处。
+        传入 bot_id 时按该 Bot 的模型覆盖取链（Bot 默认模型 / models.portrait）；没有可用模型返回 None。
         """
-        return getattr(self, "_learning_llm", None)
+        routing = getattr(self, "llm_routing", None)
+        if routing is None or not routing.available("portrait"):
+            return None
+        client = routing.client("portrait")
+        return client.for_bot(bot_id) if bot_id else client
+
+    def _publish_llm_routing(self) -> None:
+        """模型分工：登记各任务调用方是否在运行，交给 9876 展示，并在日志里列出当前生效模型。"""
+        routing = getattr(self, "llm_routing", None)
+        if routing is None:
+            return
+        few_shot = getattr(self, "few_shot_service", None)
+        running = {
+            "tag": getattr(self, "tag_extractor", None) is not None,
+            "jargon": getattr(self, "jargon_service", None) is not None,
+            "fewshot": few_shot is not None and getattr(few_shot, "_llm", None) is not None,
+            "self_reflect": getattr(self, "self_reflect", None) is not None,
+            "belief": getattr(self, "belief_engine", None) is not None,
+            # 标签审计每次维护任务现建审计器、现解析模型：配了模型就能跑，从不需要重启。
+            "tag_audit": True,
+            "meta_thinking": getattr(self, "meta_thinking", None) is not None,
+            "bookkeeping": getattr(self, "post_reply_bookkeeper", None) is not None,
+            "diary": getattr(self, "daily_diary", None) is not None,
+            "portrait": getattr(self, "relationship_portrait", None) is not None,
+        }
+        for task, active in running.items():
+            note = ""
+            if not active:
+                note = (
+                    "启动时没有可用模型，未创建；指定模型后需重启一次" if not routing.available(task)
+                    else "功能开关关闭、运行模式禁用或初始化失败（见启动日志）"
+                )
+            routing.set_active(task, active, note)
+        from ..webui.container import get_container
+
+        get_container().llm_routing = routing
+        summary = ", ".join(
+            f"{task}={routing.resolve(task).primary or '-'}({routing.resolve(task).source_label})"
+            for task in running
+        )
+        logger.info(f"[WaveMemory] 模型分工: {summary}")
+        # Bot Profile 的 model 字段以前没有接线；现在对 Bot 口吻任务生效，启动时明确提示一次。
+        for profile in self.bot_registry.all():
+            overrides = {key: value for key, value in (getattr(profile, "models", None) or {}).items() if value}
+            if getattr(profile, "model", "") or overrides:
+                logger.info(
+                    f"[WaveMemory] 模型分工: Bot {profile.db_id} 的模型覆盖生效 "
+                    f"model={getattr(profile, 'model', '') or '-'} models={overrides or '-'}"
+                    "（只作用于内心判断、事后记账、每日日记、关系小传）"
+                )
 
     async def _mood_tick_loop(self) -> None:
         """心情维护：每 10 分钟增量导入关系事件、清理过期情绪事件、刷新快照（在线程里跑，不占事件循环）。"""
@@ -1015,10 +1055,14 @@ class StartupMixin:
         return self.task_supervisor.start(task_name, coro, owner=owner)
 
     def _llm_chain(self) -> list[str]:
-        """构建统一的 LLM provider 回退链：Tag LLM 在前，配置的回退渠道在后。
+        """标签模型一族的默认回退链：Tag LLM 在前，配置的回退渠道在后。
 
-        所有需要 LLM 的后台子系统共用同一条链，避免单渠道 503/402 让能力静默停产。
+        兼容旧调用保留；新代码按任务取客户端：``self.llm_routing.client(<任务 id>)``
+        （见 services/llm_routing.py，各任务可在「模型分工」里单独指定模型）。
         """
+        routing = getattr(self, "llm_routing", None)
+        if routing is not None:
+            return routing.family_chain("tag")
         return build_provider_chain(
             self.tag_llm_provider_id,
             getattr(self, "llm_fallback_provider_ids", ""),

@@ -4,13 +4,13 @@
  *
  * 判定顺序（先命中先用）：
  *   1. KEY_FEATURE     单键覆盖（章节里个别键更属于别的功能，如 Inject_Settings.facts_max → 书设与知识）
- *   2. 键前缀           hot:<前缀>.x 按 HOT_PREFIX_FEATURE；channel:/bot: → 回复与人格
+ *   2. 键前缀           hot:<前缀>.x 按 HOT_PREFIX_FEATURE；bot:<id>.model(s) → 模型分工；其余 channel:/bot: → 回复与人格
  *   3. SECTION_FEATURE schema 章节（_conf_schema.json 顶层键）；MetaThinking_BotN 统一按对话规则处理
  *   4. 兜底 other      未登记的新章节不会从页面上消失
  */
 import type { ConfigEntry } from '@/pages/config/config-catalog'
 
-export type FeatureId = 'reply' | 'mind' | 'recall' | 'learning' | 'lore' | 'index' | 'security' | 'maintenance' | 'other'
+export type FeatureId = 'models' | 'reply' | 'mind' | 'recall' | 'learning' | 'lore' | 'index' | 'security' | 'maintenance' | 'other'
 
 export interface FeatureGroup {
   id: FeatureId
@@ -25,6 +25,14 @@ export interface FeatureGroup {
 }
 
 export const FEATURE_GROUPS: FeatureGroup[] = [
+  {
+    id: 'models',
+    title: '模型分工',
+    description: '各后台大模型任务（标签、黑话、自省、事后记账、日记等）分别用哪个模型，当前实际生效的是哪条回退链。',
+    symptoms: ['换模型', '模型报错', '模型太贵', '余额不足', '402', '503', '记账没反应', '日记没写'],
+    links: [{ label: 'Bot 管理', to: '/bots' }],
+    defaultOpen: true,
+  },
   {
     id: 'reply',
     title: '回复与人格',
@@ -102,7 +110,9 @@ export const SECTION_FEATURE: Record<string, FeatureId> = {
   FewShot_Settings: 'reply',
   Jargon_Settings: 'reply',
   Channel_Settings: 'reply',
-  llm_fallback_provider_ids: 'reply',
+  Model_Routing_Settings: 'models',
+  tag_llm_provider_id: 'models',
+  llm_fallback_provider_ids: 'models',
   Lifecycle_Settings: 'mind',
   Social_Settings: 'mind',
   Affinity_Settings: 'mind',
@@ -113,7 +123,6 @@ export const SECTION_FEATURE: Record<string, FeatureId> = {
   Study_Settings: 'learning',
   Learning_Settings: 'learning',
   Message_Filter: 'learning',
-  tag_llm_provider_id: 'learning',
   BookLore_Settings: 'lore',
   embedding_provider_id: 'index',
   embedding_dimension: 'index',
@@ -130,6 +139,7 @@ export const SECTION_FEATURE: Record<string, FeatureId> = {
 }
 
 export const KEY_FEATURE: Record<string, FeatureId> = {
+  'MetaThinking_Settings.default_model': 'models',
   'Inject_Settings.facts_max': 'lore',
   'Storage_Settings.facts_decay_rate': 'lore',
   'Memory_Index_Settings.cold_recall_enabled': 'recall',
@@ -186,7 +196,16 @@ export const KEY_SYMPTOMS: Record<string, string[]> = {
   'WebUI_Settings.webui_host': ['局域网访问', '打不开控制台'],
   'WebUI_Settings.webui_password': ['密码'],
   'backup_max_count': ['备份', '磁盘满'],
+  'tag_llm_provider_id': ['换模型', '标签太少', '没有标签'],
+  'llm_fallback_provider_ids': ['模型报错', '余额不足', '503'],
+  'MetaThinking_Settings.default_model': ['换模型', '记账没反应', '日记没写'],
+  'Model_Routing_Settings.bookkeeping': ['记账没反应', '模型太贵'],
+  'Model_Routing_Settings.diary': ['日记没写'],
+  'Model_Routing_Settings.tag': ['标签太少', '标签不准', '模型太贵'],
 }
+
+/** Bot 的模型覆盖键：`bot:<db_id>.model` / `bot:<db_id>.models.<任务>` */
+export const BOT_MODEL_KEY = /^bot:[^.]+\.(model|models\.[^.]+)$/
 
 const GROUP_BY_ID = new Map(FEATURE_GROUPS.map((group) => [group.id, group]))
 
@@ -201,6 +220,7 @@ export function featureOf(key: string): FeatureId {
     const prefix = key.slice(4).split('.')[0]
     return HOT_PREFIX_FEATURE[prefix] ?? 'other'
   }
+  if (BOT_MODEL_KEY.test(key)) return 'models'
   if (key.startsWith('channel:') || key.startsWith('bot:')) return 'reply'
   const section = key.split('.')[0]
   if (/^MetaThinking_Bot\d+$/.test(section)) return 'reply'

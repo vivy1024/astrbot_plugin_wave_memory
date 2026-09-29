@@ -316,7 +316,10 @@ class PostReplyBookkeeper:
         if learning_enabled:
             prompt_factory = getattr(getattr(self.feedback_recorder, "__self__", None), "bookkeeping_prompt", None)
             prompt += prompt_factory() if callable(prompt_factory) else BOOKKEEPING_LEARNING_PROMPT
-        response = await self.llm.text_chat(
+        # 模型分工：路由客户端按这个 Bot 的模型覆盖选链（Bot Profile 的 model / models.bookkeeping）
+        for_bot = getattr(self.llm, "for_bot", None)
+        llm = for_bot(scope.bot_id) if callable(for_bot) else self.llm
+        response = await llm.text_chat(
             prompt=prompt,
             system_prompt=prepend_identity_safety_system_prompt(None, always=True),
             contexts=[],

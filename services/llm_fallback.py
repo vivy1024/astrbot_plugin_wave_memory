@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
+import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:  # 只用于标注宿主依赖面，运行时不导入
@@ -88,30 +91,174 @@ class LLMResponse:
         self.provider_id = provider_id
 
 
+_MAX_ERROR_TEXT = 300
+_MAX_MISSING_TRACKED = 8
+
+
+class LLMCallStats:
+    """单个任务的调用统计（本次启动以来，只在内存里）。
+
+    一次 ``text_chat`` 记一次调用：链上任一 provider 返回非空即成功；整条链都失败
+    （或链为空）记一次失败。链上某个 provider 报错但后面的顶上了，只计入
+    ``provider_errors``，不算失败。在 AstrBot 主循环与 9876 线程之间共享，用锁保护。
+    """
+
+    def __init__(self, task: str = "") -> None:
+        self.task = task
+        self._lock = threading.Lock()
+        self.calls = 0
+        self.succeeded = 0
+        self.failed = 0
+        self.provider_errors = 0
+        self.last_provider = ""
+        self.last_success_at: float | None = None
+        self.last_error = ""
+        self.last_error_provider = ""
+        self.last_error_at: float | None = None
+        self.missing: list[str] = []
+
+    def begin(self) -> None:
+        with self._lock:
+            self.calls += 1
+
+    def succeed(self, provider_id: str) -> None:
+        with self._lock:
+            self.succeeded += 1
+            self.last_provider = str(provider_id)
+            self.last_success_at = time.time()
+
+    def provider_error(self, provider_id: str, error: Any) -> None:
+        with self._lock:
+            self.provider_errors += 1
+            self.last_error = describe_provider_error(provider_id, error)[:_MAX_ERROR_TEXT]
+            self.last_error_provider = str(provider_id)
+            self.last_error_at = time.time()
+
+    def provider_missing(self, provider_id: str) -> None:
+        with self._lock:
+            if provider_id not in self.missing:
+                self.missing.append(str(provider_id))
+                del self.missing[:-_MAX_MISSING_TRACKED]
+
+    def fail(self, error: Any, *, from_provider: bool = False) -> None:
+        """整条链失败。``from_provider``：错误就是链上最后一个 provider 抛的，
+        :meth:`provider_error` 已记下带状态码的描述，这里不覆盖。"""
+        with self._lock:
+            self.failed += 1
+            if not from_provider:
+                self.last_error = (str(error or "") or type(error).__name__)[:_MAX_ERROR_TEXT]
+                self.last_error_provider = ""
+            self.last_error_at = time.time()
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "calls": self.calls,
+                "succeeded": self.succeeded,
+                "failed": self.failed,
+                "provider_errors": self.provider_errors,
+                "last_provider": self.last_provider,
+                "last_success_at": self.last_success_at,
+                "last_error": self.last_error,
+                "last_error_provider": self.last_error_provider,
+                "last_error_at": self.last_error_at,
+                "missing_providers": list(self.missing),
+            }
+
+
+ChainResolver = Callable[[Optional[str]], list[str]]
+
+
+def _clean_chain(provider_ids: Any) -> list[str]:
+    return [p for p in (provider_ids or []) if p]
+
+
 class LLMFallbackClient:
     """通过 AstrBot Provider 系统调用 LLM。
 
     支持 provider_id fallback 链：按顺序尝试，第一个成功即返回。
+
+    两种用法：
+    - 固定链：``provider_ids`` 在构造时给定，可用 :meth:`set_provider_ids` 原地替换；
+    - 路由链：传 ``chain_resolver(bot_id) -> list[str]``（由 ``services.llm_routing`` 提供），
+      每次调用都按当前模型分工解析，9876 保存模型配置后无需重建客户端。
+      :meth:`for_bot` 返回绑定某个 Bot 的客户端，用于允许按 Bot 覆盖模型的任务。
     """
 
     def __init__(self, context: HostContext, provider_ids: list[str] = None, *,
-                 log_prefix: str = "[WaveMemory]", **kwargs):
+                 log_prefix: str = "[WaveMemory]",
+                 chain_resolver: ChainResolver | None = None,
+                 stats: LLMCallStats | None = None,
+                 bot_id: str | None = None,
+                 **kwargs):
         self.context = context
-        self.provider_ids = [p for p in (provider_ids or []) if p]
+        self._provider_ids = _clean_chain(provider_ids)
+        self._chain_resolver = chain_resolver
+        self._bot_id = bot_id or None
+        self.stats = stats
         self.log_prefix = log_prefix
         self.last_provider_id = ""
+
+    @property
+    def provider_ids(self) -> list[str]:
+        """当前生效的回退链（路由客户端每次读取都按最新模型分工解析）。"""
+        if self._chain_resolver is not None:
+            try:
+                return _clean_chain(self._chain_resolver(self._bot_id))
+            except Exception as exc:  # 路由解析失败不能让调用崩溃，退回构造时的链
+                logger.warning("%s 模型分工解析失败，使用构造时的回退链: %s", self.log_prefix, exc)
+        return list(self._provider_ids)
+
+    @provider_ids.setter
+    def provider_ids(self, value: list[str]) -> None:
+        self.set_provider_ids(value)
+
+    def set_provider_ids(self, provider_ids: list[str]) -> None:
+        """原地替换为固定回退链（同时取消路由解析）。"""
+        self._provider_ids = _clean_chain(provider_ids)
+        self._chain_resolver = None
+
+    @property
+    def routed(self) -> bool:
+        return self._chain_resolver is not None
+
+    @property
+    def bot_id(self) -> str | None:
+        return self._bot_id
+
+    def for_bot(self, bot_id: str | None) -> "LLMFallbackClient":
+        """绑定 Bot 的客户端：只对路由客户端有意义，固定链客户端原样返回自己。"""
+        if self._chain_resolver is None or not bot_id or bot_id == self._bot_id:
+            return self
+        return LLMFallbackClient(
+            self.context,
+            self._provider_ids,
+            log_prefix=self.log_prefix,
+            chain_resolver=self._chain_resolver,
+            stats=self.stats,
+            bot_id=str(bot_id),
+        )
 
     async def text_chat(self, *, prompt: str, system_prompt: Optional[str] = None,
                         contexts: Optional[list] = None, **kwargs) -> LLMResponse:
         """通过 AstrBot provider 调用 LLM。"""
-        if not self.provider_ids:
-            raise RuntimeError(f"{self.log_prefix} No provider_ids configured")
+        chain = self.provider_ids
+        stats = self.stats
+        if stats is not None:
+            stats.begin()
+        if not chain:
+            error = RuntimeError(f"{self.log_prefix} No provider_ids configured")
+            if stats is not None:
+                stats.fail(error)
+            raise error
 
         last_error = None
-        for provider_id in self.provider_ids:
+        for provider_id in chain:
             try:
                 provider = self.context.get_provider_by_id(provider_id)
                 if not provider:
+                    if stats is not None:
+                        stats.provider_missing(provider_id)
                     continue
 
                 # 构建 prompt（AstrBot provider 的 text_chat 接口）
@@ -126,10 +273,14 @@ class LLMFallbackClient:
 
                 if response and response.completion_text:
                     self.last_provider_id = provider_id
+                    if stats is not None:
+                        stats.succeed(provider_id)
                     return LLMResponse(response.completion_text, provider_id=provider_id)
 
             except Exception as e:
                 last_error = e
+                if stats is not None:
+                    stats.provider_error(provider_id, e)
                 logger.warning(
                     "%s %s", self.log_prefix, describe_provider_error(provider_id, e)
                 )
@@ -137,8 +288,13 @@ class LLMFallbackClient:
 
         if last_error:
             logger.error(f"{self.log_prefix} LLM 调用失败: {last_error}")
+            if stats is not None:
+                stats.fail(last_error, from_provider=True)
             raise last_error
-        raise RuntimeError(f"{self.log_prefix} All providers failed")
+        error = RuntimeError(f"{self.log_prefix} All providers failed")
+        if stats is not None:
+            stats.fail(error)
+        raise error
 
 
 async def call_first_available_provider(
@@ -146,6 +302,7 @@ async def call_first_available_provider(
     provider_ids: list[str],
     *,
     log_prefix: str = "[WaveMemory]",
+    stats: LLMCallStats | None = None,
     **text_chat_kwargs: Any,
 ):
     """按链顺序调用 provider.text_chat，返回首个非空响应。
@@ -155,10 +312,16 @@ async def call_first_available_provider(
     （如记忆整合要求「只输出 JSON」）必须用这个函数。
 
     全链失败时抛出最后一个异常；链为空或全部 provider 不存在时抛 RuntimeError。
+    ``stats`` 可选，用于模型分工页展示调用/失败次数。
     """
+    if stats is not None:
+        stats.begin()
     chain = [p for p in (provider_ids or []) if p and str(p).strip()]
     if not chain:
-        raise RuntimeError(f"{log_prefix} No provider_ids configured")
+        error = RuntimeError(f"{log_prefix} No provider_ids configured")
+        if stats is not None:
+            stats.fail(error)
+        raise error
 
     last_error: Optional[BaseException] = None
     missing: list[str] = []
@@ -166,14 +329,20 @@ async def call_first_available_provider(
         provider = context.get_provider_by_id(provider_id) if context else None
         if not provider:
             missing.append(provider_id)
+            if stats is not None:
+                stats.provider_missing(provider_id)
             continue
         try:
             response = await provider.text_chat(**text_chat_kwargs)
         except Exception as exc:
             last_error = exc
+            if stats is not None:
+                stats.provider_error(provider_id, exc)
             logger.warning("%s %s", log_prefix, describe_provider_error(provider_id, exc))
             continue
         if response and getattr(response, "completion_text", ""):
+            if stats is not None:
+                stats.succeed(provider_id)
             return response
         logger.warning(
             "%s provider=%r returned empty completion; trying next",
@@ -182,10 +351,15 @@ async def call_first_available_provider(
         )
 
     if last_error is not None:
+        if stats is not None:
+            stats.fail(last_error, from_provider=True)
         raise last_error
-    raise RuntimeError(
+    error = RuntimeError(
         f"{log_prefix} No usable provider in chain {chain} (missing={missing})"
     )
+    if stats is not None:
+        stats.fail(error)
+    raise error
 
 
 # 辅助函数：从配置构建 provider_id 链

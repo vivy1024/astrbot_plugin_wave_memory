@@ -97,11 +97,15 @@ class TagExtractor:
     5. 已有 Tag 复用：注入高频 Tag 词表，LLM 优先复用
     """
 
-    def __init__(self, context, provider_id: str, max_tags: int = 10, batch_size: int = 5, blacklist: str = "", db=None, embedding_service=None, tag_index=None, provider_fallback_ids=None):
+    def __init__(self, context, provider_id: str, max_tags: int = 10, batch_size: int = 5, blacklist: str = "", db=None, embedding_service=None, tag_index=None, provider_fallback_ids=None, chain_resolver=None, llm_stats=None):
         self.context = context
-        self.provider_id = provider_id
+        self._provider_id = provider_id
         # 标签提取失败会静默退化成关键词兜底，回退链让单渠道故障不至于长期降级。
-        self.provider_ids = build_provider_chain(provider_id, provider_fallback_ids)
+        self._provider_ids = build_provider_chain(provider_id, provider_fallback_ids)
+        # 模型分工（services.llm_routing）：给了 chain_resolver 就每次按当前配置解析回退链，
+        # 9876 保存「模型分工 · 标签提取」后无需重建提取器。
+        self._chain_resolver = chain_resolver
+        self.llm_stats = llm_stats
         self.max_tags = max_tags
         self.batch_size = batch_size
         self.db = db
@@ -124,6 +128,33 @@ class TagExtractor:
         # Tag RAG（P3）：embedding 搜索已有 tag
         self.embedding_service = embedding_service
         self.tag_index = tag_index
+
+    @property
+    def provider_ids(self) -> list[str]:
+        """当前回退链：路由模式下每次按模型分工解析，否则为构造时的链。"""
+        if self._chain_resolver is not None:
+            try:
+                return [p for p in (self._chain_resolver(None) or []) if p]
+            except Exception as exc:
+                logger.warning(f"[WaveMemory] 标签提取模型分工解析失败，使用构造时的回退链: {exc}")
+        return list(self._provider_ids)
+
+    @provider_ids.setter
+    def provider_ids(self, value) -> None:
+        self._provider_ids = [p for p in (value or []) if p]
+        self._chain_resolver = None
+
+    @property
+    def provider_id(self) -> str:
+        """首选模型；导入字段映射校验只用它（不回退）。"""
+        if self._chain_resolver is not None:
+            chain = self.provider_ids
+            return chain[0] if chain else ""
+        return self._provider_id
+
+    @provider_id.setter
+    def provider_id(self, value) -> None:
+        self._provider_id = value
 
     def _build_reference_section(self, scope=None) -> str:
         """构建已有 Tag 参考词表，注入 prompt。
@@ -339,6 +370,7 @@ class TagExtractor:
                 self.context,
                 self.provider_ids,
                 log_prefix="[TagExtract]",
+                stats=self.llm_stats,
                 prompt=prompt,
                 system_prompt="你是一个记忆标注系统，只输出 JSON 数组，不输出其他内容。",
             )
@@ -407,6 +439,7 @@ class TagExtractor:
                 self.context,
                 self.provider_ids,
                 log_prefix="[TagExtract]",
+                stats=self.llm_stats,
                 prompt=prompt,
                 system_prompt="你是一个记忆标注系统，只输出严格 JSON 对象，不输出 markdown 或解释。",
             )

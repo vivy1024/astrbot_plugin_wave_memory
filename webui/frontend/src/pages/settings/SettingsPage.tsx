@@ -86,6 +86,9 @@ function errorMessage(error: unknown, fallback: string): string {
 
 const SETTINGS_TABS = ['static', 'hot', 'restart', 'advanced'] as const
 
+/** Provider 下拉里「留空」的占位值（Radix Select 不接受空字符串作为选项值）。 */
+const PROVIDER_EMPTY = '__wm_provider_empty__'
+
 export function SettingsPage() {
   const [searchParams] = useSearchParams()
   const focusKey = searchParams.get('key') ?? ''
@@ -302,7 +305,7 @@ export function SettingsPage() {
     }
   }
 
-  function providerEditor(value: unknown, setValue: (next: unknown) => void) {
+  function providerEditor(value: unknown, setValue: (next: unknown) => void, emptyLabel?: string, label?: string) {
     if (providersLoading) return <Input aria-label="Provider 选项状态" disabled value="正在加载 Provider 选项…" />
     if (providersError) {
       return (
@@ -320,10 +323,17 @@ export function SettingsPage() {
     const options = providers.some((provider) => provider.id === currentValue) || !currentValue
       ? providers
       : [{ id: currentValue, name: currentValue, model: '当前已配置，未出现在选项列表' }, ...providers]
+    // 默认值为空的项（如模型分工）可以选回「留空」：留空 = 跟随所属默认。
     return (
-      <Select value={currentValue} onValueChange={setValue}>
-        <SelectTrigger><SelectValue placeholder="请选择 Provider" /></SelectTrigger>
-        <SelectContent>{options.map((provider) => <SelectItem key={provider.id} value={provider.id}>{provider.id} ({provider.model})</SelectItem>)}</SelectContent>
+      <Select
+        value={currentValue || (emptyLabel ? PROVIDER_EMPTY : '')}
+        onValueChange={(next) => setValue(next === PROVIDER_EMPTY ? '' : next)}
+      >
+        <SelectTrigger aria-label={label ? `修改 ${label}` : undefined}><SelectValue placeholder="请选择 Provider" /></SelectTrigger>
+        <SelectContent>
+          {emptyLabel ? <SelectItem value={PROVIDER_EMPTY}>{emptyLabel}</SelectItem> : null}
+          {options.map((provider) => <SelectItem key={provider.id} value={provider.id}>{provider.id} ({provider.model})</SelectItem>)}
+        </SelectContent>
       </Select>
     )
   }
@@ -335,7 +345,11 @@ export function SettingsPage() {
     const key = item ? `${group.key}.${item.key}` : group.key
     const setValue = (next: unknown) => item ? updateItem(group.key, item.key, next) : updateScalar(group.key, next)
     if (type === 'bool') return <Switch checked={value === true} onCheckedChange={setValue} aria-label={`修改 ${item?.description ?? group.description}`} />
-    if (special === 'select_provider') return providerEditor(value, setValue)
+    if (special === 'select_provider') {
+      const emptyAllowed = (item ?? group).default === ''
+      const emptyLabel = !emptyAllowed ? undefined : group.key === 'Model_Routing_Settings' ? '留空：跟随所属默认' : '留空：不指定'
+      return providerEditor(value, setValue, emptyLabel, item?.description ?? group.description)
+    }
     if (type === 'int' || type === 'float') {
       const meta = item ?? group
       const error = schemaErrors[key]

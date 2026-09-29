@@ -38,22 +38,29 @@ AUDIT_PROMPT = """你是一个知识图谱质量审计员。以下是一批标�
 class TagAuditor:
     """LLM 驱动的 Tag 质量审计。"""
 
-    def __init__(self, db, context=None, provider_id: str = ""):
+    def __init__(self, db, context=None, provider_id: str = "", *, provider_ids=None, llm_stats=None):
         self.db = db
         self.context = context
-        self.provider_id = provider_id
+        # 回退链（模型分工 tag_audit）；只给 provider_id 时与旧实现一样只用这一个。
+        chain = [p for p in (provider_ids or []) if p and str(p).strip()]
+        if not chain and provider_id:
+            chain = [provider_id]
+        self.provider_ids = chain
+        self.provider_id = chain[0] if chain else provider_id
+        self.llm_stats = llm_stats
 
-    def _resolve_provider(self):
+    def _resolve_provider(self, provider_id: str | None = None):
         """获取 LLM provider。
 
         WebUI 跑在独立线程的独立事件循环里，context.get_provider_by_id() 在
         非主循环线程可能返回 None；而 get_all_providers() 跨线程可用。
         故先 get_provider_by_id，失败再遍历 get_all_providers 按 meta.id 匹配。
         """
+        provider_id = self.provider_id if provider_id is None else provider_id
         if not self.context:
             return None
         try:
-            prov = self.context.get_provider_by_id(self.provider_id)
+            prov = self.context.get_provider_by_id(provider_id)
             if prov:
                 return prov
         except Exception:
@@ -61,7 +68,7 @@ class TagAuditor:
         try:
             for p in self.context.get_all_providers():
                 try:
-                    if p.meta().id == self.provider_id:
+                    if p.meta().id == provider_id:
                         return p
                 except Exception:
                     continue
@@ -70,13 +77,12 @@ class TagAuditor:
         return None
 
     async def audit_batch(self, tags: list[dict]) -> list[dict]:
-        """对一批 tag 调 LLM 做质量审计，返回建议列表。"""
-        if not self.provider_id or not self.context:
-            return []
+        """对一批 tag 调 LLM 做质量审计，返回建议列表。
 
-        provider = self._resolve_provider()
-        if not provider:
-            logger.warning(f"[WaveMemory] Audit: provider '{self.provider_id}' not found")
+        按回退链依次尝试：provider 找不到或返回空时换下一个；报错时换下一个，
+        整条链都报错则抛出最后一个错误（由 run_audit 记日志并跳过这一批）。
+        """
+        if not self.provider_ids or not self.context:
             return []
 
         # 构建 tag 列表 JSON
@@ -88,15 +94,39 @@ class TagAuditor:
 
         prompt = AUDIT_PROMPT.replace("{tags_json}", tags_json)
 
-        response = await provider.text_chat(
-            prompt=prompt,
-            system_prompt="你是知识图谱质量审计系统，只输出 JSON 数组。",
-        )
+        stats = self.llm_stats
+        if stats is not None:
+            stats.begin()
+        last_error = None
+        for provider_id in self.provider_ids:
+            provider = self._resolve_provider(provider_id)
+            if not provider:
+                logger.warning(f"[WaveMemory] Audit: provider '{provider_id}' not found")
+                if stats is not None:
+                    stats.provider_missing(provider_id)
+                continue
+            try:
+                response = await provider.text_chat(
+                    prompt=prompt,
+                    system_prompt="你是知识图谱质量审计系统，只输出 JSON 数组。",
+                )
+            except Exception as exc:
+                last_error = exc
+                if stats is not None:
+                    stats.provider_error(provider_id, exc)
+                continue
+            if response and response.completion_text:
+                if stats is not None:
+                    stats.succeed(provider_id)
+                return self._parse_suggestions(response.completion_text)
 
-        if not response or not response.completion_text:
-            return []
-
-        return self._parse_suggestions(response.completion_text)
+        if last_error is not None:
+            if stats is not None:
+                stats.fail(last_error, from_provider=True)
+            raise last_error
+        if stats is not None:
+            stats.fail(RuntimeError("audit_no_usable_provider"))
+        return []
 
     async def run_audit(
         self,

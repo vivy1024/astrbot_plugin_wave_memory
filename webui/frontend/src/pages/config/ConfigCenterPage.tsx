@@ -24,6 +24,7 @@ import {
 } from '@/pages/config/config-catalog'
 import { legacyBotIdsFrom, locateConfig, locationHref, type ConfigLocation } from '@/pages/config/config-location'
 import { groupByFeature, searchConfig, type FeatureBucket } from '@/pages/config/feature-groups'
+import { ModelRoutingPanel } from '@/pages/config/ModelRoutingPanel'
 import { RISK_KEYS, assessRisks, type RiskAssessment, type RiskStatus } from '@/pages/config/risk'
 import { ConfigInventoryPage } from '@/pages/settings/ConfigInventoryPage'
 import { SettingsPage } from '@/pages/settings/SettingsPage'
@@ -141,6 +142,8 @@ function FeatureSection({ bucket, open, onOpenChange, locateOf, onLocate }: {
               ))}
             </div>
           ) : null}
+          {/* 模型分工：配置项之外再展示每个任务当前实际生效的回退链与调用统计 */}
+          {group.id === 'models' ? <ModelRoutingPanel onLocate={onLocate} /> : null}
           {entries.length ? entries.map((entry) => (
             <EntryRow key={entry.key} entry={entry} location={locateOf(entry)} onLocate={onLocate} risky={RISK_KEYS.has(entry.key)} />
           )) : <p className="py-2 text-xs text-muted-foreground">这一组没有与默认值不同的配置项。</p>}
@@ -180,7 +183,7 @@ function FeatureView({ entries, locateOf, onLocate, onOpenChannels }: {
       {channelChanged || botOverrides ? (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
           <span>
-            注入通道有 {channelChanged} 项与默认值不同{botOverrides ? `，另有 ${botOverrides} 项 Bot 级通道覆盖` : ''}；通道逐项设置不在下面的分组里，见通道配置或配置来源。
+            注入通道有 {channelChanged} 项与默认值不同{botOverrides ? `，另有 ${botOverrides} 项 Bot 级覆盖（通道 / 模型）` : ''}；这些逐项设置不在下面的分组里，见通道配置、Bot 管理或配置来源。
           </span>
           <Button type="button" size="sm" variant="outline" onClick={onOpenChannels}>去通道配置</Button>
         </div>
