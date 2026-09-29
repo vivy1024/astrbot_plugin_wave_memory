@@ -47,6 +47,7 @@ from .db.bot_jargon_repo import BotJargonRepository
 from .db.scoped_knowledge_repo import ScopedKnowledgeRepo
 from .db.scoped_learning_projection_repo import ScopedFewShotRepository
 from .db.person_timeline_repo import PersonTimelineRepo
+from .db.relationship_portrait_repo import RelationshipPortraitRepo
 from .db.person_identity_repo import PersonIdentityRepo
 from .db.bot_profile_repo import BotProfileRepo
 from .db.bot_mood_repo import BotMoodRepository
@@ -121,6 +122,8 @@ class WaveMemoryDB:
                 soul_context_provider=self._soul_context_provider,
             )
             self._person_timeline = PersonTimelineRepo(self._cm)
+            # 关系小传：Bot 为每个人写的一段小传与历史版本（纯增量建表）
+            self._relationship_portraits = RelationshipPortraitRepo(self._cm)
             self._person_identity = PersonIdentityRepo(self._cm)
             self._bot_profiles = BotProfileRepo(self._cm)
             # 心情 v2：一个 Bot 一份心情（bot_mood_state / bot_mood_events，纯增量建表）
@@ -162,6 +165,11 @@ class WaveMemoryDB:
     @property
     def person_timeline(self) -> PersonTimelineRepo:
         return self._person_timeline
+
+    @property
+    def relationship_portraits(self) -> RelationshipPortraitRepo:
+        """关系小传仓储：按 Bot + 人物保存小传正文、版本、依据范围与状态。"""
+        return self._relationship_portraits
 
     @property
     def person_identity(self) -> PersonIdentityRepo:

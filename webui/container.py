@@ -80,6 +80,8 @@ class ServiceContainer:
         self.expression_policy: Any = None
         self.reply_feedback_service: Any = None
         self.reply_decision: Any = None
+        # 关系小传（services.relationship_portrait.RelationshipPortraitService）；没有可用模型时为 None。
+        self.relationship_portrait: Any = None
         # 书设工作台（services.book_lore_workbench.BookLoreWorkbench）；书设没加载时为 None。
         self.book_lore_workbench: Any = None
 

@@ -82,9 +82,10 @@ def describe_provider_error(provider_id: str, error: Any) -> str:
 
 
 class LLMResponse:
-    """简单的 LLM 响应包装"""
-    def __init__(self, text: str):
+    """简单的 LLM 响应包装；provider_id 是实际答出这次的渠道（便于记录「所用模型」）。"""
+    def __init__(self, text: str, provider_id: str = ""):
         self.completion_text = text
+        self.provider_id = provider_id
 
 
 class LLMFallbackClient:
@@ -98,6 +99,7 @@ class LLMFallbackClient:
         self.context = context
         self.provider_ids = [p for p in (provider_ids or []) if p]
         self.log_prefix = log_prefix
+        self.last_provider_id = ""
 
     async def text_chat(self, *, prompt: str, system_prompt: Optional[str] = None,
                         contexts: Optional[list] = None, **kwargs) -> LLMResponse:
@@ -123,7 +125,8 @@ class LLMFallbackClient:
                 )
 
                 if response and response.completion_text:
-                    return LLMResponse(response.completion_text)
+                    self.last_provider_id = provider_id
+                    return LLMResponse(response.completion_text, provider_id=provider_id)
 
             except Exception as e:
                 last_error = e
