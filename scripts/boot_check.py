@@ -179,6 +179,8 @@ def register(tools, channel_registry=None, **_):
 
 
 async def _check_extension_reload(plugin, ctx, loop, scope):
+    from astrbot_plugin_wave_memory.services.config.channel_config import KNOWN_CHANNELS
+
     ext_dir = os.path.join(plugin.data_dir, "extensions")
     os.makedirs(ext_dir, exist_ok=True)
     for version in ("v1", "v2"):
@@ -191,7 +193,7 @@ async def _check_extension_reload(plugin, ctx, loop, scope):
         check(
             f"extension reload {version}",
             result.get("ok") and called.get("result") == version and len(host_copies) == 1
-            and names.count("boot_ext_channel") == 1 and len(names) == 13,
+            and names.count("boot_ext_channel") == 1 and len(names) == len(KNOWN_CHANNELS) + 1,
             f"{result.get('tools')} {result.get('channels')} -> {called.get('result')}",
         )
 
@@ -282,7 +284,10 @@ async def run():
         from astrbot_plugin_wave_memory.domain.host_ports import HostTool
         not_tools = [getattr(t, "name", t) for t in ctx.tools if not isinstance(t, HostTool)]
         check("tools satisfy HostTool", not not_tools, str(not_tools) if not_tools else "")
-        check("channels built", len(plugin.injection_shadow_channels) == 12)
+        from astrbot_plugin_wave_memory.services.config.channel_config import KNOWN_CHANNELS
+        built = len(plugin.injection_shadow_channels)
+        # 期望数量取自通道清单，新增通道不用再改这里
+        check("channels built", built == len(KNOWN_CHANNELS), f"{built}/{len(KNOWN_CHANNELS)}")
         check("services registered", len(plugin.service_registry.status()) >= 5)
         plugin.bot_registry.save(BotProfile.from_dict({"db_id": "bot_c", "name": "丙", "qq_id": "30003"}), expected_version=0)
         event = SimpleNamespace(
