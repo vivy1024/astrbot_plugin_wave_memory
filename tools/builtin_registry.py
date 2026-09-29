@@ -49,7 +49,6 @@ def _agent_feedback_tools() -> list[ToolSpec]:
 
 
 def _social_tools() -> list[ToolSpec]:
-    from .belief_proposal import WaveMemoryProposeBeliefTool
     from .concern import WaveMemoryNoteConcernTool
     from .cultural_moment import WaveMemoryMarkCulturalMomentTool
     from .diary_episode import WaveMemoryRecordDiaryEpisodeTool
@@ -94,7 +93,7 @@ def _social_tools() -> list[ToolSpec]:
             writes=True,
             **common,
         ),
-        ToolSpec("wave_memory_propose_belief", lambda d: WaveMemoryProposeBeliefTool(db=d.db), writes=True, **common),
+        # wave_memory_propose_belief 已退役：信念只来自每日日记之后的反思（services/belief_reflection.py）。
         ToolSpec(
             "wave_memory_note_episode",
             lambda d: WaveMemoryNoteEpisodeTool(db=d.db, writer=d.writer, write_gateway=d.write_gateway),

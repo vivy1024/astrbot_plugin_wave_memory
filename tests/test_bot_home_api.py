@@ -278,7 +278,7 @@ def test_missing_tables_only_degrade_their_section(tmp_path):
     assert payload["relationships"]["items"] == []
     assert payload["learned"]["experiences"]["status"] == "unavailable"
     assert payload["replies"] == {"status": "unavailable", "reason_code": "trace_store_missing"}
-    assert set(payload["meta"]["section_ms"]) == {"memories", "soul", "relationships", "learned", "replies"}
+    assert set(payload["meta"]["section_ms"]) == {"memories", "soul", "relationships", "learned", "beliefs", "replies"}
 
 
 def test_section_failure_is_isolated(seeded):

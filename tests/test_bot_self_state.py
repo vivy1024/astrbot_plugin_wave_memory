@@ -2,7 +2,7 @@
 
 - 心情只有一个（心情 v2，services/bot_mood.py）：任何场合发生的事都作用在同一份心情上；
 - 私聊里发生的具体内容（心情原因、关切、经历）只在同一私聊中可见；
-- 信念是 Bot 自己的：在别的群形成的信念处处可用，依据在形成它的群里校验；
+- 信念是 Bot 自己的：在别的群的经历里形成的看法，话题相关时在各处都可以浮现；
 - Soul 表迁移只放宽 visibility 约束，不改动任何已有数据。
 """
 
@@ -94,22 +94,25 @@ def test_self_timeline_follows_the_bot_but_private_entries_stay_private(tmp_path
 
 
 def test_beliefs_formed_in_one_group_are_the_bots_everywhere(tmp_path):
+    """看法属于 Bot 本人：在别的群的经历里形成的看法，在其他群和私聊里话题相关时同样浮现。"""
+    from engine.db.bot_belief_repo import BeliefWrite
+
     db = WaveMemoryDB(str(tmp_path / "beliefs.sqlite"), dimension=3)
     try:
-        origin = _group("g2")
-        f1 = db.upsert_scoped_fact(origin, subject="羽书", predicate="喜欢", object="下雨天", confidence=0.9, status="approved")
-        f2 = db.upsert_scoped_fact(origin, subject="羽书", predicate="常在", object="雨天写诗", confidence=0.9, status="approved")
-        db.scoped_knowledge.upsert_scoped_belief(
-            origin, belief_key="self:rain", content="我是个喜欢雨天的人", belief_type="self_identity",
-            strength=0.8, status="active", provenance={"source_fact_ids": [f1, f2]},
-        )
-        engine = BeliefEngine(db, llm_client=None, bot_id="bot-a")
+        now = 1_790_000_000.0
+        db.bot_beliefs.apply("bot-a", [BeliefWrite(None, {
+            "content": "下雨天大家聊得更久，我也更想写点东西", "category": "world", "status": "formed",
+            "triggers": ["下雨", "雨天"], "support_dates": ["2026-09-21", "2026-09-24"],
+            "session_ids": ["qq:group:g2"], "confirm_runs": 2, "last_confirmed_at": now,
+        })], now=now)
+        engine = BeliefEngine(db, bot_id="bot-a", clock=lambda: now)
 
         for scope in (_group("g1"), _private("u1")):
-            details = engine.get_injection_details(scope)
-            assert "我是个喜欢雨天的人" in details["text"]
-        other_bot = BeliefEngine(db, llm_client=None, bot_id="bot-b")
-        assert "喜欢雨天" not in other_bot.get_injection_details(_group("g1", bot_id="bot-b"))["text"]
+            details = engine.get_injection_details(scope, message="今天又下雨了")
+            assert "下雨天大家聊得更久" in details["text"]
+        assert engine.get_injection_details(_group("g1"), message="晚饭吃什么")["text"] == "", "话题无关不浮现"
+        other_bot = BeliefEngine(db, bot_id="bot-b", clock=lambda: now)
+        assert other_bot.get_injection_details(_group("g1", bot_id="bot-b"), message="今天又下雨了")["text"] == ""
     finally:
         db.close()
 

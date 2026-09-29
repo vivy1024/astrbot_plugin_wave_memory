@@ -358,7 +358,9 @@ def _project_simple_scoped_layers(graph: GraphProjection, conn: Any) -> None:
             for row in _rows(conn, """SELECT id, belief_key, content, belief_type, strength, status,
                                           source_memory_id, provenance, created_at, updated_at
                                      FROM scoped_beliefs WHERE bot_id=? AND session_id=? AND visibility=?
+                                      AND status != 'legacy_archived'
                                      ORDER BY strength DESC, updated_at DESC LIMIT 500""", params):
+                # 旧版信念已只读归档（不注入），图谱里不再画成「持有信念」；归档内容在看法页只读可见
                 node = graph.node(
                     f"belief:{row['id']}", row.get("content") or row.get("belief_key"), "belief", "beliefs",
                     belief_id=row["id"], belief_key=row.get("belief_key"), content=_clip(row.get("content")),

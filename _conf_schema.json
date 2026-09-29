@@ -915,10 +915,10 @@
         "hint": "JSON 对象，可设 score_threshold、reply_window_seconds、max_recent_replies、backoff_base_seconds、backoff_max_seconds，以及 bots/groups 覆盖；群使用完整会话 ID。修改后重启插件生效。"
       },
       "auto_approve_enabled": {
-        "description": "自动审核事实 / 信念 / 黑话",
+        "description": "自动审核事实 / 黑话",
         "type": "bool",
         "default": false,
-        "hint": "开启后：带原话与来源记忆的事实、引用已批准事实的信念、在群里被多人多次使用的黑话直接生效，不再等人工审核。关闭时全部进待审。"
+        "hint": "开启后：带原话与来源记忆的事实、在群里被多人多次使用的黑话直接生效，不再等人工审核。关闭时全部进待审。信念不走审核：由每日日记之后的反思形成（见 belief_reflection_enabled），管理台可一键否决。"
       },
       "jargon_auto_min_memories": {
         "description": "黑话自动生效：最少出现条数",
@@ -966,7 +966,7 @@
         "description": "事后记账",
         "type": "bool",
         "default": true,
-        "hint": "羽书在群里说完话、对话停下来之后，回看这段对话，交给正式工具记下印象与好感结算、事实、黑话、人情、关切与信念。"
+        "hint": "羽书在群里说完话、对话停下来之后，回看这段对话，交给正式工具记下印象与好感结算、事实、黑话、人情与关切。信念不在这里归纳，只来自每日日记之后的反思。"
       },
       "bookkeeping_delay_seconds": {
         "description": "对话停下多久后记账（秒）",
@@ -993,6 +993,41 @@
         "description": "几点之后写日记（0-23）",
         "type": "int",
         "default": 23
+      },
+      "belief_reflection_enabled": {
+        "description": "信念反思（从经历里形成看法）",
+        "type": "bool",
+        "default": false,
+        "restart_required": true,
+        "hint": "默认关闭（会新增模型调用）。开启后，每日日记写完一轮时，每个 Bot 各自回想自上次反思以来各群的日记（不读私聊）与回复反馈，形成、印证或放下自己的看法（关于自己、某个群、事物或世界），看法只属于这个 Bot。点名群友、身份污染、与否决过的看法相似的不会保存。依赖每日日记；修改后重启插件生效。"
+      },
+      "belief_reflection_every_n_days": {
+        "description": "每几天反思一次",
+        "type": "int",
+        "default": 1,
+        "restart_required": true,
+        "hint": "1 表示每天日记写完后反思一次；3 表示距上次反思满 3 天才反思，期间的日记一篇不漏地留到那次。留空按 1。"
+      },
+      "belief_form_min_days": {
+        "description": "看法形成所需的不同日子数",
+        "type": "int",
+        "default": 2,
+        "restart_required": true,
+        "hint": "萌芽的看法要在至少这么多个不同日子的经历里得到支持、并被后来的反思再次印证，才算形成并可以在相关话题里浮现；翻倍后持续印证为稳固。留空按 2。"
+      },
+      "belief_decay_days": {
+        "description": "多少天不再被印证就变弱",
+        "type": "int",
+        "default": 30,
+        "restart_required": true,
+        "hint": "看法每隔这么多天没被新的经历印证就降一级：稳固→形成→动摇→淡出，萌芽直接淡出。留空按 30。"
+      },
+      "belief_max_active": {
+        "description": "每个 Bot 同时有效的看法上限",
+        "type": "int",
+        "default": 20,
+        "restart_required": true,
+        "hint": "已形成、稳固、动摇中的看法合计超过上限时，最弱的淡出（萌芽另按同一上限，最早的先淡出）。留空按 20。"
       }
     }
   },

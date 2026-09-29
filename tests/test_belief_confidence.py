@@ -1,4 +1,4 @@
-"""Evidence-v1 confidence and scoped Belief observation regression tests."""
+"""Evidence-v1 置信度计算（旧版 scoped 信念的候选合并仍在用；信念 v2 的生命周期见 test_belief_v2_lifecycle）。"""
 
 from __future__ import annotations
 
@@ -14,99 +14,12 @@ if "astrbot.api" not in sys.modules:
     sys.modules["astrbot"] = astrbot
     sys.modules["astrbot.api"] = api
 
-from domain.scope import RuntimeScope, SessionRef
-from engine.database import WaveMemoryDB
 from services.belief_confidence import (
     ACTIVATION_MIN_CONFIDENCE,
     ACTIVATION_MIN_SUPPORT_WINDOWS,
     POLICY_VERSION,
     calculate_confidence,
 )
-from services.belief_engine import BeliefEngine
-from services.belief_lifecycle import BeliefLifecycleService
-
-
-def _scope(bot_id: str = "bot-alpha", group_id: str = "group-1") -> RuntimeScope:
-    return RuntimeScope(
-        bot_id=bot_id,
-        visibility="group",
-        session=SessionRef(f"qq:group:{group_id}", "qq", "group", group_id),
-    )
-
-
-def _add_message(db: WaveMemoryDB, scope: RuntimeScope, *, content: str, sender_id: str, timestamp: float) -> int:
-    return db.add_memory(
-        scope.session.conversation_id,
-        content,
-        sender_id=sender_id,
-        sender_name=sender_id,
-        timestamp=timestamp,
-        scope=scope,
-    )
-
-
-def _tag(db: WaveMemoryDB, scope: RuntimeScope, memory_id: int) -> None:
-    tag_id = db.upsert_scoped_tag(scope, name=f"证据-{memory_id}")
-    db.link_scoped_memory_tag(scope, memory_id=memory_id, tag_id=tag_id)
-
-
-def _attach_approved_facts(db: WaveMemoryDB, scope: RuntimeScope, belief_id: int, memory_ids: list[int]) -> list[int]:
-    fact_ids: list[int] = []
-    for index, memory_id in enumerate(list(memory_ids)[:2]):
-        fact_ids.append(db.scoped_knowledge.upsert_scoped_fact(
-            scope,
-            subject="核实",
-            predicate=f"边界{index}",
-            object="事实",
-            status="approved",
-            source_memory_id=memory_id,
-        ))
-    if len(fact_ids) == 1:
-        fact_ids.append(db.scoped_knowledge.upsert_scoped_fact(
-            scope,
-            subject="核实",
-            predicate="复证",
-            object="事实",
-            status="approved",
-            source_memory_id=memory_ids[0],
-        ))
-    row = db.get_scoped_belief(scope, belief_id)
-    provenance = dict(row.get("provenance") or {})
-    provenance["source_fact_ids"] = fact_ids
-    db.upsert_scoped_belief(
-        scope,
-        belief_key=row["belief_key"],
-        content=row["content"],
-        belief_type=row["belief_type"],
-        strength=float(row.get("strength") or 0.0),
-        status=row["status"],
-        source_memory_id=row.get("source_memory_id"),
-        provenance=provenance,
-    )
-    return fact_ids
-
-
-def _record_window(
-    db: WaveMemoryDB,
-    scope: RuntimeScope,
-    belief_id: int,
-    memory_id: int,
-    *,
-    polarity: str = "support",
-    sender_id: str = "u1",
-    timestamp: float,
-) -> None:
-    db.record_scoped_belief_observation(
-        scope,
-        belief_id=belief_id,
-        window_key=f"window-{memory_id}",
-        polarity=polarity,
-        memory_ids=[memory_id],
-        participants=[sender_id],
-        window_started_at=timestamp,
-        window_ended_at=timestamp,
-        observed_at=timestamp,
-    )
 
 
 def test_confidence_uses_independent_windows_and_challenge_evidence():
@@ -144,97 +57,3 @@ def test_confidence_uses_independent_windows_and_challenge_evidence():
     assert challenged["components"]["confidence"] < two["components"]["confidence"]
 
 
-def test_belief_engine_persists_idempotent_evidence_observations_and_gates_activation(tmp_path):
-    db = WaveMemoryDB(str(tmp_path / "wave-memory.sqlite3"), dimension=4)
-    try:
-        scope = _scope()
-        first_id = _add_message(
-            db, scope, content="我会先核实事实，再认真回应边界问题。", sender_id="u1", timestamp=1_000.0,
-        )
-        second_id = _add_message(
-            db, scope, content="隔天我依旧先查清情况，不把别人当成工具。", sender_id="u2", timestamp=1_000.0 + 86_400,
-        )
-        challenge_id = _add_message(
-            db, scope, content="这次我没有核实就下了结论，后来发现自己错了。", sender_id="u3", timestamp=1_000.0 + 172_800,
-        )
-        for memory_id in (first_id, second_id, challenge_id):
-            _tag(db, scope, memory_id)
-
-        content = "我会先核实事实再设定边界"
-        engine = BeliefEngine(db, None, bot_id=scope.bot_id)
-        belief_id = db.upsert_scoped_belief(
-            scope,
-            belief_key="self_identity:verify-first",
-            content=content,
-            belief_type="self_identity",
-            strength=0.0,
-            status="pending",
-            source_memory_id=first_id,
-            provenance={"anchor_sentence": "我会先核实事实"},
-        )
-        _record_window(db, scope, belief_id, first_id, sender_id="u1", timestamp=1_000.0)
-        refreshed = engine.refresh_evidence_after_tags(scope, belief_id)
-        assert refreshed["status"] == "pending"
-        belief = db.get_scoped_belief(scope, belief_id)
-        assert belief["status"] == "pending"
-        assert belief["provenance"]["confidence_policy_version"] == POLICY_VERSION
-        assert belief["provenance"]["confidence_evidence"]["support_windows"] == 1
-        assert belief["strength"] < ACTIVATION_MIN_CONFIDENCE
-        with __import__("pytest").raises(ValueError, match="belief_facts_required"):
-            BeliefLifecycleService(db.scoped_knowledge).transition(scope, belief["id"], "approve")
-
-        _record_window(db, scope, belief_id, second_id, sender_id="u2", timestamp=1_000.0 + 86_400)
-        engine.refresh_evidence_after_tags(scope, belief_id)
-        belief = db.get_scoped_belief(scope, belief_id)
-        observations = db.list_scoped_belief_observations(scope, belief_id=belief["id"])
-        assert len(observations) == 2
-        assert belief["provenance"]["confidence_evidence"]["support_windows"] == 2
-        assert belief["provenance"]["activation_eligible"]
-        assert belief["strength"] >= ACTIVATION_MIN_CONFIDENCE
-
-        stable_strength = belief["strength"]
-        _record_window(db, scope, belief_id, second_id, sender_id="u2", timestamp=1_000.0 + 86_400)
-        engine.refresh_evidence_after_tags(scope, belief_id)
-        belief = db.get_scoped_belief(scope, belief_id)
-        assert len(db.list_scoped_belief_observations(scope, belief_id=belief["id"])) == 2
-        assert belief["strength"] == stable_strength
-
-        target_id = belief["id"]
-        _attach_approved_facts(db, scope, target_id, [first_id, second_id])
-        approved = BeliefLifecycleService(db.scoped_knowledge).transition(scope, target_id, "approve")
-        assert approved["status"] == "active"
-        assert content in engine.get_injection(scope)
-
-        candidate_id = db.upsert_scoped_belief(
-            scope,
-            belief_key="self_identity:challenge-misjudge",
-            content="我有时会因未核实而误判",
-            belief_type="self_identity",
-            strength=0.0,
-            status="pending",
-            source_memory_id=challenge_id,
-            provenance={
-                "anchor_sentence": "没有核实就下了结论",
-                "gating": {"reason_code": "relationship_unknown"},
-                "candidate": {"relation": "challenge", "target_belief_id": target_id},
-            },
-        )
-        _record_window(
-            db, scope, candidate_id, challenge_id,
-            polarity="challenge", sender_id="u3", timestamp=1_000.0 + 172_800,
-        )
-        engine.refresh_evidence_after_tags(scope, candidate_id)
-        target_after = db.get_scoped_belief(scope, target_id)
-        assert target_after["status"] == "active"
-        assert target_after["provenance"]["confidence_evidence"]["challenge_windows"] == 0
-        candidates = [
-            row for row in db.list_scoped_beliefs(scope)
-            if isinstance(row.get("provenance"), dict)
-            and isinstance(row["provenance"].get("candidate"), dict)
-            and row["provenance"]["candidate"].get("relation") == "challenge"
-        ]
-        assert len(candidates) == 1
-        assert candidates[0]["status"] == "pending"
-        assert candidates[0]["provenance"]["gating"]["reason_code"] == "relationship_unknown"
-    finally:
-        db.close()

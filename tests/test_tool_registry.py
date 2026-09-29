@@ -135,7 +135,9 @@ def test_builtin_specs_build_all_tools_with_unique_names():
     built = registry.build(deps, capability_enabled=lambda capability, default: True)
     names = [record.name for record in registry.records()]
     assert registry.status()["build_errors"] == {}
-    assert len(built) == len(names) == len(set(names)) == 18
+    # wave_memory_propose_belief 已退役（信念只来自反思），内置工具 17 个
+    assert len(built) == len(names) == len(set(names)) == 17
+    assert "wave_memory_propose_belief" not in names
     assert "wave_memory_record_social_impression" in names
     assert "wave_memory_search" in names
 

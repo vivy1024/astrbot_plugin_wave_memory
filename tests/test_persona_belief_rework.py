@@ -209,45 +209,6 @@ class PersonaBeliefReworkTest(unittest.TestCase):
         ))
         self.assertIn("认真解释剑阵", elsewhere["experience_block"])
 
-    def test_belief_engine_requires_group_scope_and_reads_only_scoped_active_beliefs(self):
-        from domain.scope import RuntimeScope, SessionRef
-        from services.belief_engine import BeliefEngine
-
-        db = _ScopedBeliefDB()
-        engine = BeliefEngine(db=db, llm_client=None, bot_id="legacy_bot")
-        group_scope = RuntimeScope(
-            bot_id="baizhenzhen",
-            visibility="group",
-            session=SessionRef(
-                id="qq:group:g1",
-                platform_id="qq",
-                kind="group",
-                conversation_id="g1",
-            ),
-            subject_principal_id="qq:user:u1",
-        )
-
-        text = engine.get_injection(group_scope, sender_id="u1", keywords=["边界"])
-
-        self.assertIn("核实事实", text)
-        self.assertIn("值得认真回应", text)
-        self.assertNotIn("legacy pending", text)
-        self.assertEqual(db.calls, [{"scope": group_scope, "status": "active", "limit": 50}])
-        self.assertEqual(engine.get_injection(None), "")
-        private_scope = RuntimeScope(
-            bot_id="baizhenzhen",
-            visibility="private",
-            session=SessionRef(
-                id="qq:private:u1",
-                platform_id="qq",
-                kind="private",
-                conversation_id="u1",
-            ),
-            subject_principal_id="qq:user:u1",
-        )
-        self.assertEqual(engine.get_injection(private_scope), "")
-        self.assertEqual(len(db.calls), 1)
-
     def test_metathinking_extreme_attack_uses_boundary_not_attack_back(self):
         from services.meta_thinking import MetaThinking
 
