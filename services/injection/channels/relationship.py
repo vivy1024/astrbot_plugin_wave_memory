@@ -20,6 +20,11 @@ except ImportError:  # pragma: no cover - focused repository tests
     from engine.db.person_identity_repo import linked_principals_via, local_user_id
 
 
+# 共同交往锚点：最多几条、每条截多少字（与印象时间线单条摘要同长）
+SHARED_ANCHOR_LIMIT = 3
+SHARED_ANCHOR_CHARS = 90
+
+
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
@@ -123,7 +128,7 @@ class RelationshipChannel:
             return InjectionResult.empty(self.name, reason="runtime_scope_required")
         if not scope.subject_principal_id or self.repository is None:
             return InjectionResult.empty(self.name, reason="relationship_subject_or_repository_unavailable")
-        # 对一个人的态度不分场合：数值来自群聊与私聊的汇总；
+        # 注入的是印象时间线，不是好感分数：印象跨群合并（含管理员确认的关联账号），
         # 具体内容（印象、观感、关系线索）群里的处处可见，私聊的只在该私聊可见。
         scene = scene_key(scope)
         try:
@@ -163,47 +168,33 @@ class RelationshipChannel:
                 finish_on_cancel=True,
             )
             try:
-                from ....domain.relationship_policy import classify_relationship_tier
                 from ...impression_timeline import (
                     affinity_shift_range,
                     effective_unsettled_state,
                     impression_prompting,
-                    legacy_metadata_items,
+                    injection_lines,
                     load_timeline_events,
+                    meaningful_event_anchor,
                     should_trigger_affinity_transition,
                     unsettled_energy_line,
                 )
-                from ...relationship_narrative import (
-                    compress_impressions,
-                    current_feeling_line,
-                    history_events,
-                    impression_lines,
-                    relationship_sentence,
-                    shared_experience_lines,
-                )
+                from ...relationship_evidence_display import relationship_injection_summary_snippet
+                from ...relationship_narrative import shared_experience_lines
             except ImportError:  # pragma: no cover
-                from domain.relationship_policy import classify_relationship_tier
                 from services.impression_timeline import (
                     affinity_shift_range,
                     effective_unsettled_state,
                     impression_prompting,
-                    legacy_metadata_items,
+                    injection_lines,
                     load_timeline_events,
+                    meaningful_event_anchor,
                     should_trigger_affinity_transition,
                     unsettled_energy_line,
                 )
-                from services.relationship_narrative import (
-                    compress_impressions,
-                    current_feeling_line,
-                    history_events,
-                    impression_lines,
-                    relationship_sentence,
-                    shared_experience_lines,
+                from services.relationship_evidence_display import (
+                    relationship_injection_summary_snippet,
                 )
-
-            def events_or_legacy(events: list[Any], metadata: Mapping[str, Any]) -> list[Any]:
-                return list(events) if events else legacy_metadata_items(metadata)
-
+                from services.relationship_narrative import shared_experience_lines
             if db is not None and sender_id and group_id:
                 timeline_events = await self._run_sync(
                     load_timeline_events, db,
@@ -232,35 +223,16 @@ class RelationshipChannel:
                 "timeline_decay_half_life_days",
                 _mapping(context_config.get("Inject_Settings")).get("timeline_decay_half_life_days"),
             )
-            now = float(getattr(ctx, "now", 0.0) or time.time())
             energy = float(unsettled.get("energy") or 0.0)
-            visible_traces = [
-                trace for trace in list(unsettled.get("traces") or [])
-                if not isinstance(trace, Mapping) or is_visible_scene(trace.get("group_id"), scene)
-            ]
-            # 好感度不分群：汇总该用户在所有群的积累，作为对该用户的统一态度。
-            # 记忆与印象时间线本就跨群，关系再按群拆分会让 bot 对不同群里的同一个人
-            # 有 N 份互相矛盾的态度，不符合真人对人的认知方式。
-            aggregate: Mapping[str, Any] = self._relationship_totals(scope, sender_id) if sender_id else {}
-            merged_dimensions = _mapping(aggregate.get("merged_dimensions")) if aggregate else {}
-            effective_dims: dict[str, Any] = {}
-            for name in ("familiarity", "trust", "fun", "depth", "hostility"):
-                item = _mapping(values.get(name))
-                value = item.get("effective_value", dimensions.get(name))
-                if value is not None:
-                    effective_dims[name] = value
-            status_dims = dict(merged_dimensions) if merged_dimensions else effective_dims
-            timeline_items = [
-                item for item in events_or_legacy(timeline_events, impression_meta)
-                if isinstance(item, Mapping)
-            ]
-            if (
-                relationship.get("affinity") is None
-                and not timeline_items
-                and not merged_dimensions
-            ):
-                return InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="relationship_unknown")
-
+            # 1. 印象：时间线摘要（按半衰期挑选、最多 8 条、按时间排序）+ 最近一条印象。
+            #    不注入好感分数、维度数值或态度档位：关系由模型读印象时间线自己判断。
+            rendered_lines = await asyncio.to_thread(
+                injection_lines, impression_meta,
+                history=history,
+                now=float(getattr(ctx, "now", 0.0) or time.time()),
+                events=timeline_events,
+                half_life_days=half_life_days,
+            )
             parts: list[str] = []
             filtered_lines: list[str] = []
 
@@ -269,56 +241,47 @@ class RelationshipChannel:
                     return
                 (filtered_lines if is_identity_contamination(line) else parts).append(line)
 
-            # 1. 长期关系：档位 + 依据，一句话、不带裸分数
-            acquaintance: Mapping[str, Any] = {}
-            if relationship.get("affinity") is not None or merged_dimensions:
-                acquaintance = await self._run_sync(self._acquaintance, conn, scope, sender_id)
-                add(relationship_sentence(
-                    status_dims,
-                    tier=classify_relationship_tier(status_dims),
-                    first_seen=acquaintance.get("first_seen"),
-                    interaction_count=acquaintance.get("interactions"),
-                    now=now,
-                ))
-            # 2. 印象：当前看法 + 合并称呼 + 代表性的几件事 + 走势
-            compressed = await asyncio.to_thread(
-                compress_impressions, timeline_items, now=now, half_life_days=half_life_days,
-            )
-            for line in impression_lines(compressed, fallback_events=history_events(history, now=now)):
+            for line in rendered_lines:
                 add(line)
-            # 3. 共同经历：只取与此人相关的，取不到就不写（不再塞 Bot 自己的群日记）
+            # 2. 共同交往锚点：只取与这个人相关的条目（主体或结构化参与者），不再塞 Bot 自己的群日记
             soul_items = list(_mapping(_mapping(state).get("timeline")).get("items") or [])
-            names = [str(getattr(ctx, "sender_name", "") or ""), *list(acquaintance.get("nicknames") or [])]
-            shared = shared_experience_lines(
-                soul_items, subject_principal_id=scope.subject_principal_id, display_names=names,
+            anchors = shared_experience_lines(
+                soul_items, subject_principal_id=scope.subject_principal_id,
+                limit=SHARED_ANCHOR_LIMIT, snippet_chars=SHARED_ANCHOR_CHARS,
             )
-            if shared:
-                add("和对方的共同经历：" + "；".join(shared) + "。")
-            try:
-                from ...relationship_evidence_display import relationship_injection_summary_snippet
-            except ImportError:  # pragma: no cover
-                from services.relationship_evidence_display import (
-                    relationship_injection_summary_snippet,
-                )
-            evidence_snip = relationship_injection_summary_snippet(
-                relationship.get("evidence"), max_chars=80
-            )
-            if evidence_snip:
-                add(f"历史关系摘要（只读，不改变好感度）：{evidence_snip}")
-            # 4. 当下感受：最近一两天，随时间衰减，与长期关系分开
-            add(current_feeling_line(
-                history=history, traces=visible_traces, timeline_events=timeline_items, now=now,
-            ))
-            if parts and compressed.get("total"):
-                add("（往事详情可用 wave_memory_person_search(query_type=timeline, person=当前人物) 查）")
-
-            # 5. 观感标签与结算：默认交给事后记账，不在每轮回复里要求
+            if relationship.get("affinity") is None and not parts and not anchors:
+                return InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="relationship_unknown")
+            visible_traces = [
+                trace for trace in list(unsettled.get("traces") or [])
+                if not isinstance(trace, Mapping) or is_visible_scene(trace.get("group_id"), scene)
+            ]
+            # 每轮观感标签：默认交给事后记账，不在每轮回复里要求；开启时恢复旧行为
             prompting = impression_prompting()
             per_turn_tag = _as_bool(cfg.get("per_turn_impression_tag"), prompting["per_turn_tag"])
             if per_turn_tag:
                 add(unsettled_energy_line(impression_meta, energy=energy, traces=visible_traces))
+            if not any(line.startswith("最近关系线索：") or line.startswith("印象时间线") for line in parts):
+                anchor = meaningful_event_anchor(history)
+                reason = str((anchor or {}).get("reason") or "").strip()
+                event_type = str((anchor or {}).get("event_type") or "").strip()
+                if anchor and reason:
+                    add(f"最近关系线索：{event_type}：{reason}")
+            evidence_snip = relationship_injection_summary_snippet(
+                relationship.get("evidence"), max_chars=80
+            )
+            if evidence_snip:
+                add(f"历史关系摘要（只读）：{evidence_snip}")
+            for summary in anchors:
+                add(f"共同交往锚点：{summary}")
+            # 3. 结算提示：未结算能量已满或关系可能质变时
+            trigger_dims: dict[str, Any] = {}
+            for name in ("familiarity", "trust", "fun", "depth", "hostility"):
+                item = _mapping(values.get(name))
+                value = item.get("effective_value", dimensions.get(name))
+                if value is not None:
+                    trigger_dims[name] = value
             transition_hint = ""
-            if should_trigger_affinity_transition(impression_meta, effective_dims or dimensions, energy=energy):
+            if should_trigger_affinity_transition(impression_meta, trigger_dims or dimensions, energy=energy):
                 bounds = affinity_shift_range(impression_meta, dimension="trust", energy=energy)
                 if per_turn_tag:
                     transition_hint = (
@@ -338,7 +301,12 @@ class RelationshipChannel:
             # 结算提示固定追加在末尾，保证裁决节点指令完整。
             if transition_hint:
                 parts.append(transition_hint)
-            text = "\n".join(parts) if parts else ""
+            if not parts:
+                # 认识这个人，但既没有印象也没有线索：不注入空段落，也不拿分数凑一句
+                return InjectionResult.empty(
+                    self.name, latency_ms=self._latency_ms(started), reason="relationship_no_impression",
+                )
+            text = "\n".join(parts)
             revision = relationship.get("revision") or _mapping(state).get("revision") or 0
             return InjectionResult.hit(
                 self.name,
@@ -352,8 +320,9 @@ class RelationshipChannel:
                     "dedupe_key": f"relationship:{scope.bot_id}:{scope.session.id}:{scope.subject_principal_id}:{revision}",
                 }],
                 latency_ms=self._latency_ms(started),
-                # 自然语言摘要已按条数与字数收敛（通常几百字），不被预算截断：保证末尾的结算提示完整
-                preserve_full_text=bool(parts),
+                # 时间线已按条数与长度收敛（约 1–1.5 千字），不被预算截断，保证末尾的结算提示完整；
+                # 必保留文本在编排器里独立计量，不挤占其他通道的预算。
+                preserve_full_text=True,
                 filtered=[{"filter_reason": "identity_contamination", "filter_channel": self.name} for _ in filtered_lines],
             )
         except Exception as exc:
@@ -368,50 +337,6 @@ class RelationshipChannel:
             return [sender_id]
         linked = linked_principals_via(conn, scope.bot_id, scope.subject_principal_id)
         return list(dict.fromkeys([sender_id, *(local_user_id(item) for item in linked if local_user_id(item))]))
-
-    @classmethod
-    def _acquaintance(cls, conn: Any, scope: RuntimeScope, sender_id: str) -> dict[str, Any]:
-        """认识多久、打过多少次交道、登记过的昵称：跨群与私聊汇总，只取数字与昵称，不带具体内容。"""
-        if conn is None or not sender_id or not hasattr(conn, "execute"):
-            return {}
-        try:
-            if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='user_profiles'").fetchone():
-                return {}
-            user_ids = cls._linked_user_ids(conn, scope, sender_id)
-            marks = ",".join("?" for _ in user_ids)
-            rows = conn.execute(
-                f"""SELECT first_seen, interaction_count, nickname FROM user_profiles
-                     WHERE bot_id=? AND user_id IN ({marks})""",
-                (scope.bot_id, *user_ids),
-            ).fetchall()
-        except Exception:
-            return {}
-        first_seen = [float(row[0]) for row in rows if isinstance(row[0], (int, float)) and row[0] > 0]
-        nicknames = list(dict.fromkeys(str(row[2]).strip() for row in rows if row[2] and str(row[2]).strip()))
-        return {
-            "first_seen": min(first_seen) if first_seen else None,
-            "interactions": sum(int(row[1] or 0) for row in rows if isinstance(row[1], (int, float))),
-            "nicknames": nicknames[:3],
-        }
-
-    def _relationship_totals(self, scope: Any, sender_id: str) -> dict[str, Any]:
-        """汇总该用户在所有群的关系积累；不可用时返回空 dict。
-
-        好感度不分群，因此这里拿到的是同一个人跨全部群的合并结果，不是「其他群的补充」。
-        """
-        summarizer = getattr(self.repository, "summarize_cross_group_relationship", None)
-        if not callable(summarizer) or not sender_id:
-            return {}
-        subject = getattr(scope, "subject_principal_id", None)
-        if not subject:
-            return {}
-        try:
-            data = summarizer(scope, subject_principal_id=subject)
-        except Exception:
-            return {}
-        if not isinstance(data, Mapping) or not data.get("available"):
-            return {}
-        return dict(data)
 
     @staticmethod
     def _latency_ms(started: float) -> float:

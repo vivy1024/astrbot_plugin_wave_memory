@@ -5,6 +5,8 @@
 本模块以**读时合并**恢复该能力：各群维度累加后钳制，再推导综合值与态度；
 存储仍按 `(bot_id, session_id, visibility, subject_principal_id)` 保留每群原始增量，
 聚合只在读取侧进行，不写库、不改主键。
+
+分数合并只服务于管理台与结算等读取方；关系注入不读、不输出分数（Bot 看印象时间线自己判断）。
 """
 
 from __future__ import annotations
@@ -208,8 +210,9 @@ def test_row_without_affinity_derives_from_dimensions(repo):
 class _CrossGroupRepo:
     """最小仓储替身：当前群给低分，跨群汇总给高分（复现线上懒惰芝麻场景）。"""
 
-    def __init__(self, merged_affinity=27):
+    def __init__(self, merged_affinity=27, history=None):
         self._merged_affinity = merged_affinity
+        self._history = list(history or [])
         self.summarize_calls = 0
 
     def get_state(self, scope, subject_principal_id=None, limit=25, offset=0):
@@ -222,7 +225,7 @@ class _CrossGroupRepo:
                 "revision": 1,
                 "evidence": [{"relationship_event_id": 1}],
             },
-            "relationship_history": {"items": []},
+            "relationship_history": {"items": list(self._history)},
             "timeline": {"items": []},
             "revision": 1,
         }
@@ -271,27 +274,28 @@ def _run_channel(repo, ctx):
     return asyncio.run(RelationshipChannel(repository=repo).build(ctx))
 
 
-def test_injection_uses_cross_group_affinity_not_current_group():
-    """核心回归：当前群好感度为 0，注入必须给出该用户全部群累加后的态度。"""
-    repo = _CrossGroupRepo()
+_DEEP_TALK = [{"event_type": "deep_talk", "reason": "一起聊到深夜"}]
+
+
+def test_injection_does_not_read_or_output_affinity_scores():
+    """好感分数只给群友看：关系注入不读跨群汇总，也不输出综合值、维度或态度。"""
+    repo = _CrossGroupRepo(history=_DEEP_TALK)
     result = _run_channel(repo, _channel_ctx(_channel_scope()))
 
     assert result.status == "hit"
-    # 汇总维度（熟悉 79.5、信任 15、趣味 5、深度 10）→ 合得来；当前群单独只有 trust=2.2 → 陌生人
-    assert "「合得来」" in result.text, "不得把当前群的低分当成对该用户的真实态度"
-    assert "「陌生人」" not in result.text
-    assert "非常熟" in result.text
-    assert "综合值=" not in result.text and "familiarity=" not in result.text, "注入不再输出裸分数"
-    assert "跨群关系" not in result.text, "好感度不分群，不应再按群拆分展示"
+    assert "最近关系线索：deep_talk：一起聊到深夜" in result.text
+    for noise in ("综合值", "态度=", "familiarity", "trust", "neutral", "跨群关系"):
+        assert noise not in result.text, noise
+    assert repo.summarize_calls == 0, "注入不再读取跨群分数汇总"
 
 
-def test_injection_always_aggregates_regardless_of_cross_group_switch():
-    """好感度不分群，不存在「关掉跨群」的开关。"""
+def test_injection_with_scores_but_no_impression_is_empty():
+    """只有分数（当前群 0、跨群 27）而没有任何印象或线索：不注入，不拿分数凑一句。"""
     repo = _CrossGroupRepo()
     result = _run_channel(repo, _channel_ctx(_channel_scope(), cross_group_enabled=False))
 
-    assert "「合得来」" in result.text, "好感度合并是默认行为，不受开关影响"
-    assert repo.summarize_calls == 1
+    assert result.status == "empty" and not result.text
+    assert repo.summarize_calls == 0
 
 
 def _private_scope(bot: str = "bot-0001") -> RuntimeScope:
@@ -329,12 +333,12 @@ def _private_channel_ctx():
     )
 
 
-def test_private_chat_injection_recognizes_person_with_unified_attitude():
-    """私聊不再失忆：读取本私聊的关系行，态度取群聊与私聊的汇总。"""
+def test_private_chat_injection_reads_private_state_without_scores():
+    """私聊不再失忆：读取本私聊的关系行与线索；同样不注入分数。"""
 
     class _PrivateRepo(_CrossGroupRepo):
         def __init__(self):
-            super().__init__()
+            super().__init__(history=_DEEP_TALK)
             self.state_scopes = []
 
         def get_state(self, scope, subject_principal_id=None, limit=25, offset=0):
@@ -345,9 +349,10 @@ def test_private_chat_injection_recognizes_person_with_unified_attitude():
     result = _run_channel(repo, _private_channel_ctx())
 
     assert result.status == "hit"
-    assert "「合得来」" in result.text
+    assert "一起聊到深夜" in result.text
+    assert "综合值" not in result.text and "familiarity" not in result.text
     assert repo.state_scopes == ["private"]
-    assert repo.summarize_calls == 1
+    assert repo.summarize_calls == 0
 
 
 def test_injection_reads_unsettled_energy_from_cross_group_pool(tmp_path):
