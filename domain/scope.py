@@ -433,6 +433,9 @@ COMMAND_SCOPE_MATRIX: Mapping[str, ScopeRequirement] = MappingProxyType({
     "persona.inject": ScopeRequirement(("runtime",), ("group", "private")),
     # 用梗提示只读静态梗百科，群聊与私聊都可用；默认关闭与场合开关由通道配置决定。
     "meme_hint.inject": ScopeRequirement(("runtime",), ("group", "private")),
+    # 游戏知识库所有 Bot 共用、不含会话数据：注入（请求带 game 时）与查询工具群聊私聊都可用。
+    "game_knowledge.inject": ScopeRequirement(("runtime",), ("group", "private")),
+    "game_knowledge.read": ScopeRequirement(("runtime",), ("group", "private")),
     "affinity.update": ScopeRequirement(("runtime",), ("group",), subject_required=True),
     # 私聊里同样会形成对当前私聊对象的印象与好感；具体内容只在该私聊可见。
     "social_impression.record": ScopeRequirement(("runtime",), ("group", "private"), subject_required=True),

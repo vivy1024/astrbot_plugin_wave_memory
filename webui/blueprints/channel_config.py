@@ -82,6 +82,7 @@ _CHANNEL_DESCRIPTORS = {
     "fts5": ("全文原词命中（FTS5），与向量记忆分开", ["fts_memories"], "medium", "/diagnostics/indexes"),
     "affinity": ("印象摘要、印象时间线与关系分数一起注入", ["relationship_projection"], "medium", "/people"),
     "soul_state": ("注入当前 Scope 的 Mood、Concern、Timeline 与 Soul 状态", ["soul_repository"], "high", "/soul"),
+    "game_knowledge": ("游戏直播时按请求的 game.id 选库，注入命中的攻略卡（max_items，最多 2 张）与相关词条（top_k）；请求没带 game 时不工作", ["game_knowledge_library"], "low", "/knowledge/games"),
 }
 
 

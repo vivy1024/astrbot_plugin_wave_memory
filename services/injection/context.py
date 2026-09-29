@@ -40,3 +40,6 @@ class InjectionContext:
     trace_id: str = ""
     # 调用来源：astrbot=消息钩子；cortico 等=Runtime API。写进 trace，观测台可按来源筛选。
     source: str = "astrbot"
+    # 游戏直播时 Runtime API 请求里的 game（domain.game_knowledge.GameContext）；不带时为 None，
+    # 只有 game_knowledge 通道读它，其他通道行为不变。
+    game: Any = None

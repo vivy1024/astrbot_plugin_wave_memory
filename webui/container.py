@@ -86,6 +86,8 @@ class ServiceContainer:
         self.relationship_portrait: Any = None
         # 书设工作台（services.book_lore_workbench.BookLoreWorkbench）；书设没加载时为 None。
         self.book_lore_workbench: Any = None
+        # 游戏知识库（services.game_knowledge.GameKnowledgeService）：管理台「游戏知识库」页用。
+        self.game_knowledge: Any = None
 
         # ─── 认证 ───
         self.password: str = ""

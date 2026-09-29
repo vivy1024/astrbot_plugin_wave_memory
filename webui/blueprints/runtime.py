@@ -525,7 +525,8 @@ async def context_prepare():
 
     请求体：``text``、``speaker{id,name}``/``uid``、``tier``（full/light/minimal）、
     ``recent``（可选，最近几条对话文本）、``channels``（可选，只跑这些通道）、
-    ``source``（写进 trace 的来源标签，默认 cortico）、``dry_run``。
+    ``source``（写进 trace 的来源标签，默认 cortico）、``dry_run``、
+    ``game``（可选，游戏直播时的 ``{"id", "state", "keywords"}``，供 game_knowledge 通道选库注入攻略参考）。
     """
     if not _check_auth():
         return jsonify({"ok": False, "error": {"code": "unauthorized", "message": "Invalid runtime bearer token"}}), 401
@@ -565,6 +566,13 @@ async def context_prepare():
     requested_channels = body.get("channels")
     channel_filter = [str(item) for item in requested_channels] if isinstance(requested_channels, list) else None
     try:
+        from ...domain.game_knowledge import parse_game_context
+    except ImportError:
+        from domain.game_knowledge import parse_game_context
+    # 不带 game 时连参数都不传，调用与之前完全一致；带了才交给 game_knowledge 通道选库。
+    game = parse_game_context(body.get("game"))
+    game_kwargs = {"game": game} if game is not None else {}
+    try:
         result = await preparer.prepare(
             scope=scope,
             message=text,
@@ -575,6 +583,7 @@ async def context_prepare():
             source=source,
             dry_run=bool(body.get("dry_run")),
             channel_filter=channel_filter,
+            **game_kwargs,
         )
     except ValueError as exc:
         return jsonify({"ok": False, "error": {"code": "invalid_scope", "message": str(exc)}}), 400
