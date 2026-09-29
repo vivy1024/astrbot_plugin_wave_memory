@@ -22,6 +22,7 @@ import {
   type RelationshipItem,
 } from '@/api/people'
 import { RelationshipCalibrationPanel } from '@/components/relationship/RelationshipCalibrationPanel'
+import { RelationshipPortraitPanel } from '@/components/relationship/RelationshipPortraitPanel'
 import { RelationshipRadarCard } from '@/components/relationship/RelationshipRadarCard'
 import { RelationshipTrajectoryCard } from '@/components/relationship/RelationshipTrajectoryCard'
 import { PaginationControls, QueryState, DeclarativeDataTable, ScopeSelect, usePaginationSearchParams, type PageResponse } from '@/components/shared'
@@ -421,6 +422,11 @@ function PersonDetail({ item, relationship, relationshipError, query, onChanged 
       </div>
       <div className="col-span-2"><span className="mb-1.5 block text-xs text-muted-foreground">登记别名</span><div className="flex flex-wrap gap-1">{aliases.length ? aliases.map((alias) => <Badge key={alias} variant="outline" className="font-normal">{alias}</Badge>) : <span className="text-muted-foreground">未登记别名</span>}</div></div>
     </div>
+
+    <RelationshipPortraitPanel
+      query={{ bot_id: query.bot_id, session_id: query.session_id, visibility: 'group' }}
+      userId={item.user_id}
+    />
 
     {impression || (Array.isArray(item.metadata?.impression_history) && item.metadata.impression_history.length > 0) || (Array.isArray(item.metadata?.impression_ledger) && item.metadata.impression_ledger.length > 0) ? (
       <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] p-3.5">
