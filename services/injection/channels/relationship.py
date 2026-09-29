@@ -128,8 +128,9 @@ class RelationshipChannel:
             return InjectionResult.empty(self.name, reason="runtime_scope_required")
         if not scope.subject_principal_id or self.repository is None:
             return InjectionResult.empty(self.name, reason="relationship_subject_or_repository_unavailable")
-        # 注入的是印象时间线，不是好感分数：印象跨群合并（含管理员确认的关联账号），
-        # 具体内容（印象、观感、关系线索）群里的处处可见，私聊的只在该私聊可见。
+        # 以印象时间线为主：印象跨群合并（含管理员确认的关联账号），具体内容（印象、观感、
+        # 关系线索）群里的处处可见，私聊的只在该私聊可见。好感分数只作印象之后的一行次要参考，
+        # 同样按场合汇总：群聊的行处处计入，私聊的行只在同一私聊计入。
         scene = scene_key(scope)
         try:
             state = await self._run_sync(
@@ -179,7 +180,7 @@ class RelationshipChannel:
                     unsettled_energy_line,
                 )
                 from ...relationship_evidence_display import relationship_injection_summary_snippet
-                from ...relationship_narrative import shared_experience_lines
+                from ...relationship_narrative import affinity_score_line, shared_experience_lines
             except ImportError:  # pragma: no cover
                 from services.impression_timeline import (
                     affinity_shift_range,
@@ -194,7 +195,7 @@ class RelationshipChannel:
                 from services.relationship_evidence_display import (
                     relationship_injection_summary_snippet,
                 )
-                from services.relationship_narrative import shared_experience_lines
+                from services.relationship_narrative import affinity_score_line, shared_experience_lines
             if db is not None and sender_id and group_id:
                 timeline_events = await self._run_sync(
                     load_timeline_events, db,
@@ -225,7 +226,7 @@ class RelationshipChannel:
             )
             energy = float(unsettled.get("energy") or 0.0)
             # 1. 印象：时间线摘要（按半衰期挑选、最多 8 条、按时间排序）+ 最近一条印象。
-            #    不注入好感分数、维度数值或态度档位：关系由模型读印象时间线自己判断。
+            #    关系由模型读印象时间线自己判断；分数只在后面附一行次要参考，不带态度或档位。
             rendered_lines = await asyncio.to_thread(
                 injection_lines, impression_meta,
                 history=history,
@@ -249,7 +250,23 @@ class RelationshipChannel:
                 soul_items, subject_principal_id=scope.subject_principal_id,
                 limit=SHARED_ANCHOR_LIMIT, snippet_chars=SHARED_ANCHOR_CHARS,
             )
-            if relationship.get("affinity") is None and not parts and not anchors:
+            # 好感分数：当前场合可见的汇总（跨群合并、含关联账号；私聊只计同一私聊），
+            # 汇总不可用时退回本场合的关系行
+            trigger_dims: dict[str, Any] = {}
+            for name in ("familiarity", "trust", "fun", "depth", "hostility"):
+                item = _mapping(values.get(name))
+                value = item.get("effective_value", dimensions.get(name))
+                if value is not None:
+                    trigger_dims[name] = value
+            totals = await self._run_sync(self._relationship_totals, scope)
+            if totals:
+                score_affinity = totals.get("merged_affinity")
+                score_dims: Mapping[str, Any] = _mapping(totals.get("merged_dimensions"))
+            else:
+                score_affinity = relationship.get("affinity")
+                score_dims = trigger_dims or dimensions
+            has_scores = score_affinity is not None or bool(score_dims)
+            if not has_scores and not parts and not anchors:
                 return InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="relationship_unknown")
             visible_traces = [
                 trace for trace in list(unsettled.get("traces") or [])
@@ -273,13 +290,9 @@ class RelationshipChannel:
                 add(f"历史关系摘要（只读）：{evidence_snip}")
             for summary in anchors:
                 add(f"共同交往锚点：{summary}")
+            # 2.5 好感分数：印象之后一行紧凑的次要参考；只有分数没有印象的人也注入这一行
+            add(affinity_score_line(score_affinity, score_dims, has_impression=bool(parts)))
             # 3. 结算提示：未结算能量已满或关系可能质变时
-            trigger_dims: dict[str, Any] = {}
-            for name in ("familiarity", "trust", "fun", "depth", "hostility"):
-                item = _mapping(values.get(name))
-                value = item.get("effective_value", dimensions.get(name))
-                if value is not None:
-                    trigger_dims[name] = value
             transition_hint = ""
             if should_trigger_affinity_transition(impression_meta, trigger_dims or dimensions, energy=energy):
                 bounds = affinity_shift_range(impression_meta, dimension="trust", energy=energy)
@@ -302,7 +315,7 @@ class RelationshipChannel:
             if transition_hint:
                 parts.append(transition_hint)
             if not parts:
-                # 认识这个人，但既没有印象也没有线索：不注入空段落，也不拿分数凑一句
+                # 认识这个人，但既没有印象、线索，也没有可用的分数：不注入空段落
                 return InjectionResult.empty(
                     self.name, latency_ms=self._latency_ms(started), reason="relationship_no_impression",
                 )
@@ -337,6 +350,22 @@ class RelationshipChannel:
             return [sender_id]
         linked = linked_principals_via(conn, scope.bot_id, scope.subject_principal_id)
         return list(dict.fromkeys([sender_id, *(local_user_id(item) for item in linked if local_user_id(item))]))
+
+    def _relationship_totals(self, scope: RuntimeScope) -> dict[str, Any]:
+        """当前场合可见的关系分数汇总；仓储不支持或无记录时返回空 dict（退回本场合的关系行）。"""
+        summarizer = getattr(self.repository, "summarize_cross_group_relationship", None)
+        if not callable(summarizer) or not scope.subject_principal_id or scope.session is None:
+            return {}
+        try:
+            data = summarizer(
+                scope, subject_principal_id=scope.subject_principal_id, viewer_session_id=scope.session.id,
+            )
+        except Exception:
+            # 不支持按场合过滤的旧仓储：宁可只用本场合的行，也不混入其他私聊
+            return {}
+        if not isinstance(data, Mapping) or not data.get("available"):
+            return {}
+        return dict(data)
 
     @staticmethod
     def _latency_ms(started: float) -> float:

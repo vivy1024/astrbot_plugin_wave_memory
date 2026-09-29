@@ -86,9 +86,11 @@ def test_linked_accounts_share_attitude_and_impression_timeline(db):
     after = run()
     assert after.status == "hit"
     assert "在群里帮新人解答问题" in after.text, "直播间里认出这是 QQ 群里那位"
-    assert "综合值" not in after.text and "familiarity" not in after.text, "关系注入只给印象时间线，不给分数"
+    assert "综合值" not in after.text and "familiarity" not in after.text
     merged = soul.summarize_cross_group_relationship(_bili_room(), subject_principal_id=BILI)
-    assert merged["available"] and merged["merged_affinity"] == 29, "好感分数同样合并（管理台等读取方使用）"
+    assert merged["available"] and merged["merged_affinity"] == 29, "好感分数同样合并"
+    assert after.text.splitlines()[-1].endswith("：综合 29；熟悉 80、信任 15、深度 20"), "分数合并后作为次要参考附在印象之后"
+    assert "好感分数" not in (before.text or ""), "关联之前直播间账号没有分数也没有印象"
 
 
 @pytest.fixture

@@ -794,6 +794,7 @@ class ScopedSoulRepository:
         *,
         subject_principal_id: str,
         max_groups: int = 8,
+        viewer_session_id: str | None = None,
     ) -> dict[str, Any]:
         """按 bot+subject 汇总关系，**只读聚合**，不改主键、不写任何行。
 
@@ -802,6 +803,9 @@ class ScopedSoulRepository:
         都算数，恩情与过节同时记得）。存储仍按 (bot_id, session_id, ...) 保留每群的
         原始增量，本方法是读取侧的统一口径，不写回、不改主键。
         群聊与私聊的关系数值一起汇总：态度是对这个人的整体感受，不暴露任何具体内容。
+
+        ``viewer_session_id`` 给出时按当前场合可见性汇总：群聊的行处处计入，私聊的行只在
+        同一私聊（session_id 相同）里计入（关系注入用；管理台与结算等读取方不传，保持全量）。
         """
         if (
             not isinstance(scope, RuntimeScope)
@@ -815,12 +819,17 @@ class ScopedSoulRepository:
         # 同一个人在不同平台的账号（管理员确认的关联）共享同一份态度。
         subjects = linked_principals_via(self.cm, scope.bot_id, subject)
         subject_marks = ",".join("?" for _ in subjects)
+        visible_sql = ""
+        visible_params: tuple[Any, ...] = ()
+        if viewer_session_id is not None:
+            visible_sql = " AND (visibility='group' OR session_id=?)"
+            visible_params = (str(viewer_session_id),)
         rows = self.cm.execute_read(
             f"""SELECT session_id, affinity, state, dimensions, updated_at
                  FROM scoped_soul_relationships
-                WHERE bot_id=? AND visibility IN ('group', 'private') AND subject_principal_id IN ({subject_marks})
+                WHERE bot_id=? AND visibility IN ('group', 'private') AND subject_principal_id IN ({subject_marks}){visible_sql}
                 ORDER BY updated_at DESC""",
-            (scope.bot_id, *subjects),
+            (scope.bot_id, *subjects, *visible_params),
         ).fetchall()
         if not rows:
             return {"available": False, "group_count": 0, "updated_at": None, "total_events": 0}
@@ -867,8 +876,8 @@ class ScopedSoulRepository:
 
         total_events = int(self.cm.execute_read(
             f"""SELECT COUNT(*) FROM scoped_soul_relationship_events
-                WHERE bot_id=? AND visibility IN ('group', 'private') AND subject_principal_id IN ({subject_marks})""",
-            (scope.bot_id, *subjects),
+                WHERE bot_id=? AND visibility IN ('group', 'private') AND subject_principal_id IN ({subject_marks}){visible_sql}""",
+            (scope.bot_id, *subjects, *visible_params),
         ).fetchone()[0])
         return {
             "available": True,

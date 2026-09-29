@@ -6,7 +6,8 @@
 存储仍按 `(bot_id, session_id, visibility, subject_principal_id)` 保留每群原始增量，
 聚合只在读取侧进行，不写库、不改主键。
 
-分数合并只服务于管理台与结算等读取方；关系注入不读、不输出分数（Bot 看印象时间线自己判断）。
+关系注入以印象时间线为主；好感分数只在印象之后附一行次要参考，取当前场合可见的汇总
+（群聊的行处处计入，私聊的行只在同一私聊计入）。
 """
 
 from __future__ import annotations
@@ -230,8 +231,9 @@ class _CrossGroupRepo:
             "revision": 1,
         }
 
-    def summarize_cross_group_relationship(self, scope, *, subject_principal_id):
+    def summarize_cross_group_relationship(self, scope, *, subject_principal_id, viewer_session_id=None):
         self.summarize_calls += 1
+        self.viewer_session_ids = [*getattr(self, "viewer_session_ids", []), viewer_session_id]
         return {
             "available": True,
             "group_count": 2,
@@ -277,25 +279,43 @@ def _run_channel(repo, ctx):
 _DEEP_TALK = [{"event_type": "deep_talk", "reason": "一起聊到深夜"}]
 
 
-def test_injection_does_not_read_or_output_affinity_scores():
-    """好感分数只给群友看：关系注入不读跨群汇总，也不输出综合值、维度或态度。"""
+def test_injection_appends_cross_group_scores_as_secondary_line():
+    """分数取跨群汇总（不是当前群的低分），只在关系线索之后附一行，并标明仅供参考；不带态度。"""
     repo = _CrossGroupRepo(history=_DEEP_TALK)
     result = _run_channel(repo, _channel_ctx(_channel_scope()))
 
     assert result.status == "hit"
-    assert "最近关系线索：deep_talk：一起聊到深夜" in result.text
+    lines = result.text.splitlines()
+    assert lines[0] == "最近关系线索：deep_talk：一起聊到深夜"
+    assert lines[-1] == (
+        "好感分数（群友互动用的数值，仅供参考，理解对方以上面的印象为准）："
+        "综合 27；熟悉 79.5、信任 15、好玩 5、深度 10"
+    ), "分数在关系线索与查阅提示之后"
     for noise in ("综合值", "态度=", "familiarity", "trust", "neutral", "跨群关系"):
         assert noise not in result.text, noise
-    assert repo.summarize_calls == 0, "注入不再读取跨群分数汇总"
+    assert repo.summarize_calls == 1
+    assert repo.viewer_session_ids == ["qq:group:g1"], "按当前场合可见性汇总"
 
 
-def test_injection_with_scores_but_no_impression_is_empty():
-    """只有分数（当前群 0、跨群 27）而没有任何印象或线索：不注入，不拿分数凑一句。"""
+def test_injection_with_scores_but_no_impression_injects_score_line_only():
+    """只有分数（当前群 0、跨群 27）而没有任何印象或线索：只注入一行分数，同样标明仅供参考。"""
     repo = _CrossGroupRepo()
     result = _run_channel(repo, _channel_ctx(_channel_scope(), cross_group_enabled=False))
 
-    assert result.status == "empty" and not result.text
-    assert repo.summarize_calls == 0
+    assert result.status == "hit"
+    assert result.text.startswith("好感分数（群友互动用的数值，仅供参考，你还没有记下对 ta 的印象")
+    assert len(result.text.splitlines()) == 1 and "综合 27" in result.text
+
+
+def test_injection_falls_back_to_current_row_when_summary_cannot_filter_by_scene():
+    """旧仓储的汇总不支持按场合过滤：宁可只用本场合的行，也不混入其他私聊。"""
+
+    class _OldRepo(_CrossGroupRepo):
+        def summarize_cross_group_relationship(self, scope, *, subject_principal_id):
+            raise AssertionError("不支持 viewer_session_id 的汇总不应被调用成功")
+
+    result = _run_channel(_OldRepo(history=_DEEP_TALK), _channel_ctx(_channel_scope()))
+    assert result.text.splitlines()[-1].endswith("：综合 0；信任 2.2")
 
 
 def _private_scope(bot: str = "bot-0001") -> RuntimeScope:
@@ -333,8 +353,8 @@ def _private_channel_ctx():
     )
 
 
-def test_private_chat_injection_reads_private_state_without_scores():
-    """私聊不再失忆：读取本私聊的关系行与线索；同样不注入分数。"""
+def test_private_chat_injection_reads_private_state_and_scene_scores():
+    """私聊不再失忆：读取本私聊的关系行与线索；分数按本私聊可见的汇总，只作次要参考。"""
 
     class _PrivateRepo(_CrossGroupRepo):
         def __init__(self):
@@ -350,9 +370,35 @@ def test_private_chat_injection_reads_private_state_without_scores():
 
     assert result.status == "hit"
     assert "一起聊到深夜" in result.text
+    assert result.text.index("一起聊到深夜") < result.text.index("好感分数（群友互动用的数值，仅供参考")
     assert "综合值" not in result.text and "familiarity" not in result.text
     assert repo.state_scopes == ["private"]
-    assert repo.summarize_calls == 0
+    assert repo.viewer_session_ids == ["qq:private:1"], "私聊只计入同一私聊的行"
+
+
+def test_summary_with_viewer_session_counts_private_rows_only_in_same_chat(repo):
+    """按场合汇总：群聊的行处处计入，私聊的行只在同一私聊里计入；不传 viewer 时保持全量。"""
+    _upsert_dims(repo, _scope(session="qq:group:g1"), 10, "neutral", '{"familiarity":30.0}', 1000.0)
+    repo.cm.execute_write(
+        """INSERT INTO scoped_soul_relationships(
+               bot_id, session_id, visibility, subject_principal_id, affinity, state,
+               dimensions, revision, evidence, updated_at)
+           VALUES ('bot-0001', 'qq:private:u1', 'private', ?, 5, 'neutral',
+                   '{"familiarity":20.0,"trust":8.0}', 1, '[]', 1100.0)""",
+        (SUBJECT,),
+    )
+    repo.cm.commit()
+    group_view = repo.summarize_cross_group_relationship(
+        _scope(session="qq:group:g1"), subject_principal_id=SUBJECT, viewer_session_id="qq:group:g1")
+    assert group_view["merged_dimensions"] == {"familiarity": 30.0}
+    private_view = repo.summarize_cross_group_relationship(
+        _private_scope(), subject_principal_id=SUBJECT, viewer_session_id="qq:private:u1")
+    assert private_view["merged_dimensions"] == {"familiarity": 50.0, "trust": 8.0}
+    other_private = repo.summarize_cross_group_relationship(
+        _private_scope(), subject_principal_id=SUBJECT, viewer_session_id="qq:private:u2")
+    assert other_private["merged_dimensions"] == {"familiarity": 30.0}
+    everything = repo.summarize_cross_group_relationship(_private_scope(), subject_principal_id=SUBJECT)
+    assert everything["merged_dimensions"] == {"familiarity": 50.0, "trust": 8.0}
 
 
 def test_injection_reads_unsettled_energy_from_cross_group_pool(tmp_path):

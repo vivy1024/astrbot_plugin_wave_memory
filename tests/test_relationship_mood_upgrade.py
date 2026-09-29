@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import sqlite3
 from types import SimpleNamespace
 
@@ -141,8 +142,12 @@ def test_relationship_full_history_reaches_provider_request(tmp_path):
         assert timeline_start < text.index("完整摘要22") < text.index("完整摘要29")
         assert text.index("完整摘要29") < text.index("你对这个人的印象：完整摘要29")
         assert "时间权重每 21 天减半" in text and "wave_memory_person_search" in text
-        # 每行只保留事件编号与日期：不带权重数值、来源群号，也不注入好感分数
+        # 每行只保留事件编号与日期：不带权重数值、来源群号
         assert "权重=" not in text and "来源群=" not in text
+        # 好感分数只在印象之后附一行次要参考，不带态度或英文维度键
+        score = next(line for line in text.splitlines() if line.startswith("好感分数（群友互动用的数值，仅供参考"))
+        assert text.index("你对这个人的印象：完整摘要29") < text.index(score)
+        assert "深度 3" in score and not re.search(r"\d\.\d{2,}", score)
         assert "综合值" not in text and "态度=" not in text and "depth=" not in text
         unknown = SimpleNamespace(
             mode="full",

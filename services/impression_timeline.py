@@ -706,7 +706,8 @@ def injection_lines(
 ) -> list[str]:
     """关系注入里的印象部分：印象时间线 + 最近一条印象；没有时间线时附最近关系线索与查阅提示。
 
-    不含好感分数、维度数值或态度档位：关系由模型读印象时间线自己判断。"""
+    不含好感分数、维度数值或态度档位：关系由模型读印象时间线自己判断；分数由关系通道在印象之后
+    另附一行次要参考（见 relationship_narrative.affinity_score_line）。"""
     payload = _as_mapping(metadata)
     lines: list[str] = []
 

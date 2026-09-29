@@ -1,7 +1,7 @@
-"""关系注入：印象时间线摘要（半衰期挑选、最多 8 条、按时间排序）+ 最近一条印象，不注入好感分数。
+"""关系注入：印象时间线摘要（半衰期挑选、最多 8 条、按时间排序）+ 最近一条印象，之后附一行次要参考的好感分数。
 
-好感分数（五维与综合值）只是给群友玩的数字；Bot 看印象时间线自己判断关系。
-注入里不得出现分数、维度数值、态度/档位字样、每行的权重数值或来源群号。
+好感分数（五维与综合值）是给群友互动用的数字；Bot 以印象时间线为主自己判断关系，分数只在印象之后
+以一行紧凑数值出现，并标明仅供参考。注入里不得出现态度/档位字样、每行的权重数值、来源群号或长小数。
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from services.impression_timeline import (
     select_timeline_events,
 )
 from services.injection.channels.relationship import RelationshipChannel
-from services.relationship_narrative import shared_experience_lines
+from services.relationship_narrative import SCORE_LINE_PREFIX, affinity_score_line, shared_experience_lines
 
 NOW = time.time()
 DAY = 86400.0
@@ -31,7 +31,8 @@ USER = "10000001"
 QQ = f"qq:user:{USER}"
 GROUP = "900000001"
 
-# 注入里不得出现的字样：分数/维度/态度/档位/权重数值/来源群号/被撤掉的「当下感受」与档位句
+# 注入里不得出现的字样：英文维度键/态度/档位/权重数值/来源群号/被撤掉的「当下感受」与档位句
+# （好感分数只以「好感分数（…仅供参考…）：综合 X；熟悉 A、…」一行出现）
 FORBIDDEN = (
     "综合值", "态度=", "好感从", "好感 ", "familiarity", "trust", "fun=", "depth", "hostility",
     "权重=", "来源群", GROUP, "【你和对方】", "【当下感受】", "走势",
@@ -112,10 +113,19 @@ def _timeline_rows(text: str) -> list[tuple[int, str]]:
     return [(int(match.group(1)), match.group(0)) for match in re.finditer(r"^- 事件#(\d+) .*$", text, re.M)]
 
 
+def _score_line(text: str) -> str:
+    lines = [line for line in text.splitlines() if line.startswith(SCORE_LINE_PREFIX)]
+    assert len(lines) == 1, "恰好一行好感分数"
+    return lines[0]
+
+
+LONG_DECIMAL = re.compile(r"\d\.\d{2,}")
+
+
 # ─── 注入通道 ───
 
 
-def test_channel_injects_timeline_summary_without_scores(db):
+def test_channel_injects_timeline_summary_then_secondary_score_line(db):
     when = _seed(db)
     configure_impression_prompting(per_turn_tag=False, bookkeeping_active=True)
     result = asyncio.run(RelationshipChannel(repository=db.soul_repository, db=db).build(_ctx(_group())))
@@ -136,6 +146,15 @@ def test_channel_injects_timeline_summary_without_scores(db):
     assert "joke：接住了冷笑话" in text, "旧账本条目去掉维度与增量"
     assert "共同交往锚点：人情备忘（对方帮过你）：借账号帮我救急" in text
     assert "1333" not in text, "Bot 自己的群日记与此人无关，不塞进关系注入"
+
+    score = _score_line(text)
+    assert "仅供参考" in score and "理解对方以上面的印象为准" in score, "标明分数只是次要参考"
+    # 数值取当前场合可见的汇总：综合值由汇总后的维度推导（与管理台跨群汇总同口径）
+    assert score.endswith("：综合 18；熟悉 63.3、信任 3、好玩 10.5"), score
+    assert text.index(score) > text.index(rows[-1][1]), "分数在印象时间线之后"
+    assert text.index(score) > text.index("你对这个人的印象："), "分数在最近一条印象之后"
+    assert text.index(score) > text.index("共同交往锚点："), "分数在共同交往锚点之后"
+    assert not LONG_DECIMAL.search(text), "整数或一位小数，不出现长小数"
     for word in FORBIDDEN:
         assert word not in text, word
     assert "<<impression" not in text and "未结算能量" not in text, "默认不要求每轮写观感标签"
@@ -149,13 +168,47 @@ def test_channel_uses_configured_half_life(db):
     assert "时间权重每 7 天减半" in result.text
 
 
-def test_known_person_without_impression_injects_nothing(db):
+def test_known_person_without_impression_injects_only_score_line(db):
     soul = db.soul_repository
     soul.upsert_relationship(_group(), subject_principal_id=QQ, affinity=40, state="friendly",
                              dimensions={"familiarity": 90.0, "trust": 40.0, "fun": 30.0})
     result = asyncio.run(RelationshipChannel(repository=soul, db=db).build(_ctx(_group())))
-    assert result.status == "empty" and result.warnings == ["relationship_no_impression"]
-    assert not result.text, "只有分数没有印象时不拿分数凑一句"
+    assert result.status == "hit"
+    assert result.text == _score_line(result.text), "只有分数没有印象：只注入这一行分数"
+    assert "仅供参考" in result.text and "你还没有记下对 ta 的印象" in result.text
+    for word in FORBIDDEN:
+        assert word not in result.text, word
+
+
+def _private(conversation: str = USER) -> RuntimeScope:
+    return RuntimeScope("yushu", "private", SessionRef(f"qq:private:{conversation}", "qq", "private", conversation),
+                        subject_principal_id=QQ)
+
+
+def test_score_line_counts_private_rows_only_in_the_same_private_chat(db):
+    soul = db.soul_repository
+    db.person_timeline.add_event(bot_id="yushu", user_id=USER, group_id=GROUP, kind="impression",
+                                 summary="会接冷笑话的阿木", occurred_at=NOW - DAY)
+    soul.upsert_relationship(_group(), subject_principal_id=QQ, affinity=10, state="neutral",
+                             dimensions={"familiarity": 30.0, "trust": 5.0})
+    soul.upsert_relationship(_private(), subject_principal_id=QQ, affinity=10, state="neutral",
+                             dimensions={"familiarity": 20.0, "trust": 10.0, "depth": 12.5})
+    channel = RelationshipChannel(repository=soul, db=db)
+
+    in_group = _score_line(asyncio.run(channel.build(_ctx(_group()))).text)
+    assert in_group.endswith("熟悉 30、信任 5"), "群里不计入私聊的关系行"
+
+    ctx = _ctx(_private())
+    ctx.group_id = USER
+    in_private = _score_line(asyncio.run(channel.build(ctx)).text)
+    assert in_private.endswith("熟悉 50、信任 15、深度 12.5"), "同一私聊里计入本私聊的行"
+
+
+def test_score_line_format():
+    line = affinity_score_line(12.3456789, {"familiarity": 63.333333, "trust": 3.0, "hostility": -0.04}, has_impression=True)
+    assert line == f"{SCORE_LINE_PREFIX}理解对方以上面的印象为准）：综合 12.3；熟悉 63.3、信任 3、敌意 0"
+    assert affinity_score_line(None, {}, has_impression=True) == ""
+    assert affinity_score_line(True, {"trust": float("nan")}, has_impression=False) == ""
 
 
 def test_channel_settle_hint_follows_prompting_switch(db):

@@ -1,14 +1,28 @@
-"""关系注入的辅助：从 Bot 的经历时间线里挑出与某个人相关的「共同交往锚点」。
+"""关系注入的辅助：「共同交往锚点」与次要参考的「好感分数」一行。
 
-只做读侧筛选，不写库、不看好感分数。Bot 自己的群日记/经历（没有主体、也没有结构化参与者）
-与这个人无关，不再原样塞进关系注入；昵称碰巧出现在日记里也不算与此人相关。
+- 共同交往锚点：从 Bot 的经历时间线里挑出与某个人相关的条目，只做读侧筛选，不写库。Bot 自己的
+  群日记/经历（没有主体、也没有结构化参与者）与这个人无关，不再原样塞进关系注入；昵称碰巧出现
+  在日记里也不算与此人相关。
+- 好感分数：群友互动用的数值，只作一行紧凑的次要参考放在印象之后；理解对方以印象时间线
+  （与关系小传）为主，不按分数给关系定档位、不附态度。
 """
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
+
+# 分数行里各维度的顺序与中文名
+_SCORE_LABELS = (
+    ("familiarity", "熟悉"),
+    ("trust", "信任"),
+    ("fun", "好玩"),
+    ("depth", "深度"),
+    ("hostility", "敌意"),
+)
+SCORE_LINE_PREFIX = "好感分数（群友互动用的数值，仅供参考，"
 
 _ANCHOR_WORDS = {
     "bot_helped_user": "你帮过对方",
@@ -78,4 +92,43 @@ def shared_experience_lines(
     return out
 
 
-__all__ = ["shared_experience_lines"]
+def _score_text(value: Any) -> str | None:
+    """整数或一位小数；非数、布尔与无穷返回 None。"""
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(number):
+        return None
+    rounded = round(number, 1)
+    if rounded == int(rounded):
+        return str(int(rounded))
+    return f"{rounded:.1f}"
+
+
+def affinity_score_line(
+    affinity: Any,
+    dimensions: Mapping[str, Any] | None,
+    *,
+    has_impression: bool,
+) -> str:
+    """一行紧凑的好感分数，明确标注为次要参考；没有任何数值时返回空串。
+
+    不带态度或档位；数值由调用方按当前场合可见性取好（私聊的只在同一私聊计入）。"""
+    overall = _score_text(affinity)
+    values = dimensions if isinstance(dimensions, Mapping) else {}
+    dims = [
+        f"{label} {text}"
+        for key, label in _SCORE_LABELS
+        if (text := _score_text(values.get(key))) is not None
+    ]
+    if overall is None and not dims:
+        return ""
+    note = "理解对方以上面的印象为准" if has_impression else "你还没有记下对 ta 的印象，理解对方要看实际相处"
+    body = "；".join(part for part in (f"综合 {overall}" if overall is not None else "", "、".join(dims)) if part)
+    return f"{SCORE_LINE_PREFIX}{note}）：{body}"
+
+
+__all__ = ["SCORE_LINE_PREFIX", "affinity_score_line", "shared_experience_lines"]
