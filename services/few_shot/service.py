@@ -18,6 +18,7 @@ import json
 import random
 import re
 import time
+from html import escape
 from collections.abc import Mapping, Sequence
 from typing import Any, Dict, List, Optional
 
@@ -81,6 +82,7 @@ class FewShotService:
         config: dict = None,
         repository: Any = None,
         writer: Any = None,
+        expression_policy: Any = None,
     ):
         self._db = db
         self._llm = llm_client
@@ -91,8 +93,10 @@ class FewShotService:
         # 默认实例只用于读取，绝不在构造时绕过正式 writer 创建 schema。
         self._repository = repository or ScopedFewShotRepository(connection, ensure_schema=False)
         self._writer = writer
+        self.expression_policy = expression_policy
         self._last_extract: float = 0  # 上次提取时间
         self._last_injected_ids: List[int] = []  # 避免连续注入同一条
+        self._last_injected_by_scope: dict[tuple, list[int]] = {}
 
         # 从配置读取参数
         self._min_score = float(self._config.get("min_score", 0.7))
@@ -205,41 +209,62 @@ class FewShotService:
     def refresh(self, **kwargs: Any) -> None:
         """清理注入游标，确保新晋升样例下一次可参与缓存选择。"""
         self._last_injected_ids = []
+        self._last_injected_by_scope.clear()
 
     # ─── US-5.2: 注入 few-shot ───
 
-    def get_injection(self, scope: RuntimeScope, max_items: int = None) -> str:
-        """获取当前完整 RuntimeScope 下 2-3 条 approved few-shot。"""
-        if not self._enabled or not isinstance(scope, RuntimeScope):
-            self._last_injected_ids = []
+    def get_injection(self, scope: RuntimeScope, max_items: int = None, *, message: str = "") -> str:
+        """保留原工具/调用接口；群友表达需要当前情景且已经独立审核。"""
+        selected = self.get_injection_examples(scope, max_items=max_items, message=message)
+        if not selected:
             return ""
+        examples = "\n".join(f"- {escape(item['content'])}" for item in selected)
+        return f"<style_examples>\n{examples}\n</style_examples>"
+
+    def get_injection_examples(self, scope: RuntimeScope, max_items: int = None, *, message: str = "") -> list[dict]:
+        """Return text and provenance together, avoiding cross-thread audit cursors."""
+        if not self._enabled or not isinstance(scope, RuntimeScope) or scope.visibility != "group":
+            self._last_injected_ids = []
+            return []
         if max_items is None:
             max_items = self._max_inject
+        max_items = max(0, min(3, int(max_items)))
+        if not max_items:
+            self._last_injected_ids = []
+            return []
 
         rows = self._repository.list_approved(scope=scope, limit=20)
-        if not rows:
-            self._last_injected_ids = []
-            return ""
-
         healthy_rows = [
             (int(row["id"]), str(row["content"]))
             for row in rows
             if self._is_healthy_example(row.get("content", ""))
         ]
-        if not healthy_rows:
-            self._last_injected_ids = []
-            return ""
+        learned = []
+        if self.expression_policy is not None:
+            try:
+                learned = self.expression_policy.recall(
+                    scope, message=message, max_items=min(2, max_items - int(bool(healthy_rows))),
+                )
+            except Exception as exc:
+                logger.debug(f"[FewShot] 表达读取未就绪: {type(exc).__name__}")
+        legacy_limit = max_items - len(learned)
+        key = (scope.bot_id, scope.session.id, scope.visibility)
+        previous = self._last_injected_by_scope.get(key, [])
 
         # 不连续重复同一条
-        available = [(r[0], r[1]) for r in healthy_rows if r[0] not in self._last_injected_ids]
-        if len(available) < max_items:
+        available = [(r[0], r[1]) for r in healthy_rows if r[0] not in previous]
+        if len(available) < legacy_limit:
             available = healthy_rows  # 库太小时允许重复
 
-        selected = random.sample(available, min(max_items, len(available)))
+        selected = random.sample(available, min(legacy_limit, len(available)))
         self._last_injected_ids = [s[0] for s in selected]
-
-        examples = "\n".join(f"- {s[1]}" for s in selected)
-        return f"<style_examples>\n{examples}\n</style_examples>"
+        if len(self._last_injected_by_scope) >= 128 and key not in self._last_injected_by_scope:
+            self._last_injected_by_scope.pop(next(iter(self._last_injected_by_scope)))
+        self._last_injected_by_scope[key] = self._last_injected_ids
+        return [
+            {"example_id": ident, "content": content, "source": "FewShotService.get_injection"}
+            for ident, content in selected
+        ] + learned
 
     # ─── US-5.4: 风格漂移检测 ───
 

@@ -3,7 +3,8 @@ import type { EvidenceRef, ObjectRefDescriptor, PageResponse } from '@/component
 
 /** 事实可来自群聊或私聊；私聊事实只在该私聊会话下审核与展示。 */
 export type FactVisibility = 'group' | 'private'
-export type FactReviewAction = 'approve' | 'reject'
+export type FactReviewAction = 'approve' | 'reject' | 'replace' | 'coexist'
+export type FactBatchReviewAction = 'approve' | 'reject'
 export type FactReviewHint = '' | 'suggest_approve' | 'suggest_reject' | 'needs_review'
 
 export interface FactSelection {
@@ -29,6 +30,13 @@ export interface ScopedFactItem {
   confidence: number
   status: string
   revision: number
+  /** Unix 秒；null 表示该端没有时间限制。 */
+  valid_from: number | null
+  valid_until: number | null
+  effective: boolean
+  ineffective_reason: string | null
+  review_actions: FactReviewAction[]
+  conflict_candidates: FactConflictCandidate[]
   source_memory_id?: number | null
   provenance?: Record<string, unknown>
   evidence: EvidenceRef[]
@@ -40,6 +48,8 @@ export interface ScopedFactItem {
   updated_at?: number
   created_at?: number
 }
+
+export type FactConflictCandidate = Pick<ScopedFactItem, 'id' | 'revision' | 'subject' | 'predicate' | 'object' | 'status' | 'valid_from' | 'valid_until'>
 
 export interface ScopedFactsResponse extends PageResponse<ScopedFactItem> {
   scope: unknown
@@ -67,7 +77,8 @@ export interface FactReviewRecord {
 }
 
 function scopeEnvelope(scope: FactSelection) {
-  const [platform_id, kind, conversation_id] = scope.session_id.split(':', 3)
+  const [platform_id, kind, ...conversation] = scope.session_id.split(':')
+  const conversation_id = conversation.join(':')
   return {
     kind: 'RuntimeScope',
     payload: {
@@ -92,9 +103,24 @@ export function listFacts(filters: FactListFilters): Promise<ScopedFactsResponse
   return fetchJson<ScopedFactsResponse>(`/api/facts?${params.toString()}`)
 }
 
-function transitionFact(item: ScopedFactItem, action: FactReviewAction, scope: FactSelection, reason?: string) {
+function validateReview(item: ScopedFactItem, action: FactReviewAction, scope: FactSelection) {
+  if (item.bot_id !== scope.bot_id || item.session_id !== scope.session_id || item.visibility !== scope.visibility) {
+    throw new Error('该事实不属于当前 Bot 和会话，请刷新后重试')
+  }
   if (!item.object_ref?.ref) throw new Error('该事实没有服务端签发的 ObjectRef，不能安全审核')
-  return fetchJson<{ ok: boolean; operation: { kind: string; status: string }; revision: number | null }>(
+  if (!Number.isSafeInteger(item.revision) || item.revision < 1) throw new Error('缺少有效审核版本，请刷新后重试')
+  if (!item.editable || !item.capabilities?.review?.available || !item.review_actions?.includes(action)) {
+    throw new Error('服务端未允许此审核操作，请刷新后重试')
+  }
+}
+
+export function reviewFact(item: ScopedFactItem, action: FactReviewAction, scope: FactSelection, reason?: string, target?: FactConflictCandidate) {
+  validateReview(item, action, scope)
+  if (action === 'replace' && (!target || !Number.isSafeInteger(target.revision) || target.revision < 1
+    || !item.conflict_candidates?.some((candidate) => candidate.id === target.id && candidate.revision === target.revision))) {
+    throw new Error('请选择当前冲突列表中的替换目标及版本')
+  }
+  return fetchJson<{ ok: boolean; operation: { kind: string; status: string }; revision: number | null; item: ScopedFactItem }>(
     `/api/facts/${item.id}/${action}`,
     {
       method: 'POST',
@@ -103,22 +129,23 @@ function transitionFact(item: ScopedFactItem, action: FactReviewAction, scope: F
         object_ref: item.object_ref,
         revision: item.revision,
         reason: reason ?? '',
+        ...(action === 'replace' ? { supersedes_fact_id: target!.id, supersedes_revision: target!.revision } : {}),
       }),
     },
   )
 }
 
 export function approveFact(item: ScopedFactItem, scope: FactSelection, reason?: string) {
-  return transitionFact(item, 'approve', scope, reason)
+  return reviewFact(item, 'approve', scope, reason)
 }
 
 export function rejectFact(item: ScopedFactItem, scope: FactSelection, reason?: string) {
-  return transitionFact(item, 'reject', scope, reason)
+  return reviewFact(item, 'reject', scope, reason)
 }
 
 export function batchReviewFacts(
   items: ScopedFactItem[],
-  action: FactReviewAction,
+  action: FactBatchReviewAction,
   scope: FactSelection,
 ): Promise<{
   operation_kind: string
@@ -128,6 +155,10 @@ export function batchReviewFacts(
 }> {
   if (!items.length) throw new Error('批量审核至少需要一条事实')
   if (items.some((item) => !item.object_ref?.ref)) throw new Error('批量审核要求每条事实都带有服务端签发的 ObjectRef')
+  items.forEach((item) => {
+    validateReview(item, action, scope)
+    if (!item.capabilities?.batch_review?.available) throw new Error('服务端未允许批量审核此事实')
+  })
   return fetchJson('/api/facts/commands/batch-review', {
     method: 'POST',
     body: JSON.stringify({

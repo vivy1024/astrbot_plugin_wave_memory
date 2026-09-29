@@ -25,7 +25,7 @@ function payload(overrides: Partial<BotHomePayload> = {}): BotHomePayload {
       quarantined: 87,
       by_source: { chat: 1836, core: 43, noise: 1261 },
       top_groups: [{ ...placeA, count: 2185 }, { ...placeB, count: 821 }],
-      top_speakers: [{ ...placeA, sender_id: '10000004', display_name: '纯白喵', count: 148, last_at: now - 60 }],
+      top_speakers: [{ ...placeA, sender_id: '10000004', display_name: '小白喵', count: 148, last_at: now - 60 }],
       highlights: [{
         ...placeA,
         id: 659871,
@@ -162,7 +162,7 @@ describe('BotHomePage', () => {
     const group = linkParams(screen.getAllByText('3-5层群').find((node) => node.closest('a')?.getAttribute('href')?.startsWith('/memories'))!)
     expect(Object.fromEntries(group.params)).toEqual({ bot_id: 'yushu', session_id: SESSION_A, visibility: 'group' })
 
-    const speaker = linkParams(screen.getByText('纯白喵'))
+    const speaker = linkParams(screen.getByText('小白喵'))
     expect(speaker.path).toBe('/people')
     expect(speaker.params.get('search')).toBe('10000004')
     expect(speaker.params.get('session_id')).toBe(SESSION_A)

@@ -82,3 +82,14 @@ class IdentitySafetyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_nickname_with_meow_in_mention_is_not_catgirl_contamination():
+    """群友昵称带「喵」时 @ 他并说了带「我」的话，不是猫娘污染（线上 30 天误隔离上千条）。"""
+    from services.identity_safety import is_identity_contamination
+
+    assert not is_identity_contamination("@小白喵(10001) 吃我精灵胶囊")
+    assert not is_identity_contamination("@小白喵 我知道一个我@给你")
+    # 真正的猫娘口癖仍然拦截
+    assert is_identity_contamination("(抖抖猫耳)我是猫娘喵")
+    assert is_identity_contamination("[At:10001] 我投降了喵")

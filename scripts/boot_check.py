@@ -294,7 +294,7 @@ async def run():
         check("capabilities", bool(caps["tools"]) and caps["bot"]["db_id"] == "yushu", f"{len(caps['tools'])} tools")
         scope = {"bot_id": "yushu", "visibility": "group", "session": {"id": "羽书:group:42"}}
         obs = await loop.run_in_executor(None, _http, "/api/runtime/v1/observations/batch", {"events": [
-            {"event_id": 9001, "content": "记住 周五一起打尖塔", "sender_id": "u1", "sender_name": "阿一", "scope": scope},
+            {"event_id": 9001, "content": "记住 周五一起打尖塔", "is_at_bot": True, "sender_id": "u1", "sender_name": "阿一", "scope": scope},
             {"event_id": 9002, "kind": "self", "content": "好呀周五见", "scope": scope},
         ]})
         check("observations", obs["accepted"] == 2)
@@ -314,6 +314,49 @@ async def run():
         await asyncio.sleep(3)
         rows = plugin.db.conn.execute("SELECT sender_id, content FROM memories ORDER BY id").fetchall()
         check("memories written", [r[1] for r in rows] == ["[用户要求记住] 周五一起打尖塔", "好呀周五见"], str(rows))
+        # Only this temporary instance is enabled, and no provider is available.
+        from astrbot_plugin_wave_memory.domain.scope import RuntimeScope, SessionRef
+        from astrbot_plugin_wave_memory.services.reply_decision import ReplySignals
+        learning_scope = RuntimeScope("yushu", "group", SessionRef("羽书:group:42", "羽书", "group", "42"))
+        decision = plugin.reply_decision.decide(ReplySignals(
+            bot_id="yushu", session_id=learning_scope.session.id, visibility="group", message="谢谢",
+        ))
+        check("reply rules default off and never wake by themselves", decision["mode"] == "off" and not decision["allow"])
+        check("learning default off", not plugin.reply_feedback_service.enabled and not plugin.expression_policy.enabled)
+        observed = await loop.run_in_executor(None, _http, "/api/runtime/v1/observations/batch", {"events": [
+            {"event_id": 9003, "content": "一起加油,周五一起完成挑战吧", "sender_id": "u2", "sender_name": "测试乙", "scope": scope},
+        ]})
+        check("learning source accepted", observed["accepted"] == 1)
+        # Normal chat goes through the configured debounce before writer enqueue.
+        records = []
+        for _ in range(48):
+            records = plugin.db.conn.execute("SELECT id,sender_id,content FROM memories ORDER BY id").fetchall()
+            if any(row[2] == "一起加油,周五一起完成挑战吧" for row in records):
+                break
+            await asyncio.sleep(0.25)
+        check("learning source persisted after debounce", any(row[2] == "一起加油,周五一起完成挑战吧" for row in records), str(records))
+        bot_row = next(row for row in records if row[1] == "bot")
+        source_row = next(row for row in records if row[2] == "一起加油,周五一起完成挑战吧")
+        plugin.reply_feedback_service.enabled = True
+        plugin.expression_policy.enabled = True
+        learned = plugin.reply_feedback_service.record_bookkeeping(learning_scope, {
+            "reply_feedback": [{"reply_memory_id": bot_row[0], "response_memory_id": source_row[0], "outcome": "accepted", "source_quote": "一起加油", "situation": "encourage"}],
+            "expressions": [{"source_memory_id": source_row[0], "speaker_id": "u2", "content": "一起加油", "situation": "encourage"}],
+        }, source_message_ids=[row[0] for row in records])
+        check("learning records evidence without a model call", learned == {"feedback": 1, "expressions": 1}, str(learned))
+        from urllib.parse import urlencode
+        query = urlencode({"bot_id": "yushu", "session_id": learning_scope.session.id, "visibility": "group"})
+        listing = await loop.run_in_executor(None, _http, "/api/reply-learning/expressions?" + query)
+        example = listing["items"][0]
+        check("pending expression not injected", not plugin.expression_policy.recall(learning_scope, message="有点紧张"))
+        approved = await loop.run_in_executor(None, _http, f"/api/reply-learning/expressions/{example['id']}/review", {
+            "scope": learning_scope.to_dict(), "action": "approve", "revision": example["revision"],
+            "style_only": True, "idempotency_key": "boot-expression-review",
+        })
+        recalled = plugin.expression_policy.recall(learning_scope, message="有点紧张")
+        check("reviewed expression enters situational recall", approved.get("ok") and bool(recalled))
+        feedback = await loop.run_in_executor(None, _http, "/api/reply-learning/feedback?" + query)
+        check("feedback route shares the same evidence", len(feedback["items"]) == 1)
     finally:
         await plugin.terminate()
     print("[OK] terminated cleanly")

@@ -48,3 +48,10 @@ def test_bot_reply_uses_its_own_idempotency_key():
     assert first != second  # 同一条消息引出的多段回复各自入库
     assert first == bot_reply_event_id(user_message_id, "那是，本座随手推演的法相")  # 重复投递仍去重
     assert bot_reply_event_id(None, "x") is None and bot_reply_event_id("", "x") is None
+
+
+def test_injection_does_not_raise_importance_of_recalled_memories():
+    """召回不改重要度：注入命中不得再给记忆 +0.02（曾与 v5.1 约定矛盾，形成正反馈）。"""
+    source = Path("app/injection.py").read_text(encoding="utf-8")
+    assert "set_memory_importance" not in source
+    assert "orchestrator-hit" not in source

@@ -182,6 +182,21 @@ function useTraceSessions(enabled: boolean): SessionOptionDto[] | undefined {
   return sessions
 }
 
+const REPLY_REASONS: Record<string, string> = {
+  scope_missing: '缺少 Bot 或会话信息', event_stopped: '本条消息已被宿主停止处理',
+  self_message: '不回应自己的消息', platform_denied: '宿主未允许回复', no_message: '没有新消息',
+  mode_off: '规则已关闭，保持原行为', direct_priority: '私聊或明确点名，优先回复',
+  relevance_unknown: '与当前话题的相关性未知', relevance: '已检查话题相关性',
+  question_request: '消息包含提问或请求', pure_noise: '仅有重复字符或无实际内容',
+  concern_candidate: '有关尚未了结的关切', feedback_unknown: '没有明确的回复反馈，不加减分',
+  feedback_positive: '近期回复获得明确承接', feedback_negative: '近期回复有明确负面反馈',
+  backlog: '当前会话有消息积压', recent_bot_replies: 'Bot 近期已经多次发言',
+  no_existing_candidate: '本条消息未满足原有唤醒条件', cooldown: '仍在回复冷却时间内',
+  suppression_backoff: '连续暂不回复后的等待期', score_pass: '达到回复阈值',
+  recent_reply_limit: '近期发言已达上限', score_below_threshold: '未达到回复阈值',
+  rule_suppressed: '本条未通过规则', relationship_unknown: '关系信息未知，不额外加分',
+}
+
 export function TraceDetailSheet({
   open,
   onOpenChange,
@@ -203,6 +218,7 @@ export function TraceDetailSheet({
   const errors = detail ? [detail.error, detail.errors, ...channels.filter((channel) => channel.error).map((channel) => `${channelName(channel)}: ${textValue(channel.error)}`)].flatMap(normalizeMessages) : []
   const finalText = textValue(detail?.final_text ?? detail?.final_injection_text, '')
   const rawPayload = typeof detail?.raw_payload === 'string' ? detail.raw_payload : undefined
+  const replyDecision = asRecord(detail?.reply_decision)
   const sessions = useTraceSessions(Boolean(detail))
   const linkContext = useMemo<TraceLinkContext | undefined>(() => {
     const request = asRecord(detail?.request)
@@ -235,6 +251,15 @@ export function TraceDetailSheet({
                 <Section title="预算" description="Token、字符、通道预算和截断信息均来自详情载荷。">
                   <DetailGrid value={detail.budget} preferredKeys={['total_tokens', 'token_budget', 'used_tokens', 'remaining_tokens', 'max_chars', 'truncated']} />
                 </Section>
+
+                {replyDecision ? <Section title="开口判断" description="规则判断不额外调用模型。观察模式只记录建议，是否实际回复仍由宿主决定。">
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="outline">{({ off: '关闭', shadow: '观察模式', enforce: '启用规则' } as Record<string, string>)[String(replyDecision.mode)] ?? '未记录模式'}</Badge>
+                    <span className="text-sm">{replyDecision.would_reply === true || replyDecision.decision === 'allow' ? '建议回复' : replyDecision.would_reply === false || replyDecision.decision === 'suppress' ? '建议暂不回复' : textValue(replyDecision.decision, '未记录建议')}</span>
+                    {typeof replyDecision.score === 'number' ? <span className="text-sm text-muted-foreground">评分 {replyDecision.score.toFixed(1)}</span> : null}
+                  </div>
+                  {Array.isArray(replyDecision.reasons) ? <ul className="mt-2 list-disc pl-5 text-sm">{replyDecision.reasons.filter((reason): reason is string => typeof reason === 'string').map((reason, index) => <li key={index}>{REPLY_REASONS[reason] ?? reason}</li>)}</ul> : null}
+                </Section> : null}
 
                 <Section title="通道瀑布" description="按通道查看状态、耗时、Token、命中/过滤数量和错误；点通道名跳到通道配置。">
                   {channels.length ? <div className="flex flex-col gap-3">{channels.map((channel, index) => {

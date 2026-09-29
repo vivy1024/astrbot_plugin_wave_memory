@@ -232,7 +232,7 @@ class DailyDiaryService:
             return False
         result = await record.instance.call(
             runtime_tool_context(scope, source="daily_diary"),
-            diary_title=title, diary_content=content, episode_summary=summary, emotional_weight=0.6,
+            diary_title=title, diary_content=content, episode_summary=summary, emotional_weight=6,
         )
         if self.writer is not None:
             try:

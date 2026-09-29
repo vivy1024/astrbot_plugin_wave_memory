@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any, Mapping
 
@@ -181,11 +182,16 @@ def build_trace_detail_payload(
     if not trace:
         return None
     payload = build_injection_explanation(trace)
+    try:
+        metadata = json.loads(trace.get("metadata_json") or "{}")
+        if isinstance(metadata, dict) and isinstance(metadata.get("reply_decision"), dict):
+            payload["reply_decision"] = metadata["reply_decision"]
+    except (ValueError, TypeError):
+        pass
     raw_payload = str(trace.get("payload_json") or "")
     if raw_payload:
         payload["raw_payload"] = raw_payload
         try:
-            import json
             decoded = json.loads(raw_payload)
             raw_trace = decoded.get("trace") if isinstance(decoded, Mapping) else None
             if isinstance(raw_trace, Mapping):

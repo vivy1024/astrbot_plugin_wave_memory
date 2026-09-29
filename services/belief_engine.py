@@ -29,6 +29,7 @@ from .belief_gating import (
     snapshot_from_relationship,
 )
 from .llm_fallback import LLMFallbackClient
+from .fact_policy import is_effective
 
 
 APPROVED_FACT_STATUSES = frozenset({"active", "approved"})
@@ -54,11 +55,13 @@ def approved_source_fact_ids(repository: Any, scope: RuntimeScope, fact_ids: Any
         rows = repository.list_scoped_facts(scope, limit=200) or []
     except Exception:
         return []
+    now = time.time()
     approved = {
         int(row["id"])
         for row in rows
         if isinstance(row, Mapping)
         and str(row.get("status") or "") in APPROVED_FACT_STATUSES
+        and is_effective(row, now)
         and row.get("id") is not None
     }
     return [fact_id for fact_id in raw_ids if fact_id in approved]

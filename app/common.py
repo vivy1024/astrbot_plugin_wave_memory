@@ -105,6 +105,7 @@ class _ObservationEvent:
     message_id: object = None
     message_str: str = ""
     message_obj: object = None
+    is_at_or_wake_command: bool = False
 
 
 def _stringify_config_value(value, default: str = "") -> str:

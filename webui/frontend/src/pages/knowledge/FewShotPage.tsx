@@ -1,8 +1,9 @@
-import { useHidePageScopeSelectors } from '@/app/global-scope'
+import { useGlobalScope, useHidePageScopeSelectors } from '@/app/global-scope'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { EyeIcon, RefreshCwIcon } from 'lucide-react'
 
 import { getApprovedFewShot, type ApprovedFewShot } from '@/api/knowledge'
+import { isReplyLearningScope } from '@/api/replyLearning'
 import { getScopeOptions, groupSessionOptions, scopeOptionsFor } from '@/api/options'
 import { PaginationControls, QueryState, ResponsiveDetail, DeclarativeDataTable, ScopeSelect, usePaginationSearchParams, type PageResponse } from '@/components/shared'
 import { useCanonicalScopeDefault } from '@/hooks/use-pagination-search-params'
@@ -10,6 +11,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { InputWithIcon } from '@/components/shared/InputWithIcon'
+import { ReplyLearningPanel } from './ReplyLearningPanel'
 
 function score(value: number | undefined): string {
   return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : '未评分'
@@ -41,12 +43,19 @@ function SummaryTile({ label, value, tone }: { label: string; value: string | nu
 }
 
 export function FewShotPage() {
+  const scope = useGlobalScope()
+  return <FewShotScopePage key={JSON.stringify([scope.botId, scope.sessionId, scope.visibility, scope.status])} scopeReady={scope.status === 'ready'} useDefaults={!scope.inProvider} />
+}
+
+function FewShotScopePage({ scopeReady, useDefaults }: { scopeReady: boolean; useDefaults: boolean }) {
   const hidePageScope = useHidePageScopeSelectors()
   const pagination = usePaginationSearchParams()
   const botId = pagination.searchParams.get('bot_id') ?? ''
   const sessionId = pagination.searchParams.get('session_id') ?? ''
+  const visibility = pagination.searchParams.get('visibility') || 'group'
+  const validScope = scopeReady && isReplyLearningScope({ bot_id: botId, session_id: sessionId, visibility })
   const search = pagination.searchParams.get('search') ?? ''
-  useCanonicalScopeDefault({ botId, sessionId, setFilters: pagination.setFilters })
+  useCanonicalScopeDefault({ botId, sessionId, setFilters: pagination.setFilters, enabled: useDefaults })
   const [searchDraft, setSearchDraft] = useState(search)
   const [data, setData] = useState<PageResponse<ApprovedFewShot> | null>(null)
   const [error, setError] = useState<unknown>()
@@ -57,16 +66,17 @@ export function FewShotPage() {
 
   useEffect(() => { setSearchDraft(search) }, [search])
   useEffect(() => {
-    if (!botId || !sessionId) { setData(null); setLoading(false); setError(undefined); return }
+    if (!validScope) { setData(null); setLoading(false); setError(undefined); return }
     let active = true
     setLoading(true)
+    setData(null)
     setError(undefined)
     getApprovedFewShot({ bot_id: botId, session_id: sessionId, visibility: 'group', search: search || undefined, limit: pagination.limit, offset: pagination.offset })
       .then((value) => { if (active) setData(value) })
       .catch((reason: unknown) => { if (active) { setData(null); setError(reason) } })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [botId, pagination.limit, pagination.offset, reload, search, sessionId])
+  }, [botId, pagination.limit, pagination.offset, reload, search, sessionId, validScope])
 
   const submitSearch = (event: FormEvent) => { event.preventDefault(); pagination.setFilters({ search: searchDraft.trim() || null }) }
   const clearSearch = () => { setSearchDraft(''); pagination.setFilters({ search: null }) }
@@ -75,32 +85,33 @@ export function FewShotPage() {
   const averageScore = scoredItems.length ? (scoredItems.reduce((sum, item) => sum + (item.score ?? 0), 0) / scoredItems.length).toFixed(2) : '—'
   const traitCount = data ? new Set(pageItems.flatMap((item) => item.traits ?? [])).size : '—'
   const total = data?.page.total_status === 'exact' ? data.page.total ?? '—' : '—'
-  const status = !botId || !sessionId ? 'unknown' : loading ? 'loading' : error ? 'error' : !pageItems.length ? 'empty' : 'success'
+  const status = !validScope ? 'unknown' : loading ? 'loading' : error ? 'error' : !pageItems.length ? 'empty' : 'success'
 
   return <div className="flex flex-col gap-4" data-page="few-shot">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <header className="max-w-2xl"><h1 className="text-xl font-bold tracking-tight">风格样例</h1><p className="text-xs text-muted-foreground">只展示当前 Bot 和群里已通过审核、且内容健康的正式范例。</p></header>
+      <header className="max-w-2xl"><h1 className="text-xl font-bold tracking-tight">风格样例</h1><p className="text-xs text-muted-foreground">查看当前 Bot 和群的正式范例，审核群友表达，并了解近期回复反馈。</p></header>
       <div className="flex flex-wrap gap-2 text-xs"><SummaryTile label="筛选总数" value={total} /><SummaryTile label="本页平均分" value={averageScore} tone="text-emerald-600" /><SummaryTile label="本页风格特征" value={traitCount} /></div>
     </div>
 
     <Card className="overflow-hidden border-border/60"><CardContent className="p-0">
+      <h2 className="border-b px-4 py-3 text-sm font-medium">已批准样例（只读）</h2>
       <div className={hidePageScope ? 'grid items-center gap-2 border-b bg-muted/10 px-4 py-3' : 'grid items-center gap-2 border-b bg-muted/10 px-4 py-3 lg:grid-cols-[auto_minmax(10rem,0.75fr)_minmax(12rem,1fr)_minmax(20rem,1.4fr)]'}>
         {hidePageScope ? null : (
           <>
             <div className="pr-1 text-xs"><div className="font-medium">当前群</div><div className="text-muted-foreground">Bot 和群</div></div>
             <ScopeSelect className="[&_[data-slot=field-label]]:sr-only" value={botId || undefined} loadOptions={loadBots} label="Bot" placeholder="选择 Bot" required onValueChange={(value) => pagination.setFilters({ bot_id: value, session_id: null })} />
-            <ScopeSelect className="[&_[data-slot=field-label]]:sr-only" value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" placeholder="选择群" disabled={!botId} required onValueChange={(value) => pagination.setFilters({ session_id: value })} />
+            <ScopeSelect className="[&_[data-slot=field-label]]:sr-only" value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" placeholder="选择群" disabled={!botId} required onValueChange={(value) => pagination.setFilters({ session_id: value, visibility: 'group' })} />
           </>
         )}
         <form className="flex min-w-0 flex-wrap items-center gap-2" onSubmit={submitSearch}>
           <InputWithIcon value={searchDraft} onValueChange={(v) => setSearchDraft(v)} placeholder="搜索范例内容、风格特征" containerClassName="min-w-48 flex-1" />
-          <Button type="submit" size="sm" className="h-8" disabled={loading || !botId || !sessionId}>搜索</Button>
+          <Button type="submit" size="sm" className="h-8" disabled={loading || !validScope}>搜索</Button>
           <Button type="button" size="sm" className="h-8" variant="ghost" onClick={clearSearch}>清除</Button>
-          <Button type="button" size="sm" className="h-8" variant="outline" disabled={loading || !botId || !sessionId} onClick={() => setReload((value) => value + 1)}><RefreshCwIcon aria-hidden="true" /><span className="sr-only">刷新</span></Button>
+          <Button type="button" size="sm" className="h-8" variant="outline" disabled={loading || !validScope} onClick={() => setReload((value) => value + 1)}><RefreshCwIcon aria-hidden="true" /><span className="sr-only">刷新</span></Button>
         </form>
       </div>
 
-        <QueryState status={status} error={error} title="风格样例读取失败" description={!botId || !sessionId ? '请先选择 Bot 和群聊。' : '当前群暂无已通过审核的风格样例。'} onRetry={() => setReload((value) => value + 1)}>
+        <QueryState status={status} error={error} title="风格样例读取失败" description={!validScope ? '请先选择 Bot 和群聊。' : undefined} emptyDescription="当前群暂无已通过审核的风格样例。" onRetry={() => setReload((value) => value + 1)}>
           <DeclarativeDataTable
             label="风格样例清单"
             items={pageItems}
@@ -120,7 +131,8 @@ export function FewShotPage() {
 
     <details className="rounded-lg border border-dashed text-sm">
       <summary className="cursor-pointer list-none px-4 py-2.5 font-medium marker:hidden">正式数据边界与健康规则</summary>
-      <p className="border-t px-4 py-3 text-xs leading-relaxed text-muted-foreground">本页不展示候选、拒绝项或审核写操作。除已通过审核外，内容还须通过身份污染与不安全风格检查；总数、分页和搜索始终限定在当前 Bot 和群。</p>
+      <p className="border-t px-4 py-3 text-xs leading-relaxed text-muted-foreground">上方正式范例列表保持只读，仅展示已批准且通过身份污染与不安全风格检查的内容。下方群友表达需单独审核；总数、分页和搜索始终限定在当前 Bot 和群。</p>
     </details>
+    <ReplyLearningPanel />
   </div>
 }

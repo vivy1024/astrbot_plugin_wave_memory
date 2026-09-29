@@ -30,6 +30,7 @@ from .db.migrations.display_name_repair import repair_dirty_display_names
 from .db.migrations.memories_v2 import ensure_memories_v2_schema
 from .db.migrations.scoped_derived_knowledge import ensure_scoped_derived_knowledge_schema
 from .db.migrations.scoped_learning_projections import ensure_scoped_learning_projection_schema
+from .db.migrations.reply_feedback_learning import ensure_reply_feedback_learning_schema
 from .db.migrations.scoped_memory_tag_corrections import (
     ensure_scoped_memory_tag_correction_schema,
 )
@@ -100,6 +101,7 @@ class WaveMemoryDB:
             ensure_bot_jargon_schema(self._cm)
             ensure_person_timeline_schema(self._cm)
             ensure_scoped_learning_projection_schema(self._cm)
+            ensure_reply_feedback_learning_schema(self._cm)
             # v5.1：标签全被准入拒掉的提取曾记为 done，改记 skipped（一次性，旧状态备份在单独的表里）
             retagged = repair_done_without_tags(self._cm)
             if retagged:

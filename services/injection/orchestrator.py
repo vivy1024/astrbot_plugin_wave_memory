@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import time
 import unicodedata
@@ -32,6 +33,33 @@ def set_slow_warning_ms(value: int) -> None:
         _slow_warning_ms = max(1, int(value))
     except (TypeError, ValueError):
         _slow_warning_ms = SLOW_INJECTION_WARNING_MS
+
+
+def reply_decision_metadata(event: Any) -> dict[str, Any]:
+    """Persist bounded rule diagnostics, never an event object or message body."""
+    raw = getattr(event, "_wave_memory_reply_decision", None)
+    if not isinstance(raw, dict):
+        return {}
+    decision: dict[str, Any] = {}
+    for key in ("mode", "decision", "reason_code"):
+        if isinstance(raw.get(key), str):
+            decision[key] = raw[key][:120]
+    for key in ("score", "threshold", "cooldown_remaining"):
+        value = raw.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+            decision[key] = value
+    for key in ("would_reply", "enforced", "eligible"):
+        if isinstance(raw.get(key), bool):
+            decision[key] = raw[key]
+    if isinstance(raw.get("reasons"), (list, tuple)):
+        decision["reasons"] = [item[:160] for item in raw["reasons"][:20] if isinstance(item, str)]
+    if isinstance(raw.get("factors"), dict):
+        decision["factors"] = {
+            key[:80]: value for key, value in list(raw["factors"].items())[:20]
+            if isinstance(key, str) and isinstance(value, (int, float))
+            and not isinstance(value, bool) and math.isfinite(value)
+        }
+    return {"reply_decision": decision} if decision else {}
 
 
 
@@ -114,6 +142,7 @@ class InjectionOrchestrator:
                         **runtime_scope_metadata(ctx.scope),
                         "config_revision": channel_config_revision(self.config),
                         "source": getattr(ctx, "source", "astrbot") or "astrbot",
+                        **reply_decision_metadata(ctx.event),
                     },
                     "message": ctx.message,
                     "final_text": final_text,

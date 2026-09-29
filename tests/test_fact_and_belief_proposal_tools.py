@@ -204,6 +204,19 @@ def test_belief_proposal_requires_at_least_two_approved_facts(tmp_path: Path):
     assert b["status"] == "pending"
     assert b["provenance"]["source_fact_ids"] == [f1, f2]
 
+    # 4. 同一组事实换个说法再提：更新原信念，不新增（线上曾一天出现 3 对重复）
+    res_again = asyncio.run(tool.call(
+        ctx,
+        belief_type="person_judgment",
+        content="小明嘴上不饶人，朋友卡住时总会帮忙",
+        grounding_evidence="同样两条技术协助事实",
+        source_fact_ids=[f2, f1],
+    ))
+    assert "信念" in res_again
+    beliefs = db.scoped_knowledge.list_scoped_beliefs(scope)
+    assert len(beliefs) == 1
+    assert beliefs[0]["content"] == "小明嘴上不饶人，朋友卡住时总会帮忙"
+
 
 def test_belief_lifecycle_transition_approves_when_backed_by_approved_facts(tmp_path: Path):
     db_path = tmp_path / "belief_trans.db"

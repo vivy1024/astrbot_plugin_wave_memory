@@ -139,8 +139,10 @@ class WaveMemoryProposeBeliefTool(FunctionTool[AstrAgentContext]):
         memory_id = first_memory_id_from_facts(repo, runtime_scope, approved_ids)
         if not memory_id:
             memory_id = resolve_source_memory_id(self.db, runtime_scope, quote=content)
-        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
-        belief_key = f"{belief_type}:{content_hash}"
+        # 同一类型、同一组依据事实只算一条信念：换个说法重复提审时更新原条目（保留已批准状态），
+        # 此前按正文哈希去重，事后记账隔几分钟换种说法就多出一条（线上一天 8 条里 3 对重复）。
+        facts_hash = hashlib.sha256(",".join(str(i) for i in sorted(approved_ids)).encode("utf-8")).hexdigest()[:16]
+        belief_key = f"{belief_type}:facts:{facts_hash}"
         try:
             belief_id = repo.upsert_scoped_belief(
                 runtime_scope,

@@ -142,20 +142,20 @@ def _event(i: int, kind: str, summary: str, *, days_ago: float, **provenance):
 
 def test_compress_impressions_merges_epithets_and_drops_numbers():
     events = [
-        _event(1, "impression", "过零点准时打卡互换名片赞的守约老搭子RO", days_ago=20),
-        _event(2, "impression", "跟风挑刺发图敷衍的嘴贫老搭子RO", days_ago=10),
-        _event(3, "impression", "半夜陪聊游戏攻略的老搭子RO", days_ago=5),
-        _event(4, "affinity", "日常直接互动（帮忙核对了版本号：细心的老搭子RO），好感从 15 升至 16",
+        _event(1, "impression", "过零点准时打卡互换名片赞的守约老搭子阿木", days_ago=20),
+        _event(2, "impression", "跟风挑刺发图敷衍的嘴贫老搭子阿木", days_ago=10),
+        _event(3, "impression", "半夜陪聊游戏攻略的老搭子阿木", days_ago=5),
+        _event(4, "affinity", "日常直接互动（帮忙核对了版本号：细心的老搭子阿木），好感从 15 升至 16",
                days_ago=9, before_affinity=15, after_affinity=16),
-        _event(5, "affinity", "共同玩梗接梗（接住了冷笑话：会接梗的RO），好感从 16 升至 18",
+        _event(5, "affinity", "共同玩梗接梗（接住了冷笑话：会接梗的阿木），好感从 16 升至 18",
                days_ago=2, before_affinity=16, after_affinity=18),
         _event(6, "affinity", "joke fun+1：消息带来趣味感", days_ago=1),
-        _event(7, "person_fact", "别名 RO", days_ago=1),
-        _event(8, "impression", "跟风管理挑刺发图敷衍的嘴贫老搭子RO", days_ago=0.5),
+        _event(7, "person_fact", "别名 阿木", days_ago=1),
+        _event(8, "impression", "跟风管理挑刺发图敷衍的嘴贫老搭子阿木", days_ago=0.5),
     ]
     compressed = compress_impressions(events, now=NOW)
-    assert compressed["current"] == "跟风管理挑刺发图敷衍的嘴贫老搭子RO"
-    assert ("老搭子RO", 5) in compressed["epithets"]
+    assert compressed["current"] == "跟风管理挑刺发图敷衍的嘴贫老搭子阿木"
+    assert ("老搭子阿木", 5) in compressed["epithets"]
     texts = [item["text"] for item in compressed["events"]]
     assert 1 <= len(texts) <= 4
     assert not any("挑刺发图敷衍" in text for text in texts), "与当前看法近似的旧印象不重复罗列"
@@ -181,13 +181,16 @@ def test_shared_experience_only_keeps_subject_related_items():
         {"subject_principal_id": None, "event_summary": "【日记】今日全群畅聊 1333 条，106 位群友参与。"},
         {"subject_principal_id": "qq:user:other", "event_summary": "别人的人情账"},
         {"subject_principal_id": QQ, "event_summary": "人情备忘（user_helped_bot）：借账号帮我救急"},
-        {"subject_principal_id": None, "event_summary": "【日记】今天小岸生图被挑刺，老搭子RO 在旁边笑得最大声，后来大家散了。"},
+        {"subject_principal_id": None, "participant_principal_ids": [QQ], "event_summary": "【日记】今天小林生图被挑刺，老搭子阿木 在旁边笑得最大声，后来大家散了。"},
     ]
-    lines = shared_experience_lines(items, subject_principal_id=QQ, display_names=["老搭子RO"])
+    lines = shared_experience_lines(items, subject_principal_id=QQ, display_names=["老搭子阿木"])
     assert lines[0] == "人情备忘（对方帮过你）：借账号帮我救急"
-    assert any("老搭子RO" in line for line in lines)
+    assert any("老搭子阿木" in line for line in lines)
     assert not any("1333" in line or "别人的人情账" in line for line in lines)
     assert shared_experience_lines(items[:2], subject_principal_id=QQ) == []
+    assert shared_experience_lines([
+        {"event_summary": "【日记】今天下了小雨，我独自读完一本书。"},
+    ], subject_principal_id=QQ, display_names=["小雨"]) == []
 
 
 def test_current_feeling_decays_and_skips_without_recent_interaction():
@@ -210,7 +213,7 @@ def test_current_feeling_decays_and_skips_without_recent_interaction():
 # ─── 注入通道 ───
 
 
-def _ctx(scope, *, sender_id="10001", group_id="g1", channel=None, sender_name="老搭子RO"):
+def _ctx(scope, *, sender_id="10001", group_id="g1", channel=None, sender_name="老搭子阿木"):
     return SimpleNamespace(
         mode="full", config={"channels": {"affinity": {"enabled": True, **(channel or {})}}},
         scope=scope, sender_id=sender_id, group_id=group_id, sender_name=sender_name, now=NOW,
@@ -226,10 +229,10 @@ def _seed(db):
                             event_type="episode", timestamp=NOW - 3600)
     for i in range(12):
         db.person_timeline.add_event(bot_id="yushu", user_id="10001", group_id="g1", kind="impression",
-                                     summary=f"第{i}次跟风挑刺发图敷衍的嘴贫老搭子RO", occurred_at=NOW - (20 - i) * 86400)
+                                     summary=f"第{i}次跟风挑刺发图敷衍的嘴贫老搭子阿木", occurred_at=NOW - (20 - i) * 86400)
     db.person_timeline.set_unsettled_state(
         bot_id="yushu", user_id="10001", group_id="", energy=12.0, interaction_count=6,
-        traces=[{"text": "半夜拉着器灵复盘版本更新的老搭子RO", "impact": 2.0, "ts": NOW - 3600}],
+        traces=[{"text": "半夜拉着器灵复盘版本更新的老搭子阿木", "impact": 2.0, "ts": NOW - 3600}],
     )
     return soul, scope
 
@@ -241,7 +244,7 @@ def test_channel_renders_natural_language_without_numbers_or_group_diary(db):
     text = result.text
     assert result.status == "hit"
     assert text.startswith("【你和对方】算「常聊」")
-    assert "老搭子RO×" in text, "重复的称呼合并计数"
+    assert "老搭子阿木×" in text, "重复的称呼合并计数"
     assert "【当下感受】" in text and "复盘版本更新" in text
     for noise in ("权重=", "来源群", "900000001", "综合值", "familiarity=", "事件#", "1333", "<<impression", "未结算能量"):
         assert noise not in text
@@ -281,5 +284,5 @@ def test_bookkeeping_settle_block_does_not_depend_on_injection_hint(db):
     _seed(db)
     configure_impression_prompting(per_turn_tag=False, bookkeeping_active=True)
     keeper = PostReplyBookkeeper(db, tool_registry=object(), llm=object())
-    block = keeper._settle_block(_group("g1", subject=None), [(1, "10001", "老搭子RO", "在吗")])
-    assert "【需要结算的人】" in block and "老搭子RO" in block
+    block = keeper._settle_block(_group("g1", subject=None), [(1, "10001", "老搭子阿木", "在吗")])
+    assert "【需要结算的人】" in block and "老搭子阿木" in block

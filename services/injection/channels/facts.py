@@ -8,6 +8,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from ...identity_safety import is_identity_contamination
+from ...fact_policy import is_effective
 try:
     from ....domain.scope import validate_formal_command_scope
 except ImportError:  # pragma: no cover - direct package imports in isolated tests
@@ -130,18 +131,29 @@ class FactsChannel:
         self.facts_decay_rate = facts_decay_rate
         self._entity_cache: dict[str, tuple[float, list[str]]] = {}
 
-    def _known_entities(self, bot_id: str) -> list[str]:
+    def _known_entities(self, scope: Any) -> list[str]:
         """当前 Bot 事实里出现过的实体名（新到旧）。分词会把少见人名切碎，这里按原样子串匹配。"""
-        cached = self._entity_cache.get(bot_id)
+        bot_id = str(scope.bot_id)
+        cache_key = f"{bot_id}|{scope.visibility}|{scope.session.id if scope.visibility == 'private' else ''}"
+        cached = self._entity_cache.get(cache_key)
         now = time.monotonic()
         if cached and now - cached[0] < self._ENTITY_TTL_SECONDS:
             return cached[1]
         names: list[str] = []
         repo = getattr(self.db, "scoped_knowledge", None)
-        lister = getattr(repo, "list_bot_fact_subjects", None)
-        if callable(lister):
+        cm = getattr(repo, "cm", None)
+        if cm is not None:
             try:
-                names.extend(lister(bot_id) or [])
+                source_clause = "visibility='group'"
+                source_params = [bot_id]
+                if scope.visibility == "private":
+                    source_clause += " OR (visibility='private' AND session_id=?)"
+                    source_params.append(scope.session.id)
+                rows = cm.execute_read(
+                    f"""SELECT DISTINCT subject FROM scoped_facts WHERE bot_id=? AND ({source_clause})
+                        AND status IN ('active','approved') LIMIT 5000""", source_params,
+                ).fetchall()
+                names.extend(str(row[0]) for row in rows if row and row[0])
             except Exception:
                 pass
         conn = getattr(self.db, "conn", None)
@@ -149,20 +161,21 @@ class FactsChannel:
             try:
                 rows = conn.execute(
                     """SELECT DISTINCT f.subject FROM facts f JOIN memories m ON f.source_memory_id = m.id
-                        WHERE m.bot_id = ? LIMIT 5000""",
+                        WHERE m.bot_id = ? AND m.visibility='group'
+                          AND m.resolution_state='resolved' AND COALESCE(m.quarantine,0)=0 LIMIT 5000""",
                     (bot_id,),
                 ).fetchall()
                 names.extend(str(row[0]) for row in rows if row and row[0])
             except Exception:
                 pass
         unique = list(dict.fromkeys(name.strip() for name in names if len(name.strip()) >= 2))
-        self._entity_cache[bot_id] = (now, unique)
+        self._entity_cache[cache_key] = (now, unique)
         return unique
 
     def _message_keywords(self, ctx: Any, scope: Any) -> list[str]:
         """消息里按原样认出的已知实体名优先，其余为分词关键词。"""
         message = str(getattr(ctx, "message", "") or "")
-        entities = [name for name in self._known_entities(str(scope.bot_id)) if name in message][:8]
+        entities = [name for name in self._known_entities(scope) if name in message][:8]
         return list(dict.fromkeys([*entities, *_keywords(message)]))
 
     async def build(self, ctx: Any) -> InjectionResult:
@@ -215,6 +228,9 @@ class FactsChannel:
             if len(rows) < fetch_limit:
                 rows.extend(self._legacy_fact_rows(ctx, scope, limit=fetch_limit - len(rows), keywords=keywords))
             now = float(getattr(ctx, "now", 0.0) or time.time())
+            # Repository DTOs may omit ownership after a scoped query. If they
+            # include it, reject mismatches before either retrieval path.
+            rows = [row for row in rows if self._scope_matches(row, scope)]
             facts, filtered = self._query_primary(rows, keywords=keywords, now=now)
             facts, budget_filtered = self._select_with_budget(facts, max_items=max_items, token_budget=token_budget)
             filtered.extend(budget_filtered)
@@ -244,14 +260,13 @@ class FactsChannel:
             return result
 
     @staticmethod
-    def _is_fact_eligible(row: Mapping[str, Any]) -> bool:
+    def _is_fact_eligible(row: Mapping[str, Any], now: float | None = None) -> bool:
         """统一事实准入过滤：排查 status、review_status 与 relation。
 
         适用于 primary 查询与 one-hop 联想，确保已拒绝、未审核、冲突或已归档事实
         不会通过任何一条召回路径进入注入。
         """
-        status = str(row.get("status") or "").strip().lower()
-        if status in {"pending", "rejected", "quarantined", "conflict", "deleted", "superseded"}:
+        if not is_effective(row, time.time() if now is None else now):
             return False
         review_status = str(row.get("review_status") or "").strip().lower()
         if review_status in {"pending", "rejected", "quarantined", "conflict"}:
@@ -260,6 +275,14 @@ class FactsChannel:
         if relation in {"conflicts"}:
             return False
         return True
+
+    @staticmethod
+    def _scope_matches(row: Mapping[str, Any], scope: Any) -> bool:
+        if "bot_id" in row and row["bot_id"] != scope.bot_id:
+            return False
+        if row.get("visibility") == "private":
+            return scope.visibility == "private" and row.get("session_id") == scope.session.id
+        return row.get("visibility") in (None, "group")
 
     def _query_primary(
         self,
@@ -272,7 +295,7 @@ class FactsChannel:
         facts = [
             _row_to_fact(row, now=now, decay_rate=self.facts_decay_rate)
             for row in rows
-            if (self._is_fact_eligible(row)
+            if (self._is_fact_eligible(row, now)
             and any(
                 keyword in str(row.get("subject") or "").casefold()
                 or keyword in str(row.get("object") or "").casefold()
@@ -312,7 +335,7 @@ class FactsChannel:
             _row_to_fact(row, now=now, decay_rate=self.facts_decay_rate)
             for row in rows
             if row.get("id") not in hit_rowids
-            and self._is_fact_eligible(row)
+            and self._is_fact_eligible(row, now)
             and (str(row.get("subject") or "") in entities or str(row.get("object") or "") in entities)
         ]
         extras.sort(key=lambda fact: fact.get("effective_confidence", 0.0), reverse=True)
@@ -399,7 +422,7 @@ class FactsChannel:
             keywords = _keywords(str(getattr(ctx, "message", "") or ""), limit=6)
         keywords = list(keywords)[:10]
         now = float(getattr(ctx, "now", 0.0) or time.time())
-        public_source = "(COALESCE(m.visibility, '') != 'private' AND COALESCE(m.group_id, '') NOT LIKE 'private:%')"
+        public_source = "(m.visibility = 'group' AND COALESCE(m.group_id, '') NOT LIKE 'private:%')"
         session = getattr(scope, "session", None)
         if getattr(scope, "visibility", "") == "private" and session is not None:
             source_clause = f"({public_source} OR (m.visibility = 'private' AND m.session_id = ?))"
@@ -410,10 +433,13 @@ class FactsChannel:
         clauses = [
             "m.bot_id = ?",
             source_clause,
+            "m.resolution_state = 'resolved'",
+            "COALESCE(m.quarantine, 0) = 0",
             "COALESCE(f.fact_type, '') != 'QUARANTINED_ROLEPLAY'",
+            "(f.valid_from IS NULL OR f.valid_from <= ?)",
             "(f.valid_until IS NULL OR f.valid_until > ?)",
         ]
-        params: list[Any] = [bot_id, *source_params, now]
+        params: list[Any] = [bot_id, *source_params, now, now]
         match_clauses: list[str] = []
         if sender_id:
             match_clauses.append("f.subject = ?")

@@ -232,7 +232,7 @@ def _is_noise(text: str) -> bool:
 
 
 def _epithet(text: str) -> str:
-    """「……的老搭子RO」→「老搭子RO」；没有这种结构时返回空。"""
+    """「……的老搭子阿木」→「老搭子阿木」；没有这种结构时返回空。"""
     if "的" not in text:
         return ""
     tail = text.rsplit("的", 1)[1].strip(" ，,。.、")
@@ -590,11 +590,12 @@ def shared_experience_lines(
     limit: int = 2,
     snippet_chars: int = 48,
 ) -> list[str]:
-    """只保留与此人相关的经历：主体正是此人的条目，或 Bot 自己的经历里点名提到此人的片段。
+    """只认主体或结构化 participant_principal_ids；昵称不作为人物归属证据。
 
-    Bot 的群日记/经历（没有主体）整段不相关，过去被原样塞进「共同交往锚点」。
+    参与者可直接在条目上，或在 evidence 的结构化记录中。保留 display_names 参数兼容旧调用。
     """
-    names = [str(name).strip() for name in display_names if len(str(name or "").strip()) >= 2]
+    if not subject_principal_id:
+        return []
     out: list[str] = []
     for item in soul_timeline_items or ():
         if not isinstance(item, Mapping) or len(out) >= limit:
@@ -605,18 +606,20 @@ def shared_experience_lines(
         if not summary:
             continue
         subject = str(item.get("subject_principal_id") or "")
-        if subject == subject_principal_id:
-            text = _clip(summary, snippet_chars)
-        elif not subject and names:
-            name = next((name for name in names if name in summary), "")
-            if not name:
-                continue
-            index = summary.index(name)
-            start = max(0, index - snippet_chars // 3)
-            text = summary[start:start + snippet_chars]
-            text = ("…" if start > 0 else "") + text + ("…" if start + snippet_chars < len(summary) else "")
-        else:
+        evidence = item.get("evidence")
+        records = [item]
+        if isinstance(evidence, Mapping):
+            records.append(evidence)
+        elif isinstance(evidence, (list, tuple)):
+            records.extend(record for record in evidence if isinstance(record, Mapping))
+        participant = any(
+            isinstance(record.get("participant_principal_ids"), (list, tuple))
+            and subject_principal_id in record["participant_principal_ids"]
+            for record in records
+        )
+        if subject != subject_principal_id and not participant:
             continue
+        text = _clip(summary, snippet_chars)
         if not any(_similar(text, other) for other in out):
             out.append(text)
     return out

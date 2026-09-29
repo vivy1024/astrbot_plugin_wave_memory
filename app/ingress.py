@@ -338,26 +338,6 @@ class IngressMixin:
             # 放行给后面的逻辑使用
             message = merged_content
 
-        # 惦记的人出现：没点名羽书也让她开口（关切驱动的主动跟进）。回复走正常链路，
-        # 注入阶段会附上「你惦记的事」提示（见 injection._handle_meta_thinking_check）。
-        followup = getattr(self, "concern_followup", None)
-        if (
-            followup is not None
-            and runtime_scope.visibility == "group"
-            and not getattr(event, "is_at_or_wake_command", False)
-        ):
-            concern = followup.claim_followup(runtime_scope, sender_id, sender_name, message)
-            if concern is not None:
-                event.is_at_or_wake_command = True
-                try:
-                    event._wave_memory_concern_followup = {"concern": concern, "proactive": True}
-                except Exception:
-                    pass
-                logger.info(
-                    "[WaveMemory] 关切跟进：%s 出现，主动回应 concern:%s（%s）",
-                    sender_name or sender_id, concern["id"], concern["topic"][:40],
-                )
-
         # 委托给 InboundMessagePipeline 管道执行抢词咽回、串行处理、命令拦截与生命周期派发
         await self.inbound_pipeline.process_message(
             event=event,
@@ -369,6 +349,96 @@ class IngressMixin:
             sender_name=sender_name,
             bot_id=bot_id,
         )
+
+        # 先完成入库/命令判断，主动跟进不能把原本未被点名的普通句子变成显式命令。
+        apply_decision = getattr(self, "_apply_reply_decision", None)
+        if callable(apply_decision):
+            apply_decision(event, runtime_scope, sender_id, sender_name, message)
+
+    def _apply_reply_decision(self, event, scope, sender_id, sender_name, message) -> None:
+        from ..services.proactive_policy import proactive_event_allowed
+        from ..services.reply_decision import ReplySignals, attach_reply_decision, feedback_polarity
+
+        service = getattr(self, "reply_decision", None)
+        followup = getattr(self, "concern_followup", None)
+        direct = scope.visibility == "private" or bool(getattr(event, "is_at_or_wake_command", False))
+        allowed = proactive_event_allowed(event)
+        decision = None
+        followup_gate = {}
+
+        def skipped(reason, remaining):
+            followup_gate.update(reason=reason, remaining=remaining)
+
+        def evaluate(concern=None):
+            nonlocal decision
+            if service is None:
+                return True
+            # Read-only signals; absent feedback or relationship remains unknown.
+            relevance = None
+            relationship = None
+            feedback = None
+            backlog = 0
+            if service.settings(scope.bot_id, scope.session.id)["mode"] != "off" and not direct:
+                meta = getattr(self, "meta_thinking", None)
+                interesting = getattr(meta, "is_interesting", None)
+                if callable(interesting):
+                    try:
+                        relevance = 1.0 if interesting(message) else 0.0
+                    except Exception:
+                        pass
+                repository = getattr(getattr(self, "db", None), "soul_repository", None)
+                read_stance = getattr(repository, "relationship_stance_for", None)
+                if callable(read_stance) and scope.subject_principal_id:
+                    try:
+                        relationship = read_stance(scope.bot_id, scope.subject_principal_id)
+                    except Exception:
+                        pass
+                # Only this conversation's pending ingress buffers contribute.
+                prefix = f"{scope.bot_id}:{scope.visibility}:{scope.session.id}:"
+                backlog = sum(key.startswith(prefix) for key in getattr(self, "_semantic_message_buffers", {}))
+                # Query only after the existing followup gates admitted a candidate.
+                # Ordinary overheard messages and direct requests need no feedback IO.
+                feedback_service = getattr(self, "reply_feedback_service", None)
+                read_feedback = getattr(feedback_service, "decision_signals", None)
+                if concern is not None and getattr(feedback_service, "enabled", False) is True and callable(read_feedback):
+                    try:
+                        from inspect import signature
+                        kwargs = {"limit": 8}
+                        # Support the staged rollout without retrying a failing query.
+                        if "since_ts" in signature(read_feedback).parameters:
+                            kwargs["since_ts"] = service.clock() - 86400
+                        feedback = feedback_polarity(read_feedback(scope, **kwargs))
+                    except Exception:
+                        pass  # unavailable feedback is unknown, never rejection
+            decision = service.decide(ReplySignals(
+                bot_id=scope.bot_id, session_id=scope.session.id, visibility=scope.visibility,
+                message=message, direct=direct, candidate=concern is not None,
+                # A proactive veto does not demote a direct/private request.
+                platform_allowed=allowed if not direct else not bool(getattr(event, "call_llm", False)),
+                stopped=bool((callable(getattr(event, "is_stopped", None)) and event.is_stopped())
+                             or getattr(event, "stopped", False) or getattr(event, "_force_stopped", False)),
+                relevance=relevance, relationship=relationship, backlog=backlog, feedback=feedback,
+                concern=concern is not None,
+                cooldown_remaining=followup_gate.get("remaining", 0.0),
+                candidate_gate=followup_gate.get("reason"),
+            ))
+            attach_reply_decision(event, decision)
+            return decision["allow"]
+
+        concern = None
+        if followup is not None and scope.visibility == "group" and not direct:
+            concern = followup.claim_followup(
+                scope, sender_id, sender_name, message, allowed=allowed, accept=evaluate, on_skip=skipped,
+            )
+        if decision is None:
+            evaluate()
+        if concern is not None:
+            event._wave_memory_concern_followup = {"concern": concern, "proactive": True}
+            event.is_at_or_wake_command = True
+        elif decision and decision["enforced"]:
+            # The memory pipeline has completed. stop_event is the framework's
+            # authoritative cancellation path; never call continue_event here.
+            event.stop_event()
 
     def _should_engage(self, event: AstrMessageEvent) -> str:
         """规则链前置过滤：判断消息是否与 bot 相关。
@@ -521,6 +591,15 @@ class IngressMixin:
 
     async def _handle_bot_sent(self, event: AstrMessageEvent):
         """捕获 bot 回复，写入记忆 + 异步更新好感度。"""
+        # Count successful sends even when storing bot messages is disabled or
+        # the reply is short/media-only. Never count at request/generation time.
+        service = getattr(self, "reply_decision", None)
+        reply_scope = getattr(event, "_wave_memory_runtime_scope", None)
+        if service is not None and isinstance(reply_scope, RuntimeScope) and reply_scope.session is not None:
+            sent_result = event.get_result()
+            if sent_result and sent_result.chain and not getattr(event, "_wave_memory_reply_counted", False):
+                service.note_reply(reply_scope.bot_id, reply_scope.session.id, reply_scope.visibility)
+                event._wave_memory_reply_counted = True
         if self.ignore_bot_messages:
             return
 
@@ -735,7 +814,11 @@ class IngressMixin:
         if runtime_scope.visibility == "group" and group_name:
             self._remember_group_name(runtime_scope.bot_id, group_id, group_name)
         marker = " ".join(profile.self_ids) if (profile and observation.get("is_at_bot")) else ""
-        event = _ObservationEvent(message_id=event_id, message_str=f"{content} {marker}".strip())
+        event = _ObservationEvent(
+            message_id=event_id,
+            message_str=f"{content} {marker}".strip(),
+            is_at_or_wake_command=bool(observation.get("is_at_bot")),
+        )
         await self.inbound_pipeline.process_message(
             event=event,
             runtime_scope=runtime_scope,

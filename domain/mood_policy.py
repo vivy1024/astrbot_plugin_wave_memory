@@ -16,11 +16,16 @@ from __future__ import annotations
 
 import math
 import re
+import heapq
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 POLICY_VERSION = "bot-mood/v2"
+MAX_FATIGUE_REPLY_THRESHOLD = 10000
+MAX_FATIGUE_WINDOW_MINUTES = 24 * 60
+# 在阈值附近连续淡出，而不是把许多微小冲击同时硬截断。
+MOOD_RESIDUAL_EPSILON = 1e-6
 
 # ─── 画像 ───────────────────────────────────────────────────────
 
@@ -28,7 +33,7 @@ POLICY_VERSION = "bot-mood/v2"
 def _float(value: Any, default: float, lo: float, hi: float) -> float:
     try:
         parsed = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
     if not math.isfinite(parsed):
         return default
@@ -37,8 +42,11 @@ def _float(value: Any, default: float, lo: float, hi: float) -> float:
 
 def _int(value: Any, default: int, lo: int, hi: int) -> int:
     try:
-        parsed = int(float(value))
-    except (TypeError, ValueError):
+        number = float(value)
+        if not math.isfinite(number):
+            return default
+        parsed = int(number)
+    except (TypeError, ValueError, OverflowError):
         return default
     return max(lo, min(hi, parsed))
 
@@ -141,8 +149,8 @@ class MoodSettings:
             strong_event_boost=_float(data.get("strong_event_boost"), defaults.strong_event_boost, 0.0, 5.0),
             atmosphere_weight=_float(data.get("atmosphere_weight"), defaults.atmosphere_weight, 0.0, 1.0),
             fatigue_enabled=_bool(data.get("fatigue_enabled"), defaults.fatigue_enabled),
-            fatigue_window_minutes=_int(data.get("fatigue_window_minutes"), defaults.fatigue_window_minutes, 10, 24 * 60),
-            fatigue_reply_threshold=_int(data.get("fatigue_reply_threshold"), defaults.fatigue_reply_threshold, 1, 10000),
+            fatigue_window_minutes=_int(data.get("fatigue_window_minutes"), defaults.fatigue_window_minutes, 10, MAX_FATIGUE_WINDOW_MINUTES),
+            fatigue_reply_threshold=_int(data.get("fatigue_reply_threshold"), defaults.fatigue_reply_threshold, 1, MAX_FATIGUE_REPLY_THRESHOLD),
             night_start_hour=_int(data.get("night_start_hour"), defaults.night_start_hour, 0, 23),
             night_end_hour=_int(data.get("night_end_hour"), defaults.night_end_hour, 0, 23),
             fatigue_strength=_float(data.get("fatigue_strength"), defaults.fatigue_strength, 0.0, 1.0),
@@ -404,11 +412,17 @@ class MoodReading:
     contributions: list[MoodContribution]
     baseline_valence: float
     baseline_arousal: float
+    active_events: int = 0
 
 
 def event_half_life(settings: MoodSettings, intensity: float, default_minutes: float = 120.0) -> float:
     base = settings.half_life_seconds(default_minutes)
     return base * (1.0 + settings.strong_event_boost * max(0.0, min(1.0, float(intensity or 0.0))))
+
+
+def mood_event_horizon(settings: MoodSettings, default_minutes: float = 120.0) -> float:
+    """仓储冲击绝对值不超过 1；此时间外连最强、最慢事件也已淡出。"""
+    return event_half_life(settings, 1.0, default_minutes) * math.log2(1.0 / MOOD_RESIDUAL_EPSILON)
 
 
 def decay_factor(age_seconds: float, half_life_seconds: float) -> float:
@@ -444,15 +458,18 @@ def fatigue_level(settings: MoodSettings, *, recent_replies: int, hour: int) -> 
 
 
 def compose_mood(
-    events: Sequence[MoodEventView],
+    events: Iterable[MoodEventView],
     settings: MoodSettings,
     *,
     now: float,
     fatigue: float = 0.0,
     default_half_life_minutes: float = 120.0,
+    max_contributions: int | None = None,
 ) -> MoodReading:
     """基线 + Σ 事件冲击 × 0.5^(经过时间/该事件半衰期)，再软饱和并叠加疲劳。"""
     contributions: list[MoodContribution] = []
+    top: list[tuple[float, int, MoodContribution]] = []
+    active_events = 0
     offset_v = 0.0
     offset_a = 0.0
     for event in events:
@@ -460,18 +477,33 @@ def compose_mood(
         factor = decay_factor(float(now) - float(event.created_at), half_life)
         v = float(event.valence) * factor
         a = float(event.arousal) * factor
-        if abs(v) < 1e-4 and abs(a) < 1e-4:
+        peak = max(abs(v), abs(a))
+        if peak <= MOOD_RESIDUAL_EPSILON:
             continue
+        taper = min(1.0, (peak - MOOD_RESIDUAL_EPSILON) / MOOD_RESIDUAL_EPSILON)
+        v, a = v * taper, a * taper
         offset_v += v
         offset_a += a
-        contributions.append(MoodContribution(event, v, a))
+        active_events += 1
+        contribution = MoodContribution(event, v, a)
+        if max_contributions is None:
+            contributions.append(contribution)
+        elif max_contributions > 0:
+            entry = (contribution.weight, -active_events, contribution)
+            if len(top) < max_contributions:
+                heapq.heappush(top, entry)
+            elif entry[:2] > top[0][:2]:
+                heapq.heapreplace(top, entry)
     valence = _saturate(settings.baseline_valence, offset_v, -1.0, 1.0)
     arousal = _saturate(settings.baseline_arousal, offset_a, 0.0, 1.0)
     fatigue = max(0.0, min(1.0, float(fatigue or 0.0)))
     if fatigue > 0:
         arousal = max(0.0, arousal - 0.35 * fatigue)
         valence = max(-1.0, valence - 0.10 * fatigue)
-    contributions.sort(key=lambda item: item.weight, reverse=True)
+    if max_contributions is not None:
+        contributions = [item[2] for item in sorted(top, reverse=True)]
+    else:
+        contributions.sort(key=lambda item: item.weight, reverse=True)
     word, category = mood_word(valence, arousal, fatigue)
     return MoodReading(
         valence=round(valence, 4),
@@ -482,6 +514,7 @@ def compose_mood(
         contributions=contributions,
         baseline_valence=settings.baseline_valence,
         baseline_arousal=settings.baseline_arousal,
+        active_events=active_events,
     )
 
 

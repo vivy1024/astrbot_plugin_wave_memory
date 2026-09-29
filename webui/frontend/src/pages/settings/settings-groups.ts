@@ -100,7 +100,7 @@ export const SECTION_GROUPS: Record<string, SettingsGroupMeta> = {
   },
   Learning_Settings: {
     title: '记账与主动回复',
-    description: '说完话后回看对话记账、每日日记、自动审核、关切驱动的主动回复',
+    description: '事实时效、表达学习、回复反馈、每日日记与开口判断',
     defaultOpen: false,
     bucket: 'always',
   },

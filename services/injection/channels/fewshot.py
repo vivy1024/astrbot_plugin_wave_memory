@@ -6,12 +6,14 @@ import re
 import time
 from collections.abc import Mapping
 from typing import Any
+from html import escape
 
 try:
     from ....domain.scope import RuntimeScope
 except ImportError:
     from domain.scope import RuntimeScope
 from ...identity_safety import is_identity_contamination
+from ...expression_policy import expression_is_safe
 from ..channel_base import InjectionResult
 from .safety import is_channel_allowed_in_mode
 
@@ -105,26 +107,26 @@ class FewShotChannel:
         bot_profile_id = str(getattr(ctx, "bot_profile_id", "") or "").strip()
         if not bot_profile_id or runtime_scope.bot_id != bot_profile_id:
             return InjectionResult.empty(self.name, reason="runtime_scope_bot_mismatch")
-        max_items = _as_int(cfg.get("max_items"), 3)
+        if runtime_scope.visibility != "group":
+            return InjectionResult.empty(self.name, reason="group_scope_required")
+        max_items = min(3, _as_int(cfg.get("max_items"), 3))
         if max_items <= 0:
             return InjectionResult.empty(self.name, reason="fewshot max_items is zero")
 
         try:
-            text = self.few_shot_service.get_injection(
-                scope=runtime_scope,
-                max_items=max_items,
-            ) or ""
-            text = str(text).strip()
-            if not text:
-                return InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="no approved style examples")
-
-            ids = list(getattr(self.few_shot_service, "_last_injected_ids", []) or [])
-            examples = _extract_examples(text, ids)
+            structured = getattr(self.few_shot_service, "get_injection_examples", None)
+            if callable(structured):
+                examples = structured(scope=runtime_scope, max_items=max_items, message=getattr(ctx, "message", ""))
+            else:
+                text = self.few_shot_service.get_injection(scope=runtime_scope, max_items=max_items) or ""
+                ids = list(getattr(self.few_shot_service, "_last_injected_ids", []) or [])
+                examples = _extract_examples(str(text).strip(), ids) if text else []
             selected: list[dict[str, Any]] = []
             filtered: list[dict[str, Any]] = []
-            for example in examples:
+            for example in examples[:max_items]:
                 content = example.get("content", "")
-                if not _is_healthy(content):
+                learned = example.get("source") == "ExpressionPolicy.recall"
+                if not _is_healthy(content) or (learned and not expression_is_safe(content)):
                     reason = "identity_contamination" if is_identity_contamination(content) else "unhealthy_style"
                     filtered.append({**example, "filter_reason": reason, "filter_channel": "fewshot"})
                     continue
@@ -135,7 +137,10 @@ class FewShotChannel:
                 result.filtered = [self._audit_filtered(item) for item in filtered]
                 return result
 
-            rebuilt = "<style_examples>\n" + "\n".join(f"- {item['content']}" for item in selected) + "\n</style_examples>"
+            guidance = "仅参考适合当前情景的表达方式；保持自身身份，不代入示例说话人的经历。\n" if any(
+                item.get("source") == "ExpressionPolicy.recall" for item in selected
+            ) else ""
+            rebuilt = "<style_examples>\n" + guidance + "\n".join(f"- {escape(item['content'])}" for item in selected) + "\n</style_examples>"
             return InjectionResult.hit(
                 self.name,
                 rebuilt,
@@ -150,11 +155,15 @@ class FewShotChannel:
 
     @staticmethod
     def _audit_item(item: Mapping[str, Any]) -> dict[str, Any]:
-        return {
+        payload = {
             "example_id": item.get("example_id"),
-            "source": "FewShotService.get_injection",
+            "source": item.get("source", "FewShotService.get_injection"),
             "preview": item.get("preview") or _preview(item.get("content", "")),
         }
+        if item.get("source") == "ExpressionPolicy.recall":
+            for key in ("source_memory_id", "speaker_id", "situation", "bot_id", "session_id", "visibility", "quality_adjustment"):
+                payload[key] = item.get(key)
+        return payload
 
     @staticmethod
     def _audit_filtered(item: Mapping[str, Any]) -> dict[str, Any]:

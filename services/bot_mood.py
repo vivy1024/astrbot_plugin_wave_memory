@@ -17,6 +17,8 @@ v5.1 之前的心情是「当前群最近 30 分钟的关键词统计」，按�
 
 from __future__ import annotations
 
+import json
+import math
 import re
 import threading
 import time
@@ -34,6 +36,8 @@ except ImportError:  # pragma: no cover
 try:
     from ..domain.display_name import sanitize_display_name
     from ..domain.mood_policy import (
+        MAX_FATIGUE_REPLY_THRESHOLD,
+        MAX_FATIGUE_WINDOW_MINUTES,
         POLICY_VERSION,
         MoodContribution,
         MoodSettings,
@@ -41,6 +45,7 @@ try:
         describe_age,
         effect_phrase,
         event_half_life,
+        mood_event_horizon,
         fatigue_level,
         night_active,
         parse_bookkeeping_mood,
@@ -50,9 +55,12 @@ try:
         speaking_hint,
     )
     from ..domain.scope import RuntimeScope
+    from ..engine.db.bot_mood_repo import MoodReadBudgetExceeded
 except ImportError:  # pragma: no cover - focused tests import top-level packages
     from domain.display_name import sanitize_display_name
     from domain.mood_policy import (
+        MAX_FATIGUE_REPLY_THRESHOLD,
+        MAX_FATIGUE_WINDOW_MINUTES,
         POLICY_VERSION,
         MoodContribution,
         MoodSettings,
@@ -60,6 +68,7 @@ except ImportError:  # pragma: no cover - focused tests import top-level package
         describe_age,
         effect_phrase,
         event_half_life,
+        mood_event_horizon,
         fatigue_level,
         night_active,
         parse_bookkeeping_mood,
@@ -69,8 +78,9 @@ except ImportError:  # pragma: no cover - focused tests import top-level package
         speaking_hint,
     )
     from domain.scope import RuntimeScope
+    from engine.db.bot_mood_repo import MoodReadBudgetExceeded
 
-# 冲她来的话：同一个人 45 秒内的同向情绪只记最强的一条，防刷屏把心情打穿。
+# 冲她来的话：同一场合同一个人 45 秒内的同向情绪只记最强的一条。
 MESSAGE_MERGE_SECONDS = 45.0
 # 关系事件导入：首次启用时回看这么久（之后按游标增量），更早的事件对心情早已衰减殆尽。
 FIRST_IMPORT_LOOKBACK = 12 * 3600.0
@@ -79,6 +89,11 @@ RELATIONSHIP_DEDUP_SECONDS = 600.0
 ATMOSPHERE_INTERVAL = 900.0
 SYNC_INTERVAL = 15.0
 EVENT_RETENTION = 14 * 86400.0
+# 一次合成最多 32768 条，原因只保留最多 20 条；超限明确不可用，绝不合成截断后的假心情。
+EVENT_PAGE_SIZE = 256
+EVENT_MAX_PAGES = 128
+MAX_CAUSES = 20
+MAX_REPLY_RECORDS = 2 * MAX_FATIGUE_REPLY_THRESHOLD
 CAUSE_MIN_WEIGHT = 0.03
 MAX_EVENT_VALENCE = 0.6
 MAX_EVENT_AROUSAL = 0.5
@@ -111,12 +126,18 @@ class BotMoodService:
     ):
         self.db = db
         self.profile_for = profile_for or (lambda _bot_id: None)
-        self.default_half_life_minutes = max(1.0, float(default_half_life_minutes or 120.0))
+        try:
+            default_minutes = float(default_half_life_minutes)
+        except (TypeError, ValueError, OverflowError):
+            default_minutes = 120.0
+        if not math.isfinite(default_minutes) or default_minutes <= 0:
+            default_minutes = 120.0
+        self.default_half_life_minutes = max(1.0, min(7 * 24 * 60.0, default_minutes))
         self.enabled = bool(enabled) and self.repository is not None
         self.clock = clock or time.time
         self.hour_of = hour_of or (lambda ts: time.localtime(ts).tm_hour)
         self.stats: dict[str, int] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._replies: dict[str, deque[float]] = {}
         self._replies_warmed: set[str] = set()
         self._last_sync: dict[str, float] = {}
@@ -175,6 +196,9 @@ class BotMoodService:
 
     def _add(self, bot_id: str, **kwargs) -> int | None:
         # 护栏：单条事件的冲击有上限，一句话不能把心情直接打到极端（叠加后还有软饱和）。
+        if not all(math.isfinite(float(kwargs.get(key) or 0.0)) for key in ("valence", "arousal", "intensity")):
+            self._count("invalid_event")
+            return None
         kwargs["valence"] = max(-MAX_EVENT_VALENCE, min(MAX_EVENT_VALENCE, float(kwargs.get("valence") or 0.0)))
         kwargs["arousal"] = max(-MAX_EVENT_AROUSAL, min(MAX_EVENT_AROUSAL, float(kwargs.get("arousal") or 0.0)))
         try:
@@ -220,14 +244,6 @@ class BotMoodService:
         impact = score_directed_message(content, settings, closeness=closeness, hostility=hostility)
         if impact.is_empty:
             return None
-        last = self.repository.last_subject_event(
-            scope.bot_id, subject_principal_id=subject, source="directed_message",
-            since=timestamp - MESSAGE_MERGE_SECONDS,
-        ) if subject else None
-        capped = min(abs(impact.valence), MAX_EVENT_VALENCE)
-        if last is not None and (last.valence >= 0) == (impact.valence >= 0) and abs(last.valence) >= capped:
-            self._count("merged")
-            return None
         name = self._name_for(scope.bot_id, subject, sender_name)
         quote = _quote(content)
         quoted = f"「{quote}」" if quote else ""
@@ -254,9 +270,12 @@ class BotMoodService:
                 "closeness": round(closeness, 3), "hostility": round(hostility, 3),
             },
             created_at=timestamp,
+            merge_seconds=MESSAGE_MERGE_SECONDS,
         )
         if event_id is not None:
             self.snapshot(scope.bot_id, now=timestamp)
+        else:
+            self._count("merged")
         return event_id
 
     def _relationship(self, scope: RuntimeScope, subject: str) -> tuple[float, float]:
@@ -307,7 +326,9 @@ class BotMoodService:
         try:
             group_valence = float(valence)
             group_arousal = float(arousal)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not math.isfinite(group_valence) or not math.isfinite(group_arousal):
             return None
         if abs(group_valence) < 0.2:
             return None
@@ -424,6 +445,16 @@ class BotMoodService:
         name = self._name_for(bot_id, subject)
         reason = re.sub(r"\s+", " ", str(row.get("reason") or "")).strip()
         cause = f"{name}{verb}" + (f"（{reason[:30]}{'…' if len(reason) > 30 else ''}）" if reason else "")
+        # 多维更新是同一原始互动：维度与关系行 ID 都不进入源事件幂等键。
+        # episode 可能包含多次互动，不能单凭 episode_id 把它们合并。
+        origin_kind = "memory" if row.get("source_memory_id") is not None else "operation"
+        origin_id = row.get("source_memory_id") if origin_kind == "memory" else row.get("operation_id")
+        source_ref = f"relationship_event:{int(row['id'])}"
+        if origin_id is not None:
+            source_ref = "relationship_origin:" + json.dumps(
+                [row.get("session_id") or "", row.get("visibility") or "group", subject,
+                 row.get("event_type"), origin_kind, str(origin_id)], separators=(",", ":"),
+            )
         return self._add(
             bot_id,
             source="relationship_event",
@@ -435,8 +466,11 @@ class BotMoodService:
             subject_name=name,
             session_id=str(row.get("session_id") or ""),
             visibility=str(row.get("visibility") or "group"),
-            source_ref=f"relationship_event:{int(row['id'])}",
-            evidence={"event_type": row.get("event_type"), "delta": row.get("delta")},
+            source_ref=source_ref,
+            relationship_origin=row if origin_id is not None else None,
+            evidence={"event_type": row.get("event_type"), "delta": row.get("delta"),
+                      "relationship_event_id": row["id"], "source_memory_id": row.get("source_memory_id"),
+                      "operation_id": row.get("operation_id")},
             created_at=created_at,
         ) is not None
 
@@ -449,24 +483,29 @@ class BotMoodService:
         timestamp = self._now(now)
         bucket = self._reply_bucket(bot_id, settings, timestamp)
         with self._lock:
-            bucket.append(timestamp)
+            if bucket and timestamp < bucket[-1]:
+                # 延迟/乱序回调不能把过期记录留在队列尾部，也不能挤掉更新的回复。
+                stamps = sorted([*bucket, timestamp])
+                bucket.clear()
+                bucket.extend(stamps[-MAX_REPLY_RECORDS:])
+            else:
+                bucket.append(timestamp)
 
     def _reply_bucket(self, bot_id: str, settings: MoodSettings, now: float) -> deque[float]:
-        window = settings.fatigue_window_minutes * 60.0
+        # 保留最大合法窗口与两倍最大阈值，热调参后无需重建缓存。
+        window = MAX_FATIGUE_WINDOW_MINUTES * 60.0
         with self._lock:
-            bucket = self._replies.setdefault(bot_id, deque(maxlen=5000))
+            bucket = self._replies.setdefault(bot_id, deque(maxlen=MAX_REPLY_RECORDS))
             warm = bot_id not in self._replies_warmed
             if warm:
+                # 预热与实时追加共用锁，避免读取半预热队列或集合去重吞掉同时间戳的多条回复。
+                stamps = self.repository.bot_reply_timestamps(
+                    bot_id, since=now - window, until=now, limit=MAX_REPLY_RECORDS,
+                ) if self.repository is not None else []
+                bucket.extend(stamps)
                 self._replies_warmed.add(bot_id)
-        if warm and self.repository is not None:
-            try:
-                stamps = self.repository.bot_reply_timestamps(bot_id, since=now - window)
-            except Exception:
-                stamps = []
-            with self._lock:
-                merged = sorted(set(stamps) | set(bucket))
-                bucket.clear()
-                bucket.extend(merged)
+            while bucket and bucket[0] < now - window:
+                bucket.popleft()
         return bucket
 
     def recent_replies(self, bot_id: str, settings: MoodSettings, now: float) -> int:
@@ -475,9 +514,7 @@ class BotMoodService:
         bucket = self._reply_bucket(bot_id, settings, now)
         cutoff = now - settings.fatigue_window_minutes * 60.0
         with self._lock:
-            while bucket and bucket[0] < cutoff:
-                bucket.popleft()
-            return len(bucket)
+            return sum(cutoff <= stamp <= now for stamp in bucket)
 
     # ─── 读取 ───
 
@@ -496,19 +533,28 @@ class BotMoodService:
         timestamp = self._now(now)
         if not settings.enabled:
             return {"bot_id": bot_id, "enabled": False, "policy_version": POLICY_VERSION}
-        horizon = min(7 * 86400.0, event_half_life(settings, 1.0, self.default_half_life_minutes) * 8.0)
-        try:
-            events = self.repository.list_events(bot_id, since=timestamp - horizon, limit=400)
-        except Exception as exc:
-            logger.debug(f"[WaveMemory] 心情读取失败 {bot_id}: {exc!r}")
-            return None
+        horizon = mood_event_horizon(settings, self.default_half_life_minutes)
+        max_causes = max(0, min(MAX_CAUSES, int(max_causes)))
         replies = self.recent_replies(bot_id, settings, timestamp)
         hour = int(self.hour_of(timestamp))
         fatigue = fatigue_level(settings, recent_replies=replies, hour=hour)
-        reading = compose_mood(
-            events, settings, now=timestamp, fatigue=fatigue,
-            default_half_life_minutes=self.default_half_life_minutes,
-        )
+        try:
+            events = self.repository.iter_events(
+                bot_id, since=timestamp - horizon, until=timestamp,
+                page_size=EVENT_PAGE_SIZE, max_pages=EVENT_MAX_PAGES,
+            )
+            reading = compose_mood(
+                events, settings, now=timestamp, fatigue=fatigue,
+                default_half_life_minutes=self.default_half_life_minutes,
+                max_contributions=max_causes,
+            )
+        except MoodReadBudgetExceeded:
+            self._count("read_budget_exceeded")
+            logger.warning(f"[WaveMemory] 心情事件超出单次读取预算，未使用截断结果: {bot_id}")
+            return None
+        except Exception as exc:
+            logger.debug(f"[WaveMemory] 心情读取失败 {bot_id}: {exc!r}")
+            return None
         causes = [
             self._cause(item, viewer_scope, timestamp)
             for item in reading.contributions
@@ -533,7 +579,7 @@ class BotMoodService:
             "fatigue_reasons": fatigue_reasons,
             "hint": speaking_hint(settings, reading.word, reading.category),
             "recent_replies": replies,
-            "active_events": len(reading.contributions),
+            "active_events": reading.active_events,
             "observed_at": timestamp,
             "policy_version": POLICY_VERSION,
         }
@@ -595,9 +641,8 @@ class BotMoodService:
             return
         mood = self.current(bot_id, now=now, max_causes=0)
         if not mood or not mood.get("enabled"):
-            if relationship_cursor is None:
-                return
-            mood = {"valence": 0.0, "arousal": 0.0, "fatigue": 0.0, "word": ""}
+            # 不完整读取不能用全零状态换取游标推进；保留上次快照，重试由源事件键去重。
+            return
         try:
             repo.save_state(
                 bot_id,
@@ -617,11 +662,14 @@ class BotMoodService:
             return
         timestamp = self._now(now)
         for bot_id in sorted(set(bot_ids or ()) | self._bots):
-            if self._active(bot_id) is None:
+            settings = self._active(bot_id)
+            if settings is None:
                 continue
             try:
                 self.sync_relationship_events(bot_id, now=timestamp, force=True)
-                pruned = self.repository.prune(bot_id, before=timestamp - EVENT_RETENTION)
+                # 至少保留原有审计期；长半衰期事件直到残余确实归零才允许分批删除。
+                retention = max(EVENT_RETENTION, mood_event_horizon(settings, self.default_half_life_minutes))
+                pruned = self.repository.prune(bot_id, before=timestamp - retention)
                 if pruned:
                     self._count("pruned", pruned)
                 self.snapshot(bot_id, now=timestamp)

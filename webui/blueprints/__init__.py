@@ -37,6 +37,7 @@ _CORE = (
     ("kg", "kg_bp"),
     ("knowledge", "knowledge_bp"),
     ("facts", "facts_bp"),
+    ("reply_learning", "reply_learning_bp"),
     ("options", "options_bp"),
     ("people", "people_bp"),
     ("maintenance", "maintenance_bp"),

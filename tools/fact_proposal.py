@@ -22,10 +22,14 @@ except Exception:  # pragma: no cover
 try:
     from ..domain.scope import RuntimeScope
     from ..services.identity_safety import is_identity_contamination
+    from ..services.fact_policy import get_fact_policy, valid_subject
+    from ..engine.db.fact_policy_repo import FactPolicyRepo, source_memory, resolve_subject
     from .scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
 except ImportError:  # pragma: no cover
     from domain.scope import RuntimeScope
     from services.identity_safety import is_identity_contamination
+    from services.fact_policy import get_fact_policy, valid_subject
+    from engine.db.fact_policy_repo import FactPolicyRepo, source_memory, resolve_subject
     from tools.scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
 
 
@@ -121,7 +125,7 @@ class WaveMemoryProposeFactTool(FunctionTool[AstrAgentContext]):
         "properties": {
             "subject": {
                 "type": "string",
-                "description": "事实主体（人名、QQ号或实体名，例如 '小明'、'2819203'、'我们群'）",
+                "description": "明确的人名、可解析的平台账号或实体名；不能填空主体、代词或未知占位符",
             },
             "predicate": {
                 "type": "string",
@@ -143,12 +147,22 @@ class WaveMemoryProposeFactTool(FunctionTool[AstrAgentContext]):
                 "type": "integer",
                 "description": "可选。当轮或近期记忆 id",
             },
+            "valid_from": {
+                "type": "string",
+                "description": "可选，原话明确给出的生效日期或 ISO 8601 时间；未知时省略，不推测日期",
+            },
+            "valid_until": {
+                "type": "string",
+                "description": "可选，原话明确给出的截止日期或 ISO 8601 时间；日期含当天，时间为排他上界",
+            },
         },
         "required": ["subject", "predicate", "object", "source_quote", "context_evidence"],
     })
 
     db: Any = field(default=None, repr=False)
     jargon_service: Any = field(default=None, repr=False)
+    fact_policy: Any = field(default=None, repr=False)
+    write_gateway: Any = field(default=None, repr=False)
 
     async def call(self, ctx: ContextWrapper[AstrAgentContext], **kwargs) -> str:
         if not self.db:
@@ -173,6 +187,8 @@ class WaveMemoryProposeFactTool(FunctionTool[AstrAgentContext]):
 
         if not subject or not predicate or not obj or not source_quote or not context_evidence:
             return "subject、predicate、object、source_quote 与 context_evidence 均为必填项"
+        if not valid_subject(subject):
+            return "事实提审被拒绝：需要明确有效的主体（invalid_fact_subject）"
 
         if (
             is_identity_contamination(subject)
@@ -207,6 +223,21 @@ class WaveMemoryProposeFactTool(FunctionTool[AstrAgentContext]):
             quote=source_quote,
             explicit_id=raw_memory_id,
         )
+        cm = getattr(repo, "cm", None)
+        if cm is None:
+            return "事实专用仓储不可用"
+        source = source_memory(cm.conn, runtime_scope, source_memory_id, source_quote)
+        # The legacy resolver may return an unrelated latest message. Keep an
+        # unverified proposal pending instead of presenting that ID as evidence.
+        if source is None:
+            source_memory_id = None
+        policy = self.fact_policy or get_fact_policy()
+        try:
+            validity = policy.validity(predicate=predicate, object=obj, source_quote=source_quote,
+                                       source_timestamp=(source or {}).get("timestamp"),
+                                       valid_from=kwargs.get("valid_from"), valid_until=kwargs.get("valid_until"))
+        except ValueError as exc:
+            return f"事实提审被拒绝：无效的有效期（{exc}）"
 
         needs_jargon_review = any(
             hit.get("word") and not str(hit.get("meaning") or "").strip()
@@ -214,33 +245,58 @@ class WaveMemoryProposeFactTool(FunctionTool[AstrAgentContext]):
         )
         provenance = {
             "source": "llm_reflection",
-            "evidence": context_evidence[:160],
-            "source_quote": source_quote[:240],
+            "evidence": context_evidence,
+            "source_quote": source_quote,
             "jargon_hits": [
                 {key: hit[key] for key in ("word", "meaning", "source", "status") if key in hit}
                 for hit in jargon_hits
             ],
             "needs_jargon_review": needs_jargon_review,
             "proposed_at": time.time(),
+            "source_timestamp": (source or {}).get("timestamp"),
+            "resolved_subject": resolve_subject(cm.conn, runtime_scope, subject, source, source_quote),
+            "temporal_policy": {**validity.metadata(), "timezone": policy.timezone},
         }
 
         try:
-            fact_id = repo.upsert_scoped_fact(
-                runtime_scope,
+            fact_repo = FactPolicyRepo(cm)
+            reviewer = _auto_reviewer()
+            if reviewer is not None and getattr(reviewer, "db", None) is not self.db:
+                reviewer = None
+            writer = self.write_gateway or getattr(self.db, "write_gateway", None)
+            if writer is None and reviewer is not None and reviewer.db is self.db:
+                writer = reviewer.write_gateway
+            proposal = dict(
                 subject=subject,
                 predicate=predicate,
                 object=obj,
                 confidence=0.85,
-                status="pending",
                 source_memory_id=source_memory_id,
                 provenance=provenance,
+                # Infer relative dates again with evidence verified inside the writer.
+                valid_from=kwargs.get("valid_from"),
+                valid_until=kwargs.get("valid_until"),
             )
+            if writer is not None:
+                try:
+                    from ..services.scoped_knowledge_mutations import ScopedKnowledgeMutationGateway
+                except ImportError:  # pragma: no cover
+                    from services.scoped_knowledge_mutations import ScopedKnowledgeMutationGateway
+                result = await ScopedKnowledgeMutationGateway(writer, fact_policy=policy).propose_fact(
+                    scope=runtime_scope, **proposal)
+                fact_id = result.locator
+            else:
+                # Compatibility for standalone repositories without a runtime writer.
+                fact_id = fact_repo.propose(runtime_scope, **proposal, policy=policy)
         except Exception as e:
             return f"事实提审写入失败: {e}"
-        reviewer = _auto_reviewer()
         status = await reviewer.review_fact(runtime_scope, fact_id) if reviewer is not None else None
+        if status is None:
+            status = (fact_repo.get(runtime_scope, fact_id) or {}).get("status")
         if status == "active":
-            return f"已记录事实：[{subject}] {predicate} [{obj}]（有原话支撑，已自动生效，ID: {fact_id}）"
+            return f"已记录事实：[{subject}] {predicate} [{obj}]（已审核，按有效期生效，ID: {fact_id}）"
+        if status in {"deleted", "superseded", "rejected"}:
+            return f"已保存新的事实观察（ID: {fact_id}，原事实状态 {status} 保持不变，需人工复核历史）"
         if status == "conflict":
             return f"已提审事实：[{subject}] {predicate} [{obj}]，与已有事实冲突，留待人工裁决 (ID: {fact_id})"
         return f"已成功提审事实：[{subject}] {predicate} [{obj}] (待审ID: {fact_id})"

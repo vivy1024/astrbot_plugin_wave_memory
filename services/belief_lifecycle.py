@@ -30,7 +30,10 @@ class BeliefLifecycleService:
         self.repository = repository
         self.trace_store = trace_store
 
-    def transition(self, scope: RuntimeScope, belief_id: int, action: str, query_trace_id: str | None = None) -> dict:
+    def transition(
+        self, scope: RuntimeScope, belief_id: int, action: str, query_trace_id: str | None = None,
+        *, actor: str = "webui",
+    ) -> dict:
         if action not in {"approve", "archive"}:
             raise ValueError("belief_transition_unavailable")
         current = next(
@@ -88,7 +91,7 @@ class BeliefLifecycleService:
                 raise ValueError("invalid_belief_transition")
             target_status = "archived"
         provenance = dict(current.get("provenance") or {})
-        provenance.update({"lifecycle_action": action, "lifecycle_actor": "webui"})
+        provenance.update({"lifecycle_action": action, "lifecycle_actor": actor})
         candidate = provenance.get("candidate")
         if action == "approve" and isinstance(candidate, dict):
             candidate = dict(candidate)

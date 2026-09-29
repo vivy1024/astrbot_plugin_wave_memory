@@ -16,10 +16,14 @@ try:
     from ..domain.scope import RuntimeScope, scope_to_dict
     from ..engine.db.outbox_repo import OutboxRepository
     from .facts_conflict import FactConflictClassifier
+    from .fact_policy import get_fact_policy, is_effective, valid_subject
+    from ..engine.db.fact_policy_repo import FactPolicyRepo, auto_review_reason, source_memory, fact_row
 except ImportError:  # pragma: no cover - focused tests import top-level packages
     from domain.scope import RuntimeScope, scope_to_dict
     from engine.db.outbox_repo import OutboxRepository
     from services.facts_conflict import FactConflictClassifier
+    from services.fact_policy import get_fact_policy, is_effective, valid_subject
+    from engine.db.fact_policy_repo import FactPolicyRepo, auto_review_reason, source_memory, fact_row
 
 
 _TERMINAL_STATUSES = frozenset({"deleted", "superseded"})
@@ -137,12 +141,13 @@ def _number(value: Any, field: str, *, minimum: float | None = None, maximum: fl
 class ScopedKnowledgeMutationGateway:
     """Mutation facade that only enters SQLite through ProductionWriteGateway.coordinator."""
 
-    def __init__(self, write_gateway: Any, *, clock: Any | None = None) -> None:
+    def __init__(self, write_gateway: Any, *, clock: Any | None = None, fact_policy=None) -> None:
         coordinator = getattr(write_gateway, "coordinator", None)
         if coordinator is None or not callable(getattr(coordinator, "transaction", None)):
             raise ValueError("write gateway coordinator is required")
         self._coordinator = coordinator
         self._clock = clock
+        self._fact_policy = fact_policy
         consumers = getattr(write_gateway, "_consumers", None)
         if isinstance(consumers, Mapping):
             self._consumer_names = tuple(sorted(str(name) for name in consumers))
@@ -242,6 +247,7 @@ class ScopedKnowledgeMutationGateway:
                     revision,
                     actual_event_type,
                     _canonical_json({
+                        **record.get("event_payload", {}),
                         "scope": scope_to_dict(scope),
                         "locator": locator,
                         "revision": revision,
@@ -277,6 +283,21 @@ class ScopedKnowledgeMutationGateway:
                 }],
                 "warnings": [],
             }
+            # Replacing a fact changes two aggregates; subscribers must see the
+            # retirement as well as the newly approved candidate.
+            for index, change in enumerate(record.get("related_changes", []), start=1):
+                related_event_id = uuid.uuid5(uuid.NAMESPACE_URL, f"wave-memory:{operation_id}:{index}").hex
+                connection.execute(
+                    """INSERT INTO domain_outbox(event_id,operation_id,aggregate_kind,aggregate_id,
+                       aggregate_version,event_type,payload_version,payload_json,created_at)
+                       VALUES (?,?,'fact',?,?,?,1,?,?)""",
+                    (related_event_id, operation_id, str(change["locator"]), change["revision"],
+                     change["event_type"], _canonical_json({**change, "scope": scope_to_dict(scope)}), now),
+                )
+                OutboxRepository.add_deliveries(connection, related_event_id, self._consumer_names, now)
+                result_payload["effects"].append({"event_id": related_event_id, "event_type": change["event_type"],
+                                                  "aggregate_kind": "fact", "aggregate_id": str(change["locator"]),
+                                                  "aggregate_version": change["revision"]})
             connection.execute(
                 "UPDATE write_operations SET status='committed', result_json=?, committed_at=? WHERE operation_id=?",
                 (_canonical_json(result_payload), now, operation_id),
@@ -291,6 +312,30 @@ class ScopedKnowledgeMutationGateway:
             )
 
         return await self._coordinator.transaction(transaction, actor=actor)
+
+    async def propose_fact(
+        self, *, scope: RuntimeScope, subject: str, predicate: str, object: str,
+        source_memory_id=None, provenance=None, confidence=0.85,
+        valid_from=None, valid_until=None, idempotency_key: str | None = None,
+    ) -> ScopedKnowledgeMutationResult:
+        """Commit a candidate, its evidence and delivery event in one writer transaction."""
+        confidence = _number(confidence, "confidence", minimum=0, maximum=1)
+        payload = dict(subject=subject, predicate=predicate, object=object,
+                       source_memory_id=source_memory_id, provenance=dict(provenance or {}),
+                       confidence=confidence, valid_from=valid_from, valid_until=valid_until)
+        policy = self._fact_policy or get_fact_policy()
+        return await self._commit(
+            scope=scope, target=ScopedKnowledgeMutationTarget("fact", 0, 0),
+            command_type="scoped.fact.propose.v1", actor="tool.fact.proposal",
+            event_type="scoped_fact.proposed",
+            request_shape={"scope": scope_to_dict(scope), **payload,
+                           "policy": {"timezone": policy.timezone,
+                                      "single_value_predicates": policy.single_value_predicates}},
+            mutate=lambda connection, now: FactPolicyRepo.propose_in_transaction(
+                connection, scope, **payload, policy=policy, now=now),
+            # Separate observations are retained; explicit replay keys deduplicate retries.
+            idempotency_key=idempotency_key or uuid.uuid4().hex,
+        )
 
     @staticmethod
     def _fact_row(connection, scope: RuntimeScope, locator: int):
@@ -483,8 +528,12 @@ class ScopedKnowledgeMutationGateway:
         action: str,
         reason: str | None = None,
         idempotency_key: str | None = None,
+        actor: str = "webui.facts.review",
+        resolution: str = "auto",
+        supersedes_fact_id: int | None = None,
+        supersedes_revision: int | None = None,
     ) -> ScopedKnowledgeMutationResult:
-        """人工审核事实：pending/quarantined/conflict → active / conflict / rejected。
+        """人工审核事实（``actor`` 标明是谁审的，自动审核传 ``auto_review``）：pending/quarantined/conflict → active / conflict / rejected。
 
         状态变更与审计行在同一事务内完成；批准前先用 FactConflictClassifier 判定与既有
         事实的关系，判定为 conflicts 时落 conflict 而不是 active（与历史的
@@ -492,8 +541,20 @@ class ScopedKnowledgeMutationGateway:
         """
         if target.kind != "fact":
             raise ValueError("fact target is required")
+        if action in {"replace", "coexist"}:
+            resolution = "supersede" if action == "replace" else "coexist"
+            action = "approve"
         if action not in {"approve", "reject"}:
             raise ValueError("unsupported fact review action")
+        if resolution not in {"auto", "supersede", "coexist"}:
+            raise ValueError("unsupported_fact_resolution")
+        if (actor != "webui.facts.review" and resolution != "auto") or (action == "reject" and resolution != "auto"):
+            raise ValueError("fact_resolution_requires_human_review")
+        if resolution == "supersede":
+            _positive_int(supersedes_fact_id, "supersedes_fact_id")
+            _positive_int(supersedes_revision, "supersedes_revision")
+        elif supersedes_fact_id is not None or supersedes_revision is not None:
+            raise ValueError("unexpected_supersedes_target")
         locator = _positive_int(target.locator, "locator")
         revision = _positive_int(target.revision, "revision")
         review_reason = str(reason or "").strip()[:500]
@@ -502,9 +563,13 @@ class ScopedKnowledgeMutationGateway:
             "target": {"kind": "fact", "locator": locator, "revision": revision},
             "action": action,
             "reason": review_reason,
+            "actor": actor,
+            "resolution": resolution,
+            "supersedes_fact_id": supersedes_fact_id,
+            "supersedes_revision": supersedes_revision,
         }
 
-        resolution: dict[str, str] = {"event_type": "scoped_fact.rejected"}
+        events: dict[str, str] = {"event_type": "scoped_fact.rejected"}
 
         def mutate(connection, now):
             row = self._fact_row(connection, scope, locator)
@@ -512,28 +577,72 @@ class ScopedKnowledgeMutationGateway:
             from_status = str(row[5])
             if from_status not in _FACT_REVIEW_SOURCE_STATUSES:
                 raise ValueError("invalid_fact_review_transition")
+            policy = self._fact_policy or get_fact_policy()
+            candidate = fact_row(connection, scope, locator)
             if action == "approve":
-                relation, conflict_with = self._classify_fact_conflict(connection, scope, locator)
+                if not valid_subject(candidate["subject"]):
+                    raise ValueError("invalid_fact_subject")
+                if actor == "auto_review":
+                    if from_status != "pending":
+                        raise ValueError("auto_review_requires_pending")
+                    blocked = auto_review_reason(connection, scope, candidate, policy)
+                    if blocked:
+                        raise ValueError(f"auto_review_{blocked}")
+                source = source_memory(connection, scope, candidate.get("source_memory_id"),
+                                       str(candidate["provenance"].get("source_quote") or ""))
+                validity = policy.validity(predicate=candidate["predicate"], object=candidate["object"],
+                                           source_quote=str(candidate["provenance"].get("source_quote") or ""),
+                                           source_timestamp=(source or {}).get("timestamp"),
+                                           valid_from=candidate.get("valid_from"), valid_until=candidate.get("valid_until"))
+                candidate.update(valid_from=validity.valid_from, valid_until=validity.valid_until)
+                if actor == "auto_review" and validity.valid_until is not None and validity.valid_until <= now:
+                    raise ValueError("auto_review_expired")
+                connection.execute("UPDATE scoped_facts SET valid_from=?, valid_until=? WHERE id=?",
+                                   (validity.valid_from, validity.valid_until, locator))
+                relation, conflict_with = self._classify_fact_conflict(connection, scope, locator, policy=policy, now=now)
+                if resolution == "coexist":
+                    relation = "compatible"
+                if resolution == "supersede":
+                    previous = fact_row(connection, scope, supersedes_fact_id)
+                    if previous is None or previous["id"] == locator:
+                        raise ScopedKnowledgeNotFound()
+                    if int(previous["revision"]) != supersedes_revision:
+                        raise ScopedKnowledgeRevisionConflict()
+                    if not is_effective(previous, now) or any(previous[k] != candidate[k] for k in ("subject", "predicate")):
+                        raise ValueError("invalid_supersedes_target")
+                    if not is_effective({**candidate, "status": "active"}, now):
+                        raise ValueError("replacement_not_effective")
+                    remaining, _ = self._classify_fact_conflict(connection, scope, locator,
+                                                               policy=policy, now=now, exclude_id=supersedes_fact_id)
+                    if remaining == "conflicts":
+                        raise ValueError("additional_fact_conflicts")
+                    relation, conflict_with = "supersedes", supersedes_fact_id
                 to_status = "conflict" if relation == "conflicts" else _FACT_REVIEW_APPROVE_TARGET
-                resolution["event_type"] = (
+                events["event_type"] = (
                     "scoped_fact.conflict" if to_status == "conflict" else "scoped_fact.approved"
                 )
                 if relation == "supersedes" and conflict_with is not None:
                     connection.execute(
-                        """UPDATE scoped_facts SET status='superseded', revision=revision+1, updated_at=?
+                        """UPDATE scoped_facts SET status='superseded', valid_until=?, revision=revision+1, updated_at=?
                              WHERE id=? AND bot_id=? AND session_id=? AND visibility=?
                                AND status NOT IN ('deleted','superseded')""",
-                        (now, int(conflict_with), *_scope_params(scope)),
+                        (now, now, int(conflict_with), *_scope_params(scope)),
                     )
             else:
                 relation, conflict_with = "", None
                 to_status = _FACT_REVIEW_REJECT_TARGET
-                resolution["event_type"] = "scoped_fact.rejected"
+                events["event_type"] = "scoped_fact.rejected"
+            provenance = dict(candidate["provenance"])
+            reviews = list(provenance.get("review_history") or [])
+            reviews.append({"action": action, "resolution": resolution, "actor": actor,
+                            "at": now, "reason": review_reason, "conflict_with_fact_id": conflict_with,
+                            **({"previous_fact": previous} if resolution == "supersede" else {})})
+            provenance["review_history"] = reviews
             cursor = connection.execute(
-                """UPDATE scoped_facts SET status=?, revision=revision+1, updated_at=?
+                """UPDATE scoped_facts SET status=?, provenance=?, revision=revision+1, updated_at=?
                      WHERE id=? AND bot_id=? AND session_id=? AND visibility=? AND revision=?
                        AND status NOT IN ('deleted','superseded')""",
-                (to_status, now, locator, *_scope_params(scope), revision),
+                (to_status, _canonical_json(provenance), now, locator, *_scope_params(scope), revision),
             )
             if cursor.rowcount != 1:
                 raise ScopedKnowledgeRevisionConflict()
@@ -545,18 +654,32 @@ class ScopedKnowledgeMutationGateway:
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(bot_id, session_id, visibility, idempotency_key) DO NOTHING""",
                 (
-                    *_scope_params(scope), locator, action, "webui.facts.review",
+                    *_scope_params(scope), locator, action, actor,
                     review_reason, from_status, to_status, relation, conflict_with,
-                    str(idempotency_key or f"fact.review:{locator}:{revision}:{action}"),
+                    str(idempotency_key or f"fact.review:{locator}:{revision}:{action}:{resolution}"),
                     now,
                 ),
             )
+            related_changes = []
+            if resolution == "supersede":
+                related_changes.append({"locator": supersedes_fact_id, "revision": supersedes_revision + 1,
+                                        "status": "superseded", "event_type": "scoped_fact.superseded",
+                                        "superseded_by": locator})
+                connection.execute(
+                    """INSERT INTO scoped_fact_reviews(bot_id,session_id,visibility,fact_id,action,actor,reason,
+                       from_status,to_status,relation,conflict_with_fact_id,idempotency_key,reviewed_at)
+                       VALUES (?,?,?,?,'approve',?,?,?,'superseded','supersedes',?,?,?)""",
+                    (*_scope_params(scope), supersedes_fact_id, actor, review_reason, previous["status"], locator,
+                     f"fact.retire:{supersedes_fact_id}:{supersedes_revision}:{locator}:{revision}", now),
+                )
             return {
                 "kind": "fact",
                 "locator": locator,
                 "revision": revision + 1,
                 "status": to_status,
-                "event_type": resolution["event_type"],
+                "event_type": events["event_type"],
+                "previous_locator": conflict_with if resolution == "supersede" else None,
+                "related_changes": related_changes,
             }
 
         event_type = (
@@ -567,7 +690,7 @@ class ScopedKnowledgeMutationGateway:
             scope=scope,
             target=target,
             command_type="scoped.fact.review.v1",
-            actor="webui.facts.review",
+            actor=actor,
             event_type=event_type,
             request_shape=request_shape,
             mutate=mutate,
@@ -579,6 +702,7 @@ class ScopedKnowledgeMutationGateway:
         connection: Any,
         scope: RuntimeScope,
         locator: int,
+        *, policy=None, now: float | None = None, exclude_id: int | None = None,
     ) -> tuple[str, int | None]:
         """用与历史 scoped_fact_history 相同的分类器判定同主体+谓词内的关系。"""
         row = connection.execute(
@@ -601,11 +725,12 @@ class ScopedKnowledgeMutationGateway:
                 """SELECT id, subject, predicate, object, valid_from, valid_until
                      FROM scoped_facts
                     WHERE bot_id=? AND session_id=? AND visibility=? AND subject=? AND predicate=?
-                      AND id!=? AND status NOT IN ('deleted','superseded','rejected')""",
-                (*_scope_params(scope), row[0], row[1], locator),
+                      AND id!=? AND id!=? AND status IN ('active','approved')
+                      AND (valid_until IS NULL OR valid_until>?)""",
+                (*_scope_params(scope), row[0], row[1], locator, exclude_id or -1, time.time() if now is None else now),
             ).fetchall()
         ]
-        decision = FactConflictClassifier().classify(candidate, others)
+        decision = FactConflictClassifier(policy=policy).classify(candidate, others)
         return str(decision.relation), decision.existing_id
 
     async def update_tag_relation(

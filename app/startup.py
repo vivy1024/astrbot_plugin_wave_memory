@@ -315,15 +315,18 @@ class StartupMixin:
         else:
             self.jargon_service = None
 
-        # Few-Shot 风格学习 (US-5.1~5.4)：纯记忆模式不启动风格学习服务。
-        fewshot_cfg = self.config.get("FewShot_Settings", {})
-        if runtime_capability_enabled(self.runtime_mode, "fewshot", fewshot_cfg.get("enabled", True)) and self.tag_llm_provider_id:
+        # 已审核样例的读取不依赖在线模型；只有提取/漂移检查才需要模型。
+        fewshot_cfg = self.config.get("FewShot_Settings", {}) or {}
+        fewshot_enabled = fewshot_cfg.get("enabled")
+        if fewshot_enabled is None:
+            fewshot_enabled = True
+        if runtime_capability_enabled(self.runtime_mode, "fewshot", fewshot_enabled):
             try:
                 fewshot_llm = LLMFallbackClient(
                     context=self.context,
                     provider_ids=self._llm_chain(),
                     log_prefix="[FewShot]",
-                )
+                ) if self.tag_llm_provider_id else None
                 self.few_shot_service = FewShotService(
                     db=self.db, llm_client=fewshot_llm,
                     embedding_service=self.embedding_service, enabled=True,
@@ -541,7 +544,7 @@ class StartupMixin:
         _reg("关切追踪", "ok" if self.concern_tracker else "off", "" if self.concern_tracker else f"concern_tracker {soul_state_off_reason}", dependency="Bot Profile")
         _reg("Bot 心情", "ok" if self.mood_service else "off", "" if self.mood_service else "Lifecycle_Settings.enable_mood 关闭或初始化失败", dependency="enable_mood + Bot Profile")
         _reg("黑话系统", "ok" if getattr(self, 'jargon_service', None) else "off", "" if getattr(self, 'jargon_service', None) else "Jargon 未启用", dependency="LLM Provider + 聊天记录积累")
-        _reg("风格学习", "ok" if getattr(self, 'few_shot_service', None) else "off", "" if getattr(self, 'few_shot_service', None) else "FewShot 未启用", dependency="LLM Provider + bot 回复积累")
+        _reg("风格学习", "ok" if getattr(self, 'few_shot_service', None) else "off", "" if getattr(self, 'few_shot_service', None) else "FewShot 未启用", dependency="FewShot_Settings.enabled（提取需要 LLM，读取已批准样例不需要）")
 
         # 启动 committed-outbox 派生泵；启动后会自动 replay 未完成 delivery。
         self._spawn(
@@ -791,6 +794,45 @@ class StartupMixin:
             except (TypeError, ValueError):
                 return default
 
+        from ..services.fact_policy import FactPolicy, set_fact_policy
+        try:
+            predicates = str(cfg.get("fact_single_value_predicates") or "").strip()
+            fact_options = {"timezone": str(cfg.get("fact_timezone") or "UTC")}
+            if predicates:
+                fact_options["single_value_predicates"] = tuple(
+                    value.strip() for value in re.split(r"[,，\n]", predicates) if value.strip()
+                )
+            set_fact_policy(FactPolicy(**fact_options))
+        except (TypeError, ValueError, KeyError) as exc:
+            set_fact_policy(FactPolicy())
+            logger.warning("[WaveMemory] 事实策略配置无效，使用 UTC 与默认单值关系: %s", type(exc).__name__)
+
+        from ..services.reply_decision import ReplyDecisionService
+        try:
+            raw_rules = cfg.get("reply_rules_json") or "{}"
+            rules = json.loads(raw_rules) if isinstance(raw_rules, str) else raw_rules
+            if not isinstance(rules, dict):
+                raise ValueError("reply_rules_json must be an object")
+            mode = str(cfg.get("reply_rules_mode") or "off")
+            if mode not in {"off", "shadow", "enforce"}:
+                raise ValueError("invalid reply_rules_mode")
+            self.reply_decision = ReplyDecisionService({**rules, "mode": mode})
+        except (TypeError, ValueError):
+            self.reply_decision = ReplyDecisionService({"mode": "off"})
+            logger.warning("[WaveMemory] 开口规则配置无效，已关闭规则并保持原行为")
+
+        from ..services.expression_policy import ExpressionPolicy
+        from ..services.reply_feedback import ReplyFeedbackService
+        self.expression_policy = ExpressionPolicy(
+            self.db.conn, enabled=_flag("expression_learning_enabled", False),
+        )
+        self.reply_feedback_service = ReplyFeedbackService(
+            self.db.conn, enabled=_flag("reply_feedback_enabled", False), expression_policy=self.expression_policy,
+        )
+        self.expression_policy.feedback_service = self.reply_feedback_service
+        if getattr(self, "few_shot_service", None) is not None:
+            self.few_shot_service.expression_policy = self.expression_policy
+
         write_gateway = getattr(self, "write_gateway", None)
         try:
             self.auto_reviewer = AutoReviewer(
@@ -821,6 +863,11 @@ class StartupMixin:
                 group_max_per_hour=int(_num("proactive_group_max_per_hour", 3)),
                 quiet_hours=(quiet_start, quiet_end),
                 stale_days=_num("concern_stale_days", 30.0),
+                state_path=(
+                    os.path.join(os.path.dirname(os.path.abspath(db_path)), "concern_followups.json")
+                    if (db_path := str(getattr(self.db, "db_path", "") or "")) and db_path != ":memory:"
+                    else None
+                ),
             )
             self._spawn(self._concern_tidy_loop(), name="wave-memory:learning:concern-tidy", owner="learning")
         except Exception as e:
@@ -845,6 +892,7 @@ class StartupMixin:
                     daily_limit=int(_num("bookkeeping_daily_limit", 150)),
                     bot_name_for=self._bot_display_name,
                     mood_recorder=getattr(getattr(self, "mood_service", None), "record_bookkeeping", None),
+                    feedback_recorder=self.reply_feedback_service.record_bookkeeping,
                 )
             if _flag("daily_diary_enabled", True):
                 self.daily_diary = DailyDiaryService(
@@ -859,6 +907,9 @@ class StartupMixin:
 
         configure_impression_prompting(bookkeeping_active=self.post_reply_bookkeeper is not None)
         from ..webui.container import get_container
+        get_container().expression_policy = self.expression_policy
+        get_container().reply_feedback_service = self.reply_feedback_service
+        get_container().reply_decision = self.reply_decision
 
         def _learning_stats() -> dict:
             def _of(service) -> dict | None:

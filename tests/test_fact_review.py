@@ -257,7 +257,9 @@ async def test_supersede_retires_existing_fact_in_same_transaction(env):
     result = await gateway.review_fact(
         scope=_scope(),
         target=ScopedKnowledgeMutationTarget("fact", int(candidate), 1),
-        action="approve",
+        action="replace",
+        supersedes_fact_id=existing,
+        supersedes_revision=1,
     )
 
     assert result.status == "active"

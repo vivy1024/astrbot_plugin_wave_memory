@@ -590,6 +590,7 @@ class ScopeMessageIngressTest(unittest.TestCase):
         resolver = self._resolver()
         plugin = _IngressPlugin(resolver)
         event = _FakeEvent(message="记住：作用域必须可追溯")
+        event.is_at_or_wake_command = True  # 只有对 Bot 说时才算「要求记住」
 
         asyncio.run(on_message(plugin, event))
 

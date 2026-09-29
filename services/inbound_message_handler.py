@@ -174,38 +174,31 @@ class InboundMessagePipeline:
                     logger.info(f"[WaveMemory] /teach: {content[:50]}")
                 return
 
-        # 2. 显式记忆控制前缀 (记住/忘记)
-        _remember_prefixes = ("记住", "记下", "remember")
-        _forget_prefixes = ("忘记", "忘掉", "forget", "别记")
-        for prefix in _remember_prefixes:
-            if msg_stripped.startswith(prefix):
-                content = msg_stripped[len(prefix):].strip(":： \n")
-                if content and len(content) >= 4:
-                    await self.plugin.writer.enqueue({
-                        "scope": runtime_scope,
-                        "group_id": group_id,
-                        "content": f"[用户要求记住] {content}",
-                        "sender_id": sender_id,
-                        "sender_name": sender_name if sender_name else "",
-                        "timestamp": time.time(),
-                        "event_id": event_message_id(event),
-                        "importance": 2.0,
-                        "source": "explicit",
-                    })
-                    logger.info(f"[WaveMemory] 显式要求记住: {content[:50]}")
-                return
-
-        for prefix in _forget_prefixes:
-            if msg_stripped.startswith(prefix):
-                content = msg_stripped[len(prefix):].strip(":： \n")
-                if content and len(content) >= 4:
-                    deleted_count = self.plugin.db.soft_delete_similar(
-                        content,
-                        group_id=group_id,
-                        sender_id=sender_id,
-                    )
-                    logger.info(f"[WaveMemory] 显式要求忘记: {content[:50]}, 软删除 {deleted_count} 条")
-                return
+        # 2. 记忆控制必须有明确分隔符，且是对 Bot 说的；私聊里的「忘记带伞了」仍是普通消息。
+        directed = runtime_scope.visibility == "private" or bool(getattr(event, "is_at_or_wake_command", False))
+        command = re.match(
+            r"^(记住|记下|/?remember|忘记|忘掉|/?forget|别记)(?:\s+|[:：]\s*)(\S[\s\S]*)$",
+            msg_stripped, re.IGNORECASE,
+        ) if directed else None
+        if command:
+            verb, content = command.group(1).lower().lstrip("/"), command.group(2).strip()
+            if verb in {"记住", "记下", "remember"}:
+                await self.plugin.writer.enqueue({
+                    "scope": runtime_scope,
+                    "group_id": group_id,
+                    "content": f"[用户要求记住] {content}",
+                    "sender_id": sender_id,
+                    "sender_name": sender_name or "",
+                    "timestamp": message_ts,
+                    "event_id": event_message_id(event),
+                    "importance": 2.0,
+                    "source": "explicit",
+                })
+                logger.info("[WaveMemory] 显式要求记住（已排队）")
+            else:
+                # 仅跳过本条；历史删改通过管理台完成，不按相似度删除其他人的记忆。
+                logger.info("[WaveMemory] 显式要求不记（本条不入库）")
+            return
 
         # 3. 正常消息异步推写入库
         await self.plugin.writer.enqueue({

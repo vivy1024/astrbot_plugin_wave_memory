@@ -93,10 +93,18 @@ def is_identity_contamination(text: str | None) -> bool:
     if re.search(r"(两个爸爸|最好的爸爸|爸爸下班|爸爸帮你|爸爸教|爸爸养)", compact) and targets_bot:
         return True
 
-    if is_catgirl_persona_contamination(compact):
+    if is_catgirl_persona_contamination(text):
         return True
 
     return False
+
+
+# @某人：群友昵称里带「喵」时（如 @小白喵(10001) 吃我一招），不能把昵称当成口癖
+_MENTION_RE = re.compile(r"@[^\s@]{1,24}?[(（]\d{5,12}[)）]|@[^\s@]{1,24}(?=\s)|\[At:\d+\]")
+
+
+def _strip_mentions(text: str | None) -> str:
+    return _MENTION_RE.sub("", str(text or ""))
 
 
 def is_catgirl_persona_contamination(text: str | None) -> bool:
@@ -105,10 +113,10 @@ def is_catgirl_persona_contamination(text: str | None) -> bool:
     Ordinary discussion of cats, cat food, or fictional cat-ear species should not be
     quarantined by a single keyword. The risky pattern is the self-referential style
     bundle that appeared in polluted bot replies: cat ears/tail/paws/meow/fish bait
-    plus bot-self markers or action narration.
+    plus bot-self markers or action narration. @提及里的昵称不算（群友昵称常带「喵」）。
     """
 
-    compact = _compact(text)
+    compact = _compact(_strip_mentions(text))
     if not compact:
         return False
 

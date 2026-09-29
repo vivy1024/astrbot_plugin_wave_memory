@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -109,6 +110,36 @@ class InjectionOrchestratorTest(unittest.TestCase):
         self.assertEqual(seen_req_parts, [0, 0])
         self.assertEqual([c["channel"] for c in detail["channels"]], ["memory", "facts"])
         self.assertEqual(detail["final_preview"], "记忆文本\n\n事实文本")
+
+    def test_reply_decision_is_bounded_and_survives_trace_payload_retention(self):
+        from types import SimpleNamespace
+        from services.config.channel_config import build_default_channel_config
+        from services.injection.context import InjectionContext
+        from services.injection.orchestrator import InjectionOrchestrator
+        from webui.blueprints.injection_observatory import build_trace_detail_payload
+
+        store = self._trace_store()
+        ctx = InjectionContext(
+            event=SimpleNamespace(_wave_memory_reply_decision={
+                "mode": "shadow", "would_reply": False, "score": 12.0,
+                "threshold": float("nan"), "reasons": ["发言过于频繁"] * 30,
+                "message": "should not be stored here", "token": "private-value",
+            }),
+            req=FakeReq(), message="hello", group_id="g1", sender_id="u1",
+            sender_name="测试用户", bot_id="b1", bot_profile_id="b1", trace_id="rule-1",
+        )
+        asyncio.run(InjectionOrchestrator(channels=[], config=build_default_channel_config(), trace_store=store).run(ctx))
+        trace = store.get("rule-1")
+        meta = json.loads(trace["metadata_json"])["reply_decision"]
+        self.assertFalse(meta["would_reply"])
+        self.assertEqual(len(meta["reasons"]), 20)
+        self.assertNotIn("threshold", meta)
+        self.assertNotIn("token", meta)
+        self.assertNotIn("message", meta)
+        store.conn.execute("UPDATE injection_traces SET payload_json='' WHERE trace_id='rule-1'")
+        store.conn.commit()
+        payload = build_trace_detail_payload(store, None, "rule-1")
+        self.assertEqual(payload["reply_decision"], meta)
 
     def test_disabled_empty_and_timeout_channels_do_not_enter_final_text(self):
         from services.config.channel_config import apply_channel_overrides, build_default_channel_config

@@ -6,6 +6,7 @@ from plugin_source import helper_nodes, plugin_class_node, plugin_method, plugin
 import ast
 import asyncio
 import time
+import pytest
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -75,8 +76,46 @@ def test_message_goes_through_shared_pipeline_with_platform_message_id():
 def test_remember_prefix_behaves_like_astrbot():
     ingest = _load_ingest()
     plugin = _Plugin()
-    asyncio.run(ingest(plugin, {"event_id": 1, "content": "记住 我周五要考试"}, _scope()))
+    asyncio.run(ingest(plugin, {"event_id": 1, "content": "记住 我周五要考试", "is_at_bot": True}, _scope()))
     assert plugin.writer.items[0]["content"] == "[用户要求记住] 我周五要考试"
+    assert plugin.writer.items[0]["source"] == "explicit"
+
+
+def test_prefix_words_in_ordinary_group_chat_are_just_messages():
+    """没对 Bot 说时，「记住了」「忘记带伞了」只是普通聊天：照常入库，不当指令。"""
+    ingest = _load_ingest()
+    plugin = _Plugin()
+    asyncio.run(ingest(plugin, {"event_id": 11, "content": "记住了记住了下次一定"}, _scope()))
+    asyncio.run(ingest(plugin, {"event_id": 12, "content": "忘记带伞了淋成狗"}, _scope()))
+    assert [item["content"] for item in plugin.writer.items] == ["记住了记住了下次一定", "忘记带伞了淋成狗"]
+    assert all(item.get("source") != "explicit" for item in plugin.writer.items)
+
+
+def test_directed_forget_prefix_skips_this_message():
+    ingest = _load_ingest()
+    plugin = _Plugin()
+    asyncio.run(ingest(plugin, {"event_id": 13, "content": "别记 我刚才说的地址", "is_at_bot": True}, _scope()))
+    assert plugin.writer.items == []
+
+
+@pytest.mark.parametrize("private", [False, True])
+@pytest.mark.parametrize("content", ["忘记带伞了", "记住了，下次一定", "forgettable evening", "remembering yesterday", "记住："])
+def test_directed_ordinary_prefixes_are_still_stored(private, content):
+    plugin = _Plugin()
+    scope = _scope()
+    if private:
+        scope = RuntimeScope("yushu", "private", SessionRef("羽书:private:u1", "羽书", "private", "u1"),
+                             subject_principal_id="羽书:user:u1")
+    asyncio.run(_load_ingest()(plugin, {"event_id": 14, "content": content, "is_at_bot": True}, scope))
+    assert plugin.writer.items[0]["content"] == content
+    assert plugin.writer.items[0].get("source") != "explicit"
+
+
+@pytest.mark.parametrize("content", ["记住：阿木", "/remember 阿木", "REMEMBER 阿木"])
+def test_explicit_short_memory_is_not_silently_dropped(content):
+    plugin = _Plugin()
+    asyncio.run(_load_ingest()(plugin, {"event_id": 15, "content": content, "is_at_bot": True}, _scope()))
+    assert plugin.writer.items[0]["content"] == "[用户要求记住] 阿木"
     assert plugin.writer.items[0]["source"] == "explicit"
 
 

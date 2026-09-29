@@ -68,7 +68,7 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
     description: str = (
         "综合记录对特定群友的阶段性主观印象，并根据真实互动同步更新好感度/关系维度。"
         "当你对群友的看法改变、或者双方对话产生信任/幽默/深度长谈/冒犯情绪变动时调用。"
-        "常规微调 trust，接梗幽默用 fun，深度长谈用 depth，被严重冒犯用 hostility。"
+        "常规微调 trust，接梗幽默用 fun，深度长谈用 depth；hostility 只接受非负增量，数值越大表示越冒犯。"
     )
     parameters: dict = field(default_factory=lambda: {
         "type": "object",
@@ -88,11 +88,11 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
             "dimension": {
                 "type": "string",
                 "enum": ["trust", "fun", "depth", "hostility", "familiarity"],
-                "description": "好感变动落在哪一维；常规增减用 trust，幽默接梗用 fun，深度探讨用 depth，严重冒犯用 hostility。默认 trust",
+                "description": "好感变动落在哪一维；常规增减用 trust，幽默接梗用 fun，深度探讨用 depth，严重冒犯用 hostility。hostility 只接受 >=0，数值越大表示越冒犯。默认 trust",
             },
             "delta": {
                 "type": "number",
-                "description": "本轮好感增量，受步长约束（平时在 [-2.0, 2.0] 范围内；若未决能量蓄满跃迁可放宽至 [-5.0, 5.0]），无变动填 0",
+                "description": "本轮好感增量；hostility 只接受 >=0，数值越大表示越冒犯；其他维度受系统步长约束，无变动填 0",
             },
             "source_quote": {
                 "type": "string",
@@ -182,6 +182,13 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
             if shift_level == "boundary_breach":
                 dimension = "hostility"
             raw_delta = legacy.get(shift_level, 0.0)
+
+        if dimension == "hostility":
+            try:
+                if float(raw_delta) < 0:
+                    return "hostility 只接受非负增量，数值越大表示越冒犯"
+            except (TypeError, ValueError):
+                return "hostility 增量必须是非负数字，数值越大表示越冒犯"
 
         if not target or (not impression and not shift_reason):
             return "target_user 以及 reason (或 impression) 均为必填项"

@@ -1,15 +1,15 @@
-"""事后记账：羽书在群里说完话、对话停一会儿之后，单独回看这一段，把该记的记下来。
+"""事后记账：Bot 在群里说完话、对话停一会儿之后，回看这一段。
 
 过去这些全靠她在回复当下顺手调工具：好感结算、人情、事实、信念、黑话、关切。模型忙着回话时
 很少会想起记账（线上 28 小时约 30 次回复只记了 2 次；21 个人的未结算能量攒满了却一直没结算）。
 这里把记账从回复里拆出来：
 
-- 触发：羽书在某群发言后，该群 ``delay_seconds`` 内没有她的新发言（一段对话告一段落）；
+- 触发：Bot 在某群发言后，该群 ``delay_seconds`` 内没有它的新发言（一段对话告一段落）；
   同一群两次记账至少间隔 ``session_cooldown_seconds``，全局每天最多 ``daily_limit`` 次。
 - 输入：这段对话（上次记账之后的最多 ``window_messages`` 条）、在场群友里未结算能量已满需要结算的人、
   本群未了的关切、已批准的事实（供提信念）。
 - 输出：模型按固定 JSON 列出要做的记账，逐条交给对应的正式工具执行——校验、作用域隔离、好感
-  变动范围、事实待审/自动审核都与羽书现场调用完全相同，这里不另开写入口。
+  变动范围、事实待审/自动审核都与现场调用完全相同，这里不另开写入口。
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import asyncio
 import json
 import re
 import time
+from dataclasses import replace
 from typing import Any, Callable
 
 try:
@@ -32,11 +33,17 @@ try:
     from .identity_safety import prepend_identity_safety_system_prompt
     from .impression_timeline import UNSETTLED_ENERGY_FULL, affinity_shift_range, effective_unsettled_state
     from .tool_registry import runtime_tool_context
+    from .reply_feedback import BOOKKEEPING_LEARNING_PROMPT
+    from .fact_policy import is_effective
+    from ..tools.person_identity import resolve_user_id
 except ImportError:  # pragma: no cover
     from domain.scope import RuntimeScope
     from services.identity_safety import prepend_identity_safety_system_prompt
     from services.impression_timeline import UNSETTLED_ENERGY_FULL, affinity_shift_range, effective_unsettled_state
     from services.tool_registry import runtime_tool_context
+    from services.reply_feedback import BOOKKEEPING_LEARNING_PROMPT
+    from services.fact_policy import is_effective
+    from tools.person_identity import resolve_user_id
 
 PROMPT = """你是{bot_name}。下面是你刚在群里参与的一段对话（「{bot_name}」是你自己说的话）。
 现在对话告一段落，请以你自己的视角回看，把值得记下来的事整理出来。宁缺毋滥：没有就留空数组，
@@ -79,7 +86,9 @@ def _json_object(text: str) -> dict[str, Any]:
     match = re.search(r"\{.*\}", str(text or ""), re.S)
     if not match:
         return {}
-    raw = re.sub(r"//[^\n]*", "", match.group(0))
+    # Comments outside JSON strings only: a quoted URL/source message is data.
+    raw = re.sub(r'"(?:\\.|[^"\\])*"|//[^\n]*',
+                 lambda item: "" if item.group(0).startswith("//") else item.group(0), match.group(0))
     try:
         value = json.loads(raw)
     except ValueError:
@@ -106,6 +115,7 @@ class PostReplyBookkeeper:
         window_messages: int = 40,
         bot_name_for: Callable[[str], str] | None = None,
         mood_recorder: Callable[..., Any] | None = None,
+        feedback_recorder: Callable[..., Any] | None = None,
     ):
         self.db = db
         self.tool_registry = tool_registry
@@ -118,9 +128,10 @@ class PostReplyBookkeeper:
         self.bot_name_for = bot_name_for or (lambda bot_id: bot_id)
         # 心情 v2：同一次 LLM 调用顺带输出的心情影响交给 BotMoodService（不新增调用；解析失败安全忽略）。
         self.mood_recorder = mood_recorder
-        self._timers: dict[str, asyncio.Task] = {}
-        self._last_run: dict[str, float] = {}
-        self._last_memory_id: dict[str, int] = {}
+        self.feedback_recorder = feedback_recorder
+        self._timers: dict[tuple, asyncio.Task] = {}
+        self._last_run: dict[tuple, float] = {}
+        self._last_memory_id: dict[tuple, int] = {}
         self._day = ""
         self._runs_today = 0
         self.stats: dict[str, int] = {}
@@ -128,13 +139,21 @@ class PostReplyBookkeeper:
     def _count(self, key: str, amount: int = 1) -> None:
         self.stats[key] = self.stats.get(key, 0) + amount
 
+    @staticmethod
+    def _scope_key(scope: RuntimeScope) -> tuple:
+        return scope.bot_id, scope.session.id, scope.visibility
+
+    def _learning_enabled(self) -> bool:
+        recorder_owner = getattr(self.feedback_recorder, "__self__", None)
+        return self.feedback_recorder is not None and bool(getattr(recorder_owner, "learning_enabled", True))
+
     # ─── 调度 ───
 
     def schedule(self, scope: RuntimeScope) -> None:
-        """羽书在群里说了一句话：重置该群的记账计时器。"""
+        """Bot 在群里说了一句话：重置该 Bot/群的记账计时器。"""
         if not self.enabled or not isinstance(scope, RuntimeScope) or scope.visibility != "group" or scope.session is None:
             return
-        key = scope.session.id
+        key = self._scope_key(scope)
         timer = self._timers.get(key)
         if timer is not None and not timer.done():
             timer.cancel()
@@ -154,7 +173,7 @@ class PostReplyBookkeeper:
             await asyncio.sleep(self.delay_seconds)
         except asyncio.CancelledError:
             return
-        key = scope.session.id
+        key = self._scope_key(scope)
         now = time.time()
         if now - self._last_run.get(key, 0.0) < self.session_cooldown:
             # 冷却中：到点再来一次，这段对话不会漏
@@ -177,20 +196,20 @@ class PostReplyBookkeeper:
     # ─── 执行 ───
 
     def _transcript(self, scope: RuntimeScope, bot_name: str) -> tuple[list[tuple], str]:
-        key = scope.session.id
+        key = self._scope_key(scope)
         since = self._last_memory_id.get(key, 0)
         rows = self.db.conn.execute(
             """SELECT id, sender_id, sender_name, content FROM memories
                 WHERE bot_id=? AND session_id=? AND visibility=? AND id > ?
                   AND COALESCE(quarantine, 0) = 0 AND content IS NOT NULL
                 ORDER BY id DESC LIMIT ?""",
-            (scope.bot_id, key, scope.visibility, since, self.window_messages),
+            (scope.bot_id, scope.session.id, scope.visibility, since, self.window_messages),
         ).fetchall()
         rows = list(reversed(rows))
         lines = []
         for _id, sender_id, sender_name, content in rows:
             speaker = bot_name if sender_id == "bot" else (sender_name or sender_id or "某人")
-            lines.append(f"{speaker}：{str(content or '')[:200]}")
+            lines.append(f"[memory:{_id} sender:{json.dumps(str(sender_id), ensure_ascii=False)}] {speaker}：{str(content or '')[:200]}")
         return rows, "\n".join(lines)
 
     def _settle_block(self, scope: RuntimeScope, rows: list[tuple]) -> str:
@@ -224,19 +243,52 @@ class PostReplyBookkeeper:
         repo = getattr(self.db, "scoped_knowledge", None)
         if repo is None:
             return ""
-        facts = [f for f in repo.list_scoped_facts(scope, limit=60) if f.get("status") in {"active", "approved"}][:20]
+        now = time.time()
+        facts = [f for f in repo.list_scoped_facts(scope, limit=60) if is_effective(f, now)][:20]
         if len(facts) < 2:
             return ""
         return "【已批准的事实（提信念时引用 id）】\n" + "\n".join(
             f"- {f['id']}: {f['subject']} {f['predicate']} {f['object']}" for f in facts
         ) + "\n\n"
 
-    async def _call(self, name: str, scope: RuntimeScope, **kwargs) -> str:
+    @staticmethod
+    def _call_succeeded(text: str) -> bool:
+        value = str(text or "").strip()
+        if not value:
+            return False
+        failure_markers = (
+            "失败", "拒绝", "无效", "必填", "没有在", "不支持", "未就绪", "未找到",
+            "无法", "错误", "连接已断开", "未初始化",
+        )
+        return not any(marker in value[:80] for marker in failure_markers)
+
+    async def _call_action(self, name: str, scope: RuntimeScope, **kwargs) -> int:
+        result = await self._call(name, scope, **kwargs)
+        return 1 if self._call_succeeded(result) else 0
+
+    def _subject_scope(self, scope: RuntimeScope, target_user: str) -> RuntimeScope | None:
+        """把记账目标解析成正式主体，供需要 subject 的关系工具使用。"""
+        if not isinstance(scope, RuntimeScope) or scope.session is None or not target_user:
+            return None
+        try:
+            user_id = resolve_user_id(self.db, str(target_user), scope)
+        except Exception:
+            user_id = ""
+        if not user_id:
+            return None
+        return replace(scope, subject_principal_id=f"{scope.session.platform_id}:user:{user_id}")
+
+    async def _call(self, name: str, scope: RuntimeScope, *, subject_principal_id: str | None = None, **kwargs) -> str:
         record = self.tool_registry.get(name) if self.tool_registry is not None else None
         if record is None or not getattr(record, "enabled", True):
             return ""
+        call_scope = scope
+        if subject_principal_id:
+            if scope.session is None:
+                return "主体 Scope 缺少会话"
+            call_scope = replace(scope, subject_principal_id=subject_principal_id)
         try:
-            result = await record.instance.call(runtime_tool_context(scope, source="bookkeeping"), **kwargs)
+            result = await record.instance.call(runtime_tool_context(call_scope, source="bookkeeping"), **kwargs)
         except Exception as exc:
             self._count(f"{name}:error")
             return f"失败: {exc}"
@@ -246,6 +298,8 @@ class PostReplyBookkeeper:
         return text
 
     async def run(self, scope: RuntimeScope) -> dict[str, int]:
+        if not self.enabled or not isinstance(scope, RuntimeScope) or scope.visibility != "group" or scope.session is None:
+            return {}
         bot_name = self.bot_name_for(scope.bot_id) or scope.bot_id
         rows, transcript = self._transcript(scope, bot_name)
         if len(rows) < 3 or not any(r[1] == "bot" for r in rows):
@@ -258,14 +312,27 @@ class PostReplyBookkeeper:
             concern_block=self._concern_block(scope),
             fact_block=self._fact_block(scope),
         )
+        learning_enabled = self._learning_enabled()
+        if learning_enabled:
+            prompt_factory = getattr(getattr(self.feedback_recorder, "__self__", None), "bookkeeping_prompt", None)
+            prompt += prompt_factory() if callable(prompt_factory) else BOOKKEEPING_LEARNING_PROMPT
         response = await self.llm.text_chat(
             prompt=prompt,
             system_prompt=prepend_identity_safety_system_prompt(None, always=True),
             contexts=[],
         )
         payload = _json_object(getattr(response, "completion_text", "") or "")
-        self._last_memory_id[scope.session.id] = int(rows[-1][0])
+        self._last_memory_id[self._scope_key(scope)] = int(rows[-1][0])
         self._count("runs")
+        if learning_enabled:
+            try:
+                counts = self.feedback_recorder(scope, payload, source_message_ids=tuple(int(row[0]) for row in rows))
+                if isinstance(counts, dict):
+                    for key in ("feedback", "expressions"):
+                        self._count(key, int(counts.get(key, 0)))
+            except Exception as exc:
+                self._count("feedback_error")
+                logger.warning(f"[WaveMemory] 事后反馈未写入: {type(exc).__name__}")
         if self.mood_recorder is not None:
             try:
                 if self.mood_recorder(scope, payload.get("mood"), ref=str(rows[-1][0])) is not None:
@@ -275,60 +342,63 @@ class PostReplyBookkeeper:
         done = 0
         for item in _items(payload, "impressions", 8):
             if item.get("user") and item.get("impression"):
-                await self._call(
+                target_scope = self._subject_scope(scope, str(item["user"]))
+                if target_scope is None:
+                    self._count("wave_memory_record_social_impression:subject_missing")
+                    continue
+                done += await self._call_action(
                     "wave_memory_record_social_impression", scope,
+                    subject_principal_id=target_scope.subject_principal_id,
                     target_user=str(item["user"]), impression=str(item["impression"]),
                     dimension=str(item.get("dimension") or "trust"), delta=item.get("delta", 0) or 0,
                     source_quote=str(item.get("source_quote") or ""), shift_reason="事后回看这段对话",
                 )
-                done += 1
         for item in _items(payload, "facts", 6):
             if all(item.get(k) for k in ("subject", "predicate", "object", "source_quote")):
-                await self._call(
+                done += await self._call_action(
                     "wave_memory_propose_fact", scope,
                     subject=str(item["subject"]), predicate=str(item["predicate"]), object=str(item["object"]),
                     source_quote=str(item["source_quote"]), context_evidence="事后回看群聊时记下",
                 )
-                done += 1
         for item in _items(payload, "jargon", 4):
             if item.get("phrase") and item.get("meaning"):
-                await self._call(
+                done += await self._call_action(
                     "wave_memory_mark_cultural_moment", scope,
                     moment_type="potential_jargon", target_phrase_or_snippet=str(item["phrase"]),
                     context_note=str(item["meaning"]),
                 )
-                done += 1
         for item in _items(payload, "social_anchors", 4):
             if item.get("user") and item.get("anchor_type") and item.get("summary"):
-                await self._call(
+                target_scope = self._subject_scope(scope, str(item["user"]))
+                if target_scope is None:
+                    self._count("wave_memory_note_social_anchor:subject_missing")
+                    continue
+                done += await self._call_action(
                     "wave_memory_note_social_anchor", scope,
+                    subject_principal_id=target_scope.subject_principal_id,
                     target_user=str(item["user"]), anchor_type=str(item["anchor_type"]),
                     summary=str(item["summary"]), is_active_concern=bool(item.get("is_active_concern")),
                 )
-                done += 1
         for item in _items(payload, "concerns", 3):
             if item.get("topic"):
-                await self._call(
+                done += await self._call_action(
                     "wave_memory_note_concern", scope,
                     action="note", topic=str(item["topic"]), target_user=str(item.get("target_user") or ""),
                 )
-                done += 1
         for item in _items(payload, "resolved_concerns", 4):
             if item.get("concern_id") and item.get("note"):
-                await self._call(
+                done += await self._call_action(
                     "wave_memory_note_concern", scope,
                     action="resolve", concern_id=item["concern_id"], note=str(item["note"]),
                 )
-                done += 1
         for item in _items(payload, "beliefs", 2):
             ids = item.get("source_fact_ids")
             if item.get("content") and isinstance(ids, list) and len(ids) >= 2:
-                await self._call(
+                done += await self._call_action(
                     "wave_memory_propose_belief", scope,
                     belief_type=str(item.get("belief_type") or "person_judgment"), content=str(item["content"]),
                     grounding_evidence="事后回看群聊时由已批准事实归纳", source_fact_ids=ids,
                 )
-                done += 1
         self._count("actions", done)
         if done:
             logger.info(f"[WaveMemory] 事后记账 {scope.session.id}：回看 {len(rows)} 条，记下 {done} 项")

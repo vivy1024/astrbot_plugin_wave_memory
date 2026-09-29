@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import time
+
 from quart import Blueprint, current_app, jsonify, request
 
 from ..api_contract import error_payload, mutation_response, page_response
@@ -23,6 +25,8 @@ from ..middleware.auth import require_auth
 try:
     from ...domain.scope import RuntimeScope, ScopeCodec, ScopeValidationError, SessionRef
     from ...engine.db.scoped_knowledge_repo import ScopedKnowledgeScopeError
+    from ...services.fact_policy import ineffective_reason, get_fact_policy, is_effective, valid_subject
+    from ...services.facts_conflict import FactConflictClassifier
     from ...services.scoped_knowledge_mutations import (
         ScopedKnowledgeMutationGateway,
         ScopedKnowledgeMutationTarget,
@@ -33,6 +37,8 @@ try:
 except ImportError:  # pragma: no cover - 插件根目录直接导入
     from domain.scope import RuntimeScope, ScopeCodec, ScopeValidationError, SessionRef
     from engine.db.scoped_knowledge_repo import ScopedKnowledgeScopeError
+    from services.fact_policy import ineffective_reason, get_fact_policy, is_effective, valid_subject
+    from services.facts_conflict import FactConflictClassifier
     from services.scoped_knowledge_mutations import (
         ScopedKnowledgeMutationGateway,
         ScopedKnowledgeMutationTarget,
@@ -44,6 +50,33 @@ except ImportError:  # pragma: no cover - 插件根目录直接导入
 facts_bp = Blueprint("facts", __name__, url_prefix="/api/facts")
 
 _REVIEWABLE_STATUSES = frozenset({"pending", "quarantined", "conflict"})
+_REVIEW_ACTIONS = frozenset({"approve", "reject", "replace", "coexist"})
+
+
+def _lifecycle_fields(cm, scope, item: dict, *, now: float | None = None) -> None:
+    now = time.time() if now is None else now
+    item.setdefault("valid_from", None)
+    item.setdefault("valid_until", None)
+    item["ineffective_reason"] = ineffective_reason(item, now)
+    item["effective"] = item["ineffective_reason"] is None
+    classifier = FactConflictClassifier(policy=get_fact_policy())
+    rows = row_dicts(cm.execute_read(
+        """SELECT id, revision, subject, predicate, object, status, valid_from, valid_until
+           FROM scoped_facts WHERE bot_id=? AND session_id=? AND visibility=?
+             AND subject=? AND predicate=? AND id!=? AND status IN ('active','approved')
+             ORDER BY id""",
+        (*_fact_scope_params(scope), item.get("subject"), item.get("predicate"), item.get("id")),
+    ))
+    item["conflict_candidates"] = [row for row in rows if ineffective_reason(row, now) in {None, "not_yet_valid"}
+                                   and classifier.classify(item, [row]).relation == "conflicts"]
+    actions = []
+    if item.get("status") in _REVIEWABLE_STATUSES:
+        actions = ["approve", "reject"] if valid_subject(item.get("subject")) else ["reject"]
+        if item["conflict_candidates"] and valid_subject(item.get("subject")):
+            actions.append("coexist")
+            if is_effective({**item, "status": "active"}, now) and any(is_effective(row, now) for row in item["conflict_candidates"]):
+                actions.append("replace")
+    item["review_actions"] = actions
 
 
 def _scope_error(code: str, status: int):
@@ -238,6 +271,7 @@ async def list_facts():
         available = gateway is not None and registry is not None
         reason = "scoped_knowledge_mutation_gateway_unavailable" if gateway is None else "object_ref_registry_unavailable"
         for item in items:
+            _lifecycle_fields(cm, scope, item)
             item["review_hint"] = review_hint(item)
             item["object_ref"] = fact_object_ref(item, scope, registry)
             item["capabilities"] = _capabilities("review", available=available, reason=reason)
@@ -262,7 +296,7 @@ async def list_facts():
 @require_auth
 async def review_fact(fact_id: int, action: str):
     """人工审核单条事实：approve → active/conflict，reject → rejected。"""
-    if action not in {"approve", "reject"}:
+    if action not in _REVIEW_ACTIONS:
         return _scope_error("unsupported_fact_review_action", 405)
     try:
         body = await request.get_json(silent=True) or {}
@@ -284,12 +318,19 @@ async def review_fact(fact_id: int, action: str):
             action=action,
             reason=body.get("reason"),
             idempotency_key=body.get("idempotency_key"),
+            resolution=body.get("resolution", "auto"),
+            supersedes_fact_id=body.get("supersedes_fact_id"),
+            supersedes_revision=body.get("supersedes_revision"),
         )
+        updated = _find_scoped_fact(cm, scope, fact_id)
+        _lifecycle_fields(cm, scope, updated)
+        fact_evidence(cm, [updated], _fact_scope_params(scope))
+        updated["object_ref"] = fact_object_ref(updated, scope, _object_ref_registry())
         return jsonify(mutation_response(
             operation_kind=f"fact.{action}",
             status="succeeded",
             revision=result.revision,
-            item={"id": fact_id, "status": result.status},
+            item=updated,
             include_item=True,
         ))
     except ScopedKnowledgeNotFound:
@@ -314,7 +355,7 @@ async def batch_review_facts():
             return _scope_error("invalid_request", 400)
         scope = _scope_from_envelope(body)
         action = str(body.get("action") or "").strip()
-        if action not in {"approve", "reject"}:
+        if action not in _REVIEW_ACTIONS:
             return _scope_error("unsupported_fact_review_action", 405)
         entries = body.get("items")
         if not isinstance(entries, list) or not entries:
@@ -347,6 +388,9 @@ async def batch_review_facts():
                     action=action,
                     reason=entry.get("reason"),
                     idempotency_key=entry.get("idempotency_key"),
+                    resolution=entry.get("resolution", "auto"),
+                    supersedes_fact_id=entry.get("supersedes_fact_id"),
+                    supersedes_revision=entry.get("supersedes_revision"),
                 )
                 succeeded.append({"id": fact_id, "status": result.status, "revision": result.revision})
             except Exception as exc:

@@ -871,6 +871,49 @@
     "hint": "事后记账、每日日记、自动审核与关切驱动的主动回复",
     "type": "object",
     "items": {
+      "fact_timezone": {
+        "description": "事实日期使用的时区",
+        "type": "string",
+        "default": "UTC",
+        "restart_required": true,
+        "hint": "使用 IANA 时区名，例如 Asia/Shanghai。今天、明天等相对日期按来源消息时间计算；无法确定的日期留待审核。修改后重启插件生效。"
+      },
+      "fact_single_value_predicates": {
+        "description": "事实中只能有一个有效值的关系",
+        "type": "string",
+        "default": "",
+        "restart_required": true,
+        "hint": "逗号分隔，例如 居住地,职业。留空使用内置列表；冲突进入人工审核，批准新候选不会静默覆盖旧事实。修改后重启插件生效。"
+      },
+      "reply_feedback_enabled": {
+        "description": "从事后记账记录回复效果",
+        "type": "bool",
+        "default": false,
+        "restart_required": true,
+        "hint": "复用事后记账同一次模型调用，记录明确承接、纠正或拒绝的证据。没有回应记作未知，不扣好感、不提高记忆重要度。修改后重启插件生效。"
+      },
+      "expression_learning_enabled": {
+        "description": "学习群友的情景表达",
+        "type": "bool",
+        "default": false,
+        "restart_required": true,
+        "hint": "复用事后记账提取有出处的简短表达，先进入风格样例待审，批准后才可注入；保留原有工具记录样例的方式。修改后重启插件生效。"
+      },
+      "reply_rules_mode": {
+        "description": "开口判断规则模式",
+        "type": "string",
+        "default": "off",
+        "options": ["off", "shadow", "enforce"],
+        "restart_required": true,
+        "hint": "三个选项依次为：关闭、只观察、实际启用。只观察会记录建议但不改变回复；实际启用会筛选已经获准的回复候选。不新增模型调用，不绕过宿主唤醒与权限。修改后重启插件生效。"
+      },
+      "reply_rules_json": {
+        "description": "开口判断阈值与分组覆盖",
+        "type": "text",
+        "default": "{}",
+        "restart_required": true,
+        "hint": "JSON 对象，可设 score_threshold、reply_window_seconds、max_recent_replies、backoff_base_seconds、backoff_max_seconds，以及 bots/groups 覆盖；群使用完整会话 ID。修改后重启插件生效。"
+      },
       "auto_approve_enabled": {
         "description": "自动审核事实 / 信念 / 黑话",
         "type": "bool",

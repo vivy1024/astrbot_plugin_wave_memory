@@ -84,10 +84,14 @@ def knowledge(tmp_path):
     manager = ConnectionManager(str(tmp_path / "learning.sqlite3"))
     manager._write_conn.execute(
         """CREATE TABLE memories (id INTEGER PRIMARY KEY, bot_id TEXT, session_id TEXT, visibility TEXT,
-           resolution_state TEXT, quarantine INTEGER DEFAULT 0)"""
+           resolution_state TEXT, quarantine INTEGER DEFAULT 0,
+           content TEXT, sender_id TEXT, sender_name TEXT, timestamp REAL,
+           memory_type TEXT DEFAULT 'message', source TEXT DEFAULT 'chat')"""
     )
     manager._write_conn.execute(
-        "INSERT INTO memories VALUES (42, 'yushu', 'qq:group:g1', 'group', 'resolved', 0)"
+        """INSERT INTO memories(id,bot_id,session_id,visibility,resolution_state,quarantine,
+           content,sender_id,sender_name,timestamp)
+           VALUES (42,'yushu','qq:group:g1','group','resolved',0,'我住在上海','u1','小明',1700000000)"""
     )
     manager._write_conn.commit()
     ensure_scoped_derived_knowledge_schema(manager)
@@ -103,7 +107,7 @@ def knowledge(tmp_path):
         manager.close()
 
 
-def _pending_fact(repo, *, quote="我在上海上班", memory_id=42, needs_jargon_review=False):
+def _pending_fact(repo, *, quote="我住在上海", memory_id=42, needs_jargon_review=False):
     return repo.upsert_scoped_fact(
         _scope(), subject="小明", predicate="住在", object="上海", confidence=0.85, status="pending",
         source_memory_id=memory_id,
@@ -129,6 +133,10 @@ def test_auto_review_approves_fact_with_quote_and_source(knowledge):
     reviewer = AutoReviewer(db, gateway, enabled=True)
     assert asyncio.run(reviewer.review_fact(_scope(), fact_id)) == "active"
     assert _status(repo, fact_id) == "active"
+    # 审核记录标明是自动审核，与管理台人工审核区分开
+    db, _, _ = knowledge
+    actors = [row[0] for row in db.conn.execute("SELECT actor FROM scoped_fact_reviews WHERE fact_id=?", (fact_id,))]
+    assert actors == ["auto_review"]
 
 
 def test_auto_review_skips_fact_without_evidence_or_with_unknown_jargon(knowledge):
@@ -205,6 +213,27 @@ def test_followup_quiet_hours():
     assert service.stats["skip_quiet_hours"] == 1
 
 
+def test_followup_excludes_social_anchor_concerns():
+    db = sqlite3.connect(":memory:")
+    db.execute(
+        """CREATE TABLE scoped_soul_concerns (
+           id INTEGER PRIMARY KEY, bot_id TEXT, session_id TEXT, visibility TEXT,
+           topic TEXT, intensity REAL, status TEXT, concern_type TEXT, evidence TEXT,
+           created_at REAL, last_triggered REAL, last_progress_at REAL)"""
+    )
+    evidence = json.dumps([{"kind": "subject", "user_id": "u1"}])
+    db.execute(
+        "INSERT INTO scoped_soul_concerns VALUES (1,'yushu','qq:group:g1','group','人情备忘',.8,'active','social_anchor',?,1.0,NULL,NULL)",
+        (evidence,),
+    )
+    db.execute(
+        "INSERT INTO scoped_soul_concerns VALUES (2,'yushu','qq:group:g1','group','面试结果',.8,'active','wellbeing',?,1.0,NULL,NULL)",
+        (evidence,),
+    )
+    service = ConcernFollowupService(SimpleNamespace(conn=db), enabled=True, quiet_hours=(0, 0))
+    assert [item["id"] for item in service.open_concerns_for(_scope(), "u1")] == [2]
+
+
 # ─── 事后记账 ───
 
 
@@ -231,6 +260,28 @@ class _Registry:
         return SimpleNamespace(enabled=True, instance=_Tool(name, self.calls))
 
 
+class _ScopedOutcomeTool:
+    def __init__(self, name, calls, failed_name=""):
+        self.name, self.calls, self.failed_name = name, calls, failed_name
+
+    async def call(self, ctx, **kwargs):
+        scope = ctx.context.event._wave_memory_runtime_scope
+        self.calls.append((self.name, kwargs, scope.subject_principal_id))
+        return "保存失败：测试失败" if self.name == self.failed_name else "已记录"
+
+
+class _ScopedRegistry:
+    def __init__(self, failed_name=""):
+        self.calls = []
+        self.failed_name = failed_name
+
+    def get(self, name):
+        return SimpleNamespace(
+            enabled=True,
+            instance=_ScopedOutcomeTool(name, self.calls, self.failed_name),
+        )
+
+
 class _LLM:
     def __init__(self, payload):
         self.payload = payload
@@ -245,7 +296,7 @@ def _memory_db(lines):
     conn = sqlite3.connect(":memory:")
     conn.execute(
         """CREATE TABLE memories (id INTEGER PRIMARY KEY, bot_id TEXT, session_id TEXT, visibility TEXT,
-           sender_id TEXT, sender_name TEXT, content TEXT, timestamp REAL, quarantine INTEGER DEFAULT 0)"""
+           group_id TEXT DEFAULT 'g1', sender_id TEXT, sender_name TEXT, content TEXT, timestamp REAL, quarantine INTEGER DEFAULT 0)"""
     )
     conn.execute(
         """CREATE TABLE scoped_soul_concerns (id INTEGER PRIMARY KEY, bot_id TEXT, session_id TEXT, visibility TEXT,
@@ -253,8 +304,8 @@ def _memory_db(lines):
     )
     for sender_id, name, content in lines:
         conn.execute(
-            "INSERT INTO memories (bot_id, session_id, visibility, sender_id, sender_name, content, timestamp)"
-            " VALUES ('yushu', 'qq:group:g1', 'group', ?, ?, ?, ?)",
+            "INSERT INTO memories (bot_id, session_id, visibility, group_id, sender_id, sender_name, content, timestamp)"
+            " VALUES ('yushu', 'qq:group:g1', 'group', 'g1', ?, ?, ?, ?)",
             (sender_id, name, content, time.time()),
         )
     return SimpleNamespace(conn=conn, person_timeline=_Timeline({}))
@@ -283,6 +334,28 @@ def test_bookkeeper_dispatches_items_to_formal_tools():
     # 第二次只回看新消息：没有新消息就跳过
     assert asyncio.run(keeper.run(_scope())) == {}
     assert keeper.stats["skip_short"] == 1
+
+
+def test_bookkeeper_uses_target_subject_scope_and_counts_only_successful_actions():
+    db = _memory_db([
+        ("u1", "小明", "我下周三去面试"),
+        ("bot", "羽书", "加油！"),
+        ("u1", "小明", "我在上海上班，天天加班"),
+    ])
+    llm = _LLM({
+        "impressions": [{"user": "小明", "impression": "很努力", "dimension": "trust", "delta": 1, "source_quote": "天天加班"}],
+        "social_anchors": [{"user": "小明", "anchor_type": "user_helped_bot", "summary": "帮忙核对版本"}],
+    })
+    registry = _ScopedRegistry(failed_name="wave_memory_note_social_anchor")
+    keeper = PostReplyBookkeeper(db, registry, llm, bot_name_for=lambda _b: "羽书")
+
+    result = asyncio.run(keeper.run(_scope()))
+
+    assert result["actions"] == 1
+    assert [item[0] for item in registry.calls] == [
+        "wave_memory_record_social_impression", "wave_memory_note_social_anchor",
+    ]
+    assert all(item[2] == "qq:user:u1" for item in registry.calls)
 
 
 def test_bookkeeper_forwards_mood_from_the_same_llm_call_and_ignores_bad_output():
@@ -344,6 +417,7 @@ def test_daily_diary_writes_once_via_tool_and_memory():
     now = time.time()
     assert asyncio.run(diary.write_due(now=now)) == 1
     assert registry.calls[0][0] == "wave_memory_record_diary_episode"
+    assert registry.calls[0][1]["emotional_weight"] == 6
     assert writer.items[0]["source"] == "experience" and "热天" in writer.items[0]["content"]
 
     # 经历时间线里已有当天日记：不再写
@@ -351,3 +425,14 @@ def test_daily_diary_writes_once_via_tool_and_memory():
         "INSERT INTO scoped_soul_timeline VALUES ('yushu', 'qq:group:g1', 'group', '【日记】热天', ?)", (now,)
     )
     assert asyncio.run(diary.write_due(now=now)) == 0
+
+
+def test_followup_cooldown_survives_restart(tmp_path):
+    """冷却落盘：重启（新建服务）后同一条关切仍在冷却期内，不会再被追问。"""
+    concerns = [(1, "面试结果", "active", json.dumps([{"kind": "subject", "user_id": "u1"}]))]
+    state = str(tmp_path / "concern_followups.json")
+    first = ConcernFollowupService(_concern_db(concerns), enabled=True, quiet_hours=(0, 0), state_path=state)
+    assert first.claim_followup(_scope(), "u1", "小明", "我回来了", now=time.time())["id"] == 1
+    restarted = ConcernFollowupService(_concern_db(concerns), enabled=True, quiet_hours=(0, 0), state_path=state)
+    assert restarted.recently_followed(1)
+    assert restarted.claim_followup(_scope(), "u1", "小明", "在吗", now=time.time() + 3600) is None

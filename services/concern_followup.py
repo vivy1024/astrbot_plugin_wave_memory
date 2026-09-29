@@ -1,12 +1,12 @@
-"""关切驱动的主动跟进：羽书惦记的人在群里出现时，她会主动开口问一句。
+"""关切驱动的主动跟进：关切对象在群里出现时，可按配置主动跟进。
 
 过去关切记下后什么也不影响：主动回复整条链是死代码，关切只出现在记账提醒的候选里。这里改成
 事件驱动——不另起定时发消息，而是在群消息进来、说话人正是某条未了关切的对象时，把这条消息标记为
-需要羽书回应（AstrBot 的 ``is_at_or_wake_command``），并在请求里附一段「你惦记的事」提示。回复走
+需要 Bot 回应（AstrBot 的 ``is_at_or_wake_command``），并在请求里附一段「你惦记的事」提示。回复走
 正常链路：完整记忆注入、人设、身份防线都照常生效。
 
 门控（任一不满足都不开口）：配置开关 ``Learning_Settings.proactive_reply_enabled``（默认关闭；
-关闭时不主动开口，但羽书本来就要回复这个人时仍会附上提示）；关切处于 active / progressing；同一条关切 ``cooldown_hours``
+关闭时不主动开口，但 Bot 本来就要回复这个人时仍会附上提示）；关切处于 active / progressing；同一条关切 ``cooldown_hours``
 内只跟进一次；同一群两次主动至少间隔 ``group_min_gap_seconds``、每小时最多 ``group_max_per_hour`` 次；
 不在静默时段；说话内容至少 2 个字。
 
@@ -16,10 +16,11 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections import deque
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 try:
     from astrbot.api import logger
@@ -61,6 +62,8 @@ class ConcernFollowupService:
         group_max_per_hour: int = 3,
         quiet_hours: tuple[int, int] = (1, 7),
         stale_days: float = 30.0,
+        state_path: str | None = None,
+        clock: Callable[[], float] = time.time,
     ):
         self.db = db
         self.write_gateway = write_gateway
@@ -71,8 +74,37 @@ class ConcernFollowupService:
         self.quiet_hours = quiet_hours
         self.stale_seconds = max(1.0, float(stale_days)) * 86400
         self._followed: dict[int, float] = {}
-        self._group_history: dict[str, deque] = {}
+        self._group_history: dict[tuple[str, str], deque] = {}
         self.stats: dict[str, int] = {}
+        self.clock = clock
+        # 跟进冷却落盘：只在内存里时，重启后同一条关切会在冷却期内再被追问一次
+        self.state_path = state_path
+        self._load_followed()
+
+    def _load_followed(self) -> None:
+        if not self.state_path or not os.path.exists(self.state_path):
+            return
+        try:
+            with open(self.state_path, encoding="utf-8") as handle:
+                raw = json.load(handle)
+            cutoff = self.clock() - self.cooldown_seconds
+            self._followed = {int(key): float(value) for key, value in dict(raw).items() if float(value) >= cutoff}
+        except Exception as exc:
+            logger.warning(f"[WaveMemory] 关切跟进记录读取失败（按空处理）: {exc!r}")
+            self._followed = {}
+
+    def _save_followed(self, now: float) -> None:
+        if not self.state_path:
+            return
+        cutoff = now - self.cooldown_seconds
+        self._followed = {key: value for key, value in self._followed.items() if value >= cutoff}
+        partial = f"{self.state_path}.partial"
+        try:
+            with open(partial, "w", encoding="utf-8") as handle:
+                json.dump({str(key): value for key, value in self._followed.items()}, handle)
+            os.replace(partial, self.state_path)
+        except Exception as exc:
+            logger.debug(f"[WaveMemory] 关切跟进记录保存失败: {exc!r}")
 
     def _count(self, key: str) -> None:
         self.stats[key] = self.stats.get(key, 0) + 1
@@ -89,8 +121,11 @@ class ConcernFollowupService:
         conn = getattr(self.db, "conn", None)
         if conn is None or scope.session is None or not sender_id:
             return []
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(scoped_soul_concerns)").fetchall()}
+        concern_type_expr = "concern_type" if "concern_type" in columns else "''"
         rows = conn.execute(
             f"""SELECT id, topic, intensity, status, evidence, created_at, last_triggered, last_progress_at
+                         , {concern_type_expr} AS concern_type
                   FROM scoped_soul_concerns
                  WHERE bot_id=? AND session_id=? AND visibility=? AND status IN ({','.join('?' * len(OPEN_STATUSES))})
                  ORDER BY intensity DESC, id DESC LIMIT 50""",
@@ -99,6 +134,8 @@ class ConcernFollowupService:
         name = str(sender_name or "").strip()
         found = []
         for row in rows:
+            if str(row[8] or "") == "social_anchor":
+                continue
             subjects = concern_subject_ids(row[4])
             topic = str(row[1] or "")
             matched = str(sender_id) in subjects if subjects else bool(name) and topic.startswith(f"{name}：")
@@ -111,46 +148,65 @@ class ConcernFollowupService:
 
     def claim_followup(
         self, scope: RuntimeScope, sender_id: str, sender_name: str, message: str, *, now: float | None = None,
+        allowed: bool = True, accept: Callable[[dict[str, Any]], bool] | None = None,
+        on_skip: Callable[[str, float], None] | None = None,
     ) -> dict[str, Any] | None:
-        """满足全部门控时返回要跟进的关切，并记下本次跟进；否则返回 None。"""
-        if not self.enabled or scope.visibility != "group" or scope.session is None:
+        """全部门控通过才占用持久冷却；accept 是零模型规则筛选，不是发送效果反馈。"""
+        if allowed is not True or not self.enabled or scope.visibility != "group" or scope.session is None:
             return None
         if len(str(message or "").strip()) < 2:
             return None
-        stamp = float(now if now is not None else time.time())
+        stamp = float(now if now is not None else self.clock())
         try:
             candidates = self.open_concerns_for(scope, sender_id, sender_name)
         except Exception as exc:
             logger.debug(f"[WaveMemory] 读取关切失败: {exc!r}")
             return None
-        candidates = [item for item in candidates if stamp - self._followed.get(item["id"], 0.0) >= self.cooldown_seconds]
+        cooling = [self._followed[item["id"]] + self.cooldown_seconds - stamp
+                   for item in candidates if self.recently_followed(item["id"], now=stamp)]
+        candidates = [item for item in candidates if not self.recently_followed(item["id"], now=stamp)]
         if not candidates:
+            if cooling and on_skip:
+                on_skip("concern_cooldown", min(cooling))
             return None
         if self._quiet(stamp):
             self._count("skip_quiet_hours")
+            if on_skip:
+                on_skip("concern_quiet_hours", 0.0)
             return None
-        history = self._group_history.setdefault(scope.session.id, deque(maxlen=self.group_max_per_hour))
+        history = self._group_history.setdefault((scope.bot_id, scope.session.id), deque(maxlen=self.group_max_per_hour))
         while history and stamp - history[0] > 3600:
             history.popleft()
         if history and stamp - history[-1] < self.group_min_gap:
             self._count("skip_group_gap")
+            if on_skip:
+                on_skip("concern_group_gap", history[-1] + self.group_min_gap - stamp)
             return None
         if len(history) >= self.group_max_per_hour:
             self._count("skip_group_hourly")
+            if on_skip:
+                on_skip("concern_hourly_limit", max(0.0, history[0] + 3600 - stamp))
             return None
         chosen = candidates[0]
+        if accept is not None and not accept(chosen):
+            self._count("skip_reply_rule")
+            return None
         self._followed[chosen["id"]] = stamp
+        self._save_followed(stamp)
         history.append(stamp)
         self._count("followup")
         return chosen
 
     def mark_followed(self, concern_id: int, *, now: float | None = None) -> None:
-        """羽书本来就要回复这个人时顺带跟进，也计入冷却，避免同一件事反复追问。"""
-        self._followed[int(concern_id)] = float(now if now is not None else time.time())
+        """本来就要回复这个人时顺带跟进，也计入冷却，避免同一件事反复追问。"""
+        stamp = float(now if now is not None else self.clock())
+        self._followed[int(concern_id)] = stamp
+        self._save_followed(stamp)
 
     def recently_followed(self, concern_id: int, *, now: float | None = None) -> bool:
-        stamp = float(now if now is not None else time.time())
-        return stamp - self._followed.get(int(concern_id), 0.0) < self.cooldown_seconds
+        stamp = float(now if now is not None else self.clock())
+        previous = self._followed.get(int(concern_id))
+        return previous is not None and stamp - previous < self.cooldown_seconds
 
     @staticmethod
     def hint(concern: dict[str, Any], sender_name: str, *, proactive: bool) -> str:
@@ -176,7 +232,7 @@ class ConcernFollowupService:
         conn = getattr(self.db, "conn", None)
         if gateway is None or conn is None or not callable(getattr(gateway, "transition_concern", None)):
             return 0
-        stamp = float(now if now is not None else time.time())
+        stamp = float(now if now is not None else self.clock())
         rows = conn.execute(
             """SELECT id, bot_id, session_id, visibility, expected_resolution_at,
                       COALESCE(last_progress_at, last_triggered, created_at)

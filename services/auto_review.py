@@ -40,6 +40,7 @@ class AutoReviewer:
         enabled: bool = False,
         jargon_min_memories: int = 3,
         jargon_min_senders: int = 2,
+        fact_policy=None,
     ):
         self.db = db
         self.write_gateway = write_gateway
@@ -47,6 +48,7 @@ class AutoReviewer:
         self.jargon_min_memories = max(1, int(jargon_min_memories))
         self.jargon_min_senders = max(1, int(jargon_min_senders))
         self.stats: dict[str, int] = {}
+        self.fact_policy = fact_policy
 
     def _count(self, key: str) -> None:
         self.stats[key] = self.stats.get(key, 0) + 1
@@ -59,10 +61,15 @@ class AutoReviewer:
             return None
         repo = getattr(self.db, "scoped_knowledge", None)
         try:
-            row = next(
-                (item for item in repo.list_scoped_facts(scope, limit=200) if int(item.get("id", -1)) == int(fact_id)),
-                None,
-            ) if repo is not None else None
+            try:
+                from ..engine.db.fact_policy_repo import FactPolicyRepo, auto_review_reason
+            except ImportError:  # pragma: no cover
+                from engine.db.fact_policy_repo import FactPolicyRepo, auto_review_reason
+            cm = getattr(repo, "cm", None)
+            if cm is None:
+                self._count("fact_skipped_no_evidence")
+                return None
+            row = FactPolicyRepo(cm).get(scope, int(fact_id))
             if row is None or row.get("status") != "pending":
                 return None
             provenance = row.get("provenance") if isinstance(row.get("provenance"), dict) else {}
@@ -72,15 +79,20 @@ class AutoReviewer:
             if provenance.get("needs_jargon_review"):
                 self._count("fact_skipped_jargon")
                 return None
+            blocked = auto_review_reason(cm.conn, scope, row, self.fact_policy)
+            if blocked:
+                self._count(f"fact_skipped_{blocked}")
+                return None
             try:
                 from .scoped_knowledge_mutations import ScopedKnowledgeMutationGateway, ScopedKnowledgeMutationTarget
             except ImportError:  # pragma: no cover
                 from services.scoped_knowledge_mutations import ScopedKnowledgeMutationGateway, ScopedKnowledgeMutationTarget
-            result = await ScopedKnowledgeMutationGateway(self.write_gateway).review_fact(
+            result = await ScopedKnowledgeMutationGateway(self.write_gateway, fact_policy=self.fact_policy).review_fact(
                 scope=scope,
                 target=ScopedKnowledgeMutationTarget("fact", int(fact_id), int(row.get("revision") or 1)),
                 action="approve",
                 reason=ACTOR,
+                actor=ACTOR,
                 idempotency_key=f"{ACTOR}:fact:{fact_id}:{row.get('revision')}",
             )
             status = str(getattr(result, "status", "") or "")
@@ -104,7 +116,7 @@ class AutoReviewer:
                 from .belief_lifecycle import BeliefLifecycleService
             except ImportError:  # pragma: no cover
                 from services.belief_lifecycle import BeliefLifecycleService
-            result = BeliefLifecycleService(repo).transition(scope, int(belief_id), "approve")
+            result = BeliefLifecycleService(repo).transition(scope, int(belief_id), "approve", actor=ACTOR)
             status = str(result.get("status") or "")
             self._count(f"belief_{status or 'unknown'}")
             return status or None

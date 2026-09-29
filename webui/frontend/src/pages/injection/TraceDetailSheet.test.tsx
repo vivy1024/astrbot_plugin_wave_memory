@@ -43,6 +43,17 @@ function hrefParams(href: string | null): URLSearchParams {
 }
 
 describe('TraceDetailSheet 回复溯源链接', () => {
+  it('开口判断显示观察模式与原因，不把规则建议说成实际已发送', async () => {
+    render(<MemoryRouter><TraceDetailSheet open detail={{ ...detail, reply_decision: {
+      mode: 'shadow', decision: 'suppress', would_reply: false, score: 12,
+      reasons: ['近期发言较多'],
+    } }} loading={false} error="" onOpenChange={() => {}} /></MemoryRouter>)
+    expect(await screen.findByText('开口判断')).toBeInTheDocument()
+    expect(screen.getByText('观察模式')).toBeInTheDocument()
+    expect(screen.getByText('建议暂不回复')).toBeInTheDocument()
+    expect(screen.getByText('近期发言较多')).toBeInTheDocument()
+  })
+
   it('命中条目跳到对象页，通道名跳到通道配置', async () => {
     render(<MemoryRouter><TraceDetailSheet open detail={detail} loading={false} error="" onOpenChange={() => {}} /></MemoryRouter>)
 

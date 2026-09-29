@@ -116,6 +116,10 @@ class InjectionMixin:
             from astrbot.core.agent.message import TextPart
             req.extra_user_content_parts.append(TextPart(text=safety_injection))
 
+        reply_guard = getattr(self, "_reply_request_suppressed", None)
+        if callable(reply_guard) and reply_guard(event):
+            return
+
         # ─── 规则链前置过滤 ───
         engage = self._should_engage(event)
         if engage == "skip":
@@ -245,6 +249,9 @@ class InjectionMixin:
         req.system_prompt = prepend_identity_safety_system_prompt(
             getattr(req, "system_prompt", ""), message, always=True
         )
+        reply_guard = getattr(self, "_reply_request_suppressed", None)
+        if callable(reply_guard) and reply_guard(event):
+            return
         runtime_scope = getattr(event, "_wave_memory_runtime_scope", None)
         if (
             not isinstance(runtime_scope, RuntimeScope)
@@ -293,6 +300,37 @@ class InjectionMixin:
                     req.extra_user_content_parts.append({"type": "text", "text": reflection_prompt})
         except Exception as exc:
             logger.debug("[WaveMemory] reflection trigger skipped: %s", exc)
+
+    def _reply_request_suppressed(self, event) -> bool:
+        """Recheck the ingress veto before retrieval or concern prompt side effects.
+
+        AstrBot's request hooks honor stop_event(); should_call_llm(False) alone
+        does not cancel a ProviderRequest already being processed.
+        """
+        decision = getattr(event, "_wave_memory_reply_decision", None)
+        stopped = getattr(event, "is_stopped", None)
+        if callable(stopped) and stopped():
+            return True
+        if isinstance(decision, dict) and decision.get("enforced"):
+            event.stop_event()
+            return True
+        # A concern-generated wake remains subject to platform proactive vetoes.
+        if getattr(event, "_wave_memory_concern_followup", None):
+            from ..services.proactive_policy import proactive_event_allowed
+            if not proactive_event_allowed(event):
+                if isinstance(decision, dict):
+                    from ..services.reply_decision import attach_reply_decision
+                    updated = {
+                        **decision, "decision": "suppress", "allow": False, "would_reply": False,
+                        "reasons": [*decision.get("reasons", []), "platform_denied_before_request"],
+                    }
+                    attach_reply_decision(event, updated)
+                    service = getattr(self, "reply_decision", None)
+                    if service is not None:
+                        service.diagnostics.append({**updated, "timestamp": service.clock()})
+                event.stop_event()
+                return True
+        return False
 
     def _concern_followup_prompt(self, event, sender_id: str) -> str:
         """「你惦记的事」提示：主动开口时必附；本来就要回复这个人时，没在冷却期内也附一次。"""
@@ -568,39 +606,8 @@ class InjectionMixin:
             except Exception as e:
                 logger.warning(f"[WaveMemory] record orchestrator injection metrics failed: {e}")
 
-            memory_ids = []
-            for channel_result in result.channel_results:
-                if channel_result.channel not in {"memory", "fts5"} or channel_result.status != "hit":
-                    continue
-                for item in channel_result.items or []:
-                    mid = item.get("id")
-                    if mid and mid not in memory_ids:
-                        memory_ids.append(mid)
-            for mid in memory_ids[:10]:
-                try:
-                    if (
-                        not isinstance(runtime_scope, RuntimeScope)
-                        or runtime_scope.visibility not in {"group", "private"}
-                        or runtime_scope.session is None
-                    ):
-                        continue
-                    row = self.db.conn.execute(
-                        """SELECT importance FROM memories
-                           WHERE id=? AND bot_id=? AND session_id=? AND visibility=?
-                             AND resolution_state='resolved' AND quarantine=0""",
-                        (mid, runtime_scope.bot_id, runtime_scope.session.id, runtime_scope.visibility),
-                    ).fetchone()
-                    if row:
-                        cur_imp = float(row[0] if row[0] is not None else 1.0)
-                        if cur_imp < 3.0:
-                            await self.write_gateway.set_memory_importance(
-                                scope=runtime_scope,
-                                memory_ids=[mid],
-                                importance=min(3.0, cur_imp + 0.02),
-                                idempotency_hint=f"orchestrator-hit:{trace_id}:{mid}",
-                            )
-                except Exception:
-                    pass
+            # 召回不改重要度（v5.1 起的约定）：此前这里对每次命中的前 10 条记忆 +0.02，形成
+            # 「越被想起越重要」的正反馈，且每次注入多 10 条写操作。访问计数由召回时的 touch 记录。
 
             if result.injected:
                 parts_detail = []

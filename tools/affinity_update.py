@@ -39,7 +39,7 @@ class WaveMemoryAffinityUpdateTool(FunctionTool[AstrAgentContext]):
             "dimension": {
                 "type": "string",
                 "enum": ["familiarity", "trust", "fun", "hostility", "depth"],
-                "description": "要改变的关系维度",
+                "description": "要改变的关系维度；hostility 只接受非负增量，数值越大表示越冒犯",
             },
             "delta": {"type": "number", "description": "维度变化量，受系统约束，不能直接设置总分"},
             "event_type": {
@@ -83,6 +83,8 @@ class WaveMemoryAffinityUpdateTool(FunctionTool[AstrAgentContext]):
             delta = float(kwargs.get("delta") if kwargs.get("delta") is not None else kwargs.get("affinity_delta") or 0.0)
         except (TypeError, ValueError):
             delta = 0.0
+        if dimension == "hostility" and delta < 0:
+            return "hostility 只接受非负增量，数值越大表示越冒犯"
         user_id = self._resolve_user(target, runtime_scope)
         if not user_id:
             return f"没有在当前 Bot/群作用域找到目标用户「{target}」，无法更新好感度"

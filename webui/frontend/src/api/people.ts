@@ -77,6 +77,11 @@ export interface RelationshipItem {
   person: PersonItem
   affinity: number | null
   state: 'known' | 'unknown' | string
+  /** 从五维推导的关系档位（读时计算，如「合得来」）；旧后端没有这些字段。 */
+  tier?: string
+  tier_label?: string
+  tier_polarity?: 'positive' | 'neutral' | 'negative' | string
+  closeness?: number
   revision: number | null
   values: Record<string, RelationshipValue> | null
   evidence: unknown[]

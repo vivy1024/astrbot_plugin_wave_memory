@@ -508,10 +508,16 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 
 ### 记账与学习 (Learning_Settings)
 
-两个会改变羽书行为的开关默认关闭：`auto_approve_enabled`、`proactive_reply_enabled`。
+自动审核、主动回复、表达学习与回复反馈默认关闭。下表前六项在重启插件后生效；开口规则建议先选 `shadow`（只观察），不会改变宿主是否回复。表达学习仍依赖事后记账，但复用同一次调用，不增加调用次数。
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
+| fact_timezone | UTC | 事实日期的 IANA 时区；相对日期依据来源消息时间，不按审核时间猜测。可设 Asia/Shanghai |
+| fact_single_value_predicates | （空） | 逗号分隔的单值关系名；空值使用内置列表。冲突由人工决定取代或并存，旧事实保留历史 |
+| reply_feedback_enabled | false | 同一次事后记账记录有证据的回复反馈；没有回应为未知，不自动调整好感或记忆重要度 |
+| expression_learning_enabled | false | 同一次事后记账提取群友情景表达，先人工审核，批准后才可用于风格注入 |
+| reply_rules_mode | off | off 保持原行为；shadow 仅记录建议；enforce 筛选已获准的回复候选，不能新增宿主权限 |
+| reply_rules_json | `{}` | JSON 阈值与 Bot/会话覆盖：score_threshold、reply_window_seconds、max_recent_replies、backoff_base_seconds、backoff_max_seconds；bots/groups 使用稳定 Bot ID 和完整会话 ID |
 | auto_approve_enabled | false | 自动审核：带原话与来源记忆的事实、引用 ≥2 条已批准事实的信念、被多人多次使用的黑话直接生效；关闭时全部进待审 |
 | jargon_auto_min_memories | 3 | 黑话自动生效最少出现条数 |
 | jargon_auto_min_senders | 2 | 黑话自动生效最少使用人数 |

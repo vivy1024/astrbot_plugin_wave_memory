@@ -92,7 +92,7 @@ describe('GraphPage', () => {
     expect(await screen.findByTestId('graph-sentence')).toHaveTextContent('人物/实体之间最强的')
     expect(api.getKgFull).toHaveBeenCalledWith({ bot_id: 'yushu', session_id: '羽书:group:42', visibility: 'group' }, expect.anything())
     expect(screen.getByRole('radio', { name: '知识图谱' })).toHaveAttribute('aria-checked', 'true')
-    expect(FakeSigma.instances).toHaveLength(1)
+    await waitFor(() => expect(FakeSigma.instances).toHaveLength(1))
 
     const legend = screen.getByLabelText('按类型过滤')
     await user.click(within(legend).getByRole('button', { name: /实体/ }))
