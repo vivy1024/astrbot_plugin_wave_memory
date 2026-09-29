@@ -32,6 +32,7 @@
 12. **神人包改作梗百科**：下线 `holyman_persona` 风格通道（此前每轮注入约 3100 字风格指令，且把「绝不正面回答问题」等风格条文误标为不可裁剪的安全约束）。改为三层：黑话理解参考扩充 58 条词条（不按内容删条目，敏感条目加分寸标注，只保留身份污染守卫并按句剔除）；新工具 `wave_memory_meme_lookup` 查释义与例句（神言语料只经工具可查）；可选 `meme_hint` 通道在话题相关时提示 1–2 个可以用的梗（默认关闭，按群聊/私聊/直播分开关）。
 13. **注入编排器按单通道执行 `token_budget`**（此前只检查总预算，单通道可整段超出）：超出时先按条目、再按行截断，无法安全截断才跳过，原因写进观测台；关系段的独立计量不变。线上 7 天抽样约 6% 的原词检索通道会被截断。
 14. **修复：注入去重正则从未生效**（raw f-string 里 `\s` 匹配的是字面反斜杠），重复条目现在会被真正去掉。
+15. **角色经历**：书中角色、OC 这类没有群聊经历的 Bot，可以拥有进群之前的第一人称过去。按 Bot 在 Bot 资料里启用（默认关闭），存独立的 `character_experiences` 等表、走独立通道 `character_experience`，每个 Bot 只能想起自己的经历，且只召回「当前时间点」及之前阶段的经历（避免剧透与自相矛盾）。管理台「角色经历工作台」支持三种来源：从原著提取（可中断续跑、先预览调用次数再确认）、按设定起草人生时间线再展开（标为编造，记下依据段落）、手写与 JSONL 导入导出（兼容旧格式）；角色代词可选 她 / 他 / ta。模型走模型分工新任务 `character_experience`。去掉 `bzz_experience`、`白真真经历` 两处硬编码，改为按 Bot 配置。
 
 ### 后续阶段（本地开发，尚未发版）
 
@@ -48,11 +49,12 @@
 - 升级用户需检查配置：
   - 新增 `Social_Settings.per_turn_impression_tag`（默认关闭）。
   - 新增 `Learning_Settings` 关系小传 7 项（`relationship_portrait_enabled` 默认关闭，`portrait_min_new_events`、`portrait_refresh_days`、`portrait_min_events`、`portrait_max_chars`、`portrait_max_per_round`、`portrait_daily_limit`）与信念反思 5 项（`belief_reflection_enabled` 默认关闭，`belief_reflection_every_n_days`、`belief_form_min_days`、`belief_decay_days`、`belief_max_active`），均需重启生效；信念反思依赖每日日记。
-  - 新增 `Model_Routing_Settings` 10 项（默认全空 = 行为不变）。**检查各 Bot Profile 的 `model` 字段**：此前被忽略，现在对内心判断、事后记账、每日日记、关系小传、信念反思生效。
+  - 新增 `Model_Routing_Settings` 11 项（默认全空 = 行为不变）。**检查各 Bot Profile 的 `model` 字段**：此前被忽略，现在对内心判断、事后记账、每日日记、关系小传、信念反思、角色经历生效。
   - 新增 `Jargon_Settings.meme_hint_group`（默认开）、`meme_hint_private`、`meme_hint_live`（默认关）；`meme_hint` 通道本身默认关闭。
   - `Inject_Settings.enable_holyman_persona` 废弃（保留键，填 true 只打警告）；已保存的通道配置里残留 `holyman_persona` 会被忽略。
   - 移除 `Affinity_Settings.relationship_tiers_json`（旧配置残留会被忽略）。
-- 首次启动新增 `person_relationship_portraits`、`person_relationship_portrait_history`、`bot_beliefs`、`bot_belief_events`、`bot_belief_reflection_runs` 表（只新增、可重复执行）；旧 `scoped_beliefs` 全部迁为 `legacy_archived`，不删除。
+- 首次启动自动执行一次角色经历迁移：记忆表里 `source='bzz_experience'` 的无归属旧行导入为 Bot `baizz` 的角色经历（启用、原著，按原剧情分卷建阶段），并为 baizz 开启角色经历、当前时间点设为最后一个阶段、代词设为「她」；旧行不删除，但不再被其他 Bot 召回。库里没有旧数据或没有 baizz 时安全跳过。迁移后情绪与在场人物为空，可在工作台用原始 JSONL「补上空字段」导入补齐。
+- 首次启动新增 `person_relationship_portraits`、`person_relationship_portrait_history`、`bot_beliefs`、`bot_belief_events`、`bot_belief_reflection_runs`、`character_experiences`（及其 FTS 索引、`character_timeline_stages`、`character_experience_scene_log`、`character_experience_migrations`）表（只新增、可重复执行）；旧 `scoped_beliefs` 全部迁为 `legacy_archived`，不删除。
 - 移除工具 `wave_memory_propose_belief`（内置工具 18 个）；信念管理台旧的逐条审核/归档/批量接口返回 410，新接口为 `GET /api/beliefs?bot_id=` 与 `POST /api/beliefs/<id>/veto|restore`。**部署前必须重建管理台**，否则旧页面调用已变更的接口。
 - Bot Profile 新增 `mood` 段（未配置时用中性默认值）；`Lifecycle_Settings.mood_duration_hours` 语义改为「默认恢复半衰期」。
 - 首次启动新增 `bot_mood_events`、`bot_mood_state` 两张表（只新增、可重复执行）；旧 `scoped_soul_mood` 不读不改，升级后心情从基线加最近 12 小时关系事件起步。

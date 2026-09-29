@@ -173,7 +173,7 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 
 ### 并行注入通道
 
-`InjectionOrchestrator` 并发运行 **12** 条通道；每通道独立 `timeout_ms`，单通道 timeout/error 不阻塞整体注入。总耗时超过 2000ms 打慢注入警告。
+`InjectionOrchestrator` 并发运行 **13** 条通道；每通道独立 `timeout_ms`，单通道 timeout/error 不阻塞整体注入。总耗时超过 2000ms 打慢注入警告。
 
 ```
 ├─ safety（近期上下文去重 · 身份污染过滤）
@@ -185,6 +185,7 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 ├─ jargon（已确认黑话）
 ├─ fewshot（已批准健康风格样本）
 ├─ book_lore（世界观知识）
+├─ character_experience（角色经历：书中角色 / OC 进群之前的第一人称过去，按 Bot 启用，只召回当前时间点之前的阶段）
 ├─ affinity（关系小传或印象时间线摘要为主 · 共同交往锚点 · 末尾一行好感分数仅供参考）
 ├─ meme_hint（用梗提示：话题相关时提示 1–2 个可以用的梗，默认关闭）
 └─ soul_state（Bot 本人此刻的心情：情绪词 + 1–2 条最近原因 + 可选说话倾向；近期时间线，不含群日记）
@@ -655,7 +656,7 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 
 ### 模型分工 (Model_Routing_Settings)
 
-每个后台大模型任务可以单独指定模型（填 provider id，可逗号分隔多个），失败再回退到它原来的默认链；留空时行为与改造前完全一致。9876 保存即生效；Bot 管理里还可按 Bot 覆盖以 Bot 口吻产出的任务（内心判断、事后记账、每日日记、关系小传、信念反思）。
+每个后台大模型任务可以单独指定模型（填 provider id，可逗号分隔多个），失败再回退到它原来的默认链；留空时行为与改造前完全一致。9876 保存即生效；Bot 管理里还可按 Bot 覆盖以 Bot 口吻产出的任务（内心判断、事后记账、每日日记、关系小传、信念反思、角色经历）。
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
@@ -669,6 +670,7 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | diary | （空） | 每日日记；留空跟随 MetaThinking 默认模型 |
 | portrait | （空） | 关系小传；留空跟随 MetaThinking 默认模型 |
 | belief_reflection | （空） | 信念反思；留空跟随 MetaThinking 默认模型 |
+| character_experience | （空） | 角色经历的原著提取、时间线起草与展开；留空跟随 MetaThinking 默认模型 |
 
 ### MetaThinking (MetaThinking_Settings)
 
