@@ -296,7 +296,8 @@ def _memory_db(lines):
     conn = sqlite3.connect(":memory:")
     conn.execute(
         """CREATE TABLE memories (id INTEGER PRIMARY KEY, bot_id TEXT, session_id TEXT, visibility TEXT,
-           group_id TEXT DEFAULT 'g1', sender_id TEXT, sender_name TEXT, content TEXT, timestamp REAL, quarantine INTEGER DEFAULT 0)"""
+           group_id TEXT DEFAULT 'g1', sender_id TEXT, sender_name TEXT, content TEXT, timestamp REAL, quarantine INTEGER DEFAULT 0,
+           source TEXT DEFAULT 'chat', provenance TEXT)"""
     )
     conn.execute(
         """CREATE TABLE scoped_soul_concerns (id INTEGER PRIMARY KEY, bot_id TEXT, session_id TEXT, visibility TEXT,
@@ -425,6 +426,78 @@ def test_daily_diary_writes_once_via_tool_and_memory():
         "INSERT INTO scoped_soul_timeline VALUES ('yushu', 'qq:group:g1', 'group', '【日记】热天', ?)", (now,)
     )
     assert asyncio.run(diary.write_due(now=now)) == 0
+
+
+def _diary_db_with_live_rows(rows):
+    """直播间会话的记忆：(sender_id, sender_name, content, source, event_type, 秒偏移)。"""
+    db = _memory_db([])
+    db.conn.execute(
+        """CREATE TABLE scoped_soul_timeline (bot_id TEXT, session_id TEXT, visibility TEXT, event_summary TEXT,
+           occurred_at REAL)"""
+    )
+    db.conn.execute(
+        "CREATE TABLE person_timeline_events (bot_id TEXT, group_id TEXT, kind TEXT, summary TEXT, created_at REAL)"
+    )
+    today = datetime.now()
+    base = datetime(today.year, today.month, today.day).timestamp() + 1  # 当天之内（日记只看当天）
+    for sender_id, name, content, source, event_type, offset in rows:
+        provenance = json.dumps({"metadata": {"origin_kind": f"runtime:game_event:minecraft:{event_type}"}}) if event_type else None
+        db.conn.execute(
+            "INSERT INTO memories (bot_id, session_id, visibility, group_id, sender_id, sender_name, content, timestamp, source, provenance)"
+            " VALUES ('yushu', 'bilibili:group:30000001', 'group', '30000001', ?, ?, ?, ?, ?, ?)",
+            (sender_id, name, content, base + offset, source, provenance),
+        )
+    return db
+
+
+def _diary_prompt(db):
+    llm = _LLM({"title": "直播的一天", "content": "今天在直播间挖矿，" * 10 + "\nTag: 我的世界", "summary": "挖矿"})
+
+    class _Writer:
+        items = []
+
+        async def enqueue(self, item):
+            self.items.append(item)
+
+    diary = DailyDiaryService(db, _Registry(), llm, _Writer(), hour=0)
+    written = asyncio.run(diary.write_due(now=time.time()))
+    return written, (llm.prompts[0] if llm.prompts else "")
+
+
+def test_daily_diary_uses_game_events_as_separate_material():
+    db = _diary_db_with_live_rows([
+        ("10000001", "阿木", "主播加油", "chat", None, 0),
+        ("bot", "羽书", "谢谢阿木，今晚先去挖铁", "core", None, 10),
+        ("bot", "羽书", "[我的世界] 立下目标：挖到钻石", "game_event", "goal", 20),
+        ("bot", "羽书", "[我的世界] 今天第 1 次死亡：被打死（yushu was slain by Zombie）", "game_event", "death", 30),
+    ])
+    written, prompt = _diary_prompt(db)
+    assert written == 1
+    own, games = prompt.split("【你今天在游戏里的经历】")
+    assert "谢谢阿木，今晚先去挖铁" in own and "[我的世界]" not in own
+    assert "立下目标：挖到钻石" in games and "今天第 1 次死亡" in games
+
+
+def test_daily_diary_written_from_game_events_alone():
+    """这一天只打了游戏、没说话：直播间会话照样被挑中，日记只用游戏经历。"""
+    db = _diary_db_with_live_rows([("bot", "羽书", "[我的世界] 从主世界进入了下界", "game_event", "discovery", 0)])
+    written, prompt = _diary_prompt(db)
+    assert written == 1
+    assert "（今天没怎么说话）" in prompt and "从主世界进入了下界" in prompt
+
+
+def test_daily_diary_game_material_keeps_goals_and_folds_deaths():
+    rows = [("bot", "羽书", f"[我的世界] 今天第 {i} 次死亡：被打死", "game_event", "death", i) for i in range(1, 26)]
+    rows += [
+        ("bot", "羽书", "[我的世界] 立下目标：讨伐末影龙", "game_event", "goal", 5),
+        ("bot", "羽书", "[我的世界] 完成了目标：做一张床", "game_event", "goal", 40),
+    ]
+    written, prompt = _diary_prompt(_diary_db_with_live_rows(rows))
+    assert written == 1
+    games = prompt.split("【你今天在游戏里的经历】")[1].split("【今天记下的人和事】")[0]
+    assert "立下目标：讨伐末影龙" in games and "完成了目标：做一张床" in games
+    assert "今天第 1 次死亡" in games and "今天第 25 次死亡" in games and "今天第 12 次死亡" not in games
+    assert "一共死了 25 次" in games
 
 
 def test_followup_cooldown_survives_restart(tmp_path):

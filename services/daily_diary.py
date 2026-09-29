@@ -1,9 +1,10 @@
 """每日日记：每晚为羽书当天说过话的每个群写一篇第一人称日记。
 
-素材三份：
+素材四份：
 1. 群分析插件当天的分析（话题与总评）——有就用，没开或当天失败就跳过；
 2. 羽书当天自己在这个群说的话；
-3. 当天记下的印象、人情备忘与关切。
+3. 当天她自己的游戏经历（Runtime API 写入的 source=game_event，如直播间里的死亡、目标、发现）；
+4. 当天记下的印象、人情备忘与关切。
 
 写法沿用 VCP 日记的形态：正文之后一行 ``Tag: …``，话题名与人名当标签。落两处：
 - 经历时间线（经 ``wave_memory_record_diary_episode`` 工具，与现场写日记同一校验）；
@@ -33,12 +34,14 @@ try:
     from ..domain.scope import RuntimeScope
     from .concern_followup import _scope_from_row
     from .daily_diary_bridge import find_daily_analysis_db
+    from .game_events import GAME_EVENT_SOURCE
     from .identity_safety import prepend_identity_safety_system_prompt
     from .tool_registry import runtime_tool_context
 except ImportError:  # pragma: no cover
     from domain.scope import RuntimeScope
     from services.concern_followup import _scope_from_row
     from services.daily_diary_bridge import find_daily_analysis_db
+    from services.game_events import GAME_EVENT_SOURCE
     from services.identity_safety import prepend_identity_safety_system_prompt
     from services.tool_registry import runtime_tool_context
 
@@ -49,7 +52,7 @@ PROMPT = """你是{bot_name}。今天是 {date}，一天快结束了，请以第
 
 【你今天自己说过的一些话】
 {own_lines}
-
+{games}
 【今天记下的人和事】
 {notes}
 
@@ -63,6 +66,20 @@ PROMPT = """你是{bot_name}。今天是 {date}，一天快结束了，请以第
 def _day_start(now: float) -> float:
     local = datetime.fromtimestamp(now)
     return datetime(local.year, local.month, local.day).timestamp()
+
+
+# 游戏经历最多列这么多条；多出来时先保证目标、发现、里程碑，死亡只留第一次和最后一次并注明次数。
+_GAME_LINES_MAX = 20
+
+
+def _game_event_type(provenance: Any) -> str:
+    """provenance.metadata.origin_kind = runtime:game_event:<game>:<event_type>。"""
+    try:
+        meta = json.loads(provenance or "{}").get("metadata") or {}
+    except (TypeError, ValueError, AttributeError):
+        return ""
+    origin = str(meta.get("origin_kind") or "")
+    return origin.rsplit(":", 1)[-1] if origin.startswith("runtime:game_event:") else ""
 
 
 class DailyDiaryService:
@@ -190,17 +207,50 @@ class DailyDiaryService:
         return "\n".join(lines[:10]) or "（今天没有群分析结果）"
 
     def _own_lines(self, scope: RuntimeScope, start: float) -> tuple[str, int | None]:
+        # 游戏经历也记在 sender_id='bot' 名下，但不是她说的话，单独成段（_game_lines）。
         rows = self.db.conn.execute(
             """SELECT id, content FROM memories
                 WHERE bot_id=? AND session_id=? AND visibility=? AND sender_id='bot' AND timestamp >= ?
+                  AND COALESCE(source, '') != ?
                 ORDER BY id""",
-            (scope.bot_id, scope.session.id, scope.visibility, start),
+            (scope.bot_id, scope.session.id, scope.visibility, start, GAME_EVENT_SOURCE),
         ).fetchall()
         if not rows:
             return "", None
         step = max(1, len(rows) // 20)
         picked = rows[::step][:20]
         return "\n".join(f"- {str(r[1] or '')[:120]}" for r in picked), int(rows[-1][0])
+
+    def _game_lines(self, scope: RuntimeScope, start: float) -> str:
+        """当天她自己的游戏经历，按时间先后；太多时保留目标与发现，死亡只留首尾并注明次数。"""
+        try:
+            rows = self.db.conn.execute(
+                """SELECT timestamp, content, provenance FROM memories
+                    WHERE bot_id=? AND session_id=? AND visibility=? AND sender_id='bot' AND source=?
+                      AND timestamp >= ? AND COALESCE(quarantine, 0)=0
+                    ORDER BY timestamp, id""",
+                (scope.bot_id, scope.session.id, scope.visibility, GAME_EVENT_SOURCE, start),
+            ).fetchall()
+        except Exception as exc:
+            logger.debug(f"[WaveMemory] 日记游戏素材读取失败: {exc!r}")
+            return ""
+        if not rows:
+            return ""
+        picked = [(float(r[0] or 0), str(r[1] or "")) for r in rows]
+        note = ""
+        if len(picked) > _GAME_LINES_MAX:
+            deaths = [row for row, raw in zip(picked, rows) if _game_event_type(raw[2]) == "death"]
+            if len(deaths) > 2:
+                dropped = {id(row) for row in deaths[1:-1]}
+                picked = [row for row in picked if id(row) not in dropped]
+                note = f"\n- （这一天一共死了 {len(deaths)} 次，中间 {len(deaths) - 2} 次没列出）"
+            if len(picked) > _GAME_LINES_MAX:
+                step = len(picked) / _GAME_LINES_MAX
+                picked = [picked[int(i * step)] for i in range(_GAME_LINES_MAX)]
+        lines = "\n".join(
+            f"- {datetime.fromtimestamp(ts).strftime('%H:%M')} {content[:120]}" for ts, content in picked
+        )
+        return lines + note
 
     def _notes(self, scope: RuntimeScope, start: float) -> str:
         group_id = scope.session.conversation_id
@@ -225,14 +275,17 @@ class DailyDiaryService:
 
     async def write_one(self, scope: RuntimeScope, *, start: float, now: float) -> bool:
         own, anchor_id = self._own_lines(scope, start)
-        if not own:
+        games = self._game_lines(scope, start)
+        if not own and not games:
             return False
         bot_name = self.bot_name_for(scope.bot_id) or scope.bot_id
         date = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
         group_id = scope.session.conversation_id
         prompt = PROMPT.format(
             bot_name=bot_name, date=date, group_name=self.group_name_for(scope.bot_id, group_id) or group_id,
-            topics=self._topics(group_id, date), own_lines=own, notes=self._notes(scope, start),
+            topics=self._topics(group_id, date), own_lines=own or "（今天没怎么说话）",
+            games=f"\n【你今天在游戏里的经历】\n{games}\n" if games else "",
+            notes=self._notes(scope, start),
         )
         # 模型分工：路由客户端按这个 Bot 的模型覆盖选链（Bot Profile 的 model / models.diary）
         for_bot = getattr(self.llm, "for_bot", None)
