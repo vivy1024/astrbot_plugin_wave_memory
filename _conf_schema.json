@@ -1177,12 +1177,6 @@
         "default": 20.0,
         "min": 1.0,
         "max": 50.0
-      },
-      "relationship_tiers_json": {
-        "description": "关系档位名与阈值（JSON，可选）",
-        "hint": "留空使用默认档位：敌对/反感/有点烦/亲近/信得过/合得来/常聊/面熟/陌生人（读时从五维推导，不改存量数值）。填 JSON 对象按档位 key 覆盖，如 {\"close\": {\"label\": \"挚友\"}, \"regular\": {\"when\": [{\"familiarity\": [50, null]}]}}；填 JSON 数组则整体替换档位表（按顺序第一个命中生效）。条件写成 {维度: [下限, 上限]}，维度可用 familiarity/trust/fun/depth/hostility 与 rapport（fun+depth）。非法时启动日志告警并回退默认。",
-        "type": "string",
-        "default": ""
       }
     }
   },

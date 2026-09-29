@@ -21,7 +21,6 @@ try:
         clamp_dimension,
         compute_affinity,
         is_noisy_relationship_event,
-        relationship_stance,
         validate_event,
     )
     from ...domain.scope import RuntimeScope
@@ -38,7 +37,6 @@ except ImportError:  # pragma: no cover
         clamp_dimension,
         compute_affinity,
         is_noisy_relationship_event,
-        relationship_stance,
         validate_event,
     )
     from domain.scope import RuntimeScope
@@ -207,17 +205,6 @@ def _state_for_affinity(affinity: int) -> str:
 
 def _compute_affinity(dimensions: Mapping[str, float]) -> int:
     return compute_affinity(dimensions)
-
-
-def _tier_fields(dimensions: Any) -> dict[str, Any]:
-    """读时推导的关系档位；旧 state（attitude_level）字段保持不变。"""
-    stance = relationship_stance(dimensions if isinstance(dimensions, Mapping) else {})
-    return {
-        "tier": stance["tier"],
-        "tier_label": stance["tier_label"],
-        "tier_polarity": stance["polarity"],
-        "closeness": stance["closeness"],
-    }
 
 
 class ScopedSoulRepository:
@@ -890,59 +877,10 @@ class ScopedSoulRepository:
             "groups": groups,
             "merged_affinity": merged_affinity,
             "merged_state": attitude_level(merged_affinity),
-            **{f"merged_{key}": value for key, value in _tier_fields(total_dimensions).items()},
             "merged_dimensions": total_dimensions,
             "updated_at": max((row[4] or 0) for row in rows),
             "total_events": total_events,
             "linked_principals": subjects,
-        }
-
-    def relationship_stance_for(self, bot_id: str, subject_principal_id: str) -> dict[str, Any]:
-        """给定 Bot 与对方 principal，返回跨群汇总后的关系档位与亲疏权重（只读）。
-
-        供心情评估判断「损话是玩笑还是冒犯」等场景使用，不需要 RuntimeScope、不暴露任何
-        具体内容。返回::
-
-            {"available": bool, "tier": str, "tier_label": str, "polarity": "positive|neutral|negative",
-             "closeness": float(-1~1), "dimensions": {五维汇总}}
-
-        没有任何关系记录时 available=False、档位为陌生人、closeness=0.0。
-        """
-        bot = _exact_string(bot_id, "bot_id")
-        subject = _exact_string(subject_principal_id, "subject_principal_id")
-        total_dimensions: dict[str, float] = {}
-        rows: list[Any] = []
-        if self.cm is not None:
-            subjects = linked_principals_via(self.cm, bot, subject)
-            marks = ",".join("?" for _ in subjects)
-            rows = self.cm.execute_read(
-                f"""SELECT dimensions FROM scoped_soul_relationships
-                     WHERE bot_id=? AND visibility IN ('group', 'private') AND subject_principal_id IN ({marks})""",
-                (bot, *subjects),
-            ).fetchall()
-        for (raw,) in rows:
-            try:
-                parsed = json.loads(str(raw or "{}"))
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(parsed, Mapping):
-                continue
-            for name, value in parsed.items():
-                if name not in DIMENSION_RANGES:
-                    continue
-                try:
-                    total_dimensions[name] = total_dimensions.get(name, 0.0) + clamp_dimension(name, float(value))
-                except (TypeError, ValueError):
-                    continue
-        total_dimensions = {name: clamp_dimension(name, value) for name, value in total_dimensions.items()}
-        stance = relationship_stance(total_dimensions)
-        return {
-            "available": bool(rows),
-            "tier": stance["tier"],
-            "tier_label": stance["tier_label"],
-            "polarity": stance["polarity"],
-            "closeness": stance["closeness"] if rows else 0.0,
-            "dimensions": total_dimensions,
         }
 
     def list_relationship_history(
@@ -1239,13 +1177,11 @@ class ScopedSoulRepository:
                 for item in value_rows
             }
             evidence = json.loads(str(row[5] or "[]"))
-            dimensions = json.loads(str(row[3] or "{}"))
             result.append({
                 "subject_principal_id": subject_id,
                 "affinity": int(row[1]),
                 "state": str(row[2]),
-                **_tier_fields(dimensions),
-                "dimensions": dimensions,
+                "dimensions": json.loads(str(row[3] or "{}")),
                 "revision": int(row[4]),
                 "evidence": evidence,
                 "evidence_summaries": _evidence_summaries(evidence),
@@ -1403,9 +1339,8 @@ class ScopedSoulRepository:
                     for item in value_rows
                 }
                 rel_evidence = json.loads(str(row[4] or "[]"))
-                rel_dimensions = json.loads(str(row[2] or "{}"))
                 relationship = {
-                    "affinity": row[0], "state": row[1], **_tier_fields(rel_dimensions), "dimensions": rel_dimensions,
+                    "affinity": row[0], "state": row[1], "dimensions": json.loads(str(row[2] or "{}")),
                     "revision": row[3], "evidence": rel_evidence,
                     "evidence_summaries": _evidence_summaries(rel_evidence),
                     "updated_at": row[5], "people_ref": subject, "values": values,

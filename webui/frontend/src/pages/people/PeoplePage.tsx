@@ -406,12 +406,6 @@ function PersonDetail({ item, relationship, relationshipError, query, onChanged 
     <div className="grid grid-cols-2 gap-3 rounded-lg border p-3.5">
       <div><span className="mb-0.5 block text-xs text-muted-foreground">互动数</span><span className="font-mono font-medium">{interactionCount(item) ?? '未记录'}</span></div>
       <div><span className="mb-0.5 block text-xs text-muted-foreground">好感</span>
-        {relationship?.tier_label ? (
-          <Badge variant="outline" className={`mr-1.5 text-xs ${
-            relationship.tier_polarity === 'negative' ? 'border-blue-500/60 text-blue-600 dark:text-blue-400' :
-            relationship.tier_polarity === 'positive' ? 'border-rose-500/60 text-rose-600 dark:text-rose-400' : ''
-          }`} title="关系档位：由熟悉、信任、趣味、深度、敌意五维推导">{relationship.tier_label}</Badge>
-        ) : null}
         {actualAffinity !== null ? (
           <Badge className={`text-xs font-mono font-semibold ${
             actualAffinity >= 15 ? 'bg-rose-500 text-white' :

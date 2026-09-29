@@ -567,14 +567,7 @@ class BootstrapMixin:
 
         per_turn_tag = social_cfg.get("per_turn_impression_tag")
         configure_impression_prompting(per_turn_tag=False if per_turn_tag is None else bool(per_turn_tag))
-        # 关系档位名与阈值：空=默认档位；非法 JSON 记警告并保持默认，不影响启动
-        from ..domain.relationship_policy import configure_relationship_tiers
-
-        try:
-            configure_relationship_tiers(affinity_cfg.get("relationship_tiers_json") or None)
-        except Exception as exc:
-            configure_relationship_tiers(None)
-            logger.warning(f"[WaveMemory] relationship_tiers_json 配置无效，已使用默认关系档位: {exc}")
+        # 旧配置里残留的 Affinity_Settings.relationship_tiers_json（关系档位，已移除）不再读取，忽略即可。
         # 9876 保存的热参数覆盖（数据库持久化），叠加在静态配置之上。
         self._apply_persisted_hot_overrides()
         self.hot_config.on_change(self._on_core_hot_config_change)
