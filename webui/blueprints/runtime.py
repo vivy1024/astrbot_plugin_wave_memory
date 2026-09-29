@@ -525,7 +525,10 @@ async def context_prepare():
 
     请求体：``text``、``speaker{id,name}``/``uid``、``tier``（full/light/minimal）、
     ``recent``（可选，最近几条对话文本）、``channels``（可选，只跑这些通道）、
-    ``source``（写进 trace 的来源标签，默认 cortico）、``dry_run``。
+    ``source``（写进 trace 的来源标签，默认 cortico）、``dry_run``。未知字段忽略。
+
+    响应里的 ``safety_prompt`` 是身份安全系统提示全文：AstrBot 路径把同一段加在系统提示词开头
+    （``prepend_identity_safety_system_prompt``），外部应用自己放进系统级位置；没有时为空串。
     """
     if not _check_auth():
         return jsonify({"ok": False, "error": {"code": "unauthorized", "message": "Invalid runtime bearer token"}}), 401
@@ -556,8 +559,10 @@ async def context_prepare():
         }), 503
 
     try:
+        from ...services.identity_safety import prepend_identity_safety_system_prompt
         from ...services.injection.runtime_prepare import channel_stats, persona_lore_block
     except ImportError:
+        from services.identity_safety import prepend_identity_safety_system_prompt
         from services.injection.runtime_prepare import channel_stats, persona_lore_block
 
     recent = body.get("recent")
@@ -594,6 +599,8 @@ async def context_prepare():
         "trace_id": result.trace_id,
         "elapsed_ms": round((time.perf_counter() - started) * 1000, 1),
         "channels": channel_stats(result),
+        # 与 AstrBot 路径系统提示词开头的同一段（always=True：每次都给，不看本轮消息）。
+        "safety_prompt": prepend_identity_safety_system_prompt("", text, always=True),
     })
 
 

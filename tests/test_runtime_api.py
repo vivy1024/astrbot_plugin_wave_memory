@@ -230,6 +230,46 @@ async def test_runtime_context_prepare_uses_orchestrator(app, container_mock):
 
 
 @pytest.mark.asyncio
+async def test_runtime_context_prepare_returns_identity_safety_prompt(app, container_mock):
+    """safety_prompt 与 AstrBot 路径加在系统提示词开头的是同一段；带 game 等新字段、不带新字段都照常工作。"""
+    from services.identity_safety import IDENTITY_SAFETY_SYSTEM_PROMPT, prepend_identity_safety_system_prompt
+
+    memory = _FakeChannel("memory", "相关记忆")
+    _install_preparer(container_mock, [memory])
+    client = app.test_client()
+    headers = {"Authorization": "Bearer yushu-dev-token"}
+    scope = {"bot_id": "yushu", "session": {"id": "bilibili:group:24292304"}}
+    try:
+        old_client = await client.post(
+            "/api/runtime/v1/context/prepare",
+            headers=headers,
+            json={"text": "今晚打什么", "speaker": {"id": "10000001", "name": "阿木"}, "tier": "full", "scope": scope},
+        )
+        assert old_client.status_code == 200
+        old_data = await old_client.get_json()
+        assert {"ok", "block", "chars", "tier", "trace_id", "elapsed_ms", "channels"} <= set(old_data)
+        assert old_data["safety_prompt"] == IDENTITY_SAFETY_SYSTEM_PROMPT
+        assert old_data["safety_prompt"] == prepend_identity_safety_system_prompt("", "今晚打什么", always=True)
+        assert "相关记忆：阿木" in old_data["block"]
+
+        # 新客户端多带 game 字段：服务端不认识也照常返回，其他内容不变。
+        with_game = await client.post(
+            "/api/runtime/v1/context/prepare",
+            headers=headers,
+            json={
+                "text": "今晚打什么", "speaker": {"id": "10000001", "name": "阿木"}, "tier": "full", "scope": scope,
+                "game": {"id": "minecraft", "state": {"time_of_day": "night", "health": 6}, "keywords": ["夜晚"]},
+            },
+        )
+        assert with_game.status_code == 200
+        game_data = await with_game.get_json()
+        assert game_data["block"] == old_data["block"]
+        assert game_data["safety_prompt"] == IDENTITY_SAFETY_SYSTEM_PROMPT
+    finally:
+        container_mock.runtime_context_preparer = None
+
+
+@pytest.mark.asyncio
 async def test_runtime_context_prepare_rejects_unknown_bot_and_missing_preparer(app, container_mock):
     client = app.test_client()
     headers = {"Authorization": "Bearer yushu-dev-token"}
