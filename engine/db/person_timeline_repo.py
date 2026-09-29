@@ -222,6 +222,8 @@ class PersonTimelineRepo:
         kind: str = "",
         strict: bool = False,
         connection=None,
+        viewer_scene: str | None = None,
+        user_ids: list[str] | None = None,
     ) -> int:
         clauses, params = self._event_filters(
             bot_id=bot_id,
@@ -230,6 +232,8 @@ class PersonTimelineRepo:
             event_id=event_id,
             query=query,
             kind=kind,
+            viewer_scene=viewer_scene,
+            user_ids=user_ids,
         )
         sql = f"SELECT COUNT(*) FROM person_timeline_events WHERE {' AND '.join(clauses)}"
         reader = connection.execute if connection is not None else self.cm.execute_read
@@ -254,7 +258,10 @@ class PersonTimelineRepo:
         offset: int = 0,
         strict: bool = False,
         connection=None,
+        viewer_scene: str | None = None,
+        user_ids: list[str] | None = None,
     ) -> dict[str, Any]:
+        """``viewer_scene`` 为当前场合键时，只返回该场合可见的事件（其他私聊的内容不外流）。"""
         items = self.list_events(
             bot_id=bot_id,
             user_id=user_id,
@@ -266,6 +273,8 @@ class PersonTimelineRepo:
             offset=offset,
             strict=strict,
             connection=connection,
+            viewer_scene=viewer_scene,
+            user_ids=user_ids,
         )
         total = self.count_events(
             bot_id=bot_id,
@@ -276,6 +285,8 @@ class PersonTimelineRepo:
             kind=kind,
             strict=strict,
             connection=connection,
+            viewer_scene=viewer_scene,
+            user_ids=user_ids,
         )
         return {"items": items, "total": total}
 

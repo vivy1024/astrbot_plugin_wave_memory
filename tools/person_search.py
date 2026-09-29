@@ -18,12 +18,12 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 
 try:
-    from ..domain.scope import RuntimeScope
+    from ..domain.scope import RuntimeScope, scene_key
     from ..engine.db.connection import ConnectionManager
     from .person_identity import display_name_for_user, resolve_user_id
     from .scope_boundary import require_read_runtime_scope, scope_error_message
 except ImportError:  # pragma: no cover - direct tools imports in isolated tests
-    from domain.scope import RuntimeScope
+    from domain.scope import RuntimeScope, scene_key
     from engine.db.connection import ConnectionManager
     from tools.person_identity import display_name_for_user, resolve_user_id
     from tools.scope_boundary import require_read_runtime_scope, scope_error_message
@@ -238,6 +238,8 @@ class WaveMemoryPersonSearchTool(FunctionTool[AstrAgentContext]):
             limit=limit,
             offset=offset,
             strict=True,
+            # 群里记下的处处可见；私聊里记下的只在同一私聊可见（跨群/私聊查询时不带出别人的私聊）
+            viewer_scene=scene_key(scope),
         )
         items = page["items"]
         total = page["total"]

@@ -324,6 +324,48 @@ def test_person_search_timeline_reads_full_detail_and_pages(tmp_path):
         cm.close()
 
 
+def test_person_search_timeline_hides_other_private_chats(tmp_path):
+    """跨群/私聊查时间线：群里记下的处处可见，私聊里记下的只在同一私聊可见。"""
+    from engine.db.connection import ConnectionManager
+    from engine.db.person_timeline_repo import PersonTimelineRepo
+
+    cm = ConnectionManager(str(tmp_path / "people.sqlite3"))
+    try:
+        repo = PersonTimelineRepo(cm)
+        cm.executescript(
+            """
+            CREATE TABLE user_profiles(user_id TEXT, group_id TEXT, bot_id TEXT, nickname TEXT, interaction_count INTEGER, last_seen REAL);
+            CREATE TABLE person_registry(qq_id TEXT, display_name TEXT, aliases TEXT, message_count INTEGER);
+            INSERT INTO user_profiles VALUES ('10000001', '398291136', 'yushu', '阿木', 10, 1);
+            INSERT INTO person_registry VALUES ('10000001', '阿木', '[]', 10);
+            """
+        )
+        repo.add_event(bot_id="yushu", user_id="10000001", group_id="398291136",
+                       kind="impression", summary="群里会接冷笑话", occurred_at=100.0)
+        repo.add_event(bot_id="yushu", user_id="10000001", group_id="private:10000001",
+                       kind="impression", summary="私聊里说了家里的事", occurred_at=110.0)
+        db = SimpleNamespace(conn=cm, person_timeline=repo, closed=False)
+        tool = WaveMemoryPersonSearchTool(db=db)
+
+        in_group = asyncio.run(tool.call(
+            _ctx(_scope()), person="10000001", query_type="timeline", scope="all_groups",
+        ))
+        assert "群里会接冷笑话" in in_group
+        assert "私聊里说了家里的事" not in in_group and "total: 1" in in_group
+
+        other_private = RuntimeScope("yushu", "private", SessionRef("qq:private:10000002", "qq", "private", "10000002"),
+                                     subject_principal_id="qq:user:10000002")
+        leaked = asyncio.run(tool.call(_ctx(other_private), person="10000001", query_type="timeline"))
+        assert "私聊里说了家里的事" not in leaked
+
+        same_private = RuntimeScope("yushu", "private", SessionRef("qq:private:10000001", "qq", "private", "10000001"),
+                                    subject_principal_id="qq:user:10000001")
+        own = asyncio.run(tool.call(_ctx(same_private), person="10000001", query_type="timeline"))
+        assert "私聊里说了家里的事" in own and "群里会接冷笑话" in own
+    finally:
+        cm.close()
+
+
 def test_facts_and_search_tools_work_in_private_chat():
     from tools.extra_tools import WaveMemoryFactsTool
     from tools.memory_search import WaveMemorySearchTool
