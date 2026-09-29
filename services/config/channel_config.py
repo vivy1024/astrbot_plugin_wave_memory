@@ -33,19 +33,25 @@ KNOWN_CHANNELS = (
     "memory",
     "facts",
     "persona",
-    "holyman_persona",
     "belief",
     "jargon",
+    "meme_hint",
     "fewshot",
     "book_lore",
     "fts5",
     "affinity",
     "soul_state",
 )
-# 已退役通道：旧 Channel_Settings 里可能仍保存其覆盖项；校验时静默忽略而不是拒绝。
-RETIRED_CHANNELS = frozenset({"timeline"})
+# 已退役通道：旧 Channel_Settings / Bot 通道覆盖 / 分层配置里可能仍保存其覆盖项；
+# 校验时静默忽略而不是拒绝。holyman_persona（神人风格人格包）已下线，神人包改作梗百科。
+RETIRED_CHANNELS = frozenset({"timeline", "holyman_persona"})
+# 历史有效层写入时还没有、后来才加入的通道：缺失时用默认值补齐。
+_LATE_ADDED_CHANNELS = frozenset({"meme_hint"})
 
-_ADVANCED_FULL_ONLY = {"persona", "holyman_persona", "belief", "jargon", "fewshot", "book_lore", "affinity", "soul_state"}
+_ADVANCED_FULL_ONLY = {"persona", "belief", "jargon", "meme_hint", "fewshot", "book_lore", "affinity", "soul_state"}
+# 私聊安全包络里保留配置值的通道：只读静态资产、不读任何会话数据；
+# 是否真在私聊里生效仍由通道自己的场合开关决定（默认关）。
+_PRIVATE_PASSTHROUGH = frozenset({"meme_hint"})
 _OPTIONAL_MEMORY_ONLY = {"facts", "fts5"}
 _QUERY_STAGE_NAMES = frozenset({"epa", "pyramid", "spike", "geodesic"})
 _QUERY_PARAM_LIMITS = {
@@ -191,10 +197,10 @@ def _modes_for(name: str, mode: str) -> tuple[str, ...]:
 def _enabled_for(name: str, mode: str, inject_cfg: Mapping[str, Any]) -> bool:
     if name == "safety":
         return True
-    # 风格人格包默认关闭：只接受配置里的显式开关作为默认值，
-    # 最终生效值仍由通道覆盖（Channel_Settings）决定，不设第二个激活入口。
-    if name == "holyman_persona":
-        return bool(inject_cfg.get("enable_holyman_persona", False))
+    # 用梗提示默认关闭：只能经通道覆盖（Channel_Settings / 分层配置 / Bot 通道覆盖）显式开启。
+    # 旧 Inject_Settings.enable_holyman_persona 已废弃，不再影响任何通道。
+    if name == "meme_hint":
+        return False
     if mode == "compat_only":
         return False
     if mode == "memory_only" and name in _ADVANCED_FULL_ONLY:
@@ -229,10 +235,10 @@ def build_default_channel_config(
         # max_items=2 允许自我人格块与自我经历块同时注入；对话者统计块已移除
         # （其能力由 affinity 印象时间线与 fewshot 覆盖，且两者都有前端出口）。
         "persona": ChannelConfig("persona", _enabled_for("persona", mode, inject_cfg), priority=70, max_items=2, token_budget=460, timeout_ms=500, modes=_modes_for("persona", mode)),
-        # 可选风格人格包：默认关闭，优先级低于 persona/fewshot，作为补充风格层。
-        "holyman_persona": ChannelConfig("holyman_persona", _enabled_for("holyman_persona", mode, inject_cfg), priority=48, max_items=6, token_budget=900, timeout_ms=200, modes=_modes_for("holyman_persona", mode)),
         "belief": ChannelConfig("belief", _enabled_for("belief", mode, inject_cfg), priority=65, max_items=5, token_budget=220, timeout_ms=300, modes=_modes_for("belief", mode)),
         "jargon": ChannelConfig("jargon", _enabled_for("jargon", mode, inject_cfg), priority=60, max_items=3, token_budget=180, timeout_ms=160, modes=_modes_for("jargon", mode)),
+        # 用梗提示：话题命中时最多提示 1–2 个可以用的梗（默认关闭，场合开关见 Jargon_Settings）。
+        "meme_hint": ChannelConfig("meme_hint", _enabled_for("meme_hint", mode, inject_cfg), priority=55, max_items=2, token_budget=120, timeout_ms=120, modes=_modes_for("meme_hint", mode)),
         "fewshot": ChannelConfig("fewshot", _enabled_for("fewshot", mode, inject_cfg), priority=50, max_items=3, token_budget=260, timeout_ms=300, modes=_modes_for("fewshot", mode)),
         "book_lore": ChannelConfig("book_lore", _enabled_for("book_lore", mode, inject_cfg), priority=45, max_items=1, token_budget=260, timeout_ms=800, min_score=0.35, modes=_modes_for("book_lore", mode)),
         "fts5": ChannelConfig("fts5", _enabled_for("fts5", mode, inject_cfg), priority=85, top_k=10, token_budget=350, timeout_ms=600, min_score=0.0, modes=_modes_for("fts5", mode)),
@@ -453,7 +459,7 @@ def _config_set_from_payload(payload: Mapping[str, Any]) -> ChannelConfigSet:
     # 用当前默认值补齐后再校验；其余"已知但缺失"仍视为损坏配置。
     defaults = build_default_channel_config().channels
     missing_known = [name for name in KNOWN_CHANNELS if name not in raw_channels_payload]
-    if missing_known and not set(missing_known).issubset({"holyman_persona"}):
+    if missing_known and not set(missing_known).issubset(_LATE_ADDED_CHANNELS):
         raise ValueError("effective channel config must contain every known channel")
     filled = dict(raw_channels_payload)
     for name in missing_known:
@@ -513,6 +519,23 @@ def _config_set_from_payload(payload: Mapping[str, Any]) -> ChannelConfigSet:
     return replace(validated, channels=channels, mode=candidate.mode)
 
 
+def _strip_retired_channels(patch: Any) -> Any:
+    """分层配置里残留的已退役通道覆盖项不进入有效配置（也不出现在有效值里）。"""
+    if not isinstance(patch, Mapping):
+        return patch
+    channels = patch.get("channels")
+    if not isinstance(channels, Mapping) or not any(name in RETIRED_CHANNELS for name in channels):
+        return patch
+    cleaned = dict(patch)
+    kept = {name: value for name, value in channels.items() if name not in RETIRED_CHANNELS}
+    # 空对象在分层合并里表示“整体替换为空”，只剩退役项时要连 channels 键一起去掉。
+    if kept:
+        cleaned["channels"] = kept
+    else:
+        cleaned.pop("channels")
+    return cleaned
+
+
 def _is_private_scope(scope: Any) -> bool:
     return bool(
         isinstance(scope, RuntimeScope)
@@ -526,7 +549,7 @@ def _restrict_private_channels(config: ChannelConfigSet) -> ChannelConfigSet:
     """Apply the non-overridable private-session channel safety envelope."""
     allowed = {"safety", "memory", "fts5"}
     channels = {
-        name: cfg if name in allowed else replace(cfg, enabled=False, modes=("full",))
+        name: cfg if name in allowed or name in _PRIVATE_PASSTHROUGH else replace(cfg, enabled=False, modes=("full",))
         for name, cfg in config.channels.items()
     }
     return replace(
@@ -565,7 +588,7 @@ def resolve_effective_channel_config(
     layers = settings.get("layers", {})
     # validate_layer_store checks every layer, including entries unrelated to this Scope.
     validate_layer_store(layers)
-    selected = patches_for_scope(layers, scope)
+    selected = {layer: _strip_retired_channels(patch) for layer, patch in patches_for_scope(layers, scope).items()}
 
     candidate = system_config
     for layer in ("bot", "session", "user", "relationship"):

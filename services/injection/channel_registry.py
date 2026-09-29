@@ -139,16 +139,15 @@ class ChannelRegistry:
 
 
 def builtin_channel_specs() -> list[ChannelSpec]:
-    """v5 ``_setup_injection_shadow_pipeline`` 里的 12 个通道，顺序与参数不变。"""
-    from ..jargon.holyman_persona import HolymanPersonaPack
+    """内置 12 个通道。v5 的 holyman_persona 风格通道已下线，同位置换成默认关闭的 meme_hint。"""
     from ..persona_composer import PersonaComposer
     from .channels.belief import BeliefChannel
     from .channels.book_lore import BookLoreChannel
     from .channels.facts import FactsChannel
     from .channels.fewshot import FewShotChannel
     from .channels.fts5 import FTS5Channel
-    from .channels.holyman_persona import HolymanPersonaChannel
     from .channels.jargon import JargonChannel
+    from .channels.meme_hint import MemeHintChannel, meme_hint_scene_switches
     from .channels.memory_recall import MemoryRecallChannel
     from .channels.persona import PersonaChannel
     from .channels.relationship import RelationshipChannel
@@ -175,8 +174,11 @@ def builtin_channel_specs() -> list[ChannelSpec]:
         ),
         ChannelSpec("belief", lambda d, b: BeliefChannel(belief_engine=getattr(d, "belief_engine", None))),
         ChannelSpec("jargon", lambda d, b: JargonChannel(jargon_service=getattr(d, "jargon_service", None))),
-        # 可选风格人格包：默认关闭，需在通道配置里显式开启。
-        ChannelSpec("holyman_persona", lambda d, b: HolymanPersonaChannel(persona_pack=HolymanPersonaPack())),
+        # 用梗提示：默认关闭；场合开关读 Jargon_Settings（群聊默认开、私聊与直播默认关）。
+        ChannelSpec(
+            "meme_hint",
+            lambda d, b: MemeHintChannel(scene_switches=meme_hint_scene_switches(getattr(d, "config", None) or {})),
+        ),
         ChannelSpec("fewshot", lambda d, b: FewShotChannel(few_shot_service=getattr(d, "few_shot_service", None))),
         ChannelSpec("affinity", lambda d, b: RelationshipChannel(repository=d.db.soul_repository, db=d.db)),
         ChannelSpec("soul_state", lambda d, b: SoulStateChannel(repository=d.db.soul_repository, mood_service=getattr(d, "mood_service", None))),

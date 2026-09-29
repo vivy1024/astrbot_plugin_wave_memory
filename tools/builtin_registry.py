@@ -134,8 +134,24 @@ def _book_lore_tools() -> list[ToolSpec]:
     return [ToolSpec("wave_memory_book_lore_search", book_lore, group="book_lore", capability="book_lore_tools")]
 
 
+def _jargon_tools() -> list[ToolSpec]:
+    from .meme_lookup import WaveMemoryMemeLookupTool
+
+    # 只读静态梗百科，不依赖 JargonService；纯记忆/兼容模式随 jargon 能力一起关闭。
+    return [
+        ToolSpec(
+            "wave_memory_meme_lookup",
+            lambda d: WaveMemoryMemeLookupTool(),
+            group="jargon",
+            capability="jargon",
+            capability_default=True,
+            description="查梗百科：看不懂梗或想接梗时查释义与例句",
+        ),
+    ]
+
+
 def builtin_tool_specs() -> list[ToolSpec]:
-    return [*_memory_tools(), *_agent_feedback_tools(), *_social_tools(), *_book_lore_tools()]
+    return [*_memory_tools(), *_agent_feedback_tools(), *_social_tools(), *_book_lore_tools(), *_jargon_tools()]
 
 
 __all__ = ["builtin_tool_specs"]

@@ -159,8 +159,9 @@ describe('配置文案不暴露实现术语', () => {
     // + Learning_Settings 15 项，以及事实策略、回复反馈、表达学习、开口规则 6 项；
     // 撤掉关系档位后移除 Affinity_Settings.relationship_tiers_json（-1）；
     // 关系小传新增 Learning_Settings 7 项（relationship_portrait_enabled 与 portrait_* 六项）；
-    // 模型分工 10 项（每个后台大模型任务一项）。
-    expect(total).toBe(170)
+    // 模型分工 10 项（每个后台大模型任务一项）；
+    // Jargon_Settings 用梗提示的群聊/私聊/直播三个场合开关（+3）。
+    expect(total).toBe(173)
     expect(noType).toEqual([])
   })
 

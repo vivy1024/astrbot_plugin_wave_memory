@@ -387,8 +387,8 @@
     "type": "object",
     "items": {
       "enable_holyman_persona": {
-        "description": "启用 holyman-skills 风格人格包（可选）",
-        "hint": "默认关闭。开启后把 holyman-skills 人格包作为风格参考注入，会改变说话方式；与既有 Bot 人格并存而非覆盖。仅作为默认值，通道页的开关覆盖优先。",
+        "description": "（已废弃，不再生效）holyman-skills 风格人格包",
+        "hint": "神人风格人格包通道已下线，这个开关保留只为兼容旧配置，填 true 也不会注入任何风格指令。神人包现在只作梗百科用：黑话理解参考自动附释义，工具 wave_memory_meme_lookup 可查梗，可选的用梗提示见通道 meme_hint 与 Jargon_Settings。",
         "type": "bool",
         "default": false,
         "restart_required": false
@@ -942,6 +942,27 @@
         "description": "单次回复最大注入黑话数",
         "type": "int",
         "default": 3
+      },
+      "meme_hint_group": {
+        "description": "用梗提示：群聊场合",
+        "hint": "用梗提示（通道 meme_hint）默认关闭，要先在 9876 通道配置或 Bot 资料的通道覆盖里打开 meme_hint；这里决定打开后在哪些场合生效。群聊默认允许。",
+        "type": "bool",
+        "default": true,
+        "restart_required": true
+      },
+      "meme_hint_private": {
+        "description": "用梗提示：私聊场合",
+        "hint": "私聊默认不提示梗。开启后私聊里也会在话题命中时提示 1–2 个可以用的梗（只读静态梗百科，不读任何会话数据）。",
+        "type": "bool",
+        "default": false,
+        "restart_required": true
+      },
+      "meme_hint_live": {
+        "description": "用梗提示：直播 / Runtime API 场合",
+        "hint": "Cortico 直播或其他经 /context/prepare 取注入的来源。默认关闭，直播里不提示梗。",
+        "type": "bool",
+        "default": false,
+        "restart_required": true
       }
     }
   },

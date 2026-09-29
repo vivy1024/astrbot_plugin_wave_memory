@@ -341,9 +341,9 @@ export function GlobalJargonPanel({ botId }: { botId: string }) {
         </div>
         <Alert>
           <ShieldCheckIcon />
-          <AlertTitle>风格人格包为可选、默认关闭</AlertTitle>
+          <AlertTitle>神人包只作梗百科，不作人格</AlertTitle>
           <AlertDescription>
-            holyman-skills 原生是人格提示词包。若要把它作为「说话方式参考」注入（会改变风格），请在通道配置页开启 holyman_persona；它与既有 Bot 人格并存，且整包需通过身份安全守卫。
+            神人包的风格人格通道已下线，不再往回复里注入任何说话方式指令。它现在只当知识用：群友消息里出现的梗由黑话理解参考附上释义；模型看不懂或想接梗时可调用 wave_memory_meme_lookup 查释义与例句（神言语料只经这个工具返回）；可选的用梗提示在通道配置页开启 meme_hint，默认关闭。
           </AlertDescription>
         </Alert>
         <div className="flex flex-wrap items-end gap-2">

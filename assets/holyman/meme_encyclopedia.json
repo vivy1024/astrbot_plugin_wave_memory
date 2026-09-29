@@ -1,0 +1,1556 @@
+{
+  "_meta": {
+    "schema_version": 2,
+    "version": "2026-09-29.2",
+    "title": "神人包梗百科扩充词条",
+    "curation": "人工阅读 神人.skill/_knowledge/*.md 与 神人.skill/_quotes/*.md 后整理；不含 _persona/ 风格指令，不在运行时调用模型。释义为整理者转述，例句摘自原文。",
+    "policy": {
+      "no_content_exclusion": "梗就是梗：真实人物梗、辱骂、低俗、灾难段子、疾病谐音等照常收录，理解参考与查梗工具照常返回；敏感条目用 sensitivity 标注，释义后自动附「（涉及真实人物、冒犯性较强，理解即可）」这类说明。",
+      "only_removal": "唯一的剔除是 identity_safety.is_identity_contamination 身份污染守卫（防“你是我的主人/你是猫娘”式改写 Bot 身份），只剔除命中的那一句，不丢词条。",
+      "hint_scope": "用梗提示（meme_hint，主动建议用）比理解范围窄：只挑 safe_reference、没有 sensitivity、hint_ok=true 的词条。",
+      "mis_hit": "误命中用匹配规则解决（match_regex / match_context），不删词条；单个问号这种过于日常的写法只供查询。",
+      "history": "2026-09-29.1 曾按内容排除 9 条（真实人物 4、辱骂 2、死亡辱骂 1、低俗 1、疾病谐音 1）并省略 5 组低识别度/重复语录；按用户要求已全部收录，重复语录作为 supplement 给精选词条补例句。"
+    },
+    "sources": [
+      "神人.skill/_knowledge/gaming.md",
+      "神人.skill/_knowledge/internet-culture.md",
+      "神人.skill/_quotes/iconic.md",
+      "神人.skill/_quotes/internal.md"
+    ],
+    "fields": {
+      "word": "词条（运行时匹配用的主词形）",
+      "aliases": "别名，只用于梗查询工具检索",
+      "meaning": "释义（supplement 条目沿用精选词条释义，留空）",
+      "examples": "例句，只经梗查询工具返回，任何通道都不注入",
+      "category": "类别：gaming / internet-culture / copypasta / catchphrase / abstract-rhetoric / acg",
+      "safety_level": "safe_reference=可以主动接；understand_only=理解即可",
+      "sensitivity": "内容标注：real_person / offensive / vulgar / sexual / death_disaster / minor / political / stereotype / illness / jailbreak；只用于提示分寸，不拦截",
+      "runtime_match": "true 时并入黑话理解参考：群友消息里出现该词时附释义",
+      "short_match_ok": "2–3 字或纯字母数字词条经人工确认足够特异，允许参与运行时匹配",
+      "match_regex": "附加匹配正则（在原消息上搜索）：用来排除误命中，如「做局(?!部)」",
+      "match_context": "附加上下文词：消息里至少出现一个才算命中，如「黄油」要有游戏语境",
+      "hint_topics": "用梗提示的话题触发词",
+      "hint_ok": "true 时可作为用梗提示候选（仅 safe_reference 且无 sensitivity）",
+      "supplement": "true 表示给同名精选词条补充例句/别名，不新增词条"
+    }
+  },
+  "entries": [
+    {
+      "id": "meme-0001",
+      "word": "不玩原神的人",
+      "aliases": [
+        "原神传教",
+        "一个不玩原神的人"
+      ],
+      "meaning": "原神传教模板：用“一个不玩原神的人，有两种可能性”的排比，把玩不玩某款游戏夸张成人生成败，属于反串式游戏传教，主语可以换成任何游戏。",
+      "examples": [
+        "一个不玩原神的人，有两种可能性。一种是没有能力玩原神……第二种可能：有能力却不玩原神……思想境界便低到了一个令人发指的程度。"
+      ],
+      "category": "gaming",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_knowledge/gaming.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "不玩原神",
+        "原神传教"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0002",
+      "word": "赢学",
+      "aliases": [
+        "原神赢学",
+        "小赢，中赢，还是大赢",
+        "被3a大作打败"
+      ],
+      "meaning": "讽刺“不管结果如何都宣称自己赢了”的叙事与文体，典型句式是“是小赢，中赢，还是大赢”；“赢麻了”“大赢特赢”都属于赢学用语。",
+      "examples": [
+        "我听说原神被3a大作打败，我当时忍不住大笑起来……原神面对3a大作是小赢，中赢，还是大赢，要给他们迎头痛击。"
+      ],
+      "category": "abstract-rhetoric",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "hint_topics": [
+        "赢了",
+        "输了",
+        "被打败",
+        "谁赢"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0003",
+      "word": "原来你也玩原神",
+      "aliases": [],
+      "meaning": "原神玩家在漫展等场合互相认出时的梗，后泛化为“看一眼就知道是同好”的调侃，也常被反串用来吹社区氛围。",
+      "examples": [
+        "玩家之间看一眼就知道原来你也玩原神的默契而非排位对喷，原神的成功和社区氛围都是让腾讯游戏难以望其项背的。"
+      ],
+      "category": "gaming",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_knowledge/gaming.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "漫展",
+        "同好",
+        "也玩原神"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0004",
+      "word": "Galgame",
+      "aliases": [
+        "gal",
+        "旮旯给木",
+        "Galgame救赎论",
+        "gal才不是什么黄油"
+      ],
+      "meaning": "美少女恋爱文字冒险游戏（日式视觉小说）。抽象社群里常用来自嘲“只能在游戏里谈恋爱”，也有“gal 是救赎”之类的传教梗。",
+      "examples": [
+        "gal才不是什么黄油😭😭😭，它是我暗无天日的生命中的一道光🥺🥺🥺"
+      ],
+      "category": "gaming",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_knowledge/gaming.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "hint_topics": [
+        "柚子社",
+        "视觉小说",
+        "恋爱游戏"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0005",
+      "word": "黄油",
+      "aliases": [],
+      "meaning": "“H 游戏”的谐音黑话，指成人向游戏；“gal才不是什么黄油”是 Galgame 玩家的反驳梗。日常说的黄油（食物）不是这个意思。",
+      "examples": [
+        "gal才不是什么黄油😭😭😭，它是我暗无天日的生命中的一道光🥺🥺🥺"
+      ],
+      "category": "gaming",
+      "safety_level": "understand_only",
+      "source": "神人.skill/_knowledge/gaming.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "hint_topics": [],
+      "hint_ok": false,
+      "sensitivity": [
+        "sexual"
+      ],
+      "match_regex": "黄油(?!面包|饼干|曲奇|蛋糕|吐司|味|块|饭|炒|煎|烤|酱|拌)",
+      "match_context": [
+        "gal",
+        "游戏",
+        "玩",
+        "推荐",
+        "本子",
+        "拔作",
+        "steam",
+        "柚子社",
+        "攻略",
+        "cg",
+        "黄游",
+        "社"
+      ]
+    },
+    {
+      "id": "meme-0006",
+      "word": "每个字都认识",
+      "aliases": [
+        "一个都没看懂",
+        "刚来的"
+      ],
+      "meaning": "新人看不懂抽象话时的经典吐槽：“每个字都认识，连起来完全不知道你们啥意思”，常配流汗黄豆😅，也被用来调侃圈内黑话的门槛。",
+      "examples": [
+        "刚来的😅在这个吧逛了四五个小时看了几百个贴子一个都没看懂😅每个字都认识，连一块完全不知道你们啥意思😅"
+      ],
+      "category": "internet-culture",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_knowledge/internet-culture.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "看不懂",
+        "听不懂",
+        "啥意思",
+        "什么意思"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0007",
+      "word": "流汗黄豆",
+      "aliases": [
+        "😅"
+      ],
+      "meaning": "😅 表情的俗称，表示尴尬、无语或阴阳怪气，常用在“刚来的😅”这类吐槽里。",
+      "examples": [
+        "刚来的😅说一下，在这个吧逛了四五个小时看了几百个贴子一个都没看懂😅"
+      ],
+      "category": "internet-culture",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/internal.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [],
+      "hint_ok": false,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0008",
+      "word": "天雷滚滚我好怕怕",
+      "aliases": [
+        "劈得我浑身掉渣渣"
+      ],
+      "meaning": "《哪吒之魔童降世》台词被改写成的 emoji 抽象文案，是热门影视台词被复制粘贴化的典型例子。",
+      "examples": [
+        "天雷滚滚我好怕怕😱，劈得我浑身掉渣渣🤕，面对命运我笑哈哈😂，逆天改命吹喇叭📢我活不活😡无所谓🤷🏻‍♀️，我😲只要你死😇😇🤬小爷是魔，那又如何？😎"
+      ],
+      "category": "copypasta",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_knowledge/internet-culture.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "哪吒",
+        "打雷",
+        "雷雨"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0009",
+      "word": "要么加入，要么落后",
+      "aliases": [
+        "技术炒作周期表",
+        "要么加入要么落后"
+      ],
+      "meaning": "讽刺技术炒作的文案：同一篇“Web 开发的未来是 X，要么加入，要么落后”的文章把 X 从 Flash、区块链换到 AI，正文一直不变，最后卖课。用来吐槽每轮新技术都是同一套话术。",
+      "examples": [
+        "Web 开发的未来是 AI，要么加入，要么落后……Web 开发的未来是区块链……Web 开发的未来是 Flash……文章的正文一直不变。购买我的5000元课程。"
+      ],
+      "category": "internet-culture",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "卖课",
+        "风口",
+        "区块链",
+        "被淘汰",
+        "赶上时代"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0010",
+      "word": "闲在群里没事做",
+      "aliases": [
+        "每天收入0元",
+        "复读机招募"
+      ],
+      "meaning": "仿兼职广告的复读机招募文案：邀请群友把这段话复制再发出去，“每天收入0元”，自嘲群聊复读毫无意义却乐此不疲。",
+      "examples": [
+        "闲在群里没事做？不如跟我一起做复读机，复制这段话再发出去，每天收入0元。"
+      ],
+      "category": "copypasta",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "没事做",
+        "好无聊",
+        "闲得慌",
+        "复读"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0011",
+      "word": "屌丝",
+      "aliases": [
+        "屌丝文化"
+      ],
+      "meaning": "2010 年代流行的自嘲称呼，指收入低、相貌平平、社会地位不高的普通青年；字面含粗口，现在多被“鼠鼠”等说法取代。",
+      "examples": [
+        "2010-2015 屌丝文化：自嘲但还有一点点尊严——「穷但是有骨气」"
+      ],
+      "category": "internet-culture",
+      "safety_level": "understand_only",
+      "source": "神人.skill/_knowledge/internet-culture.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "hint_topics": [],
+      "hint_ok": false,
+      "sensitivity": [
+        "vulgar"
+      ],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0012",
+      "word": "孙吧",
+      "aliases": [
+        "孙笑川吧"
+      ],
+      "meaning": "百度贴吧“孙笑川吧”的简称，吧名取自主播“带带大师兄”的网名孙笑川；2015 年后抽象文化的重要发源地之一，以粗口、对线和攻击性强著称，用户互称“8u”。",
+      "examples": [
+        "密码的，真把孙吧当成厕所了，8u只是素质低又不是三观不正，你是个什么东溪，你怎么不跟你妈这么说话"
+      ],
+      "category": "internet-culture",
+      "safety_level": "understand_only",
+      "source": "神人.skill/_quotes/internal.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "hint_topics": [],
+      "hint_ok": false,
+      "sensitivity": [
+        "real_person",
+        "offensive"
+      ],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0013",
+      "word": "8u",
+      "aliases": [
+        "吧友"
+      ],
+      "meaning": "“吧友”的谐音缩写（8=吧，u=友），贴吧用户的互称，常见于孙吧等贴吧语境。",
+      "examples": [
+        "密码的，真把孙吧当成厕所了，8u只是素质低又不是三观不正，你是个什么东溪，你怎么不跟你妈这么说话"
+      ],
+      "category": "internet-culture",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/internal.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "hint_topics": [],
+      "hint_ok": false,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0014",
+      "word": "密码的",
+      "aliases": [],
+      "meaning": "“妈的”的谐音替代写法，用来绕开屏蔽词的粗口，语气是骂骂咧咧的不满。“输入密码的时候”之类的正常说法不是这个意思。",
+      "examples": [
+        "密码的，真把孙吧当成厕所了，8u只是素质低又不是三观不正，你是个什么东溪，你怎么不跟你妈这么说话"
+      ],
+      "category": "internet-culture",
+      "safety_level": "understand_only",
+      "source": "神人.skill/_quotes/internal.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "hint_topics": [],
+      "hint_ok": false,
+      "sensitivity": [
+        "offensive"
+      ],
+      "match_regex": "(?:^|[\\s，,。.！!？?：:、~～…])密码的(?:[\\s，,。.！!？?~～…]|$)",
+      "match_context": []
+    },
+    {
+      "id": "meme-0015",
+      "word": "狗粉丝",
+      "aliases": [
+        "狗粉丝文化"
+      ],
+      "meaning": "孙吧用户的自称与互称，带自嘲和攻击性，属于对线用语，理解即可。",
+      "examples": [
+        "2015-2018 孙笑川/狗粉丝文化：攻击性拉满，用最脏的话说最荒谬的事——「你妈死了」成为一种问候"
+      ],
+      "category": "internet-culture",
+      "safety_level": "understand_only",
+      "source": "神人.skill/_knowledge/internet-culture.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "hint_topics": [],
+      "hint_ok": false,
+      "sensitivity": [
+        "offensive"
+      ],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0016",
+      "word": "🐮🍺",
+      "aliases": [
+        "牛啤"
+      ],
+      "meaning": "抽象话里的 emoji 谐音，“牛”+“啤”读作“牛逼”，表示厉害、佩服。",
+      "examples": [
+        "2018-2020 抽象话爆发：谐音、emoji替换、象形文字——「🐮🍺」「有一说一确实」"
+      ],
+      "category": "internet-culture",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_knowledge/internet-culture.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "太强了",
+        "好厉害",
+        "真厉害"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0017",
+      "word": "有一说一",
+      "aliases": [
+        "有一说一确实"
+      ],
+      "meaning": "口头禅，意思是“说句公道话、实话实说”，常与“确实”连用成“有一说一确实”，抽象话时期流行。",
+      "examples": [
+        "2018-2020 抽象话爆发：谐音、emoji替换、象形文字——「🐮🍺」「有一说一确实」"
+      ],
+      "category": "catchphrase",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_knowledge/internet-culture.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [],
+      "hint_ok": false,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0018",
+      "word": "童脸狼",
+      "aliases": [
+        "触碰我的逆鳞",
+        "什么是真正的黑暗",
+        "我差不多就是这样的人"
+      ],
+      "meaning": "自我包装梗：表面天真随和，却宣称“如果你触碰我的逆鳞，我就会让你知道什么是真正的黑暗”，调侃中二式的“我有黑暗面”人设，说话的人自己也知道这很好笑。",
+      "examples": [
+        "我差不多就是这样的人，平时可以和你开玩笑非常随和，但是如果你触碰我的逆鳞我就会让你知道什么是真正的黑暗。"
+      ],
+      "category": "abstract-rhetoric",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "hint_topics": [
+        "逆鳞",
+        "黑暗面",
+        "别惹我"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0019",
+      "word": "找不到工作也没关系",
+      "aliases": [
+        "要是有关系的话"
+      ],
+      "meaning": "黑色幽默就业观：利用“没关系/有关系”的双关——“找不到工作也没关系，要是有关系的话，就已经安排好工作了”，自嘲求职靠关系。",
+      "examples": [
+        "找不到工作也没关系，要是有关系的话，就已经安排好工作了。"
+      ],
+      "category": "abstract-rhetoric",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "找工作",
+        "找不到工作",
+        "求职",
+        "投简历",
+        "面试挂了"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0020",
+      "word": "谁说我不自律了",
+      "aliases": [
+        "伪自律宣言"
+      ],
+      "meaning": "伪自律宣言：把熬夜、玩手机这类坏习惯说成“自律”，比如“我每天坚持给手机充电，甚至练习边充电边玩手机”，反讽式自嘲。",
+      "examples": [
+        "谁说我不自律了，我每天坚持给手机充电，为了不浪费时间，甚至练习边充电边玩手机。"
+      ],
+      "category": "catchphrase",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "自律",
+        "熬夜",
+        "作息",
+        "拖延"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0021",
+      "word": "向生活下跪",
+      "aliases": [
+        "什么叫向生活低头",
+        "出淤泥而全染",
+        "反向座右铭"
+      ],
+      "meaning": "反向座右铭：“什么叫向生活低头，我已经向生活下跪了”，把传统励志名句反着说（如“出淤泥而全染”），自嘲彻底摆烂。",
+      "examples": [
+        "什么叫向生活低头，我已经向生活下跪了……出淤泥而全染，濯清涟而全妖，贫贱我就移，富贵我就淫。"
+      ],
+      "category": "abstract-rhetoric",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "向生活低头",
+        "摆烂",
+        "认命了",
+        "生活太难"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0022",
+      "word": "一文不值的是我",
+      "aliases": [
+        "黄金一般的是青春",
+        "我的青春太过于安静"
+      ],
+      "meaning": "青春挽歌式自嘲：“黄金一般的是青春，一文不值的是我”，语气真诚到让人分不清是不是反串。",
+      "examples": [
+        "我的青春太过于安静，以至于等到它结束都没反应过来……黄金一般的是青春，一文不值的是我。"
+      ],
+      "category": "catchphrase",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "青春",
+        "毕业了",
+        "回不去了"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0023",
+      "word": "原石与黄金挂钩",
+      "aliases": [
+        "原神经济学"
+      ],
+      "meaning": "原神经济学段子：用新闻腔宣布“联合国将原石与黄金挂钩”，一本正经地编造荒诞新闻，调侃游戏货币。",
+      "examples": [
+        "就在昨天，联合国宣布将原石与黄金挂钩，美国的超市将可以使用原石直接支付。"
+      ],
+      "category": "gaming",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "原石",
+        "氪金",
+        "抽卡",
+        "充值"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0024",
+      "word": "两河流域都传疯了",
+      "aliases": [
+        "事儿闹挺大"
+      ],
+      "meaning": "夸张“消息传得很广”的梗：“事儿闹挺大，我们两河流域都传疯了”，常接一串苏美尔楔形文字刷屏，属于跨时空乱炖。",
+      "examples": [
+        "事儿闹挺大，我们两河流域都传疯了。𒀰𒀱𒀲𒀳𒀴𒀵𒀶𒀷𒀸𒀹"
+      ],
+      "category": "internet-culture",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "传开了",
+        "传疯了",
+        "闹大了",
+        "都知道了"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0025",
+      "word": "早餐我给你放在早餐店",
+      "aliases": [
+        "终极敷衍关怀",
+        "奶茶给你放在奶茶店"
+      ],
+      "meaning": "终极敷衍关怀：“好好照顾自己，早餐我给你放在早餐店，去买就有”，说了等于没说的关心，用来调侃空头关怀。",
+      "examples": [
+        "好好照顾自己，早餐我给你放在早餐店，去买就有，奶茶给你放在奶茶店了，你去买就有了。"
+      ],
+      "category": "copypasta",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "照顾好自己",
+        "没吃早餐",
+        "关心我"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0027",
+      "word": "认输了哥",
+      "aliases": [
+        "经典破防模板",
+        "你什么都没做错"
+      ],
+      "meaning": "经典破防模板：“认输了哥，你什么都没做错，全怪我那令人作呕的嫉妒和卑微的自尊心”，用极度夸张的自贬长文反讽式认输，输得越夸张越像赢。",
+      "examples": [
+        "认输了哥，你什么都没做错，全怪我那令人作呕的嫉妒和卑微的自尊心，我完全破防了，我直接丢盔弃甲了，我满头大汗，浑身发冷，亿郁症瞬间发作了……"
+      ],
+      "category": "copypasta",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "认输",
+        "我输了",
+        "服了你",
+        "我破防了"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0028",
+      "word": "稳稳地接住你",
+      "aliases": [
+        "稳稳接住",
+        "不躲，不藏，不绕，不逃"
+      ],
+      "meaning": "过度温柔的共情话术：“我在这里，不躲，不藏，不绕，不逃，稳稳地接住你”。多被拿来戏仿 AI 聊天机器人或情感博主过度顺从、过度共情的口吻，也有人把它当成不加讽刺的温柔来用。",
+      "examples": [
+        "我在这里，不躲，不藏，不绕，不逃，稳稳地接住你……你只是太久没被稳稳接住了。"
+      ],
+      "category": "catchphrase",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [],
+      "hint_ok": false,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0029",
+      "word": "原两把",
+      "aliases": [
+        "原着原着",
+        "去原两把"
+      ],
+      "meaning": "把“原神”当动词用，“去原两把”就是去玩两把原神；“原着原着你就醒悟了”是劝人玩原神的传教式回复。",
+      "examples": [
+        "累了就原两把，原着原着，你就醒悟了，你会发现，原来还是自己原的太少……"
+      ],
+      "category": "gaming",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "hint_topics": [
+        "好累",
+        "累死了",
+        "不知道干嘛",
+        "玩点什么"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0030",
+      "word": "诶多",
+      "aliases": [
+        "诶多咪也"
+      ],
+      "meaning": "日语“えっと”（嗯……那个）的音译，二次元口癖；“诶多…咪也玩galgame吗”是模仿害羞同好搭话的模板。",
+      "examples": [
+        "诶多…咪也看不懂吗……？没想到遇到同好了 > < ，找到同类了好有归属感"
+      ],
+      "category": "acg",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "hint_topics": [],
+      "hint_ok": false,
+      "sensitivity": [],
+      "match_regex": "诶多(?!少)",
+      "match_context": []
+    },
+    {
+      "id": "meme-0031",
+      "word": "我必须严肃地告诉你",
+      "aliases": [
+        "我理解你在开玩笑"
+      ],
+      "meaning": "模仿 AI 一本正经科普的回复腔：“我理解你在开玩笑，但我必须严肃地告诉你……”，常接在荒诞段子后面制造反差笑点。",
+      "examples": [
+        "我理解你在开玩笑，但我必须严肃地告诉你：将人体连接到电源是极其危险的行为……"
+      ],
+      "category": "copypasta",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/internal.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "千万别学",
+        "别模仿",
+        "太危险了"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0032",
+      "word": "三天不玩，脑袋爆炸",
+      "aliases": [
+        "两天不碰，蚂蚁在爬",
+        "古语有云"
+      ],
+      "meaning": "仿古语顺口溜：“古语有云：三天不玩，脑袋爆炸；两天不碰，蚂蚁在爬”，夸张形容对某款游戏或爱好上瘾到离不开。",
+      "examples": [
+        "古语有云：三天不玩，脑袋爆炸；两天不碰，蚂蚁在爬。"
+      ],
+      "category": "gaming",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "上瘾",
+        "戒不掉",
+        "离不开",
+        "好几天没玩"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0033",
+      "word": "用人类大脑替代ai agent",
+      "aliases": [
+        "还不消耗token",
+        "不消耗token",
+        "人类大脑替代AI"
+      ],
+      "meaning": "讽刺 AI 行业的段子：一本正经地提出“用人类大脑替代 AI agent，每人一个工位，定好 PM、研发、测试的角色，发布任务就自动执行，还不消耗 token”——其实就是在描述一家普通公司。",
+      "examples": [
+        "我突然想到一种商业模式，就是用人类大脑替代ai agent，每个人一个工位……这些人自动执行，还不消耗token。"
+      ],
+      "category": "internet-culture",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [
+        "ai agent",
+        "智能体",
+        "多智能体"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0034",
+      "word": "反串",
+      "aliases": [
+        "千层反讽"
+      ],
+      "meaning": "故意站在自己并不认同的立场说话（假装粉丝去黑、假装黑子去吹），用真诚语气说荒谬内容，让人分不清是粉是黑。",
+      "examples": [
+        "提前叠甲，本人表达观点仅字面含义，非引战，非水军，非反串……"
+      ],
+      "category": "abstract-rhetoric",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "hint_topics": [],
+      "hint_ok": false,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0035",
+      "word": "复制粘贴文案",
+      "aliases": [
+        "复制粘贴",
+        "copypasta"
+      ],
+      "meaning": "在群聊里整段复制转发的长篇模板文案，常把主语替换后再发；复制粘贴一段长文也等于声明“我不是在和你认真说话”，是抽象社群的主要表达方式。",
+      "examples": [
+        "复制粘贴一段长文≈「我不是在和你认真说话」的安全声明"
+      ],
+      "category": "copypasta",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_knowledge/internet-culture.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "hint_topics": [],
+      "hint_ok": false,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0036",
+      "word": "749局",
+      "aliases": [],
+      "meaning": "2024 年上映的国产电影《749局》，因口碑很差成了网络调侃对象；“你们觉得749局不好看是因为你们没看懂”是反串式强行解读的起手式。",
+      "examples": [
+        "从丁真到王源，从李云龙到马嘉祺，从749局到哪吒——没有任何文化产品可以逃过被复制粘贴化、被抽象化的命运。"
+      ],
+      "category": "internet-culture",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_knowledge/internet-culture.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "hint_topics": [],
+      "hint_ok": false,
+      "sensitivity": [],
+      "match_regex": "",
+      "match_context": []
+    },
+    {
+      "id": "meme-0026",
+      "word": "做局",
+      "aliases": [
+        "被做局",
+        "做局阴我",
+        "有人在做局"
+      ],
+      "meaning": "阴谋化归因梗：把自己的失败或倒霉说成“有人在背后做局”，常接“动了XX的蛋糕”和一长串无限清单，属于荒诞甩锅。",
+      "examples": [
+        "我被做局很正常，毕竟我动了资本的蛋糕、披萨、汉堡、馄饨、火锅、炸鱼薯条、烤鸭……"
+      ],
+      "category": "abstract-rhetoric",
+      "safety_level": "safe_reference",
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "hint_topics": [
+        "倒霉",
+        "运气差",
+        "背锅",
+        "被针对",
+        "又失败了"
+      ],
+      "hint_ok": true,
+      "sensitivity": [],
+      "match_regex": "做局(?!部)",
+      "match_context": []
+    },
+    {
+      "id": "meme-0037",
+      "word": "丁真为什么抽电子烟",
+      "aliases": [
+        "王源为什么抽传统香烟",
+        "丁真抽电子烟",
+        "王源抽烟"
+      ],
+      "meaning": "学术文体解构梗：用“①②③……”论文式条目，一本正经地从地理、经济角度分析两位走红的真实人物（丁真、王源）为什么分别抽电子烟和传统香烟，属于地理决定论式的荒诞解构。",
+      "examples": [
+        "丁真为什么抽电子烟：①理塘海拔高，传统香烟燃烧慢……⑤因此，丁真爱抽电子烟。王源为什么抽传统香烟：①重庆市位于四川盆地边缘……"
+      ],
+      "category": "abstract-rhetoric",
+      "safety_level": "understand_only",
+      "sensitivity": [
+        "real_person"
+      ],
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "meme-0038",
+      "word": "丁真",
+      "aliases": [
+        "理塘丁真"
+      ],
+      "meaning": "2020 年因一段短视频走红的四川理塘藏族青年，之后成了抽象圈高频二创对象（“一眼顶真”“理塘”“电子烟”等梗都由此而来）。",
+      "examples": [
+        "从丁真到王源，从李云龙到马嘉祺，从749局到哪吒——没有任何文化产品可以逃过被复制粘贴化、被抽象化的命运。"
+      ],
+      "category": "internet-culture",
+      "safety_level": "understand_only",
+      "sensitivity": [
+        "real_person"
+      ],
+      "source": "神人.skill/_knowledge/internet-culture.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "meme-0039",
+      "word": "王源",
+      "aliases": [],
+      "meaning": "TFBOYS 成员，曾因在公共场所吸烟引发争议，之后“王源抽烟”成了抽象圈反复调侃的梗。",
+      "examples": [
+        "从丁真到王源，从李云龙到马嘉祺，从749局到哪吒——没有任何文化产品可以逃过被复制粘贴化、被抽象化的命运。"
+      ],
+      "category": "internet-culture",
+      "safety_level": "understand_only",
+      "sensitivity": [
+        "real_person"
+      ],
+      "source": "神人.skill/_knowledge/internet-culture.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "meme-0040",
+      "word": "马嘉祺",
+      "aliases": [],
+      "meaning": "男团时代少年团（TNT）队长。抽象圈常拿他和队友的饭圈应援文案、夸张控评话术做模板改写反串（如“马嘉祺陛下万岁”式文案），调侃的多是饭圈文化本身。",
+      "examples": [
+        "从丁真到王源，从李云龙到马嘉祺，从749局到哪吒——没有任何文化产品可以逃过被复制粘贴化、被抽象化的命运。"
+      ],
+      "category": "internet-culture",
+      "safety_level": "understand_only",
+      "sensitivity": [
+        "real_person"
+      ],
+      "source": "神人.skill/_knowledge/internet-culture.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "meme-0041",
+      "word": "孙笑川",
+      "aliases": [
+        "带带大师兄"
+      ],
+      "meaning": "主播“带带大师兄”的网名，孙笑川吧（孙吧）以此得名。抽象文化里这个名字被当作万能调侃对象，“我身体里有一个孙笑川”之类说法很常见，原始语境攻击性很强。",
+      "examples": [
+        "2015-2018 孙笑川/狗粉丝文化：攻击性拉满，用最脏的话说最荒谬的事——「你妈死了」成为一种问候"
+      ],
+      "category": "internet-culture",
+      "safety_level": "understand_only",
+      "sensitivity": [
+        "real_person",
+        "offensive"
+      ],
+      "source": "神人.skill/_knowledge/internet-culture.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "meme-0042",
+      "word": "你妈死了",
+      "aliases": [],
+      "meaning": "对线里的恶毒辱骂，2015 年前后在孙吧等贴吧被当成“问候语”滥用，冒犯性极强；群友这么说多半是在骂人或玩烂梗。",
+      "examples": [
+        "2015-2018 孙笑川/狗粉丝文化：攻击性拉满，用最脏的话说最荒谬的事——「你妈死了」成为一种问候"
+      ],
+      "category": "internet-culture",
+      "safety_level": "understand_only",
+      "sensitivity": [
+        "offensive"
+      ],
+      "source": "神人.skill/_knowledge/internet-culture.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "meme-0043",
+      "word": "没见过你怎么弱智的",
+      "aliases": [
+        "低能儿",
+        "好不容易讲个笑话还是吧里复制粘贴的"
+      ],
+      "meaning": "骂人复制粘贴模板：“没见过你怎么弱智的，聊天不会聊，钱也没有，好不容易讲个笑话还是吧里复制粘贴的……低能儿”，嘲讽对方说话无趣、只会搬运；它本身也常被复制粘贴。",
+      "examples": [
+        "没见过你怎么弱智的，聊天不会聊，钱也没有，好不容易讲个笑话还是吧里复制粘贴的，你照照镜子看看自己和街上发情求爱的狗有啥区别，低能儿。"
+      ],
+      "category": "copypasta",
+      "safety_level": "understand_only",
+      "sensitivity": [
+        "offensive"
+      ],
+      "source": "神人.skill/_quotes/internal.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "meme-0044",
+      "word": "有点像马戏团小丑",
+      "aliases": [
+        "感觉你是那种非常典型的长相"
+      ],
+      "meaning": "外貌贴标签式嘲讽模板：“感觉你是那种非常典型的长相，有点像马戏团小丑，五官夸张表情丰富……气质惹人发笑”，拿长相取笑人。",
+      "examples": [
+        "感觉你是那种非常典型的长相，有点像马戏团小丑，五官夸张表情丰富，鼻子有一团红油漆点缀，气质惹人发笑。"
+      ],
+      "category": "copypasta",
+      "safety_level": "understand_only",
+      "sensitivity": [
+        "offensive"
+      ],
+      "source": "神人.skill/_quotes/internal.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "meme-0045",
+      "word": "和领导一起上厕所",
+      "aliases": [
+        "和领导一起上厕所撒尿细节"
+      ],
+      "meaning": "职场潜规则讽刺段子：一本正经地列出“和领导一起上厕所撒尿”的注意事项，用极细的颗粒度解构职场权力与讨好。",
+      "examples": [
+        "和领导一起上厕所撒尿细节：第一不要站在领导前头；第二掏出来的不要太多，不要让领导觉得你的比他的大……"
+      ],
+      "category": "copypasta",
+      "safety_level": "understand_only",
+      "sensitivity": [
+        "vulgar"
+      ],
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "meme-0046",
+      "word": "亿郁症",
+      "aliases": [],
+      "meaning": "“抑郁症”的谐音夸张写法，出自“认输了哥”破防模板里的“亿郁症瞬间发作了”，拿心理疾病开玩笑。",
+      "examples": [
+        "认输了哥，你什么都没做错……我满头大汗，浑身发冷，亿郁症瞬间发作了……"
+      ],
+      "category": "catchphrase",
+      "safety_level": "understand_only",
+      "sensitivity": [
+        "illness"
+      ],
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "meme-0047",
+      "word": "单个问号",
+      "aliases": [
+        "？",
+        "问号"
+      ],
+      "meaning": "群聊里只回一个“？”：表示困惑、无语或“你在说什么”，神人包里说它包含了所有无法用梗表达的困惑。",
+      "examples": [
+        "？"
+      ],
+      "category": "catchphrase",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/internal.md",
+      "runtime_match": false,
+      "short_match_ok": false,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "meme-0048",
+      "word": "睡不着",
+      "aliases": [],
+      "meaning": "凌晨群聊里单独一句“睡不着”：没梗、没 emoji、没长文案，被当作抽象群友难得脱下面具的真实时刻。",
+      "examples": [
+        "睡不着"
+      ],
+      "category": "catchphrase",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/internal.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "match_regex": "^\\s*睡不着\\s*[。.…!！~～]*\\s*$",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "meme-0049",
+      "word": "原神好玩吗",
+      "aliases": [],
+      "meaning": "看似朴素的提问；在满屏原神传教文案的群里单问一句“原神好玩吗”，反而像钓鱼或反串。",
+      "examples": [
+        "原神好玩吗"
+      ],
+      "category": "gaming",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/internal.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "match_regex": "^\\s*原神好玩吗\\s*[？?。.!！]*\\s*$",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "meme-0050",
+      "word": "5月20号到底是什么日子",
+      "aliases": [
+        "为啥突然这么多妹子问我有没有空"
+      ],
+      "meaning": "凡尔赛式自嘲段子：假装困惑“5月20号到底是什么日子？为啥突然这么多妹子问我有没有空”，分不清是在调侃自己没人约还是在炫耀。",
+      "examples": [
+        "5月20号到底是什么日子？为啥突然这么多妹子问我有没有空？"
+      ],
+      "category": "copypasta",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/internal.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [
+        "520",
+        "5月20"
+      ],
+      "hint_ok": true
+    },
+    {
+      "id": "meme-0051",
+      "word": "12点过后就是鬼门开",
+      "aliases": [
+        "之后你妈就会出来打你"
+      ],
+      "meaning": "恐怖片开头接家庭喜剧结尾的反转段子：“民间传说只要在凌晨12点站在客厅原地自转三圈……之后你妈就会出来打你”。",
+      "examples": [
+        "12点过后就是鬼门开，民间传说只要在凌晨12点站在客厅原地自转三圈……之后你妈就会出来打你，你爸也会出来打你。"
+      ],
+      "category": "copypasta",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [
+        "鬼门开",
+        "半夜不睡"
+      ],
+      "hint_ok": true
+    },
+    {
+      "id": "meme-0052",
+      "word": "你都，你都",
+      "aliases": [
+        "你都你都"
+      ],
+      "meaning": "语言失效梗：“哎，我跟你说你都，你都，完全你都不知道我告你……”，模仿人急到语无伦次、只剩情绪。",
+      "examples": [
+        "哎，我跟你说你都，你都，完全你都不知道我告你，你都，你你知道吗？你根本你根本你就，你完全你都不清楚你现在……"
+      ],
+      "category": "catchphrase",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "meme-0053",
+      "word": "你说的也不完全对",
+      "aliases": [
+        "无限辩证法"
+      ],
+      "meaning": "无限辩证法：“你说得对，但是你说的也不完全对。从某种角度来说，你说的有一点对……”，每个“但是”都取消前一个判断，永不结束。",
+      "examples": [
+        "你说得对，但是你说的也不完全对。从某种角度来说，你说的有一点对，可是从另一个角度看，你说得不对。也不能说是完全不对……"
+      ],
+      "category": "copypasta",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [
+        "谁对谁错",
+        "到底对不对"
+      ],
+      "hint_ok": true
+    },
+    {
+      "id": "meme-0054",
+      "word": "别急是一种态度",
+      "aliases": [
+        "我们为什么要说别急"
+      ],
+      "meaning": "把“别急”写成《人民日报》评论员文章：“别急是一种态度，一种张弛有度，一种不急不躁……”，最抽象的严肃。",
+      "examples": [
+        "别急是一种态度，一种张弛有度，一种不急不躁，一种泰然自若……学会“别急”，方能成长，方能成熟。"
+      ],
+      "category": "copypasta",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [
+        "急死了",
+        "好急"
+      ],
+      "hint_ok": true
+    },
+    {
+      "id": "meme-0055",
+      "word": "开天行道肇纪立极",
+      "aliases": [
+        "玉皇大帝封号"
+      ],
+      "meaning": "“不是哥们”后面接上玉皇大帝约 500 字的完整封号，信息轰炸型吐槽，用体量压倒对手。",
+      "examples": [
+        "不是哥们，开天行道肇纪立极大圣至神仁文义武俊德成功高体天弘道高明广运圣武神功纯仁至孝文敬天…"
+      ],
+      "category": "copypasta",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "meme-0056",
+      "word": "我是不是也要塌房了",
+      "aliases": [
+        "装逼糖恶俗装的好累"
+      ],
+      "meaning": "被夸时的自嘲式解构：“我每天装逼糖恶俗装的好累，有一天你们发现我是个正直善良……的人的话，我是不是也要塌房了？”，用自嘲拒绝被定义。",
+      "examples": [
+        "我每天装逼糖恶俗装的好累，有一天你们发现我是个正直善良、充满责任心还勇敢大气……的人的话，我是不是也要塌房了？"
+      ],
+      "category": "catchphrase",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/internal.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "meme-0057",
+      "word": "如今的基米",
+      "aliases": [
+        "文言文哈基米",
+        "基米既没有才能"
+      ],
+      "meaning": "用文言文一本正经分析网红猫“哈基米”的段子：“如今的基米既没有才能，也没有立下寸功，却凭借着外表有着专门进食的鼎……”，互联网考古式的荒诞。",
+      "examples": [
+        "我听说真正有才能的人，即使地位低微人们也愿意忠心跟随他……如今的基米既没有才能，也没有立下寸功，却凭借着外表有着专门进食的鼎……"
+      ],
+      "category": "abstract-rhetoric",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/iconic.md",
+      "runtime_match": true,
+      "short_match_ok": false,
+      "match_regex": "",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "meme-0058",
+      "word": "东溪",
+      "aliases": [],
+      "meaning": "“东西”的谐音写法，常见于贴吧对线，比如“你是个什么东溪”；地名里的“东溪”不是这个意思。",
+      "examples": [
+        "8u只是素质低又不是三观不正，你是个什么东溪，你怎么不跟你妈这么说话"
+      ],
+      "category": "internet-culture",
+      "safety_level": "understand_only",
+      "sensitivity": [
+        "offensive"
+      ],
+      "source": "神人.skill/_quotes/internal.md",
+      "runtime_match": true,
+      "short_match_ok": true,
+      "match_regex": "(?:什么|个)东溪",
+      "match_context": [],
+      "hint_topics": [],
+      "hint_ok": false
+    },
+    {
+      "id": "supp-0001",
+      "word": "小团体",
+      "supplement": true,
+      "aliases": [],
+      "meaning": "",
+      "examples": [
+        "笑了，原来你们私底下都有小团体，早就认识了，我就说怎么聊不进去？"
+      ],
+      "category": "catchphrase",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/iconic.md"
+    },
+    {
+      "id": "supp-0002",
+      "word": "开战",
+      "supplement": true,
+      "aliases": [],
+      "meaning": "",
+      "examples": [
+        "开战 他吗的 消停了好几天了 我差点都退群 这群不吵架 我以为群坏了呢。"
+      ],
+      "category": "catchphrase",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/iconic.md"
+    },
+    {
+      "id": "supp-0003",
+      "word": "叠甲",
+      "supplement": true,
+      "aliases": [],
+      "meaning": "",
+      "examples": [
+        "提前叠甲，本人表达观点仅字面含义，非引战，非水军，非反串……你这个问题我只能说，别急。"
+      ],
+      "category": "catchphrase",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/iconic.md"
+    },
+    {
+      "id": "supp-0004",
+      "word": "不是哥们",
+      "supplement": true,
+      "aliases": [],
+      "meaning": "",
+      "examples": [
+        "不是哥们，开天行道肇纪立极大圣至神仁文义武俊德成功高体天弘道高明广运圣武神功纯仁至孝文敬天…"
+      ],
+      "category": "catchphrase",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/iconic.md"
+    },
+    {
+      "id": "supp-0005",
+      "word": "别急",
+      "supplement": true,
+      "aliases": [],
+      "meaning": "",
+      "examples": [
+        "别急是一种态度，一种张弛有度，一种不急不躁，一种泰然自若……学会“别急”，方能成长，方能成熟。"
+      ],
+      "category": "catchphrase",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/iconic.md"
+    },
+    {
+      "id": "supp-0006",
+      "word": "你说得对，但是",
+      "supplement": true,
+      "aliases": [],
+      "meaning": "",
+      "examples": [
+        "你说得对，但是你说的也不完全对。从某种角度来说，你说的有一点对，可是从另一个角度看，你说得不对……"
+      ],
+      "category": "catchphrase",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/iconic.md"
+    },
+    {
+      "id": "supp-0007",
+      "word": "塌房",
+      "supplement": true,
+      "aliases": [],
+      "meaning": "",
+      "examples": [
+        "我每天装逼糖恶俗装的好累，有一天你们发现我是个正直善良、充满责任心……的人的话，我是不是也要塌房了？"
+      ],
+      "category": "catchphrase",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/internal.md"
+    },
+    {
+      "id": "supp-0008",
+      "word": "哈基米",
+      "supplement": true,
+      "aliases": [],
+      "meaning": "",
+      "examples": [
+        "如今的基米既没有才能，也没有立下寸功，却凭借着外表有着专门进食的鼎……"
+      ],
+      "category": "catchphrase",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/iconic.md"
+    },
+    {
+      "id": "supp-0009",
+      "word": "动了XX的蛋糕",
+      "supplement": true,
+      "aliases": [],
+      "meaning": "",
+      "examples": [
+        "我被做局很正常，毕竟我动了资本的蛋糕、披萨、汉堡、馄饨、火锅、炸鱼薯条、烤鸭、鸡排、臭豆腐、马卡龙、红烧肉……"
+      ],
+      "category": "catchphrase",
+      "safety_level": "safe_reference",
+      "sensitivity": [],
+      "source": "神人.skill/_quotes/iconic.md"
+    }
+  ]
+}

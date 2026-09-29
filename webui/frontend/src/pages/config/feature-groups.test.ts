@@ -157,10 +157,10 @@ describe('配置条目构建', () => {
     const rows: ConfigInventoryRow[] = [
       { key: 'embedding_dimension', layer: 'static', title: '', scope: 'global', default: 1024, saved: 1024, effective: 1024, source: 'plugin_config', apply_mode: 'restart', changed: false, warning: null },
       { key: 'hot:query.group_weight_cross', layer: 'static', title: '', scope: 'global', default: 0.8, saved: 0.7, effective: 0.7, source: 'plugin_config.Social_Settings.group_weight_cross', apply_mode: 'hot', changed: true, warning: null },
-      { key: 'channel:holyman_persona.enabled', layer: 'override', title: '注入通道 holyman_persona · enabled', scope: 'global', default: false, saved: null, effective: true, source: 'Channel_Settings', apply_mode: 'hot', changed: true, warning: null },
+      { key: 'channel:meme_hint.enabled', layer: 'override', title: '注入通道 meme_hint · enabled', scope: 'global', default: false, saved: null, effective: true, source: 'Channel_Settings', apply_mode: 'hot', changed: true, warning: null },
     ]
     const built = buildConfigEntries({ schemaGroups: groups, hotParams: hot, inventoryRows: rows })
-    expect(built.map((item) => item.key)).toEqual(['embedding_dimension', 'WebUI_Settings.webui_password', 'hot:query.group_weight_cross', 'channel:holyman_persona.enabled'])
+    expect(built.map((item) => item.key)).toEqual(['embedding_dimension', 'WebUI_Settings.webui_password', 'hot:query.group_weight_cross', 'channel:meme_hint.enabled'])
     const [dimension, password, weight, channel] = built
     expect(dimension).toMatchObject({ layer: 'static', changed: false, restartRequired: true })
     expect(password).toMatchObject({ layer: null, changed: true })

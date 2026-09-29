@@ -160,6 +160,12 @@ class BootstrapMixin:
         self.inject_top_k = int(query_cfg.get("inject_top_k", 5))
         self.min_similarity = float(query_cfg.get("min_similarity", "0.35"))
         self.injection_format = query_cfg.get("injection_format", "[记忆] {sender}({time}): {content}")
+        # 神人风格人格包通道已下线：旧配置里开着也照常启动，只提示一次不再生效。
+        if inject_cfg.get("enable_holyman_persona") is True:
+            logger.warning(
+                "[WaveMemory] Inject_Settings.enable_holyman_persona 已废弃、不再生效："
+                "神人风格人格包通道已下线，神人包改作梗百科（黑话理解参考 + wave_memory_meme_lookup 工具）"
+            )
         # v2.0: inject 控制参数
         self.skip_recent_minutes = int(inject_cfg.get("skip_recent_minutes", 30))
         self.facts_max = int(inject_cfg.get("facts_max", 5))

@@ -135,9 +135,10 @@ def test_builtin_specs_build_all_tools_with_unique_names():
     built = registry.build(deps, capability_enabled=lambda capability, default: True)
     names = [record.name for record in registry.records()]
     assert registry.status()["build_errors"] == {}
-    assert len(built) == len(names) == len(set(names)) == 18
+    assert len(built) == len(names) == len(set(names)) == 19
     assert "wave_memory_record_social_impression" in names
     assert "wave_memory_search" in names
+    assert "wave_memory_meme_lookup" in names
 
 
 def test_extensions_register_tools(tmp_path):
