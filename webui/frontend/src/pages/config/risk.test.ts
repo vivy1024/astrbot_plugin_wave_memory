@@ -78,6 +78,9 @@ describe('高风险判定', () => {
     // 标签提炼关闭时，标签模型留空不算危险
     const off = [entry('tag_llm_provider_id', '', ''), entry('Tag_Settings.tag_extraction_enabled', false, true)]
     expect(statusOf(off, 'tag_llm_provider_id').status).toBe('normal')
+    // 模型分工里给标签提取单独指定了模型，标签模型留空也不算停摆
+    const routed = [entry('tag_llm_provider_id', '', ''), entry('Model_Routing_Settings.tag', 'nug/tagger', '')]
+    expect(statusOf(routed, 'tag_llm_provider_id').status).toBe('normal')
   })
 
   it('跨项判定：compat_only 下强行开原生注入、噪声保留期缩短', () => {

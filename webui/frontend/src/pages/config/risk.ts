@@ -105,13 +105,13 @@ export const RISK_RULES: RiskRule[] = [
   },
   {
     key: 'tag_llm_provider_id',
-    reason: '标签提炼、自省等后台 LLM 调用都走这个模型。',
-    impact: '换模型会改变标签风格、质量与调用成本；留空时标签提炼停摆。',
+    reason: '标签提炼、黑话、风格样例、自省等后台任务的默认模型；「模型分工」里没单独指定的任务都用它。',
+    impact: '换模型会改变标签风格、质量与调用成本；留空且模型分工也没给标签提取指定模型时，标签提炼停摆。',
     restart: true,
     affectsData: false,
     deviationExpected: true,
-    check: (value, lookup) => isBlank(value) && lookup('Tag_Settings.tag_extraction_enabled') !== false
-      ? { status: 'danger', message: '标签提炼已开启，但没有指定标签分析模型。' }
+    check: (value, lookup) => isBlank(value) && isBlank(lookup('Model_Routing_Settings.tag')) && lookup('Tag_Settings.tag_extraction_enabled') !== false
+      ? { status: 'danger', message: '标签提炼已开启，但没有指定标签分析模型（模型分工里也没给标签提取指定）。' }
       : null,
   },
   {

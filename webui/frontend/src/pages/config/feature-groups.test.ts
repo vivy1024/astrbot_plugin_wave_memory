@@ -77,6 +77,21 @@ describe('按功能分组规则', () => {
     expect(featureOf('Brand_New_Settings.x')).toBe('other')
   })
 
+  it('模型相关的键都归入「模型分工」，向量模型仍在性能与索引', () => {
+    expect(featureOf('Model_Routing_Settings.diary')).toBe('models')
+    expect(featureOf('Model_Routing_Settings.tag')).toBe('models')
+    expect(featureOf('tag_llm_provider_id')).toBe('models')
+    expect(featureOf('llm_fallback_provider_ids')).toBe('models')
+    expect(featureOf('MetaThinking_Settings.default_model')).toBe('models')
+    expect(featureOf('MetaThinking_Settings.spam_threshold')).toBe('reply')
+    // Bot 的模型覆盖进模型分工，Bot 的通道覆盖仍按回复与人格
+    expect(featureOf('bot:bot_a.model')).toBe('models')
+    expect(featureOf('bot:bot_a.models.diary')).toBe('models')
+    expect(featureOf('bot:bot_a.channels.jargon.enabled')).toBe('reply')
+    expect(featureOf('embedding_provider_id')).toBe('index')
+    expect(searchConfig([entry('Model_Routing_Settings.bookkeeping', { title: '事后记账' })], '记账没反应')[0]).toMatchObject({ bySymptom: true })
+  })
+
   it('groupByFeature 按固定顺序分桶、统计改过的项并跳过空组', () => {
     const buckets = groupByFeature([
       entry('Tag_Settings.max_tags_per_message', { changed: true }),

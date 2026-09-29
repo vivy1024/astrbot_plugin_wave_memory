@@ -4,6 +4,7 @@ import { DownloadIcon, PlusIcon, RefreshCwIcon, SaveIcon, Trash2Icon, UploadIcon
 import { toast } from 'sonner'
 
 import {
+  BOT_MODEL_TASKS,
   emptyBot,
   emptyMood,
   exportBots,
@@ -20,6 +21,7 @@ import {
   type MoodDto,
 } from '@/api/bots'
 import { isRequestCancelled } from '@/api/client'
+import { listProviders, type ProviderPayload } from '@/api/config'
 import { QueryState } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -47,13 +49,13 @@ function fromLines(text: string): string[] {
   return text.split('\n').map((item) => item.trim()).filter(Boolean)
 }
 
-function TextField({ id, label, value, onChange, hint, placeholder, disabled }: {
-  id: string; label: string; value: string; onChange: (value: string) => void; hint?: string; placeholder?: string; disabled?: boolean
+function TextField({ id, label, value, onChange, hint, placeholder, disabled, list }: {
+  id: string; label: string; value: string; onChange: (value: string) => void; hint?: string; placeholder?: string; disabled?: boolean; list?: string
 }) {
   return (
     <Field className="gap-1">
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Input id={id} value={value} placeholder={placeholder} disabled={disabled} onChange={(event) => onChange(event.target.value)} />
+      <Input id={id} value={value} placeholder={placeholder} disabled={disabled} list={list} onChange={(event) => onChange(event.target.value)} />
       {hint ? <FieldDescription>{hint}</FieldDescription> : null}
     </Field>
   )
@@ -156,6 +158,51 @@ function MoodEditor({ mood, onChange }: { mood: MoodDto; onChange: (next: MoodDt
           onChange={(v) => { setHintsText(v); set('speaking_hints', fromHintLines(v)) }}
           hint="情绪词如 开心 / 烦躁 / 委屈 / 疲惫，也可写类别 正面 / 负面 / 平静 / 疲惫。命中时随心情一起注入；空则不写。" />
       </div>
+    </div>
+  )
+}
+
+function withModel(models: Record<string, string> | undefined, task: string, value: string): Record<string, string> {
+  const next = { ...(models ?? {}) }
+  if (value) next[task] = value
+  else delete next[task]
+  return next
+}
+
+/** 模型：该 Bot 的默认模型 + 按任务覆盖，只作用于以 Bot 口吻产出的任务。 */
+function ModelFields({ draft, onChange }: { draft: BotProfileDto; onChange: (next: BotProfileDto) => void }) {
+  const [providers, setProviders] = useState<ProviderPayload[]>([])
+  useEffect(() => {
+    let alive = true
+    listProviders()
+      .then((payload) => { if (alive) setProviders(payload.providers ?? []) })
+      .catch(() => { if (alive) setProviders([]) })  // 选项只是输入提示，拿不到也能手填
+    return () => { alive = false }
+  }, [])
+  return (
+    <div className="space-y-2 rounded-lg border p-3 md:col-span-2">
+      <FieldLabel>模型</FieldLabel>
+      <FieldDescription>
+        只作用于以这个 Bot 口吻产出的任务：内心判断、事后记账、每日日记、关系小传。优先级：按任务覆盖 → 默认模型 → 配置中心「模型分工」 → 所属默认；前面的不可用时依次回退。保存后立即生效。
+      </FieldDescription>
+      <div className="grid gap-3 md:grid-cols-2">
+        <TextField id="bot-model" label="默认模型" value={draft.model} onChange={(v) => onChange({ ...draft, model: v })}
+          list="bot-provider-options" placeholder="留空跟随模型分工" hint="下面没单独填的任务都先用它。" />
+        {BOT_MODEL_TASKS.map((task) => (
+          <TextField
+            key={task.id}
+            id={`bot-model-${task.id}`}
+            label={`模型 · ${task.label}`}
+            value={draft.models?.[task.id] ?? ''}
+            onChange={(v) => onChange({ ...draft, models: withModel(draft.models, task.id, v) })}
+            list="bot-provider-options"
+            placeholder="留空跟随默认模型"
+          />
+        ))}
+      </div>
+      <datalist id="bot-provider-options">
+        {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.model}</option>)}
+      </datalist>
     </div>
   )
 }
@@ -273,7 +320,6 @@ function BotEditor({ draft, onChange, isNew, initialTab = 'identity' }: { draft:
       <TabsContent value="behavior" className="grid gap-4 md:grid-cols-2">
         <TextField id="bot-interest" label="兴趣关键词（逗号分隔）" value={csv(draft.interest_keywords)} onChange={(v) => set('interest_keywords', fromCsv(v))} />
         <TextField id="bot-exclude" label="排除的记忆来源（逗号分隔）" value={csv(draft.exclude_sources)} onChange={(v) => set('exclude_sources', fromCsv(v))} />
-        <TextField id="bot-model" label="模型" value={draft.model} onChange={(v) => set('model', v)} hint="留空用全局默认。" />
         <Field className="gap-1">
           <FieldLabel htmlFor="bot-proactive">主动插话</FieldLabel>
           <Switch id="bot-proactive" checked={draft.proactive_enabled} onCheckedChange={(value) => set('proactive_enabled', value)} />
@@ -283,6 +329,7 @@ function BotEditor({ draft, onChange, isNew, initialTab = 'identity' }: { draft:
         <div className="md:col-span-2">
           <AreaField id="bot-meta" label="MetaThinking 提示词" rows={6} value={draft.meta_prompt} onChange={(v) => set('meta_prompt', v)} hint="留空用默认模板。" />
         </div>
+        <ModelFields draft={draft} onChange={onChange} />
       </TabsContent>
       <TabsContent value="mood">
         <MoodEditor mood={draft.mood ?? emptyMood()} onChange={(next) => set('mood', next)} />

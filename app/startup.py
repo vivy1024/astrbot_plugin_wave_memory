@@ -939,8 +939,8 @@ class StartupMixin:
             "fewshot": few_shot is not None and getattr(few_shot, "_llm", None) is not None,
             "self_reflect": getattr(self, "self_reflect", None) is not None,
             "belief": getattr(self, "belief_engine", None) is not None,
-            # 标签审计每次维护任务现建审计器，只要有模型就能跑。
-            "tag_audit": routing.available("tag_audit"),
+            # 标签审计每次维护任务现建审计器、现解析模型：配了模型就能跑，从不需要重启。
+            "tag_audit": True,
             "meta_thinking": getattr(self, "meta_thinking", None) is not None,
             "bookkeeping": getattr(self, "post_reply_bookkeeper", None) is not None,
             "diary": getattr(self, "daily_diary", None) is not None,

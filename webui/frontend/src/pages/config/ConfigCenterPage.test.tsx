@@ -5,10 +5,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ConfigCenterPage } from '@/pages/config/ConfigCenterPage'
 
-const api = vi.hoisted(() => ({ schema: vi.fn(), hot: vi.fn(), inventory: vi.fn() }))
+const api = vi.hoisted(() => ({ schema: vi.fn(), hot: vi.fn(), inventory: vi.fn(), routing: vi.fn() }))
 
 vi.mock('@/api/config', () => ({ getConfigSchema: api.schema, getHotConfig: api.hot }))
 vi.mock('@/api/configInventory', () => ({ getConfigInventory: api.inventory }))
+vi.mock('@/api/llmRouting', () => ({ getLlmRouting: api.routing }))
 // 嵌入的三个页面有各自的测试；这里只验证配置中心把它们挂上并传递定位参数。
 vi.mock('@/pages/settings/SettingsPage', () => ({ SettingsPage: () => <div>系统配置页桩</div> }))
 vi.mock('@/pages/channels/ChannelConfigPage', () => ({ ChannelConfigPage: () => <div>通道配置页桩</div> }))
@@ -73,6 +74,67 @@ beforeEach(() => {
   })
 })
 
+function stats(overrides = {}) {
+  return {
+    calls: 0, succeeded: 0, failed: 0, provider_errors: 0, last_provider: '', last_success_at: null,
+    last_error: '', last_error_provider: '', last_error_at: null, missing_providers: [], ...overrides,
+  }
+}
+
+function task(id: string, title: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id, title, family: 'tag', family_title: '标签模型一族', description: `${title}说明`, consumers: [], bot_overridable: false,
+    reserved: false, config_key: `Model_Routing_Settings.${id}`, configured: [], invalid: null,
+    chain: ['nug/tag'], primary: 'nug/tag', source: 'default', source_label: '所属默认', source_key: 'tag_llm_provider_id',
+    layers: [], chain_status: [{ id: 'nug/tag', known: true }], missing: [], default_chain: ['nug/tag'],
+    default_key: 'tag_llm_provider_id', default_label: '标签模型 + 回退链', available: true, active: true, active_note: '',
+    apply_mode: 'hot', stats: stats(), bots: [], ...overrides,
+  }
+}
+
+function routingPayload() {
+  return {
+    available: true,
+    tasks: [
+      task('jargon', '黑话挖掘', {
+        configured: ['typo/missing'], chain: ['typo/missing', 'nug/tag'], primary: 'typo/missing', source: 'task', source_label: '任务配置',
+        source_key: 'Model_Routing_Settings.jargon', chain_status: [{ id: 'typo/missing', known: false }, { id: 'nug/tag', known: true }],
+        missing: ['typo/missing'],
+        stats: stats({ calls: 4, succeeded: 3, failed: 1, provider_errors: 2, last_error: 'provider=nug/tag status=402 kind=unrecoverable: Insufficient Balance' }),
+      }),
+      task('self_reflect', '纠错自省', { active: false, active_note: '启动时没有可用模型，未创建；指定模型后需重启一次', apply_mode: 'restart' }),
+      task('diary', '每日日记', {
+        family: 'meta', bot_overridable: true, chain: ['nug/meta'], primary: 'nug/meta', source_key: 'MetaThinking_Settings.default_model',
+        chain_status: [{ id: 'nug/meta', known: true }],
+        bots: [{
+          bot_id: 'bot_a', name: '甲', chain: ['bot/diary', 'nug/meta'], primary: 'bot/diary', source: 'bot', source_label: 'Bot 覆盖',
+          source_key: 'bot:bot_a.models.diary', chain_status: [{ id: 'bot/diary', known: true }, { id: 'nug/meta', known: true }],
+        }],
+      }),
+    ],
+    families: {
+      tag: {
+        title: '标签模型一族', keys: ['tag_llm_provider_id', 'llm_fallback_provider_ids'], description: '启动时读取，改了需重启。',
+        chain: ['nug/tag'], chain_status: [{ id: 'nug/tag', known: true }], apply_mode: 'restart',
+      },
+    },
+    piggyback: [{ id: 'expression_learning', title: '表达学习', rides_on: 'diary' }],
+    embedding: { key: 'embedding_provider_id', provider_id: 'emb/qwen', saved: 'emb/qwen', dimension: 1024, apply_mode: 'restart', note: '向量模型不在模型分工范围。' },
+    providers: [{ id: 'nug/tag', model: 'gemini', type: 'openai_chat_completion' }, { id: 'nug/meta', model: 'gemini', type: 'openai_chat_completion' }],
+    providers_error: null,
+  }
+}
+
+function tagModelSchema() {
+  return {
+    groups: [{
+      key: 'tag_llm_provider_id', kind: 'scalar', type: 'string', special: 'select_provider', description: '标签模型', hint: '',
+      default: '', saved: 'nug/tag', effective: 'nug/tag', value: 'nug/tag', ...state, apply_mode: 'restart', restart_required: true,
+    }],
+    warnings: [],
+  }
+}
+
 describe('ConfigCenterPage', () => {
   it('按功能分组展示当前值与来源，修改跳到内嵌系统配置并带定位参数', async () => {
     const user = userEvent.setup()
@@ -121,6 +183,57 @@ describe('ConfigCenterPage', () => {
     await user.click(screen.getByRole('button', { name: '修改 channel:jargon.enabled' }))
     expect(screen.getByTestId('location')).toHaveTextContent('view=channels&channel=jargon&field=enabled')
     expect(await screen.findByText('通道配置页桩')).toBeVisible()
+  })
+
+  it('模型分工分组展示各任务生效模型、来源、找不到的 provider 与调用统计，修改沿用定位机制', async () => {
+    api.schema.mockResolvedValue({
+      groups: [
+        ...schemaPayload().groups,
+        {
+          key: 'Model_Routing_Settings', kind: 'object', description: '模型分工', hint: '',
+          items: [{ key: 'diary', type: 'string', description: '每日日记', hint: '', special: 'select_provider', default: '', saved: '', effective: '', value: '', ...state, apply_mode: 'service', restart_required: false }],
+        },
+      ],
+      warnings: [],
+    })
+    api.routing.mockResolvedValue(routingPayload())
+    const user = userEvent.setup()
+    renderPage()
+
+    const panel = await screen.findByTestId('model-routing-panel')
+    expect(within(panel).getByText('当前各任务实际使用的模型')).toBeVisible()
+    const jargon = within(panel).getByTestId('llm-task-jargon')
+    expect(within(jargon).getByText('任务配置')).toBeVisible()
+    expect(within(jargon).getByText('找不到')).toBeVisible()
+    expect(within(jargon).getByText(/调用 4 次/)).toBeVisible()
+    expect(within(jargon).getByText(/status=402/)).toBeVisible()
+    const reflect = within(panel).getByTestId('llm-task-self_reflect')
+    expect(within(reflect).getByText('需重启')).toBeVisible()
+    expect(within(reflect).getByText(/指定模型后需重启一次/)).toBeVisible()
+    expect(within(panel).getByText('emb/qwen')).toBeVisible()
+    expect(within(panel).getByText(/表达学习没有单独的模型调用/)).toBeVisible()
+
+    await user.click(within(panel).getByRole('button', { name: '修改 Model_Routing_Settings.jargon' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('/config?view=settings&key=Model_Routing_Settings.jargon&tab=static')
+  })
+
+  it('模型分工里的 Bot 覆盖跳到 Bot 管理「行为」', async () => {
+    api.schema.mockResolvedValue(tagModelSchema())
+    api.routing.mockResolvedValue(routingPayload())
+    const user = userEvent.setup()
+    renderPage()
+    const panel = await screen.findByTestId('model-routing-panel')
+    expect(within(within(panel).getByTestId('llm-task-diary')).getByText('甲')).toBeVisible()
+    await user.click(within(panel).getByRole('button', { name: '修改 bot:bot_a.models.diary' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('/bots?bot=bot_a&tab=behavior')
+  })
+
+  it('模型分工接口失败只在分组内提示', async () => {
+    api.schema.mockResolvedValue(tagModelSchema())
+    api.routing.mockRejectedValue(new Error('routing 挂了'))
+    renderPage()
+    expect(await screen.findByText('模型分工加载失败')).toBeVisible()
+    expect(screen.getByText('标签模型')).toBeVisible()
   })
 
   it('schema 加载失败显示错误与重试；热参数失败只降级提示', async () => {
