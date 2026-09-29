@@ -337,11 +337,13 @@ async def book_lore_graph():
 
 @runtime_bp.route("/observations/batch", methods=["POST"])
 async def observations_batch():
-    """被动事件摄入：QQ 群消息、弹幕、Bot 自己说的话，走与 AstrBot 消息钩子相同的处理。
+    """被动事件摄入：QQ 群消息、弹幕、Bot 自己说的话，走与 AstrBot 消息钩子相同的处理；
+    Bot 自己的游戏经历（``game_event``）只按她的经历入库。
 
-    每个事件：``event_id``（平台原始消息号，用于去重）、``kind``（message/danmaku/self）、
-    ``content``、``sender_id``、``sender_name``、``timestamp``、``scope``、可选 ``group_name``、
-    ``is_at_bot``。逐条返回回执；任何一条失败不影响其他条。
+    每个事件：``event_id``（平台原始消息号或调用方的稳定编号，用于去重）、``kind``
+    （message/danmaku/self/game_event）、``content``、``sender_id``、``sender_name``、``timestamp``、
+    ``scope``、可选 ``group_name``、``is_at_bot``；``game_event`` 另带 ``game``（小写游戏标识）与
+    ``event_type``（death/goal/discovery/milestone 等），不带发言人。逐条返回回执；任何一条失败不影响其他条。
     """
     if not _check_auth():
         return jsonify({"ok": False, "error": {"code": "unauthorized", "message": "Invalid runtime bearer token"}}), 401
@@ -373,7 +375,8 @@ async def observations_batch():
             continue
         scope_data = dict(ev.get("scope") or {})
         sender_id = str(ev.get("sender_id") or "").strip()
-        if sender_id and not scope_data.get("subject_principal_id") and str(ev.get("kind") or "message") != "self":
+        # Bot 自己说的话、自己的游戏经历不带发言人。
+        if sender_id and not scope_data.get("subject_principal_id") and str(ev.get("kind") or "message") not in {"self", "game_event"}:
             scope_data["subject_principal_id"] = sender_id
         try:
             scope = _parse_runtime_scope(scope_data)
