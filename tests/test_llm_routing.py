@@ -48,7 +48,7 @@ from services.llm_routing import (
 
 ROOT = Path(__file__).resolve().parents[1]
 
-TAG_FAMILY = ("tag", "jargon", "fewshot", "self_reflect", "belief")
+TAG_FAMILY = ("tag", "jargon", "fewshot", "self_reflect")
 LEARNING = ("bookkeeping", "diary", "portrait")
 
 
@@ -523,7 +523,7 @@ def test_startup_takes_every_task_client_from_router():
     learning = _method_source(startup, "_init_learning_services")
     assert "LLMFallbackClient(" not in init and "LLMFallbackClient(" not in learning
     assert "_llm_chain()" not in init and "_llm_chain()" not in learning
-    for task in ("jargon", "fewshot", "meta_thinking", "self_reflect", "belief"):
+    for task in ("jargon", "fewshot", "meta_thinking", "self_reflect"):
         assert f"self.llm_routing.client('{task}')" in init, task
     for task in ("bookkeeping", "diary"):
         assert f"routing.client('{task}')" in learning, task
@@ -622,7 +622,9 @@ async def test_llm_routing_overview_endpoint(config_app):
     assert tasks["jargon"]["source"] == "task" and tasks["jargon"]["missing"] == ["typo/missing"]
     assert tasks["jargon"]["apply_mode"] == "hot"
     assert tasks["self_reflect"]["apply_mode"] == "restart"
-    assert tasks["portrait"]["reserved"] is True and tasks["portrait"]["active"] is False
+    # 关系小传与信念反思已实现，不再是预留任务；本用例没登记它们的运行状态
+    assert tasks["portrait"]["reserved"] is False and tasks["portrait"]["active"] is None
+    assert tasks["belief_reflection"]["family"] == "meta" and tasks["belief_reflection"]["reserved"] is False
     assert tasks["diary"]["bots"][0]["bot_id"] == "bot_a" and tasks["diary"]["bots"][0]["source"] == "bot"
     assert tasks["bookkeeping"]["bots"] == []  # 没有覆盖的 Bot 不列出
     assert data["embedding"] == {

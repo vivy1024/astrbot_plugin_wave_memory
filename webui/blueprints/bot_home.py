@@ -6,6 +6,7 @@
 - ``soul``：Bot 本人的当前心情（心情 v2：情绪词 + 最近原因）、最近观测的群氛围与主要关切；
 - ``relationships``：窗口内关系变化最大的人（scoped_soul_relationship_events）；
 - ``learned``：窗口内新增的事实 / 信念 / 黑话候选 / 经历片段；
+- ``beliefs``：她最近形成或改变的看法（信念 v2 的状态变化，不受窗口限制，最近几条）；
 - ``replies``：最近几次注入 trace 与命中的通道。
 
 约束：只读；每条 SQL 都走已有索引并带 LIMIT；各区块独立失败，某一块出错不拖垮整页。
@@ -79,6 +80,7 @@ TOP_RELATIONSHIPS = 5
 LEARNED_SAMPLES = 3
 REPLY_LIMIT = 5
 CONCERN_LIMIT = 5
+BELIEF_CHANGE_LIMIT = 5
 _CONTENT_PREVIEW = 200
 # 历史上 Bot 自己的回复以 sender_id='bot' 落库；再加上 BotProfile 的平台账号。
 _SELF_SENDER_SENTINELS = ("bot", "bot_self")
@@ -586,11 +588,12 @@ _LEARNED_SPECS: dict[str, dict[str, str]] = {
         "status_sql": "status",
         "place_sql": "session_id, visibility",
     },
+    # 信念 v2 属于 Bot 本人（不按群），没有会话地点
     "beliefs": {
-        "table": "scoped_beliefs",
+        "table": "bot_beliefs",
         "text_sql": "content",
         "status_sql": "status",
-        "place_sql": "session_id, visibility",
+        "place_sql": "NULL, NULL",
     },
     "jargon": {
         "table": "scoped_jargon",
@@ -620,6 +623,53 @@ def _learned_section(ctx: _Context) -> dict[str, Any]:
             logger.warning("[WaveMemory BotHome] learned.%s 读取失败: %s", key, exc)
             out[key] = {**_failed(f"{key}_read_failed"), "total": None, "by_status": {}, "samples": []}
     return _ready(**out)
+
+
+_BELIEF_CHANGE_LABELS = {
+    "sprout": "刚萌芽",
+    "formed": "形成了",
+    "stable": "更确信了",
+    "shaken": "开始动摇",
+    "faded": "淡出了",
+    "vetoed": "被否决",
+}
+
+
+def _beliefs_section(ctx: _Context) -> dict[str, Any]:
+    """她最近形成或改变的看法：最近几次状态变化 + 当前各状态条数。"""
+    if not ctx.has_table("bot_beliefs") or not ctx.has_table("bot_belief_events"):
+        return _unavailable("table_missing")
+    rows = ctx.fetchall(
+        """SELECT e.id, e.belief_id, e.event_type, e.from_status, e.to_status, e.reason, e.occurred_at,
+                  b.content, b.category, b.status
+             FROM bot_belief_events e JOIN bot_beliefs b ON b.id=e.belief_id AND b.bot_id=e.bot_id
+            WHERE e.bot_id=? AND e.from_status != e.to_status
+            ORDER BY e.occurred_at DESC, e.id DESC LIMIT ?""",
+        (ctx.bot_id, BELIEF_CHANGE_LIMIT),
+    )
+    counts = {
+        _text(status): int(count or 0)
+        for status, count in ctx.fetchall(
+            "SELECT status, COUNT(*) FROM bot_beliefs WHERE bot_id=? GROUP BY status LIMIT 20", (ctx.bot_id,),
+        )
+    }
+    items = [
+        {
+            "event_id": event_id,
+            "belief_id": belief_id,
+            "event_type": event_type,
+            "from_status": from_status or None,
+            "to_status": to_status,
+            "change_label": _BELIEF_CHANGE_LABELS.get(_text(to_status), _text(to_status)),
+            "reason": _preview(reason, 120),
+            "occurred_at": occurred_at,
+            "content": _preview(content, 160),
+            "category": category,
+            "current_status": current_status,
+        }
+        for event_id, belief_id, event_type, from_status, to_status, reason, occurred_at, content, category, current_status in rows
+    ]
+    return _ready(items=items, counts=counts, held=counts.get("formed", 0) + counts.get("stable", 0))
 
 
 def _replies_section(ctx: _Context) -> dict[str, Any]:
@@ -732,6 +782,7 @@ def build_bot_home_payload(
     soul = run("soul", lambda: _soul_section(ctx, soul_repository, mood_service))
     relationships = run("relationships", lambda: _relationships_section(ctx))
     learned = run("learned", lambda: _learned_section(ctx))
+    beliefs = run("beliefs", lambda: _beliefs_section(ctx))
     replies = run("replies", lambda: _replies_section(ctx))
     return {
         "bot": {"db_id": bot_id, "name": bot_name or bot_id},
@@ -740,6 +791,7 @@ def build_bot_home_payload(
         "soul": soul,
         "relationships": relationships,
         "learned": learned,
+        "beliefs": beliefs,
         "replies": replies,
         "meta": {
             "generated_at": time.time(),

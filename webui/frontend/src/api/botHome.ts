@@ -147,6 +147,27 @@ export interface BotHomeLearned extends BotHomeSectionBase {
   experiences?: BotHomeLearnedBucket
 }
 
+/** 信念 v2：她最近形成或改变的看法（状态变化，不受窗口限制）。 */
+export interface BotHomeBeliefChange {
+  event_id: number
+  belief_id: number
+  event_type: string
+  from_status: string | null
+  to_status: string
+  change_label: string
+  reason: string
+  occurred_at: number | null
+  content: string
+  category: string | null
+  current_status: string
+}
+
+export interface BotHomeBeliefs extends BotHomeSectionBase {
+  items?: BotHomeBeliefChange[]
+  counts?: Record<string, number>
+  held?: number
+}
+
 export interface BotHomeHitChannel {
   channel: string
   item_count: number
@@ -176,6 +197,8 @@ export interface BotHomePayload {
   soul: BotHomeSoul
   relationships: BotHomeRelationships
   learned: BotHomeLearned
+  /** 旧版后端没有这一块 */
+  beliefs?: BotHomeBeliefs
   replies: BotHomeReplies
   meta: { generated_at: number; elapsed_ms: number; section_ms: Record<string, number> }
 }

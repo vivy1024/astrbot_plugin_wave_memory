@@ -72,7 +72,6 @@ from ..services.concern_tracker import ConcernTracker
 from ..services.subjective_time import SubjectiveTime
 from ..services.desire_engine import DesireEngine
 from ..services.belief_engine import BeliefEngine
-from ..services.belief_emergence import BeliefEmergenceService
 from ..services.belief_gating import snapshot_from_relationship
 from ..services.proactive_audit import record_proactive_timeline
 from ..services.jargon.service import JargonService
@@ -409,15 +408,16 @@ class StartupMixin:
         # ─── BDI / 灵魂子系统实例化（修复 06-12 集体停摆：原代码仅有 hasattr 守卫调用，缺实例化）───
         soul_bot = experience_bot or reflect_bot
         soul_bot_id = soul_bot.db_id if soul_bot else ""
-        # 信念引擎（提取在 consolidation 内触发，注入在 on_llm_request）
+        # 信念引擎（信念 v2 读侧）：只在话题相关时浮现 Bot 自己形成的看法，不调用模型，按 scope.bot_id 读取。
+        # 看法由每日日记之后的反思形成（_init_learning_services 里的 BeliefReflectionService）。
         try:
-            if runtime_capability_enabled(self.runtime_mode, "belief", True) and self.llm_routing.available("belief") and soul_bot_id:
-                belief_llm = self.llm_routing.client("belief")
+            if runtime_capability_enabled(self.runtime_mode, "belief", True) and getattr(self.db, "bot_beliefs", None) is not None:
+                from ..services.belief_lifecycle import BeliefPolicy
+
                 self.belief_engine = BeliefEngine(
                     db=self.db,
-                    llm_client=belief_llm,
                     bot_id=soul_bot_id,
-                    soul_repository=self.db.soul_repository,
+                    policy=BeliefPolicy.from_config(self.config.get("Learning_Settings", {}) or {}),
                 )
             else:
                 self.belief_engine = None
@@ -425,12 +425,6 @@ class StartupMixin:
             logger.warning(f"[WaveMemory] BeliefEngine init failed: {e}")
             _record_err("BeliefEngine", e)
             self.belief_engine = None
-        try:
-            self.belief_emergence = BeliefEmergenceService(db=self.db, bot_id=soul_bot_id) if runtime_capability_enabled(self.runtime_mode, "belief_emergence", True) and soul_bot_id else None
-        except Exception as e:
-            logger.warning(f"[WaveMemory] BeliefEmergence init failed: {e}")
-            _record_err("BeliefEmergence", e)
-            self.belief_emergence = None
         # 关切 / 情绪轨迹 / 时间锚点：memory_only/compat_only 下属于高级灵魂状态能力，默认不实例化。
         soul_repository = self.db.soul_repository
         soul_coordinator = self.write_gateway.coordinator
@@ -523,16 +517,16 @@ class StartupMixin:
             else missing_bot_profile_reason if not reflect_bot
             else "SelfReflect 初始化失败或未启用"
         )
+        # 信念 v2 的注入不需要模型；反思（形成看法）的状态见「记账与学习」统计里的 belief_reflection。
         soul_off_reason = (
-            "tag_llm_provider_id 未配置（模型分工也未单独指定）" if not self.llm_routing.available("belief")
-            else missing_bot_profile_reason if not soul_bot_id
+            "当前运行模式关闭了信念" if not runtime_capability_enabled(self.runtime_mode, "belief", True)
             else "belief_engine 初始化失败或未启用"
         )
         soul_state_off_reason = missing_bot_profile_reason if not soul_bot_id else "初始化失败或未启用"
 
         _reg("自省系统", "ok" if getattr(self, 'self_reflect', None) else "off", "" if getattr(self, 'self_reflect', None) else self_reflect_off_reason, dependency="LLM Provider + Bot Profile")
         _reg("记忆淘汰", "ok" if getattr(self, 'eviction_service', None) else "off", "" if getattr(self, 'eviction_service', None) else "Eviction 未启用", dependency="自动启用")
-        _reg("信念引擎", "ok" if self.belief_engine else "off", "" if self.belief_engine else soul_off_reason, dependency="LLM Provider + Bot Profile")
+        _reg("信念引擎", "ok" if self.belief_engine else "off", "" if self.belief_engine else soul_off_reason, dependency="Learning_Settings.belief_reflection_enabled（形成看法需 LLM Provider + 每日日记）")
         _reg("关切追踪", "ok" if self.concern_tracker else "off", "" if self.concern_tracker else f"concern_tracker {soul_state_off_reason}", dependency="Bot Profile")
         _reg("Bot 心情", "ok" if self.mood_service else "off", "" if self.mood_service else "Lifecycle_Settings.enable_mood 关闭或初始化失败", dependency="enable_mood + Bot Profile")
         _reg("黑话系统", "ok" if getattr(self, 'jargon_service', None) else "off", "" if getattr(self, 'jargon_service', None) else "Jargon 未启用", dependency="LLM Provider + 聊天记录积累")
@@ -766,9 +760,10 @@ class StartupMixin:
     def _init_learning_services(self) -> None:
         """记账与学习：自动审核、关切主动跟进、事后记账、每日日记、关系小传（Learning_Settings）。
 
-        两个会改变羽书行为的开关默认关闭：auto_approve_enabled（事实/信念/黑话有证据时直接生效，
+        两个会改变羽书行为的开关默认关闭：auto_approve_enabled（事实/黑话有证据时直接生效，
         不等人审）、proactive_reply_enabled（惦记的人出现时没点名也主动开口）。
         新增模型消耗的关系小传（relationship_portrait_enabled）同样默认关闭。
+        信念不走审核：由每日日记之后的反思形成（belief_reflection_enabled，默认关闭）。
         """
         from ..services.auto_review import AutoReviewer, set_auto_reviewer
         from ..services.concern_followup import ConcernFollowupService
@@ -930,6 +925,7 @@ class StartupMixin:
             logger.warning("[WaveMemory] 关系小传已开启但没有可用的 LLM Provider，未启动；注入沿用印象时间线摘要")
         configure_portrait_injection(enabled=portrait_settings.enabled and self.relationship_portrait is not None)
 
+        self.belief_reflection = self._create_belief_reflection(cfg, _flag, _num)
         # 关系注入据此决定群聊里是否还要提示「该结算了」：记账已启动时交给它回看结算
         from ..services.impression_timeline import configure_impression_prompting
 
@@ -939,6 +935,7 @@ class StartupMixin:
         get_container().reply_feedback_service = self.reply_feedback_service
         get_container().reply_decision = self.reply_decision
         get_container().relationship_portrait = self.relationship_portrait
+        get_container().belief_reflection = self.belief_reflection
 
         def _learning_stats() -> dict:
             def _of(service) -> dict | None:
@@ -953,17 +950,19 @@ class StartupMixin:
                 "bookkeeping": _of(self.post_reply_bookkeeper),
                 "daily_diary": _of(self.daily_diary),
                 "relationship_portrait": _of(getattr(self, "relationship_portrait", None)),
+                "belief_reflection": _of(self.belief_reflection),
                 "mood": _of(getattr(self, "mood_service", None)),
             }
 
         get_container().learning_stats_getter = _learning_stats
         logger.info(
             "[WaveMemory] 记账与学习: auto_approve=%s proactive_reply=%s bookkeeping=%s daily_diary=%s "
-            "relationship_portrait=%s",
+            "relationship_portrait=%s belief_reflection=%s",
             bool(self.auto_reviewer and self.auto_reviewer.enabled),
             bool(self.concern_followup and self.concern_followup.enabled),
             self.post_reply_bookkeeper is not None, self.daily_diary is not None,
             bool(self.relationship_portrait and self.relationship_portrait.enabled),
+            self.belief_reflection is not None,
         )
 
     def _portrait_llm(self, bot_id: str = ""):
@@ -988,7 +987,7 @@ class StartupMixin:
             "jargon": getattr(self, "jargon_service", None) is not None,
             "fewshot": few_shot is not None and getattr(few_shot, "_llm", None) is not None,
             "self_reflect": getattr(self, "self_reflect", None) is not None,
-            "belief": getattr(self, "belief_engine", None) is not None,
+            "belief_reflection": getattr(self, "belief_reflection", None) is not None,
             # 标签审计每次维护任务现建审计器、现解析模型：配了模型就能跑，从不需要重启。
             "tag_audit": True,
             "meta_thinking": getattr(self, "meta_thinking", None) is not None,
@@ -1019,8 +1018,65 @@ class StartupMixin:
                 logger.info(
                     f"[WaveMemory] 模型分工: Bot {profile.db_id} 的模型覆盖生效 "
                     f"model={getattr(profile, 'model', '') or '-'} models={overrides or '-'}"
-                    "（只作用于内心判断、事后记账、每日日记、关系小传）"
+                    "（只作用于内心判断、事后记账、每日日记、关系小传、信念反思）"
                 )
+
+    def _belief_reflection_llm(self, bot_id: str = ""):
+        """信念反思用的模型客户端，走模型分工的 ``belief_reflection`` 任务（按 Bot 覆盖用 for_bot）。"""
+        routing = getattr(self, "llm_routing", None)
+        if routing is None or not routing.available("belief_reflection"):
+            return None
+        client = routing.client("belief_reflection")
+        return client.for_bot(bot_id) if bot_id else client
+
+    def _create_belief_reflection(self, cfg: dict, _flag, _num):
+        """信念 v2：每日日记写完一轮后，按 Bot 反思这段时间的经历（Learning_Settings.belief_reflection_*）。
+
+        默认关闭（会新增模型调用，部署时再开）；依赖每日日记，日记没启动时不会触发。
+        memory_only / compat_only 下按 ``belief_emergence`` 能力关闭（信念「涌现」的正式来源就是反思）。
+        """
+        from ..services.belief_lifecycle import BeliefPolicy
+        from ..webui.container import get_container
+
+        policy = BeliefPolicy.from_config(cfg)
+        get_container().belief_policy = policy
+        if not _flag("belief_reflection_enabled", False):
+            return None
+        if not runtime_capability_enabled(self.runtime_mode, "belief_emergence", True):
+            logger.info("[WaveMemory] 信念反思未启动：当前运行模式关闭了信念")
+            return None
+        if getattr(self, "daily_diary", None) is None:
+            logger.warning(
+                "[WaveMemory] 信念反思已开启但每日日记没有启动（daily_diary_enabled 关闭或没有可用的 LLM），不会触发"
+            )
+            return None
+        try:
+            from ..services.belief_reflection import BeliefReflectionService
+
+            def self_names(db_id: str) -> list[str]:
+                profile = self.bot_registry.get(db_id)
+                if profile is None:
+                    return []
+                return [str(getattr(profile, "name", "") or ""), *(str(a) for a in (getattr(profile, "aliases", None) or []))]
+
+            reflection = BeliefReflectionService(
+                self.db,
+                llm_for_bot=self._belief_reflection_llm,
+                enabled=True,
+                every_n_days=int(_num("belief_reflection_every_n_days", 1)),
+                policy=policy,
+                bot_name_for=self._bot_display_name,
+                self_names_for=self_names,
+                group_name_for=self._get_group_name,
+                feedback_service=getattr(self, "reply_feedback_service", None),
+                bot_ids_for=lambda: [p.db_id for p in self.bot_registry.all() if p.db_id],
+            )
+            self.daily_diary.add_pass_listener(reflection.on_diary_pass)
+            return reflection
+        except Exception as e:
+            logger.warning(f"[WaveMemory] BeliefReflection init failed: {e}")
+            _record_err("BeliefReflection", e)
+            return None
 
     async def _mood_tick_loop(self) -> None:
         """心情维护：每 10 分钟增量导入关系事件、清理过期情绪事件、刷新快照（在线程里跑，不占事件循环）。"""
@@ -1091,15 +1147,3 @@ class StartupMixin:
         except Exception as e:
             logger.debug(f"[WaveMemory] Jargon mine error: {e}")
             _record_err("JargonMine", e)
-
-    async def _belief_emergence_task(self, runtime_scope: RuntimeScope | None = None) -> None:
-        """手工/排障入口：不再由入站消息自动调度。"""
-        try:
-            if not getattr(self, "belief_emergence", None):
-                return
-            created = await self.belief_emergence.emerge_recent(days=14, limit=2, scope=runtime_scope)
-            if created:
-                logger.info(f"[WaveMemory] Belief emerged {len(created)} candidates")
-        except Exception as e:
-            logger.debug(f"[WaveMemory] Belief emergence error: {e}")
-            _record_err("BeliefEmergence", e)

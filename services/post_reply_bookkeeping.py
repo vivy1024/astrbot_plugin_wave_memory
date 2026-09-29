@@ -1,15 +1,17 @@
 """事后记账：Bot 在群里说完话、对话停一会儿之后，回看这一段。
 
-过去这些全靠她在回复当下顺手调工具：好感结算、人情、事实、信念、黑话、关切。模型忙着回话时
+过去这些全靠她在回复当下顺手调工具：好感结算、人情、事实、黑话、关切。模型忙着回话时
 很少会想起记账（线上 28 小时约 30 次回复只记了 2 次；21 个人的未结算能量攒满了却一直没结算）。
 这里把记账从回复里拆出来：
 
 - 触发：Bot 在某群发言后，该群 ``delay_seconds`` 内没有它的新发言（一段对话告一段落）；
   同一群两次记账至少间隔 ``session_cooldown_seconds``，全局每天最多 ``daily_limit`` 次。
 - 输入：这段对话（上次记账之后的最多 ``window_messages`` 条）、在场群友里未结算能量已满需要结算的人、
-  本群未了的关切、已批准的事实（供提信念）。
+  本群未了的关切。
 - 输出：模型按固定 JSON 列出要做的记账，逐条交给对应的正式工具执行——校验、作用域隔离、好感
   变动范围、事实待审/自动审核都与现场调用完全相同，这里不另开写入口。
+- 不再归纳信念：信念是她从自己的经历里慢慢形成的看法，只由每日日记之后的反思产生
+  （``services/belief_reflection.py``）；旧模型输出里残留的 ``beliefs`` 字段直接忽略。
 """
 
 from __future__ import annotations
@@ -34,7 +36,6 @@ try:
     from .impression_timeline import UNSETTLED_ENERGY_FULL, affinity_shift_range, effective_unsettled_state
     from .tool_registry import runtime_tool_context
     from .reply_feedback import BOOKKEEPING_LEARNING_PROMPT
-    from .fact_policy import is_effective
     from ..tools.person_identity import resolve_user_id
 except ImportError:  # pragma: no cover
     from domain.scope import RuntimeScope
@@ -42,7 +43,6 @@ except ImportError:  # pragma: no cover
     from services.impression_timeline import UNSETTLED_ENERGY_FULL, affinity_shift_range, effective_unsettled_state
     from services.tool_registry import runtime_tool_context
     from services.reply_feedback import BOOKKEEPING_LEARNING_PROMPT
-    from services.fact_policy import is_effective
     from tools.person_identity import resolve_user_id
 
 PROMPT = """你是{bot_name}。下面是你刚在群里参与的一段对话（「{bot_name}」是你自己说的话）。
@@ -52,7 +52,7 @@ PROMPT = """你是{bot_name}。下面是你刚在群里参与的一段对话（�
 【对话】
 {transcript}
 
-{settle_block}{concern_block}{fact_block}只输出一个 JSON 对象，字段如下（都可以是空数组）：
+{settle_block}{concern_block}只输出一个 JSON 对象，字段如下（都可以是空数组）：
 {{
   "impressions": [  // 对某位群友形成或更新了看法；需要结算的人请务必给出一条
     {{"user": "群友名字", "impression": "一句话观感", "dimension": "trust|fun|depth|hostility|familiarity",
@@ -73,9 +73,6 @@ PROMPT = """你是{bot_name}。下面是你刚在群里参与的一段对话（�
   ],
   "resolved_concerns": [  // 上面列出的未了关切里，这段对话里已经了结的
     {{"concern_id": 数字, "note": "怎么了结的"}}
-  ],
-  "beliefs": [  // 只有当上面列出的已批准事实里有两条以上共同支撑一个判断时才写
-    {{"belief_type": "person_judgment|world_view|preference", "content": "判断", "source_fact_ids": [事实id, ...]}}
   ],
   "mood": {{"direction": "up|down|none", "strength": 0到1, "reason": "一句话：这段对话里什么事让你心情变好或变差"}}
   // 这段对话对你自己心情的影响；没什么影响就填 none
@@ -239,18 +236,6 @@ class PostReplyBookkeeper:
             return ""
         return "【你还挂念着的事】\n" + "\n".join(f"- concern:{r[0]} {r[1]}" for r in rows) + "\n\n"
 
-    def _fact_block(self, scope: RuntimeScope) -> str:
-        repo = getattr(self.db, "scoped_knowledge", None)
-        if repo is None:
-            return ""
-        now = time.time()
-        facts = [f for f in repo.list_scoped_facts(scope, limit=60) if is_effective(f, now)][:20]
-        if len(facts) < 2:
-            return ""
-        return "【已批准的事实（提信念时引用 id）】\n" + "\n".join(
-            f"- {f['id']}: {f['subject']} {f['predicate']} {f['object']}" for f in facts
-        ) + "\n\n"
-
     @staticmethod
     def _call_succeeded(text: str) -> bool:
         value = str(text or "").strip()
@@ -310,7 +295,6 @@ class PostReplyBookkeeper:
             transcript=transcript,
             settle_block=self._settle_block(scope, rows),
             concern_block=self._concern_block(scope),
-            fact_block=self._fact_block(scope),
         )
         learning_enabled = self._learning_enabled()
         if learning_enabled:
@@ -394,14 +378,9 @@ class PostReplyBookkeeper:
                     "wave_memory_note_concern", scope,
                     action="resolve", concern_id=item["concern_id"], note=str(item["note"]),
                 )
-        for item in _items(payload, "beliefs", 2):
-            ids = item.get("source_fact_ids")
-            if item.get("content") and isinstance(ids, list) and len(ids) >= 2:
-                done += await self._call_action(
-                    "wave_memory_propose_belief", scope,
-                    belief_type=str(item.get("belief_type") or "person_judgment"), content=str(item["content"]),
-                    grounding_evidence="事后回看群聊时由已批准事实归纳", source_fact_ids=ids,
-                )
+        if _items(payload, "beliefs", 20):
+            # 旧提示词或模型惯性输出的信念一律不写：信念只来自反思
+            self._count("beliefs_ignored", len(_items(payload, "beliefs", 20)))
         self._count("actions", done)
         if done:
             logger.info(f"[WaveMemory] 事后记账 {scope.session.id}：回看 {len(rows)} 条，记下 {done} 项")

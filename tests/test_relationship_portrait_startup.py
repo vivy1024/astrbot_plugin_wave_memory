@@ -48,9 +48,11 @@ class _Plugin:
     pass
 
 
-_METHODS = _methods("_init_learning_services", "_portrait_llm")
+_METHODS = _methods("_init_learning_services", "_portrait_llm", "_create_belief_reflection", "_belief_reflection_llm")
 _Plugin._init_learning_services = _METHODS["_init_learning_services"]
 _Plugin._portrait_llm = _METHODS["_portrait_llm"]
+_Plugin._create_belief_reflection = _METHODS["_create_belief_reflection"]
+_Plugin._belief_reflection_llm = _METHODS["_belief_reflection_llm"]
 
 
 @pytest.fixture

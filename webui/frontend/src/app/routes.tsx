@@ -85,7 +85,7 @@ export const appRoutes: AppRoute[] = [
   // 认知：她对人和世界的理解
   { path: '/people', scope: 'session', scopeAllows: { legacy: true }, title: '人物与关系', description: '按 Bot、群和用户查看画像与好感', group: 'cognition', icon: UsersIcon, element: PeoplePage },
   { path: '/facts', scope: 'session', scopeAllows: { private: true }, title: '事实', description: '人物/事物关系、证据与人工审核', group: 'cognition', icon: GitBranchIcon, element: FactsPage },
-  { path: '/beliefs', scope: 'session', title: '信念', description: '证据健康与生命周期审核', group: 'cognition', icon: BookHeartIcon, element: BeliefsPage },
+  { path: '/beliefs', scope: 'bot', title: '看法', description: '她从自己的经历里形成的看法：按状态分组、依据日记与历史', group: 'cognition', icon: BookHeartIcon, element: BeliefsPage },
   { path: '/jargon', scope: 'session', title: '黑话与口癖', description: '群聊习得黑话、证据审核与内置口癖资产', group: 'cognition', icon: SmileIcon, element: JargonPage },
   { path: '/knowledge/experiences', scope: 'session', scopeAllows: { legacy: true }, title: '经历片段', description: '对话沉淀的个人经历与重要事件', group: 'cognition', icon: SparklesIcon, element: ExperiencesPage },
   { path: '/knowledge/style-examples', scope: 'session', title: '风格样例', description: '已通过审核的正式回复范例', group: 'cognition', icon: MessageSquareTextIcon, element: FewShotPage },

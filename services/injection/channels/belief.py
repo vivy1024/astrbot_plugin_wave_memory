@@ -1,4 +1,7 @@
-"""Belief 注入通道。"""
+"""Belief 注入通道：只在当前话题与她自己形成的看法相关时浮现 1–2 条（不再每轮注入）。
+
+相关性由 ``BeliefEngine`` 用触发词与原文重叠判断，不调用模型、不做向量检索；只含已形成/稳固的看法。
+"""
 
 from __future__ import annotations
 
@@ -33,19 +36,6 @@ def _as_bool(value: Any, default: bool = True) -> bool:
 def _channel_cfg(ctx: Any) -> Mapping[str, Any]:
     config = _mapping(getattr(ctx, "config", {}))
     return _mapping(_mapping(config.get("channels", {})).get("belief", {}))
-
-
-def _keywords(message: str) -> list[str]:
-    tokens = [token.strip() for token in str(message or "").split() if len(token.strip()) > 1]
-    if not tokens:
-        tokens = re.findall(r"[\w\u4e00-\u9fff]{2,}", str(message or ""))
-    deduped: list[str] = []
-    for token in tokens:
-        if token not in deduped:
-            deduped.append(token)
-        if len(deduped) >= 5:
-            break
-    return deduped
 
 
 def _extract_belief_ids(text: str) -> list[int]:
@@ -89,7 +79,7 @@ def _scope_audit(scope: Any) -> dict[str, Any] | None:
 
 
 class BeliefChannel:
-    """只读调用 BeliefEngine.get_injection，不写入或提升信念。"""
+    """只读调用 BeliefEngine.get_injection_details，不写入或改变看法。"""
 
     name = "belief"
     # build 里没有 await、全是同步读库：编排器放到工作线程跑，不占事件循环
@@ -119,28 +109,25 @@ class BeliefChannel:
             )
 
         try:
-            bot_profile_id = getattr(ctx, "bot_profile_id", "") or getattr(ctx, "bot_id", "") or "bot"
-            if hasattr(self.belief_engine, "bot_id"):
-                self.belief_engine.bot_id = bot_profile_id
-            keywords = _keywords(getattr(ctx, "message", "") or "")
-            details = None
-            detail_getter = getattr(self.belief_engine, "get_injection_details", None)
-            if callable(detail_getter):
-                details = detail_getter(
-                    scope=runtime_scope,
-                    sender_id=getattr(ctx, "sender_id", "") or "",
-                    keywords=keywords,
-                )
-                text = str((details or {}).get("text") or "")
-            else:
-                text = self.belief_engine.get_injection(
-                    scope=runtime_scope,
-                    sender_id=getattr(ctx, "sender_id", "") or "",
-                    keywords=keywords,
-                ) or ""
-            text = str(text).strip()
+            # 看法属于 Scope 里的 Bot：引擎按 scope.bot_id 读取，不改写共享引擎的状态（多线程下会串）。
+            bot_profile_id = getattr(runtime_scope, "bot_id", "") or getattr(ctx, "bot_profile_id", "") or "bot"
+            try:
+                max_items = int(cfg.get("max_items") or 2)
+            except (TypeError, ValueError):
+                max_items = 2
+            details = self.belief_engine.get_injection_details(
+                runtime_scope,
+                sender_id=getattr(ctx, "sender_id", "") or "",
+                message=str(getattr(ctx, "message", "") or ""),
+                max_items=max_items,
+            ) or {}
+            text = str(details.get("text") or "").strip()
             if not text:
-                return InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="no active beliefs")
+                return InjectionResult.empty(
+                    self.name,
+                    latency_ms=self._latency_ms(started),
+                    reason=str(details.get("reason") or "no_relevant_belief"),
+                )
             if is_identity_contamination(text):
                 result = InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="no safe beliefs")
                 result.filtered = [self._audit_filtered(text, reason="identity_contamination")]
@@ -150,18 +137,16 @@ class BeliefChannel:
                 self.name,
                 text,
                 items=[{
-                    "source": "BeliefEngine.get_injection",
+                    "source": "BeliefEngine.get_injection_details",
                     "bot_id": bot_profile_id,
                     "sender_id": getattr(ctx, "sender_id", "") or "",
-                    "keywords": keywords,
                     "belief_ids": belief_ids,
+                    "matches": [dict(item) for item in details.get("matches") or [] if isinstance(item, Mapping)],
                     "preview": _preview(text),
                     "trace_id": getattr(ctx, "trace_id", ""),
                     "scope": _scope_audit(runtime_scope),
                     "source_channel": "belief",
                     "evidence": belief_ids,
-                    "gating": (details or {}).get("gating", {}),
-                    "interaction_policy": (details or {}).get("interaction_policy", {}),
                     "rendered_text": text,
                     "dedupe_key": "belief:" + (":".join(str(i) for i in belief_ids) or _preview(text, 80)),
                 }],
@@ -175,7 +160,7 @@ class BeliefChannel:
     @staticmethod
     def _audit_filtered(text: str, *, reason: str) -> dict[str, Any]:
         return {
-            "source": "BeliefEngine.get_injection",
+            "source": "BeliefEngine.get_injection_details",
             "filter_reason": reason,
             "filter_channel": "belief",
             "belief_ids": _extract_belief_ids(text),

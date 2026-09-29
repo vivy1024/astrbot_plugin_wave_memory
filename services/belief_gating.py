@@ -1,25 +1,19 @@
-"""Scoped belief relationship gating policy.
+"""正式关系快照与信任/敌意阈值（只剩主动关心策略在用）。
 
-This module is deliberately independent from SQLite and LLM services.  It turns
-formal relationship snapshots into a conservative, auditable decision that can
-be reused by extraction and injection paths.
+历史上这里是「按好感分数给信念做门禁」：对方 trust<30 或 hostility≥60 时不注入对人的判断、
+提取信念时按关系决定直通/待审/隔离。信念 v2 只来自 Bot 自己的经历反思，不再有对人的判断，
+这些门禁（``interaction_policy``、``evaluate_relationship_gate``、``candidate_fingerprint``、
+``canonical_subject_principal``）已删除。模块名保留，免得改动所有导入点。
 """
 
 from __future__ import annotations
 
-import hashlib
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-try:
-    from ..domain.scope import RuntimeScope
-except ImportError:  # pragma: no cover - focused tests import services directly
-    from domain.scope import RuntimeScope
 
-
-POLICY_VERSION = "relationship-gating-v1"
 DIRECT_TRUST_MIN = 60.0
 DIRECT_HOSTILITY_MAX = 30.0
 QUARANTINE_TRUST_BELOW = 30.0
@@ -35,23 +29,6 @@ def _finite_number(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return numeric if math.isfinite(numeric) else None
-
-
-def canonical_subject_principal(scope: RuntimeScope, sender_id: Any) -> str | None:
-    """Project a message sender into the current session's principal namespace."""
-    if not isinstance(scope, RuntimeScope) or scope.visibility != "group" or scope.session is None:
-        return None
-    sender = str(sender_id or "").strip()
-    if not sender:
-        return None
-    prefix = f"{scope.session.platform_id}:user:"
-    if sender.startswith(prefix):
-        return sender if sender != prefix and ":" not in sender[len(prefix):] else None
-    # Raw IDs are accepted only as a single namespace-safe component.  A
-    # different platform/canonical namespace is never silently rewritten.
-    if ":" in sender or sender in {"bot_self", "unknown"}:
-        return None
-    return f"{prefix}{sender}"
 
 
 def relationship_dimensions(row: Mapping[str, Any] | None) -> dict[str, float]:
@@ -122,141 +99,13 @@ def snapshot_from_relationship(
     )
 
 
-def candidate_fingerprint(
-    scope: RuntimeScope,
-    *,
-    relation: str,
-    target_belief_id: int | None,
-    content: str,
-) -> str:
-    """Build a scope- and target-bound idempotency key for gated candidates."""
-    if not isinstance(scope, RuntimeScope) or scope.session is None:
-        raise ValueError("scope_required")
-    normalized_relation = str(relation or "").strip().lower()
-    normalized_content = " ".join(str(content or "").casefold().split())
-    payload = "\0".join((
-        scope.bot_id,
-        scope.session.id,
-        scope.visibility,
-        normalized_relation,
-        "" if target_belief_id is None else str(int(target_belief_id)),
-        normalized_content,
-    ))
-    return "belief-candidate-v1:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
-
-
-def evaluate_relationship_gate(
-    snapshots: Sequence[RelationshipSnapshot],
-    *,
-    unknown_subjects: Sequence[str] = (),
-) -> dict[str, Any]:
-    """Evaluate one or more speakers using the strictest relationship values."""
-    normalized = [item for item in snapshots if isinstance(item, RelationshipSnapshot)]
-    unknown = list(dict.fromkeys(str(item) for item in unknown_subjects if str(item)))
-    known = [item for item in normalized if item.known_for_gating]
-    all_subjects = list(dict.fromkeys([item.subject_principal_id for item in normalized] + unknown))
-    trust_values = [item.trust for item in known if item.trust is not None]
-    hostility_values = [item.hostility for item in known if item.hostility is not None]
-    effective_trust = min(trust_values) if trust_values else None
-    effective_hostility = max(hostility_values) if hostility_values else None
-
-    decision = "pending"
-    reason_code = "relationship_review_required"
-    if any(item.trust is not None and item.trust < QUARANTINE_TRUST_BELOW for item in known):
-        decision = "quarantine"
-        reason_code = "relationship_low_trust"
-    elif any(item.hostility is not None and item.hostility >= QUARANTINE_HOSTILITY_MIN for item in known):
-        decision = "quarantine"
-        reason_code = "relationship_high_hostility"
-    elif unknown or len(known) != len(normalized) or not known:
-        decision = "pending"
-        reason_code = "relationship_unknown" if unknown or not known else "relationship_review_required"
-    elif effective_trust is not None and effective_hostility is not None:
-        if effective_trust >= DIRECT_TRUST_MIN and effective_hostility < DIRECT_HOSTILITY_MAX:
-            decision = "direct"
-            reason_code = "relationship_direct"
-        else:
-            decision = "pending"
-            reason_code = "relationship_review_required"
-
-    return {
-        "policy_version": POLICY_VERSION,
-        "decision": decision,
-        "reason_code": reason_code,
-        "effective_trust": effective_trust,
-        "effective_hostility": effective_hostility,
-        "subjects": all_subjects,
-        "relationship_revisions": {
-            item.subject_principal_id: item.revision for item in normalized if item.revision is not None
-        },
-        "snapshots": [item.to_dict() for item in normalized],
-        "unknown_subjects": unknown,
-        "review_required": decision != "direct",
-    }
-
-
-def interaction_policy(
-    snapshot: RelationshipSnapshot | None,
-    *,
-    subject_available: bool = True,
-) -> dict[str, Any]:
-    """Return bounded, non-factual response guidance for the current subject."""
-    if not subject_available or snapshot is None or not snapshot.known_for_gating:
-        return {
-            "policy_version": POLICY_VERSION,
-            "mode": "cautious",
-            "reason_code": "relationship_unknown",
-            "allow_person_judgment": False,
-            "privacy_openness": "minimal",
-            "playfulness": "neutral",
-            "boundary": "先核实事实，不要默认彼此熟悉或共享背景",
-        }
-    trust = float(snapshot.trust or 0.0)
-    hostility = float(snapshot.hostility or 0.0)
-    fun = float(snapshot.dimensions.get("fun", 0.0))
-    if hostility >= QUARANTINE_HOSTILITY_MIN:
-        return {
-            "policy_version": POLICY_VERSION,
-            "mode": "deescalate",
-            "reason_code": "relationship_high_hostility",
-            "allow_person_judgment": False,
-            "privacy_openness": "minimal",
-            "playfulness": "none",
-            "boundary": "保持礼貌、简短并明确边界，不反击",
-        }
-    if trust >= DIRECT_TRUST_MIN and hostility < DIRECT_HOSTILITY_MAX:
-        return {
-            "policy_version": POLICY_VERSION,
-            "mode": "trusted",
-            "reason_code": "relationship_direct",
-            "allow_person_judgment": True,
-            "privacy_openness": "safe_public_topics_only",
-            "playfulness": "light" if fun >= FUN_PLAYFUL_MIN else "neutral",
-            "boundary": "respond naturally only to volunteered or safely public topics; do not disclose private information",
-        }
-    return {
-        "policy_version": POLICY_VERSION,
-        "mode": "cautious",
-        "reason_code": "relationship_review_required" if trust >= QUARANTINE_TRUST_BELOW else "relationship_low_trust",
-        "allow_person_judgment": trust >= QUARANTINE_TRUST_BELOW,
-        "privacy_openness": "minimal",
-        "playfulness": "light" if fun >= FUN_PLAYFUL_MIN else "neutral",
-        "boundary": "keep claims tentative and do not assume trust or shared context",
-    }
-
-
 __all__ = [
     "DIRECT_HOSTILITY_MAX",
     "DIRECT_TRUST_MIN",
     "FUN_PLAYFUL_MIN",
-    "POLICY_VERSION",
     "QUARANTINE_HOSTILITY_MIN",
     "QUARANTINE_TRUST_BELOW",
     "RelationshipSnapshot",
-    "candidate_fingerprint",
-    "canonical_subject_principal",
-    "evaluate_relationship_gate",
-    "interaction_policy",
     "relationship_dimensions",
     "snapshot_from_relationship",
 ]

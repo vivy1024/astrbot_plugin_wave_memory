@@ -54,6 +54,14 @@ const REASON_LABELS: Record<string, string> = {
 
   // 信念
   belief_anchor_unavailable: '信念锚点暂不可用',
+  belief_revision_conflict: '这条看法刚被改过，已刷新，请再操作一次',
+  belief_revision_required: '缺少版本号，请刷新后再操作',
+  belief_already_vetoed: '这条看法已经被否决了',
+  belief_not_vetoed: '只有被否决的看法才能恢复',
+  belief_repository_unavailable: '看法数据还没准备好',
+  belief_formed_by_reflection_only: '看法只能从她自己的经历里反思形成，不能手工新增',
+  legacy_readonly: '旧版数据只读，不能修改',
+  bot_id_required: '请先选择 Bot',
   belief_edit_command_unavailable: '暂时无法编辑该信念',
   belief_restore_command_unavailable: '暂时无法恢复该信念',
   anchored_belief_command_unavailable: '暂时无法为该信念挂接锚点',

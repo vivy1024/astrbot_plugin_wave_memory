@@ -28,7 +28,7 @@ RESERVED_DB_IDS = frozenset({"bot", "default", "system", "all", "none"})
 
 # 允许按 Bot 覆盖模型的后台任务：只有以 Bot 自己口吻/视角产出内容的任务。
 # 任务 id 与 services/llm_routing.py 的 TASKS 一致（那边有测试核对）。
-BOT_MODEL_TASKS = ("meta_thinking", "bookkeeping", "diary", "portrait")
+BOT_MODEL_TASKS = ("meta_thinking", "bookkeeping", "diary", "portrait", "belief_reflection")
 
 
 class BotProfileError(ValueError):
@@ -206,7 +206,7 @@ class BotProfile:
     interest_keywords: list[str] = field(default_factory=list)
     # ---- v6 ----
     enabled: bool = True
-    # 这个 Bot 的默认模型：只作用于 BOT_MODEL_TASKS（内心判断、事后记账、每日日记、关系小传），
+    # 这个 Bot 的默认模型：只作用于 BOT_MODEL_TASKS（内心判断、事后记账、每日日记、关系小传、信念反思），
     # 优先级低于下面按任务的覆盖、高于全局「模型分工」。留空跟随全局。
     model: str = ""
     # 按任务的模型覆盖 {任务 id: provider id}，只有 BOT_MODEL_TASKS 里的任务生效。

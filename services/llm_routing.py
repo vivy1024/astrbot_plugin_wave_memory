@@ -103,12 +103,6 @@ TASKS: tuple[TaskSpec, ...] = (
         consumers=("被纠正后的自省",),
     ),
     TaskSpec(
-        "belief", "信念引擎", "tag",
-        "信念引擎持有这个客户端，但当前版本没有发起模型调用（信念改由对话中的模型现场提审）；配置它不会产生调用。",
-        "[BeliefEngine]",
-        consumers=("BeliefEngine（当前无调用）",),
-    ),
-    TaskSpec(
         "tag_audit", "标签审计", "tag",
         "标签页手动触发的标签质量审计（维护任务）。旧实现只用标签模型本身、不走回退链，留空时保持不变。",
         "[TagAudit]",
@@ -143,11 +137,17 @@ TASKS: tuple[TaskSpec, ...] = (
     ),
     TaskSpec(
         "portrait", "关系小传", "meta",
-        "为每个群友写关系摘要（预留，功能在另一分支实现）。",
+        "为每个群友写关系小传：读此人公开场合的印象时间线，以 Bot 视角写摘要（Learning_Settings.relationship_portrait_enabled）。",
         "[Portrait]",
-        consumers=("关系小传（预留）",),
+        consumers=("关系小传（后台生成与管理台重新生成）",),
         bot_overridable=True,
-        reserved=True,
+    ),
+    TaskSpec(
+        "belief_reflection", "信念反思", "meta",
+        "每日日记写完后，Bot 回想这段时间的群聊日记与回复反馈，形成、印证或放下自己的看法（Learning_Settings.belief_reflection_enabled）。",
+        "[BeliefReflection]",
+        consumers=("信念反思（每日日记之后）",),
+        bot_overridable=True,
     ),
 )
 

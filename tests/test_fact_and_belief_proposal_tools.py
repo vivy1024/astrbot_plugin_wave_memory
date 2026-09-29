@@ -6,9 +6,7 @@ from types import SimpleNamespace
 
 from domain.scope import RuntimeScope, SessionRef
 from engine.database import WaveMemoryDB
-from services.belief_lifecycle import BeliefLifecycleService
 from tools.fact_proposal import WaveMemoryProposeFactTool
-from tools.belief_proposal import WaveMemoryProposeBeliefTool
 
 
 def _group_scope(group: str = "group-100", subject: str = "qq:user:u1") -> RuntimeScope:
@@ -154,104 +152,3 @@ def test_fact_proposal_in_private_chat_stays_in_that_private_chat(tmp_path: Path
     assert db.list_scoped_facts(other_private) == []
     assert db.list_bot_scoped_facts(_group_scope(), keywords=["小明"]) == [], "私聊事实不进入 Bot 级公开事实"
     db.close()
-
-
-def test_belief_proposal_requires_at_least_two_approved_facts(tmp_path: Path):
-    db_path = tmp_path / "belief_facts.db"
-    db = WaveMemoryDB(str(db_path))
-    scope = _group_scope()
-    tool = WaveMemoryProposeBeliefTool(db=db)
-    ctx = _context_wrapper(scope)
-
-    # 1. 传少于 2 条直接拒绝
-    res = asyncio.run(tool.call(
-        ctx,
-        belief_type="person_judgment",
-        content="小明很可靠",
-        grounding_evidence="根据观察",
-        source_fact_ids=[1],
-    ))
-    assert "至少两条已审核事实" in res
-
-    # 2. 插入 2 条事实但为 pending 状态，仍然拒绝
-    f1 = db.scoped_knowledge.upsert_scoped_fact(scope, subject="小明", predicate="协助调试", object="代码", status="pending")
-    f2 = db.scoped_knowledge.upsert_scoped_fact(scope, subject="小明", predicate="通宵排查", object="死锁", status="pending")
-    res_pending = asyncio.run(tool.call(
-        ctx,
-        belief_type="person_judgment",
-        content="小明很可靠",
-        grounding_evidence="根据观察",
-        source_fact_ids=[f1, f2],
-    ))
-    assert "必须是当前群内至少两条已批准事实" in res_pending
-
-    # 3. 事实批准为 approved 后，提审成功
-    db.conn.execute("UPDATE scoped_facts SET status='approved' WHERE id IN (?, ?)", (f1, f2))
-    db.conn.commit()
-
-    res_ok = asyncio.run(tool.call(
-        ctx,
-        belief_type="person_judgment",
-        content="小明表面言辞犀利，但在朋友遇到技术难关时从不推脱",
-        grounding_evidence="已由两条技术协助事实证实",
-        source_fact_ids=[f1, f2],
-    ))
-    assert "已成功提审信念" in res_ok
-
-    beliefs = db.scoped_knowledge.list_scoped_beliefs(scope)
-    assert len(beliefs) == 1
-    b = beliefs[0]
-    assert b["status"] == "pending"
-    assert b["provenance"]["source_fact_ids"] == [f1, f2]
-
-    # 4. 同一组事实换个说法再提：更新原信念，不新增（线上曾一天出现 3 对重复）
-    res_again = asyncio.run(tool.call(
-        ctx,
-        belief_type="person_judgment",
-        content="小明嘴上不饶人，朋友卡住时总会帮忙",
-        grounding_evidence="同样两条技术协助事实",
-        source_fact_ids=[f2, f1],
-    ))
-    assert "信念" in res_again
-    beliefs = db.scoped_knowledge.list_scoped_beliefs(scope)
-    assert len(beliefs) == 1
-    assert beliefs[0]["content"] == "小明嘴上不饶人，朋友卡住时总会帮忙"
-
-
-def test_belief_lifecycle_transition_approves_when_backed_by_approved_facts(tmp_path: Path):
-    db_path = tmp_path / "belief_trans.db"
-    db = WaveMemoryDB(str(db_path))
-    scope = _group_scope()
-
-    # 写入一条支撑记忆
-    mem_id = db.add_memory(scope.session.conversation_id, "昨晚小明帮我通宵调代码", sender_id="u1", scope=scope)
-    f1 = db.scoped_knowledge.upsert_scoped_fact(scope, subject="小明", predicate="协助调试", object="代码", status="approved", source_memory_id=mem_id)
-    f2 = db.scoped_knowledge.upsert_scoped_fact(scope, subject="小明", predicate="通宵排查", object="死锁", status="approved", source_memory_id=mem_id)
-
-    tool = WaveMemoryProposeBeliefTool(db=db)
-    ctx = _context_wrapper(scope)
-    asyncio.run(tool.call(
-        ctx,
-        belief_type="person_judgment",
-        content="小明在技术求助时极度热心",
-        grounding_evidence="两条已批准事实",
-        source_fact_ids=[f1, f2],
-    ))
-
-    b_id = db.scoped_knowledge.list_scoped_beliefs(scope)[0]["id"]
-    lifecycle = BeliefLifecycleService(db.scoped_knowledge)
-
-    # 1. 事实批准状态被废止（如 superseded），则拒绝审核通过
-    db.conn.execute("UPDATE scoped_facts SET status='superseded' WHERE id=?", (f1,))
-    db.conn.commit()
-    try:
-        lifecycle.transition(scope, b_id, "approve")
-        assert False, "should fail when approved facts < 2"
-    except ValueError as exc:
-        assert "belief_facts_required" in str(exc)
-
-    # 2. 事实恢复为 approved，审核顺利通过为 active
-    db.conn.execute("UPDATE scoped_facts SET status='approved' WHERE id=?", (f1,))
-    db.conn.commit()
-    res = lifecycle.transition(scope, b_id, "approve")
-    assert res["status"] == "active"

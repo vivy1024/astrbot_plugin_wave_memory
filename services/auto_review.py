@@ -1,12 +1,13 @@
-"""自动审核：事实、信念、黑话在有证据时直接转正（配置 Learning_Settings.auto_approve_enabled，默认关闭）。
+"""自动审核：事实、黑话在有证据时直接转正（配置 Learning_Settings.auto_approve_enabled，默认关闭）。
 
-v5 起这三类知识只能由人在 WebUI 逐条批准，线上长期无人审：事实堆在待审，信念要求「≥2 条已批准事实」
-永远建不起来，黑话连批准所需的证据字段都没有。开启后按下面的规则自动处理，不满足规则的仍留给人工：
+v5 起这些知识只能由人在 WebUI 逐条批准，线上长期无人审：事实堆在待审，黑话连批准所需的证据字段都没有。
+开启后按下面的规则自动处理，不满足规则的仍留给人工：
 
 - 事实：有支撑原话、原话定位到了本群记忆、原话里没有未解释的黑话 → 走与 WebUI 同一个审核命令批准。
   与已有事实冲突时审核命令会落 ``conflict``（不生效），仍需人工裁决。
-- 信念：走 WebUI 同一个转正流程（要求 ≥2 条已批准事实或 ≥2 条经历证据）。
 - 黑话：本群至少 ``jargon_min_memories`` 条记忆、``jargon_min_senders`` 位不同发言人用过这个词。
+
+信念不在这里：信念 v2 由每日日记之后的反思形成，形成即生效（管理台可一键否决），不需要逐条审核。
 
 审核失败不影响提审本身：原记录保持待审。
 """
@@ -101,31 +102,6 @@ class AutoReviewer:
         except Exception as exc:
             self._count("fact_error")
             logger.warning(f"[WaveMemory] 事实自动审核失败（保持待审）: {exc!r}")
-            return None
-
-    # ─── 信念 ───
-
-    def review_belief(self, scope: RuntimeScope, belief_id: int) -> str | None:
-        if not self.enabled:
-            return None
-        repo = getattr(self.db, "scoped_knowledge", None)
-        if repo is None:
-            return None
-        try:
-            try:
-                from .belief_lifecycle import BeliefLifecycleService
-            except ImportError:  # pragma: no cover
-                from services.belief_lifecycle import BeliefLifecycleService
-            result = BeliefLifecycleService(repo).transition(scope, int(belief_id), "approve", actor=ACTOR)
-            status = str(result.get("status") or "")
-            self._count(f"belief_{status or 'unknown'}")
-            return status or None
-        except ValueError as exc:  # 证据不足等：保持待审
-            self._count(f"belief_skipped_{exc}")
-            return None
-        except Exception as exc:
-            self._count("belief_error")
-            logger.warning(f"[WaveMemory] 信念自动审核失败（保持待审）: {exc!r}")
             return None
 
     # ─── 黑话 ───

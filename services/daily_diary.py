@@ -10,6 +10,7 @@
 - 记忆库（source=experience），检索时能直接找到。
 
 同一群同一天只写一篇（按经历时间线里当天是否已有日记判断，重启不会重复写）。
+每写完一轮就通知监听方（``add_pass_listener``）：信念反思接在这里，保证在当天日记写完之后进行。
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ import json
 import re
 import time
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 try:
     from astrbot.api import logger
@@ -86,16 +87,35 @@ class DailyDiaryService:
         self.bot_name_for = bot_name_for or (lambda bot_id: bot_id)
         self.group_name_for = group_name_for or (lambda bot_id, group_id: group_id)
         self.stats: dict[str, int] = {}
+        self._pass_listeners: list[Callable[[float], Awaitable[Any]]] = []
 
     def _count(self, key: str) -> None:
         self.stats[key] = self.stats.get(key, 0) + 1
+
+    def add_pass_listener(self, listener: Callable[[float], Awaitable[Any]]) -> None:
+        """每写完一轮日记后调用 ``listener(now)``（信念反思接在这里）；监听方出错不影响日记。"""
+        self._pass_listeners.append(listener)
+
+    async def run_pass(self, *, now: float | None = None) -> int:
+        """写一轮到期的日记，然后通知监听方：日记写完之后才轮到反思。"""
+        stamp = float(now if now is not None else time.time())
+        written = await self.write_due(now=stamp)
+        for listener in list(self._pass_listeners):
+            try:
+                await listener(stamp)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._count("listener_error")
+                logger.warning(f"[WaveMemory] 日记之后的处理失败: {exc!r}")
+        return written
 
     async def loop(self) -> None:
         await asyncio.sleep(300)
         while True:
             try:
                 if datetime.now().hour >= self.hour:
-                    await self.write_due()
+                    await self.run_pass()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

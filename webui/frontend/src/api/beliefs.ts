@@ -1,195 +1,125 @@
 import { fetchJson } from './client'
-import type { EvidenceRef, ObjectRefDescriptor, PageResponse } from '@/components/shared/types'
 
-export type BeliefType = 'self_identity' | 'person_judgment' | 'world_view' | 'preference'
-
-export interface ScopedSelection {
-  bot_id: string
-  session_id: string
-  visibility: 'group'
-}
+/** 信念 v2：Bot 本人从经历里形成的看法（按 Bot，不按群）。legacy_archived 是只读的旧版人物判断。 */
+export type BeliefStatus = 'sprout' | 'formed' | 'stable' | 'shaken' | 'faded' | 'vetoed' | 'legacy_archived'
+export type BeliefCategory = 'self' | 'group' | 'thing' | 'world'
 
 export interface BeliefActionAvailability {
   available: boolean
   reason_code: string | null
 }
 
-export interface BeliefGatingSummary {
-  decision: 'direct' | 'pending' | 'quarantine' | null
-  reason_code: string | null
-  trust: number | null
-  hostility: number | null
-  subjects: string[]
-  policy_version: string | null
-  review_required: boolean
-  unknown_subjects: string[]
-  relationship_revisions: Record<string, number>
+/** 依据日记：链接到具体日记（经历时间线节点编号 + 日期 + 群）。 */
+export interface BeliefDiaryRef {
+  diary_id: number
+  date: string
+  session_id: string
+  group_name: string
+  title: string
+  polarity?: 'support' | 'challenge'
+}
+
+export interface BeliefHistoryItem {
+  id: number
+  event_type: string
+  label: string
+  from_status: BeliefStatus | null
+  to_status: BeliefStatus | null
+  from_label: string | null
+  to_label: string | null
+  reason: string
+  actor: string
+  occurred_at: number
+  evidence: BeliefDiaryRef[]
 }
 
 export interface BeliefItem {
   id: number
-  belief_key: string
-  content: string
-  type: BeliefType
-  status: 'pending' | 'active' | 'archived' | 'quarantined'
-  confidence: number | null
-  confidence_components: Record<string, number> | null
-  confidence_policy_version: string | null
-  confidence_evidence?: Record<string, number | null>
-  gating: BeliefGatingSummary
-  anchor_sentence: string | null
-  evidence_health: 'available' | 'unavailable' | 'quarantined' | 'unknown'
-  quarantine_reason: string | null
+  key: string
+  legacy: boolean
   bot_id: string
-  session_id: string
-  visibility: 'group'
-  evidence: EvidenceRef[]
-  object_ref: ObjectRefDescriptor | null
-  revision: number
-  actions: Record<'approve' | 'archive' | 'restore' | 'delete', BeliefActionAvailability>
-  updated_at?: number
-}
-
-export interface BeliefFilters extends ScopedSelection {
-  limit: 25 | 50 | 100
-  offset: number
-  type?: BeliefType
-  status?: string
-  search?: string
-  evidence_health?: string
-}
-
-export interface BeliefCapability {
-  available: boolean
-  reason_code: string | null
-  actions?: Array<'approve' | 'archive'>
-}
-
-export interface BeliefsResponse extends PageResponse<BeliefItem> {
-  scope: { kind: string; payload: unknown }
-  capabilities: {
-    lifecycle: BeliefCapability
-    batch_lifecycle: BeliefCapability
-    evidence: BeliefCapability
-    create: BeliefCapability
-    edit: BeliefCapability
-    physical_delete: BeliefCapability
-    select_all_matching: BeliefCapability
-  }
-}
-
-export interface BeliefEvidenceMessage {
-  id: number
-  group_id: string | null
-  sender_id: string | null
-  sender_name: string | null
   content: string
-  timestamp: number
-  role: 'before' | 'anchor' | 'after'
+  category: BeliefCategory | null
+  category_label: string | null
+  status: BeliefStatus
+  status_label: string
+  strength?: number
+  support_days?: number
+  support_dates?: string[]
+  confirm_runs?: number
+  challenge_count?: number
+  triggers?: string[]
+  experience_phrase?: string | null
+  first_seen_at?: number | null
+  last_confirmed_at?: number | null
+  status_changed_at?: number | null
+  updated_at?: number | null
+  created_at?: number | null
+  revision?: number
+  legacy_type?: string
+  legacy_type_label?: string
+  legacy_status?: string | null
+  session_id?: string | null
+  evidence: BeliefDiaryRef[]
+  history: BeliefHistoryItem[]
+  actions: Record<'veto' | 'restore', BeliefActionAvailability>
 }
 
-export interface BeliefEvidencePayload {
-  ok: boolean
-  belief: Pick<BeliefItem, 'id' | 'content' | 'type' | 'revision'>
-  scope: { kind: string; payload: unknown }
-  anchor: BeliefEvidenceMessage | null
-  messages: BeliefEvidenceMessage[]
-  memories: BeliefEvidenceMessage[]
-  support_anchors: Array<BeliefEvidenceMessage & { polarity?: 'support' | 'challenge' }>
-  challenge_anchors: Array<BeliefEvidenceMessage & { polarity?: 'support' | 'challenge' }>
-  relationship_events: Array<Record<string, unknown>>
-  episodes: Array<Record<string, unknown>>
-  used_fallback: boolean
-  reason_code: string | null
+export interface BeliefGroup {
+  status: BeliefStatus
+  label: string
+  description: string
+  count: number
+  items: BeliefItem[]
+}
+
+export interface BeliefReflectionRun {
+  id: number
+  run_date: string
+  status: string
+  attempts: number
+  diary_ids: number[]
+  counts: Record<string, number>
+  error: string
+  started_at: number
+  finished_at: number | null
+}
+
+export interface BeliefsResponse {
+  bot_id: string
+  groups: BeliefGroup[]
+  counts: Partial<Record<BeliefStatus, number>>
+  policy: { form_min_days: number; stable_min_days: number; decay_days: number; max_active: number }
+  reflection: {
+    enabled: boolean
+    every_n_days: number | null
+    last_run: BeliefReflectionRun | null
+    recent_runs: BeliefReflectionRun[]
+  }
+  capabilities: Record<'veto' | 'restore' | 'create' | 'edit' | 'physical_delete', BeliefActionAvailability>
+  generated_at: number
 }
 
 export interface MutationResult {
   ok: boolean
   operation: { kind: string; status: string; id?: string }
   revision: number | string | null
-  item?: { id: number; status: string }
+  item?: BeliefItem
 }
 
-function scopeEnvelope(scope: ScopedSelection) {
-  const [platform_id, kind, conversation_id] = scope.session_id.split(':', 3)
-  return {
-    kind: 'RuntimeScope',
-    payload: {
-      bot_id: scope.bot_id,
-      visibility: scope.visibility,
-      session: { id: scope.session_id, platform_id, kind, conversation_id },
-      subject_principal_id: null,
-    },
-  }
+export function listBeliefs(botId: string, init?: { signal?: AbortSignal }): Promise<BeliefsResponse> {
+  const params = new URLSearchParams({ bot_id: botId })
+  return fetchJson<BeliefsResponse>(`/api/beliefs?${params.toString()}`, { signal: init?.signal })
 }
 
-export function listBeliefs(filters: BeliefFilters): Promise<BeliefsResponse> {
-  const params = new URLSearchParams({
-    bot_id: filters.bot_id,
-    session_id: filters.session_id,
-    visibility: filters.visibility,
-    limit: String(filters.limit),
-    offset: String(filters.offset),
-  })
-  if (filters.type) params.set('type', filters.type)
-  if (filters.status) params.set('status', filters.status)
-  if (filters.search) params.set('search', filters.search)
-  if (filters.evidence_health) params.set('evidence_health', filters.evidence_health)
-  return fetchJson<BeliefsResponse>(`/api/beliefs?${params.toString()}`)
-}
-
-export function getBeliefEvidence(item: BeliefItem, scope: ScopedSelection, before = 15, after = 15): Promise<BeliefEvidencePayload> {
-  if (!item.object_ref?.ref) throw new Error('该信念没有服务端签发的 ObjectRef，不能安全读取证据')
-  const params = new URLSearchParams({
-    bot_id: scope.bot_id,
-    session_id: scope.session_id,
-    visibility: scope.visibility,
-    ref: item.object_ref.ref,
-    before: String(before),
-    after: String(after),
-  })
-  return fetchJson<BeliefEvidencePayload>(`/api/beliefs/${item.id}/evidence?${params.toString()}`)
-}
-
-export function batchTransitionBeliefs(items: BeliefItem[], action: 'approve' | 'archive', scope: ScopedSelection): Promise<{
-  ok: boolean
-  operation: { kind: string; status: string }
-  transitioned_count: number
-  items: Array<{ id: number; status: string }>
-}> {
-  if (!items.length || items.some((item) => !item.object_ref?.ref)) throw new Error('批量操作要求每条信念都带有服务端签发的 ObjectRef')
-  return fetchJson<{
-    ok: boolean
-    operation: { kind: string; status: string }
-    transitioned_count: number
-    items: Array<{ id: number; status: string }>
-  }>('/api/beliefs/commands/batch-lifecycle', {
+function transitionBelief(item: BeliefItem, action: 'veto' | 'restore', botId: string, reason = ''): Promise<MutationResult> {
+  if (item.legacy || item.revision === undefined) throw new Error('旧版信念只读，不能在这里修改')
+  return fetchJson<MutationResult>(`/api/beliefs/${item.id}/${action}`, {
     method: 'POST',
-    body: JSON.stringify({
-      scope: scopeEnvelope(scope),
-      action,
-      items: items.map((item) => ({ id: item.id, object_ref: item.object_ref, revision: item.revision })),
-    }),
+    // 带上读到的版本号：别处改过（比如反思刚更新）时服务端返回 409，不会覆盖
+    body: JSON.stringify({ bot_id: botId, revision: item.revision, reason }),
   })
 }
 
-function transitionBelief(item: BeliefItem | number, action: 'approve' | 'archive', scope: ScopedSelection): Promise<MutationResult> {
-  const id = typeof item === 'number' ? item : item.id
-  const objectRef = typeof item === 'number' ? null : item.object_ref
-  const revision = typeof item === 'number' ? null : item.revision
-  // Keep the historical client call shape for source compatibility; the server
-  // rejects this branch with object_ref_revision_required instead of mutating.
-  if (!objectRef) {
-    return fetchJson<MutationResult>(`/api/beliefs/${id}/${action}`, {
-      method: 'POST',
-      body: JSON.stringify({ scope: scopeEnvelope(scope) }),
-    })
-  }
-  return fetchJson<MutationResult>(`/api/beliefs/${id}/${action}`, {
-    method: 'POST',
-    body: JSON.stringify({ scope: scopeEnvelope(scope), object_ref: objectRef, revision }),
-  })
-}
-
-export const approveBelief = (item: BeliefItem | number, scope: ScopedSelection) => transitionBelief(item, 'approve', scope)
-export const archiveBelief = (item: BeliefItem | number, scope: ScopedSelection) => transitionBelief(item, 'archive', scope)
+export const vetoBelief = (item: BeliefItem, botId: string, reason = '') => transitionBelief(item, 'veto', botId, reason)
+export const restoreBelief = (item: BeliefItem, botId: string) => transitionBelief(item, 'restore', botId)

@@ -1,28 +1,75 @@
-"""Beliefs Blueprint — 信念管理 CRUD + approve/archive (US-1.2)"""
+"""Beliefs Blueprint — 信念 v2：Bot 自己从经历里形成的看法（按状态分组查看、否决 / 恢复）。
+
+- ``GET /api/beliefs/?bot_id=<db_id>``：按状态分组（萌芽 / 已形成 / 稳固 / 动摇中 / 已淡出 / 已否决 /
+  已归档），每条带依据日记与完整历史；旧版 scoped 信念只读列在「已归档（旧版人物判断）」里。
+- ``POST /api/beliefs/<id>/veto`` / ``restore``：带上读到的 ``revision``，版本对不上返回 409。
+  写入全部委托 ``BeliefLifecycleService``，本文件不写 SQL。
+- 形成的看法默认自动生效，不再有逐条审核；旧的 scoped 审核/归档接口与旧 beliefs 表的批量改动一律 410。
+"""
 
 from __future__ import annotations
 
 import json
+import time
 from functools import wraps
+from typing import Any
 
-from quart import Blueprint, current_app, jsonify, request
+from quart import Blueprint, jsonify, request
 
-from ..api_contract import error_payload, mutation_response, page_response
+from ..api_contract import error_payload, mutation_response
 from ..container import get_container
 from ..middleware.auth import require_auth
 
 try:
-    from ...domain.scope import RuntimeScope, ScopeCodec, ScopeValidationError, SessionRef
-    from ...engine.db.scoped_knowledge_repo import ScopedKnowledgeScopeError
-    from ...services.belief_engine import is_episode_backed, is_fact_backed
-    from ...services.belief_lifecycle import BeliefLifecycleService
+    from ...engine.db.bot_belief_repo import BeliefRevisionConflict
+    from ...services.belief_engine import describe_experiences
+    from ...services.belief_lifecycle import (
+        CATEGORY_LABELS,
+        EVENT_LABELS,
+        LEGACY_ARCHIVED,
+        STATUS_LABELS,
+        STATUSES,
+        VETOED,
+        BeliefAdminError,
+        BeliefLifecycleService,
+        BeliefPolicy,
+        compute_strength,
+    )
 except ImportError:  # pragma: no cover - plugin root may be imported directly
-    from domain.scope import RuntimeScope, ScopeCodec, ScopeValidationError, SessionRef
-    from engine.db.scoped_knowledge_repo import ScopedKnowledgeScopeError
-    from services.belief_engine import is_episode_backed, is_fact_backed
-    from services.belief_lifecycle import BeliefLifecycleService
+    from engine.db.bot_belief_repo import BeliefRevisionConflict
+    from services.belief_engine import describe_experiences
+    from services.belief_lifecycle import (
+        CATEGORY_LABELS,
+        EVENT_LABELS,
+        LEGACY_ARCHIVED,
+        STATUS_LABELS,
+        STATUSES,
+        VETOED,
+        BeliefAdminError,
+        BeliefLifecycleService,
+        BeliefPolicy,
+        compute_strength,
+    )
 
 beliefs_bp = Blueprint("beliefs", __name__, url_prefix="/api/beliefs")
+
+GROUP_ORDER = (*STATUSES, LEGACY_ARCHIVED)
+GROUP_DESCRIPTIONS = {
+    "sprout": "只出现过一次，还不会在聊天里浮现",
+    "formed": "在不同日子的经历里被印证过，话题相关时会浮现",
+    "stable": "持续被印证，话题相关时会浮现",
+    "shaken": "遇到反例或很久没被印证，暂不浮现",
+    "faded": "被推翻、长期没被印证或超出上限，不再浮现",
+    "vetoed": "管理员否决；之后不会再生成相似的看法",
+    LEGACY_ARCHIVED: "旧版由事后记账从事实归纳的人物判断，只读保留，不注入",
+}
+_LEGACY_TYPE_LABELS = {
+    "self_identity": "自我身份",
+    "person_judgment": "人物判断",
+    "world_view": "世界观",
+    "preference": "偏好",
+}
+_EVIDENCE_LIMIT = 12
 
 
 def _table_exists(conn, table: str) -> bool:
@@ -35,7 +82,6 @@ def _table_exists(conn, table: str) -> bool:
 
 # 需要排除的 archived_reason（身份污染 / 清理标记）
 _EXCLUDED_REASONS = ("identity_roleplay_contamination", "identity_cleanup_full")
-_VALID_BELIEF_TYPES = {"self_identity", "person_judgment", "world_view", "preference"}
 _LEGACY_BELIEF_TYPE_MAP = {
     "self": "self_identity",
     "other": "person_judgment",
@@ -83,11 +129,6 @@ def _scope_error(code: str, status: int):
     return jsonify({"error": {"code": code}}), status
 
 
-def _scope_failure(exc: Exception):
-    code = getattr(exc, "reason_code", None) or getattr(exc, "code", None) or "invalid_scope"
-    return _scope_error(str(code), 400 if code in {"scope_required", "pagination_required", "object_ref_revision_required"} else 422)
-
-
 def _legacy_mutation_disabled(handler):
     """Keep unresolved legacy rows auditable but permanently non-mutable in formal APIs."""
     @wraps(handler)
@@ -96,409 +137,314 @@ def _legacy_mutation_disabled(handler):
     return reject
 
 
-def _scoped_repo(container):
-    repo = getattr(getattr(container, "db", None), "scoped_knowledge", None)
-    if repo is None:
-        raise ScopedKnowledgeScopeError("scoped_repository_unavailable")
-    return repo
+# ─────────────────────────── 信念 v2 ───────────────────────────
+
+def _error(code: str, message: str, status: int):
+    return jsonify(error_payload(code, message)), status
 
 
-def _group_scope_from_query() -> RuntimeScope:
-    required = ("bot_id", "session_id", "visibility")
-    if any(request.args.get(field) is None for field in required):
-        raise ScopedKnowledgeScopeError("scope_required")
-    bot_id, session_id, visibility = (request.args.get(field) for field in required)
-    if visibility != "group":
-        raise ScopedKnowledgeScopeError("derived_scope_visibility_unsupported")
-    try:
-        platform_id, kind, conversation_id = str(session_id).split(":", 2)
-    except ValueError as exc:
-        raise ScopeValidationError("invalid_session_id", "session_id must be canonical") from exc
-    return RuntimeScope(str(bot_id), visibility, SessionRef(str(session_id), platform_id, kind, conversation_id))
+def _repo(container):
+    db = getattr(container, "db", None)
+    return getattr(db, "bot_beliefs", None) if db is not None else None
 
 
-def _scope_from_envelope(body: dict) -> RuntimeScope:
-    if "scope" not in body:
-        raise ScopedKnowledgeScopeError("scope_required")
-    scope = ScopeCodec.from_dict(body["scope"])
-    if not isinstance(scope, RuntimeScope) or scope.visibility != "group":
-        raise ScopedKnowledgeScopeError("derived_scope_visibility_unsupported")
-    return scope
+def _policy(container) -> BeliefPolicy:
+    policy = getattr(container, "belief_policy", None)
+    return policy if isinstance(policy, BeliefPolicy) else BeliefPolicy()
 
 
-def _pagination_from_query() -> tuple[int, int]:
-    try:
-        limit = int(request.args.get("limit", 25))
-        offset = int(request.args.get("offset", 0))
-    except (TypeError, ValueError) as exc:
-        raise ScopedKnowledgeScopeError("invalid_pagination") from exc
-    if limit not in {25, 50, 100} or offset < 0:
-        raise ScopedKnowledgeScopeError("invalid_pagination")
-    return limit, offset
+def _bot_id(value: Any) -> str:
+    return str(value or "").strip()
 
 
-def _item_revision(item: dict) -> int:
-    return max(1, int(float(item.get("updated_at") or item.get("created_at") or 1) * 1000))
-
-
-def _object_ref_registry():
-    try:
-        return current_app.extensions.get("wave_api_contract", {}).get("object_refs")
-    except RuntimeError:
-        return None
-
-
-def _scope_query(scope: RuntimeScope) -> dict:
-    query = {"bot_id": scope.bot_id, "visibility": scope.visibility}
-    if scope.session is not None:
-        query["session_id"] = scope.session.id
-    if scope.subject_principal_id:
-        query["subject_principal_id"] = scope.subject_principal_id
-    return query
-
-
-def _item_object_ref(item: dict, scope: RuntimeScope) -> dict | None:
-    registry = _object_ref_registry()
-    if registry is None:
-        return None
-    revision = _item_revision(item)
-    locator = int(item["id"])
-    ref = registry.issue(kind="belief", locator=locator, scope=scope, revision=revision)
+def _history_item(event: dict) -> dict:
     return {
-        "ref": ref,
-        "kind": "belief",
-        "locator": locator,
-        "scope_key": scope.session.id if scope.session else scope.bot_id,
-        "scope_query": _scope_query(scope),
-        "version": revision,
+        "id": event.get("id"),
+        "event_type": event.get("event_type"),
+        "label": EVENT_LABELS.get(str(event.get("event_type") or ""), str(event.get("event_type") or "")),
+        "from_status": event.get("from_status") or None,
+        "to_status": event.get("to_status") or None,
+        "from_label": STATUS_LABELS.get(str(event.get("from_status") or "")),
+        "to_label": STATUS_LABELS.get(str(event.get("to_status") or "")),
+        "reason": event.get("reason") or "",
+        "actor": event.get("actor") or "",
+        "occurred_at": event.get("occurred_at"),
+        "evidence": list(event.get("evidence") or []),
     }
 
 
-def _require_object_ref(body: dict, *, kind: str, locator: int, scope: RuntimeScope, item: dict) -> None:
-    """变更必须携带列表签发的 opaque ref 与同一 revision。"""
-    descriptor = body.get("object_ref") or body.get("ref")
-    ref = descriptor.get("ref") if isinstance(descriptor, dict) else descriptor
-    try:
-        revision = int(body.get("revision"))
-    except (TypeError, ValueError) as exc:
-        raise ScopedKnowledgeScopeError("object_ref_revision_required") from exc
-    registry = _object_ref_registry()
-    binding = registry.resolve(ref, kind=kind, locator=locator, request_scope=scope) if registry else None
-    if binding is None or binding.revision != revision or _item_revision(item) != revision:
-        raise ScopedKnowledgeScopeError("object_ref_stale")
+def _evidence_from_history(history: list[dict]) -> list[dict]:
+    """依据日记（最新在前，按日记去重）；标出是印证还是反例。"""
+    seen: set[Any] = set()
+    out: list[dict] = []
+    for event in reversed(history):
+        polarity = "challenge" if event.get("event_type") == "challenged" else "support"
+        for ref in event.get("evidence") or []:
+            key = (ref.get("diary_id"), polarity)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({**ref, "polarity": polarity})
+            if len(out) >= _EVIDENCE_LIMIT:
+                return out
+    return out
 
 
-def _find_scoped_belief(repo, scope: RuntimeScope, belief_id: int) -> dict:
-    for row in repo.list_scoped_beliefs(scope, limit=10000):
-        if row.get("id") == belief_id:
-            return row
-    raise LookupError("scoped_object_not_found")
-
-
-def _query_trace_valid(container, scope: RuntimeScope, body: dict) -> bool:
-    trace_id = str(body.get("query_trace_id") or "").strip()
-    store = getattr(container, "injection_trace_store", None)
-    if not trace_id or store is None:
-        return False
-    try:
-        return store.get_for_scope(trace_id, scope) is not None
-    except Exception:
-        return False
-
-
-def _memory_evidence_available(container, scope: RuntimeScope, source_memory_id) -> bool:
-    if source_memory_id is None or scope.session is None:
-        return False
-    conn = getattr(getattr(container, "db", None), "conn", None)
-    if conn is None:
-        return False
-    try:
-        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
-        required = {"id", "bot_id", "session_id", "visibility", "resolution_state", "quarantine"}
-        if not required <= columns:
-            return conn.execute(
-                "SELECT 1 FROM memories WHERE id=? AND (group_id=? OR session_id=?) "
-                "AND COALESCE(quarantine,0)=0 LIMIT 1",
-                (int(source_memory_id), scope.session.conversation_id, scope.session.id),
-            ).fetchone() is not None
-        row = conn.execute(
-            "SELECT 1 FROM memories WHERE id=? AND bot_id=? AND session_id=? AND visibility=? "
-            "AND resolution_state='resolved' AND COALESCE(quarantine,0)=0 LIMIT 1",
-            (int(source_memory_id), scope.bot_id, scope.session.id, scope.visibility),
-        ).fetchone()
-        if row is None and scope.visibility == "group":
-            row = conn.execute(
-                "SELECT 1 FROM memories WHERE id=? AND (group_id=? OR session_id=?) "
-                "AND COALESCE(visibility,'group')='group' "
-                "AND COALESCE(resolution_state,'resolved')='resolved' "
-                "AND COALESCE(quarantine,0)=0 LIMIT 1",
-                (int(source_memory_id), scope.session.conversation_id, scope.session.id),
-            ).fetchone()
-        return row is not None
-    except Exception:
-        return False
-
-
-def _context_count(value, default: int = 15) -> int:
-    try:
-        return max(0, min(50, int(value)))
-    except (TypeError, ValueError):
-        return default
-
-
-def _scoped_belief_evidence(container, scope: RuntimeScope, item: dict, *, before: int, after: int) -> dict:
-    """只在同一 RuntimeScope 内还原 Belief 的支持/反证经历与主锚点上下文。"""
-    evidence_polarity: dict[int, str] = {}
-    for evidence in item.get("evidence") or []:
-        if not isinstance(evidence, dict):
-            continue
-        try:
-            memory_id = int(evidence.get("id"))
-        except (TypeError, ValueError):
-            continue
-        if memory_id > 0:
-            evidence_polarity[memory_id] = str(evidence.get("polarity") or "support")
-    try:
-        source_memory_id = int(item.get("source_memory_id")) if item.get("source_memory_id") is not None else None
-    except (TypeError, ValueError):
-        source_memory_id = None
-    if source_memory_id is not None:
-        evidence_polarity.setdefault(source_memory_id, "support")
-    anchor_id = source_memory_id or next((memory_id for memory_id, polarity in evidence_polarity.items() if polarity == "support"), None) or next(iter(evidence_polarity), None)
-    base_payload = {
-        "ok": True,
-        "belief": {
-            "id": item.get("id"),
-            "content": item.get("content"),
-            "type": item.get("type"),
-            "revision": item.get("revision"),
+def _serialize(belief: dict, history: list[dict], *, policy: BeliefPolicy, now: float) -> dict:
+    status = str(belief.get("status") or "")
+    items = [_history_item(event) for event in history]
+    dates = list(belief.get("support_dates") or [])
+    return {
+        "id": int(belief["id"]),
+        "key": f"belief:{belief['id']}",
+        "legacy": False,
+        "bot_id": belief.get("bot_id"),
+        "content": belief.get("content"),
+        "category": belief.get("category"),
+        "category_label": CATEGORY_LABELS.get(str(belief.get("category") or ""), "关于世界"),
+        "status": status,
+        "status_label": STATUS_LABELS.get(status, status),
+        "strength": compute_strength(belief, now=now, policy=policy),
+        "support_days": len(dates),
+        "support_dates": dates,
+        "confirm_runs": int(belief.get("confirm_runs") or 0),
+        "challenge_count": int(belief.get("challenge_count") or 0),
+        "triggers": list(belief.get("triggers") or []),
+        "experience_phrase": describe_experiences(dates, now=now) if dates else None,
+        "first_seen_at": belief.get("first_seen_at"),
+        "last_confirmed_at": belief.get("last_confirmed_at"),
+        "status_changed_at": belief.get("status_changed_at"),
+        "updated_at": belief.get("updated_at"),
+        "revision": int(belief.get("revision") or 1),
+        "evidence": _evidence_from_history(items),
+        "history": items,
+        "actions": {
+            "veto": {"available": status != VETOED, "reason_code": None if status != VETOED else "belief_already_vetoed"},
+            "restore": {"available": status == VETOED, "reason_code": None if status == VETOED else "belief_not_vetoed"},
         },
-        "scope": ScopeCodec.to_dict(scope),
-        "anchor": None,
-        "messages": [],
-        "memories": [],
-        "support_anchors": [],
-        "challenge_anchors": [],
-        "relationship_events": [],
-        "episodes": [],
-        "used_fallback": True,
-        "reason_code": "belief_anchor_unavailable",
     }
-    conn = getattr(getattr(container, "db", None), "conn", None)
-    if conn is None or scope.session is None or anchor_id is None:
-        return base_payload
 
-    try:
-        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
-        required = {"id", "content", "timestamp", "bot_id", "session_id", "visibility", "resolution_state", "quarantine"}
-        if not required <= columns:
-            return base_payload
-        group_column = "group_id" if "group_id" in columns else "session_id"
-        sender_id_column = "sender_id" if "sender_id" in columns else "NULL"
-        sender_name_column = "sender_name" if "sender_name" in columns else "NULL"
-        select_columns = f"id, {group_column}, {sender_id_column}, {sender_name_column}, content, timestamp"
-        scope_where = (
-            "bot_id=? AND session_id=? AND visibility=? "
-            "AND resolution_state='resolved' AND COALESCE(quarantine,0)=0"
-        )
-        scope_params = (scope.bot_id, scope.session.id, scope.visibility)
-        anchor = conn.execute(
-            f"SELECT {select_columns} FROM memories WHERE id=? AND {scope_where} LIMIT 1",
-            (anchor_id, *scope_params),
-        ).fetchone()
-        if not anchor:
-            return base_payload
-        message_filter = " AND memory_type='message'" if "memory_type" in columns else ""
-        anchor_ts = float(anchor[5])
-        before_rows = conn.execute(
-            f"SELECT {select_columns} FROM memories WHERE {scope_where} AND timestamp < ?{message_filter} "
-            "ORDER BY timestamp DESC LIMIT ?",
-            (*scope_params, anchor_ts, before),
-        ).fetchall()
-        after_rows = conn.execute(
-            f"SELECT {select_columns} FROM memories WHERE {scope_where} AND timestamp > ?{message_filter} "
-            "ORDER BY timestamp ASC LIMIT ?",
-            (*scope_params, anchor_ts, after),
-        ).fetchall()
-        evidence_rows = []
-        if evidence_polarity:
-            marks = ",".join("?" for _ in evidence_polarity)
-            evidence_rows = conn.execute(
-                f"SELECT {select_columns} FROM memories WHERE id IN ({marks}) AND {scope_where} ORDER BY timestamp ASC",
-                (*evidence_polarity.keys(), *scope_params),
-            ).fetchall()
-    except Exception:
-        return base_payload
 
-    def row_to_message(row, role: str, polarity: str | None = None) -> dict:
-        payload = {
-            "id": row[0],
-            "group_id": row[1],
-            "sender_id": row[2],
-            "sender_name": row[3],
-            "content": row[4],
-            "timestamp": row[5],
-            "role": role,
-        }
-        if polarity:
-            payload["polarity"] = polarity
-        return payload
-
-    anchor_message = row_to_message(anchor, "anchor", evidence_polarity.get(int(anchor[0]), "support"))
-    messages = [
-        *[row_to_message(row, "before") for row in reversed(before_rows)],
-        anchor_message,
-        *[row_to_message(row, "after") for row in after_rows],
-    ]
-    support_anchors = []
-    challenge_anchors = []
-    for row in evidence_rows:
-        polarity = evidence_polarity.get(int(row[0]), "support")
-        target = support_anchors if polarity == "support" else challenge_anchors
-        target.append(row_to_message(row, "anchor", polarity))
+def _serialize_legacy(row: dict) -> dict:
+    provenance = row.get("provenance") if isinstance(row.get("provenance"), dict) else {}
+    belief_type = _normalize_belief_type(row.get("belief_type")) or "world_view"
     return {
-        **base_payload,
-        "anchor": anchor_message,
-        "messages": messages,
-        "memories": messages,
-        "support_anchors": support_anchors,
-        "challenge_anchors": challenge_anchors,
-        "used_fallback": False,
-        "reason_code": None,
+        "id": int(row["id"]),
+        "key": f"legacy:{row['id']}",
+        "legacy": True,
+        "bot_id": row.get("bot_id"),
+        "content": row.get("content"),
+        "category": None,
+        "category_label": None,
+        "legacy_type": belief_type,
+        "legacy_type_label": _LEGACY_TYPE_LABELS.get(belief_type, belief_type),
+        "legacy_status": provenance.get("legacy_status") or None,
+        "session_id": row.get("session_id"),
+        "status": LEGACY_ARCHIVED,
+        "status_label": STATUS_LABELS[LEGACY_ARCHIVED],
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "evidence": [],
+        "history": [],
+        "actions": {
+            "veto": {"available": False, "reason_code": "legacy_readonly"},
+            "restore": {"available": False, "reason_code": "legacy_readonly"},
+        },
     }
 
 
-def _belief_observations(repo, scope: RuntimeScope, belief_id: int | None = None) -> list[dict]:
-    getter = getattr(repo, "list_scoped_belief_observations", None)
-    if not callable(getter):
+def _legacy_rows(container, bot_id: str) -> list[dict]:
+    repo = getattr(getattr(container, "db", None), "scoped_knowledge", None)
+    lister = getattr(repo, "list_bot_scoped_beliefs", None)
+    if not callable(lister):
         return []
     try:
-        return list(getter(scope, belief_id=belief_id, limit=1000) or [])
-    except (TypeError, ValueError):
-        try:
-            return list(getter(scope, limit=1000) or [])
-        except Exception:
-            return []
+        return [dict(row, bot_id=bot_id) for row in lister(bot_id, status=LEGACY_ARCHIVED, limit=500) or []]
     except Exception:
         return []
 
 
-def _formal_belief(
-    row: dict,
-    scope: RuntimeScope,
-    *,
-    evidence_available: bool = False,
-    observations: list[dict] | None = None,
-) -> dict:
-    item = dict(row)
-    provenance = item.get("provenance") if isinstance(item.get("provenance"), dict) else {}
-    source_memory_id = item.get("source_memory_id")
-    item["type"] = _normalize_belief_type(item.pop("belief_type", "")) or "world_view"
-    item["confidence"] = item.get("strength")
-    item["confidence_components"] = provenance.get("confidence_components")
-    item["confidence_policy_version"] = provenance.get("confidence_policy_version")
-    item["confidence_evidence"] = provenance.get("confidence_evidence")
-    gating = provenance.get("gating") if isinstance(provenance.get("gating"), dict) else {}
-    item["gating"] = {
-        "decision": gating.get("decision"),
-        "reason_code": gating.get("reason_code"),
-        "trust": gating.get("effective_trust"),
-        "hostility": gating.get("effective_hostility"),
-        "subjects": list(gating.get("subjects") or []),
-        "policy_version": gating.get("policy_version"),
-        "review_required": bool(gating.get("review_required", item.get("status") != "active")),
-        "unknown_subjects": list(gating.get("unknown_subjects") or []),
-        "relationship_revisions": dict(gating.get("relationship_revisions") or {}),
-    }
-    item["anchor_sentence"] = provenance.get("anchor_sentence")
-    item["evidence_health"] = "available" if evidence_available else "unavailable"
-    item["quarantine_reason"] = provenance.get("quarantine_reason")
-    item["bot_id"] = scope.bot_id
-    item["session_id"] = scope.session.id if scope.session else None
-    item["visibility"] = scope.visibility
-    item["level"] = _belief_level(item.get("strength"))
-    item["revision"] = _item_revision(item)
-    evidence: list[dict] = []
-    seen_memory_ids: set[int] = set()
-    for observation in observations or []:
-        polarity = str(observation.get("polarity") or "support")
-        summary = "支持经历" if polarity == "support" else "反证经历"
-        for raw_memory_id in observation.get("memory_ids") or []:
-            try:
-                memory_id = int(raw_memory_id)
-            except (TypeError, ValueError):
-                continue
-            if memory_id <= 0 or memory_id in seen_memory_ids:
-                continue
-            seen_memory_ids.add(memory_id)
-            evidence.append({
-                "type": "memory",
-                "id": str(memory_id),
-                "source_scope": scope.session.id if scope.session else scope.bot_id,
-                "availability": "available" if evidence_available else "unavailable",
-                "summary": f"{summary} · {observation.get('window_key') or '未记录窗口'}",
-                "polarity": polarity,
-                "object_ref": None,
-            })
-    if evidence_available and source_memory_id is not None and not evidence:
-        evidence.append({
-            "type": "memory",
-            "id": str(source_memory_id),
-            "source_scope": scope.session.id if scope.session else scope.bot_id,
-            "availability": "available",
-            "summary": item.get("anchor_sentence") or "Belief 的同 Scope 来源锚点",
-            "polarity": "support",
-            "object_ref": None,
-        })
-    item["evidence"] = evidence
-    item["observation_count"] = len(observations or [])
-    item["object_ref"] = _item_object_ref(item, scope)
-    fact_backed = is_fact_backed(_scoped_repo(get_container()), scope, provenance)
-    can_activate = item.get("status") in {"pending", "quarantined"} and fact_backed
-    approve_reason = None if can_activate else "belief_facts_required"
-    item["actions"] = {
-        "approve": {"available": can_activate, "reason_code": approve_reason},
-        "archive": {"available": item.get("status") != "archived", "reason_code": None if item.get("status") != "archived" else "invalid_belief_transition"},
-        "restore": {"available": False, "reason_code": "belief_restore_command_unavailable"},
-        "delete": {"available": False, "reason_code": "physical_delete_disabled"},
-    }
-    return item
-
-
-def _deep_link_error(state: str):
-    return jsonify(error_payload("not_found", "Resource not found")), 404
-
-
-def _resolve_belief_detail(scope: RuntimeScope, *, locator: int | None = None):
-    ref = request.args.get("ref")
-    if not ref:
-        return None, (jsonify(error_payload("object_ref_required", "Object reference is required")), 400)
-    registry = _object_ref_registry()
-    if registry is None:
-        return None, _deep_link_error("not-found")
-    binding, state = registry.resolve_with_state(
-        ref,
-        kind="belief",
-        locator=locator,
-        request_scope=scope,
-    )
-    if binding is None:
-        return None, _deep_link_error(state)
+def _reflection_summary(container, repo, bot_id: str) -> dict:
+    service = getattr(container, "belief_reflection", None)
+    runs = []
     try:
-        belief_id = int(binding.locator)
-        row = _find_scoped_belief(_scoped_repo(get_container()), scope, belief_id)
-    except (LookupError, TypeError, ValueError):
-        return None, _deep_link_error("not-found")
-    if _item_revision(row) != binding.revision:
-        return None, _deep_link_error("version-stale")
+        runs = repo.list_runs(bot_id, limit=5)
+    except Exception:
+        runs = []
+    return {
+        "enabled": bool(service is not None and getattr(service, "enabled", False)),
+        "every_n_days": getattr(service, "every_n_days", None) if service is not None else None,
+        "last_run": runs[0] if runs else None,
+        "recent_runs": runs,
+    }
+
+
+def build_beliefs_payload(container, bot_id: str, *, now: float | None = None) -> dict:
+    """按状态分组的只读视图；也供测试直接调用。"""
+    repo = _repo(container)
+    policy = _policy(container)
+    stamp = float(now if now is not None else time.time())
+    beliefs = repo.list_beliefs(bot_id, limit=2000)
+    events = repo.list_events(bot_id, belief_ids=[b["id"] for b in beliefs], limit=10000) if beliefs else []
+    by_belief: dict[int, list[dict]] = {}
+    for event in events:
+        by_belief.setdefault(int(event["belief_id"]), []).append(event)
+    items_by_status: dict[str, list[dict]] = {status: [] for status in GROUP_ORDER}
+    for belief in beliefs:
+        item = _serialize(belief, by_belief.get(int(belief["id"]), []), policy=policy, now=stamp)
+        items_by_status.setdefault(item["status"], []).append(item)
+    for status in GROUP_ORDER:
+        items_by_status[status].sort(key=lambda item: (-(item.get("strength") or 0.0), -(item.get("updated_at") or 0.0)))
+    items_by_status[LEGACY_ARCHIVED] = [_serialize_legacy(row) for row in _legacy_rows(container, bot_id)]
+    groups = [
+        {
+            "status": status,
+            "label": STATUS_LABELS[status],
+            "description": GROUP_DESCRIPTIONS[status],
+            "count": len(items_by_status.get(status, [])),
+            "items": items_by_status.get(status, []),
+        }
+        for status in GROUP_ORDER
+    ]
+    return {
+        "bot_id": bot_id,
+        "groups": groups,
+        "counts": {group["status"]: group["count"] for group in groups},
+        "policy": {
+            "form_min_days": policy.form_min_days,
+            "stable_min_days": policy.stable_min_days,
+            "decay_days": policy.decay_days,
+            "max_active": policy.max_active,
+        },
+        "reflection": _reflection_summary(container, repo, bot_id),
+        "capabilities": {
+            "veto": {"available": True, "reason_code": None},
+            "restore": {"available": True, "reason_code": None},
+            "create": {"available": False, "reason_code": "belief_formed_by_reflection_only"},
+            "edit": {"available": False, "reason_code": "belief_edit_command_unavailable"},
+            "physical_delete": {"available": False, "reason_code": "physical_delete_disabled"},
+        },
+        "generated_at": stamp,
+    }
+
+
+@beliefs_bp.route("/", methods=["GET"])
+@require_auth
+async def list_beliefs():
+    """Bot 的看法，按状态分组；每条带依据日记与历史。"""
+    bot_id = _bot_id(request.args.get("bot_id"))
+    if not bot_id:
+        return _error("bot_id_required", "bot_id 必填（BotProfile.db_id）", 400)
     container = get_container()
-    item = _formal_belief(
-        row,
-        scope,
-        evidence_available=_memory_evidence_available(container, scope, row.get("source_memory_id")),
-        observations=_belief_observations(_scoped_repo(container), scope, int(row.get("id") or 0)),
-    )
-    return item, None
+    if _repo(container) is None:
+        return _error("belief_repository_unavailable", "信念数据还没准备好", 503)
+    return jsonify(build_beliefs_payload(container, bot_id))
+
+
+@beliefs_bp.route("/<int:belief_id>", methods=["GET"])
+@require_auth
+async def get_belief(belief_id: int):
+    bot_id = _bot_id(request.args.get("bot_id"))
+    if not bot_id:
+        return _error("bot_id_required", "bot_id 必填（BotProfile.db_id）", 400)
+    container = get_container()
+    repo = _repo(container)
+    if repo is None:
+        return _error("belief_repository_unavailable", "信念数据还没准备好", 503)
+    belief = repo.get_belief(bot_id, belief_id)
+    if belief is None:
+        return _error("belief_not_found", "找不到这条看法", 404)
+    item = _serialize(belief, repo.list_events(bot_id, belief_ids=[belief_id]), policy=_policy(container), now=time.time())
+    return jsonify({"item": item})
+
+
+async def _transition(belief_id: int, action: str):
+    body = await request.get_json(silent=True) or {}
+    bot_id = _bot_id(body.get("bot_id"))
+    if not bot_id:
+        return _error("bot_id_required", "bot_id 必填（BotProfile.db_id）", 400)
+    container = get_container()
+    repo = _repo(container)
+    if repo is None:
+        return _error("belief_repository_unavailable", "信念数据还没准备好", 503)
+    service = BeliefLifecycleService(repo, _policy(container))
+    try:
+        if action == "veto":
+            belief = service.veto(bot_id, belief_id, revision=body.get("revision"),
+                                  reason=str(body.get("reason") or "")[:200])
+        else:
+            belief = service.restore(bot_id, belief_id, revision=body.get("revision"))
+    except BeliefRevisionConflict:
+        return _error("belief_revision_conflict", "这条看法刚被改过，请刷新后再操作", 409)
+    except BeliefAdminError as exc:
+        status = {"belief_not_found": 404, "belief_revision_required": 400}.get(exc.code, 409)
+        return _error(exc.code, "当前状态不允许这个操作", status)
+    item = _serialize(belief, repo.list_events(bot_id, belief_ids=[belief_id]), policy=_policy(container), now=time.time())
+    return jsonify(mutation_response(
+        operation_kind=f"belief.{action}", status="succeeded", revision=item["revision"],
+        item=item, include_item=True,
+    ))
+
+
+@beliefs_bp.route("/<int:belief_id>/veto", methods=["POST"])
+@require_auth
+async def veto_belief(belief_id: int):
+    """一键否决：不再浮现，内容被记住，以后不再生成相似的看法。"""
+    return await _transition(belief_id, "veto")
+
+
+@beliefs_bp.route("/<int:belief_id>/restore", methods=["POST"])
+@require_auth
+async def restore_belief(belief_id: int):
+    """撤销否决：回到否决前的状态。"""
+    return await _transition(belief_id, "restore")
+
+
+@beliefs_bp.route("/", methods=["POST"])
+@require_auth
+async def create_belief():
+    """看法只能从 Bot 自己的经历里反思形成，WebUI 不能手工创建。"""
+    return _scope_error("anchored_belief_command_unavailable", 503)
+
+
+@beliefs_bp.route("/<int:belief_id>", methods=["PUT"])
+@require_auth
+async def edit_belief(belief_id: int):
+    """自由编辑会让看法脱离经历依据，因此正式 API 禁用。"""
+    return _scope_error("belief_edit_command_unavailable", 503)
+
+
+@beliefs_bp.route("/<int:belief_id>", methods=["DELETE"])
+@require_auth
+async def delete_belief(belief_id: int):
+    """看法只允许否决，不允许物理删除（历史与否决记忆都要保留）。"""
+    return _scope_error("physical_delete_disabled", 410)
+
+
+# ─────────────────────────── 旧数据：只读 / 已停用 ───────────────────────────
+
+@beliefs_bp.route("/<int:belief_id>/approve", methods=["POST"])
+@require_auth
+@_legacy_mutation_disabled
+async def approve_belief(belief_id: int):
+    """旧 scoped 信念的人工审核已停用：信念 v2 形成即生效，旧数据只读归档。"""
+    return _scope_error("legacy_mutation_disabled", 410)
+
+
+@beliefs_bp.route("/<int:belief_id>/archive", methods=["POST"])
+@require_auth
+@_legacy_mutation_disabled
+async def archive_belief(belief_id: int):
+    """旧 scoped 信念已统一归档为只读。"""
+    return _scope_error("legacy_mutation_disabled", 410)
+
+
+@beliefs_bp.route("/commands/batch-lifecycle", methods=["POST"])
+@require_auth
+@_legacy_mutation_disabled
+async def batch_transition_scoped_beliefs():
+    """旧 scoped 信念批量审核/归档已停用。"""
+    return _scope_error("legacy_mutation_disabled", 410)
 
 
 @beliefs_bp.route("/legacy/audit", methods=["GET"])
@@ -583,123 +529,6 @@ async def legacy_list_beliefs():
         "page": {"number": offset // limit + 1, "page_size": limit, "total": total,
                  "total_status": "exact", "has_next": offset + len(items) < total},
     })
-
-
-@beliefs_bp.route("/", methods=["GET"])
-@require_auth
-async def list_beliefs():
-    """正式 scoped beliefs 列表；使用统一 PageResponse。"""
-    try:
-        scope = _group_scope_from_query()
-        limit, offset = _pagination_from_query()
-        container = get_container()
-        repo = _scoped_repo(container)
-        rows = repo.list_scoped_beliefs(
-            scope, status=request.args.get("status"), limit=10000,
-        )
-        belief_type = _normalize_belief_type(request.args.get("type"))
-        search = (request.args.get("search") or "").strip()
-        if belief_type:
-            rows = [row for row in rows if _normalize_belief_type(row.get("belief_type")) == belief_type]
-        if search:
-            rows = [row for row in rows if search in str(row.get("content") or "")]
-        evidence_health_param = (request.args.get("evidence_health") or "").strip().lower()
-        if evidence_health_param in {"available", "unavailable", "quarantined", "unknown"}:
-            filtered_rows = []
-            for r in rows:
-                ev_ok = _memory_evidence_available(container, scope, r.get("source_memory_id"))
-                ev_health = "available" if ev_ok else "unavailable"
-                if ev_health == evidence_health_param:
-                    filtered_rows.append(r)
-            rows = filtered_rows
-        observations_by_belief: dict[int, list[dict]] = {}
-        for observation in _belief_observations(repo, scope):
-            try:
-                observations_by_belief.setdefault(int(observation.get("belief_id")), []).append(observation)
-            except (TypeError, ValueError):
-                continue
-        items = [
-            _formal_belief(
-                row,
-                scope,
-                evidence_available=_memory_evidence_available(container, scope, row.get("source_memory_id")),
-                observations=observations_by_belief.get(int(row.get("id") or 0), []),
-            )
-            for row in rows[offset:offset + limit]
-        ]
-        payload = page_response(items, total=len(rows), limit=limit, offset=offset)
-        payload["scope"] = ScopeCodec.to_dict(scope)
-        payload["capabilities"] = {
-            "lifecycle": {"available": True, "actions": ["approve", "archive"], "reason_code": None},
-            "batch_lifecycle": {"available": True, "actions": ["approve", "archive"], "reason_code": None},
-            "evidence": {"available": True, "reason_code": None},
-            "create": {"available": False, "reason_code": "anchored_belief_command_unavailable"},
-            "edit": {"available": False, "reason_code": "belief_edit_command_unavailable"},
-            "physical_delete": {"available": False, "reason_code": "physical_delete_disabled"},
-            "archive_legacy": {"available": False, "reason_code": "legacy_mutation_disabled"},
-            "select_all_matching": {"available": False, "reason_code": "object_ref_batch_required"},
-        }
-        return jsonify(payload)
-    except (ScopeValidationError, ScopedKnowledgeScopeError, TypeError, ValueError) as exc:
-        return _scope_failure(exc)
-
-
-@beliefs_bp.route("/resolve", methods=["GET"])
-@require_auth
-async def resolve_belief():
-    """仅凭 opaque ObjectRef 与显式当前 Scope 解析详情，不接受裸 ID。"""
-    try:
-        scope = _group_scope_from_query()
-        item, failure = _resolve_belief_detail(scope)
-        if failure is not None:
-            return failure
-        return jsonify({"item": item, "resolution": {"state": "ready"}})
-    except (ScopeValidationError, ScopedKnowledgeScopeError, TypeError, ValueError) as exc:
-        return _scope_failure(exc)
-
-
-@beliefs_bp.route("/<int:belief_id>", methods=["GET"])
-@require_auth
-async def get_belief(belief_id: int):
-    """使用 ObjectRef+当前 Scope+canonical revision 读取单条详情。"""
-    try:
-        scope = _group_scope_from_query()
-        item, failure = _resolve_belief_detail(scope, locator=belief_id)
-        if failure is not None:
-            return failure
-        return jsonify({"item": item, "resolution": {"state": "ready"}})
-    except (ScopeValidationError, ScopedKnowledgeScopeError, TypeError, ValueError) as exc:
-        return _scope_failure(exc)
-
-
-@beliefs_bp.route("/<int:belief_id>/evidence", methods=["GET"])
-@require_auth
-async def get_scoped_belief_evidence(belief_id: int):
-    """按 ObjectRef 与完整 RuntimeScope 还原正式信念的同 Scope 证据。"""
-    try:
-        scope = _group_scope_from_query()
-        item, failure = _resolve_belief_detail(scope, locator=belief_id)
-        if failure is not None:
-            return failure
-        before = _context_count(request.args.get("before"), 15)
-        after = _context_count(request.args.get("after"), 15)
-        return jsonify(_scoped_belief_evidence(get_container(), scope, item, before=before, after=after))
-    except (ScopeValidationError, ScopedKnowledgeScopeError, TypeError, ValueError) as exc:
-        return _scope_failure(exc)
-
-
-@beliefs_bp.route("/", methods=["POST"])
-@require_auth
-async def create_belief():
-    """没有 candidate→evidence→QualityGate 命令时禁止 WebUI 手工创建正式信念。"""
-    return _scope_error("anchored_belief_command_unavailable", 503)
-
-
-@beliefs_bp.route("/<int:belief_id>", methods=["PUT"])
-@require_auth
-async def edit_belief(belief_id: int):
-    """自由编辑会绕过 confidence/evidence policy，因此正式 API 禁用。"""
-    return _scope_error("belief_edit_command_unavailable", 503)
 
 
 @beliefs_bp.route("/legacy/<int:belief_id>/evidence", methods=["GET"])
@@ -803,108 +632,6 @@ async def legacy_belief_evidence(belief_id: int):
         "scope": None,
         "readonly": True,
     })
-
-
-@beliefs_bp.route("/<int:belief_id>/approve", methods=["POST"])
-@require_auth
-async def approve_belief(belief_id: int):
-    """审核通过 scoped belief；证据只接受同 Scope 的 source_memory_id。"""
-    body = await request.get_json(silent=True) or {}
-    try:
-        scope = _scope_from_envelope(body)
-        container = get_container()
-        repo = _scoped_repo(container)
-        current = _find_scoped_belief(repo, scope, belief_id)
-        _require_object_ref(body, kind="belief", locator=belief_id, scope=scope, item=current)
-        if not _memory_evidence_available(container, scope, current.get("source_memory_id")):
-            return _scope_error("belief_anchor_unavailable", 422)
-        result = BeliefLifecycleService(repo, getattr(container, "injection_trace_store", None)).transition(scope, belief_id, "approve", query_trace_id=body.get("query_trace_id"))
-        return jsonify(mutation_response(
-            operation_kind="belief.approve", status="succeeded", revision=None,
-            item=result, include_item=True,
-        ))
-    except LookupError:
-        return _scope_error("scoped_object_not_found", 404)
-    except (ScopeValidationError, ScopedKnowledgeScopeError, TypeError, ValueError) as exc:
-        return _scope_failure(exc)
-
-
-@beliefs_bp.route("/<int:belief_id>/archive", methods=["POST"])
-@require_auth
-async def archive_belief(belief_id: int):
-    """归档 scoped 信念。"""
-    body = await request.get_json(silent=True) or {}
-    try:
-        scope = _scope_from_envelope(body)
-        repo = _scoped_repo(get_container())
-        current = _find_scoped_belief(repo, scope, belief_id)
-        _require_object_ref(body, kind="belief", locator=belief_id, scope=scope, item=current)
-        result = BeliefLifecycleService(repo).transition(scope, belief_id, "archive")
-        return jsonify(mutation_response(
-            operation_kind="belief.archive", status="succeeded", revision=None,
-            item=result, include_item=True,
-        ))
-    except LookupError:
-        return _scope_error("scoped_object_not_found", 404)
-    except (ScopeValidationError, ScopedKnowledgeScopeError, TypeError, ValueError) as exc:
-        return _scope_failure(exc)
-
-
-@beliefs_bp.route("/commands/batch-lifecycle", methods=["POST"])
-@require_auth
-async def batch_transition_scoped_beliefs():
-    """批量迁移当前页签发的信念；先全量校验，再执行领域命令。"""
-    body = await request.get_json(silent=True) or {}
-    try:
-        scope = _scope_from_envelope(body)
-        action = str(body.get("action") or "")
-        entries = body.get("items")
-        if action not in {"approve", "archive"}:
-            raise ScopedKnowledgeScopeError("invalid_belief_transition")
-        if not isinstance(entries, list) or not entries or len(entries) > 100:
-            raise ScopedKnowledgeScopeError("invalid_batch_items")
-
-        container = get_container()
-        repo = _scoped_repo(container)
-        validated: list[dict] = []
-        seen: set[int] = set()
-        for entry in entries:
-            if not isinstance(entry, dict):
-                raise ScopedKnowledgeScopeError("invalid_batch_item")
-            belief_id = int(entry.get("id"))
-            if belief_id in seen:
-                continue
-            seen.add(belief_id)
-            current = _find_scoped_belief(repo, scope, belief_id)
-            _require_object_ref(entry, kind="belief", locator=belief_id, scope=scope, item=current)
-            if action == "approve":
-                if current.get("status") not in {"pending", "quarantined"}:
-                    raise ScopedKnowledgeScopeError("invalid_belief_transition")
-                if not is_fact_backed(repo, scope, current.get("provenance")) and not is_episode_backed(repo, scope, current.get("provenance")):
-                    raise ScopedKnowledgeScopeError("belief_facts_required")
-            elif current.get("status") == "archived":
-                raise ScopedKnowledgeScopeError("invalid_belief_transition")
-            validated.append(current)
-
-        lifecycle = BeliefLifecycleService(repo, getattr(container, "injection_trace_store", None))
-        results = [lifecycle.transition(scope, int(current["id"]), action, query_trace_id=body.get("query_trace_id")) for current in validated]
-        return jsonify({
-            "ok": True,
-            "operation": {"kind": f"belief.batch.{action}", "status": "succeeded"},
-            "transitioned_count": len(results),
-            "items": results,
-        })
-    except LookupError:
-        return _scope_error("scoped_object_not_found", 404)
-    except (ScopeValidationError, ScopedKnowledgeScopeError, TypeError, ValueError) as exc:
-        return _scope_failure(exc)
-
-
-@beliefs_bp.route("/<int:belief_id>", methods=["DELETE"])
-@require_auth
-async def delete_belief(belief_id: int):
-    """Belief 只允许生命周期归档，不允许物理删除。"""
-    return _scope_error("physical_delete_disabled", 410)
 
 
 @beliefs_bp.route("/batch-archive", methods=["POST"])

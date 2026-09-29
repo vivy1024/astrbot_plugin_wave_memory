@@ -43,6 +43,7 @@ from .db.migrations.scoped_fact_review import ensure_scoped_fact_review_schema
 from .db.migrations.bot_jargon import ensure_bot_jargon_schema
 from .db.migrations.person_timeline import ensure_person_timeline_schema
 from .db.migrations.shared_memory_grants import ensure_shared_memory_grants_schema
+from .db.migrations.bot_beliefs import archive_legacy_scoped_beliefs
 from .db.bot_jargon_repo import BotJargonRepository
 from .db.scoped_knowledge_repo import ScopedKnowledgeRepo
 from .db.scoped_learning_projection_repo import ScopedFewShotRepository
@@ -51,6 +52,7 @@ from .db.relationship_portrait_repo import RelationshipPortraitRepo
 from .db.person_identity_repo import PersonIdentityRepo
 from .db.bot_profile_repo import BotProfileRepo
 from .db.bot_mood_repo import BotMoodRepository
+from .db.bot_belief_repo import BotBeliefRepository
 from .db.config_override_repo import ConfigOverrideRepo
 from .db.scoped_soul_repo import ScopedSoulRepository
 from .db.shared_memory_grant_repo import SharedMemoryGrantRepository
@@ -92,6 +94,10 @@ class WaveMemoryDB:
             self._belief_repo = BeliefRepo(self._cm)
             # 仅创建新的 scoped_* 正式数据面；绝不回填或改写 legacy 表。
             ensure_scoped_derived_knowledge_schema(self._cm)
+            # 信念 v2：信念只来自反思；旧版 scoped_beliefs（事后记账从事实归纳）一律只读归档（幂等）
+            archived = archive_legacy_scoped_beliefs(self._cm)
+            if archived:
+                logger.info(f"[WaveMemory] 旧版信念已归档为只读: {archived} 条（不删除、不注入）")
             ensure_scoped_memory_tag_correction_schema(self._cm)
             ensure_scoped_tag_projection_schema(self._cm)
             ensure_scoped_tag_governance_schema(self._cm)
@@ -128,6 +134,8 @@ class WaveMemoryDB:
             self._bot_profiles = BotProfileRepo(self._cm)
             # 心情 v2：一个 Bot 一份心情（bot_mood_state / bot_mood_events，纯增量建表）
             self._bot_mood = BotMoodRepository(self._cm)
+            # 信念 v2：一个 Bot 自己的看法 + 状态变化历史 + 反思进度（纯增量建表）
+            self._bot_beliefs = BotBeliefRepository(self._cm)
             self._config_overrides = ConfigOverrideRepo(self._cm)
             self._fewshot_repository = ScopedFewShotRepository(self._cm, ensure_schema=False)
             self._injection_metrics = InjectionMetricStore(self._cm)
@@ -185,6 +193,11 @@ class WaveMemoryDB:
     def bot_mood(self) -> BotMoodRepository:
         """Bot 心情仓储：一个 Bot 一份心情 + 带来源的情绪事件流水。"""
         return self._bot_mood
+
+    @property
+    def bot_beliefs(self) -> BotBeliefRepository:
+        """信念 v2 仓储：Bot 本人从经历里形成的看法、历史与反思进度。"""
+        return self._bot_beliefs
 
     @property
     def config_overrides(self) -> ConfigOverrideRepo:

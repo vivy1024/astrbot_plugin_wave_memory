@@ -99,18 +99,15 @@ def test_reflection_trigger_aggregates_scoped_candidates():
     prompt = service.build_prompt(scope=group_scope(), message="小明还在考研吗", sender_id="u1")
     assert "关切 concern:1" in prompt
     assert "事实 fact:3" in prompt
-    # 下发的必须是 scoped_facts 里已批准事实的 id，而不是 scoped_beliefs 的 id。
-    assert "source_fact_ids=[3,5]" in prompt
-    assert "source_fact_ids=[8,9]" not in prompt
+    # 信念 v2 只来自日记之后的反思：现场反思不再下发信念提审底座与待审信念
+    assert "source_fact_ids" not in prompt
+    assert "待审信念" not in prompt and "belief:" not in prompt
     assert "待审黑话 jargon:4" in prompt
     assert "episode 不等于 social anchor" in prompt
 
 
-def test_belief_base_requires_approved_facts_not_active_beliefs():
-    """只有 active 信念、没有已批准事实时，不应产出信念提审底座提示。
-
-    这正是此前把 list_scoped_beliefs 误当成事实来源时无法察觉的分支。
-    """
+def test_belief_base_is_never_offered_even_with_approved_facts():
+    """信念不再由事实归纳：无论有没有已批准事实，都不产出信念提审底座提示。"""
     knowledge = _FakeKnowledge(
         approved_facts=[{"id": 3, "subject": "小明", "predicate": "备考", "object": "考研", "status": "pending"}],
         active_beliefs=[{"id": 8, "content": "他嘴硬但会帮忙"}, {"id": 9, "content": "他最近压力很大"}],
@@ -262,11 +259,11 @@ def test_prompt_exposes_exact_tool_names():
     prompt = service.build_prompt(scope=group_scope(), message="小明还在考研吗", sender_id="u1")
     for tool in (
         "wave_memory_propose_fact",
-        "wave_memory_propose_belief",
         "wave_memory_mark_cultural_moment",
         "wave_memory_note_social_anchor",
     ):
         assert tool in prompt, tool
+    assert "wave_memory_propose_belief" not in prompt, "信念提审工具已退役"
 
 
 def test_exposed_tool_names_actually_exist():

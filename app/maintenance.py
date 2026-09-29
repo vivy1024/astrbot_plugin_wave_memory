@@ -72,7 +72,6 @@ from ..services.concern_tracker import ConcernTracker
 from ..services.subjective_time import SubjectiveTime
 from ..services.desire_engine import DesireEngine
 from ..services.belief_engine import BeliefEngine
-from ..services.belief_emergence import BeliefEmergenceService
 from ..services.belief_gating import snapshot_from_relationship
 from ..services.proactive_audit import record_proactive_timeline
 from ..services.jargon.service import JargonService
@@ -927,7 +926,8 @@ class MaintenanceMixin:
     def _schedule_belief_tag_refresh(self, event) -> None:
         """Debounce Tag-driven evidence refresh onto one pending belief at a time."""
         engine = getattr(self, "belief_engine", None)
-        if engine is None:
+        # 信念 v2 的看法来自日记反思、不挂在标签证据上：新引擎没有这条刷新路径，旧 scoped 信念也已只读归档。
+        if engine is None or not callable(getattr(engine, "refresh_evidence_after_tags", None)):
             return
         payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}
         try:

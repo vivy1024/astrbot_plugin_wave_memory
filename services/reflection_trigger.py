@@ -17,11 +17,6 @@ from .experience_episodes import fetch_recent_episodes
 from .identity_safety import is_identity_contamination
 
 try:
-    from .belief_engine import APPROVED_FACT_STATUSES
-except ImportError:  # pragma: no cover - 插件根目录直接导入
-    from services.belief_engine import APPROVED_FACT_STATUSES
-
-try:
     from ..domain.scope import RuntimeScope, is_visible_scene, scene_key
 except ImportError:  # pragma: no cover
     from domain.scope import RuntimeScope, is_visible_scene, scene_key
@@ -168,7 +163,6 @@ class ReflectionTriggerService:
         footer = (
             "可选动作（按需调用，可零个或多个）："
             "提审事实 wave_memory_propose_fact（必须带 source_quote 支撑原话）；"
-            "提审信念 wave_memory_propose_belief（需绑定至少两条已批准事实）；"
             "群文化/梗 wave_memory_mark_cultural_moment（context_note 须完整说明出处原话与语境）；"
             "社交锚点 wave_memory_note_social_anchor；"
             "群友观感 wave_memory_record_social_impression（必须带群友真实原话 source_quote，无原话不记）；"
@@ -320,30 +314,6 @@ class ReflectionTriggerService:
                         accept("fact", f"事实 fact:{fact.get('id')} [{fact.get('status')}]: {blob[:100]}")
             except Exception as exc:
                 outcome.record_failure("fact", exc)
-
-            try:
-                # 信念提审的 source_fact_ids 只接受 scoped_facts 里 active/approved 的 id
-                # （见 belief_engine.approved_source_fact_ids）。这里过去误查 scoped_beliefs，
-                # 导致下发的是 belief id，模型拿去提审必然被拒。
-                approved = [
-                    item
-                    # 取足够多再筛：待审事实堆积时，最近 8 条可能全是 pending，已批准的被挤出窗口
-                for item in knowledge.list_scoped_facts(scope, limit=50)
-                    if str(item.get("status") or "") in APPROVED_FACT_STATUSES
-                ]
-                if len(approved) >= 2:
-                    ids = ",".join(str(item.get("id")) for item in approved[:3])
-                    accept("belief_base", f"已批准事实底座可用于信念提审 source_fact_ids=[{ids}]")
-            except Exception as exc:
-                outcome.record_failure("belief_base", exc)
-
-            try:
-                for belief in knowledge.list_scoped_beliefs(scope, status="pending", limit=2):
-                    content = str(belief.get("content") or "").strip()
-                    if content:
-                        accept("belief_pending", f"待审信念 belief:{belief.get('id')}: {content[:100]}")
-            except Exception as exc:
-                outcome.record_failure("belief_pending", exc)
 
             try:
                 for jargon in knowledge.list_scoped_jargon(scope, status="pending", limit=2):

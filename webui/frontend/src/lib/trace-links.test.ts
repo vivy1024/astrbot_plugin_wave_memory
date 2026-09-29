@@ -54,7 +54,7 @@ describe('trace-links 链接规则', () => {
   })
 
   it('信念、风格样例、心智状态只带作用域；人设类通道没有对象页', () => {
-    expect(traceItemLink('belief', {}, ctx)?.to).toBe('/beliefs?bot_id=yushu&session_id=%E7%BE%BD%E4%B9%A6%3Agroup%3A398291136&visibility=group')
+    expect(traceItemLink('belief', {}, ctx)?.to).toBe('/beliefs?bot_id=yushu')
     expect(traceItemLink('fewshot', {}, ctx)?.to.startsWith('/knowledge/style-examples?')).toBe(true)
     expect(traceItemLink('soul_state', {}, { botId: 'yushu' })?.to).toBe('/soul?bot_id=yushu')
     expect(traceItemLink('persona', {}, ctx)).toBeNull()

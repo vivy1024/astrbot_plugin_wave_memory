@@ -27,6 +27,7 @@ import {
 import { isRequestCancelled } from '@/api/client'
 import { useGlobalScope } from '@/app/global-scope'
 import { QueryState } from '@/components/shared/QueryState'
+import { BeliefChangesCard } from './BeliefChangesCard'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -110,6 +111,13 @@ const STATUS_LABELS: Record<string, string> = {
   rejected: '已驳回',
   archived: '已归档',
   recorded: '已记录',
+  // 信念 v2 的状态
+  sprout: '萌芽',
+  formed: '已形成',
+  stable: '稳固',
+  shaken: '动摇中',
+  faded: '已淡出',
+  vetoed: '已否决',
 }
 
 function statusLabel(status: string): string {
@@ -763,6 +771,7 @@ export function BotHomePage() {
         <MemoriesCard data={data} botId={botId} days={days} onRetry={reload} />
         <RelationshipsCard data={data} botId={botId} days={days} onRetry={reload} />
         <LearnedCard data={data} botId={botId} days={days} onRetry={reload} />
+        <BeliefChangesCard section={data.beliefs} botId={botId} onRetry={reload} />
         <RepliesCard data={data} botId={botId} onRetry={reload} />
       </div>
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
