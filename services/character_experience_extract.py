@@ -18,10 +18,10 @@ from dataclasses import dataclass
 from typing import Any
 
 try:
-    from ..domain.character_experience import EMOTIONS, normalize_content
+    from ..domain.character_experience import DEFAULT_PRONOUN, EMOTIONS, normalize_content, normalize_pronoun
     from .book_lore_workbench import split_chapters
 except ImportError:  # 仓库测试把插件根目录当顶层包
-    from domain.character_experience import EMOTIONS, normalize_content
+    from domain.character_experience import DEFAULT_PRONOUN, EMOTIONS, normalize_content, normalize_pronoun
     from services.book_lore_workbench import split_chapters
 
 MIN_SCENE_CHARS = 100
@@ -170,22 +170,41 @@ def clip_scene(text: str, max_chars: int = MAX_SCENE_CHARS) -> str:
 _EMOTION_TEXT = "/".join(EMOTIONS)
 
 
-def extract_prompts(*, name: str, aliases: Sequence[str], description: str, chapter_title: str, scene_text: str) -> tuple[str, str]:
-    """从原著提取：一个场景 → 1–3 条第一人称记忆。角色名、别名、设定全部来自参数。"""
+def _pronoun(value: str) -> str:
+    return normalize_pronoun(value) or DEFAULT_PRONOUN
+
+
+def pronoun_note(name: str, pronoun: str) -> str:
+    """提示词里说明怎么指代角色：她 / 他 / ta（ta 不假定性别）。"""
+    value = _pronoun(pronoun)
+    return f"指代{name}时用「{value}」" + ("，不假定性别" if value == "ta" else "")
+
+
+def extract_prompts(
+    *,
+    name: str,
+    aliases: Sequence[str],
+    description: str,
+    chapter_title: str,
+    scene_text: str,
+    pronoun: str = DEFAULT_PRONOUN,
+) -> tuple[str, str]:
+    """从原著提取：一个场景 → 1–3 条第一人称记忆。角色名、别名、代词、设定全部来自参数。"""
     alias_text = "、".join(_clean_names(aliases))
+    p = _pronoun(pronoun)
     system = (
         f"你是一个角色经历整理者。你的任务是把小说片段改写成「{name}」本人的第一人称记忆。\n\n"
-        f"角色：{name}" + (f"（别名：{alias_text}）" if alias_text else "") + "\n"
+        f"角色：{name}" + (f"（别名：{alias_text}）" if alias_text else "") + f"；{pronoun_note(name, p)}\n"
         f"角色设定：{description.strip() or '（未提供，按片段里的表现把握语气）'}\n\n"
         "规则：\n"
-        f"1. 用{name}的视角和语气重述这段经历，第一人称「我」；提到别人时用{name}平时对他们的称呼。\n"
+        f"1. 用{p}的视角和语气重述这段经历，第一人称「我」；提到别人时用{p}平时对他们的称呼。\n"
         "2. 保留关键情节、人物、情感；不要编造片段里没有的事。\n"
         "3. 语气符合上面的角色设定。\n"
         "4. 输出 1-3 条记忆，每条 50-150 字。\n"
         f"5. 如果片段里{name}只是被提到、没有实际参与或感受，输出空数组 []。\n"
         f"6. emotion 从这些标签里选一个：{_EMOTION_TEXT}。\n"
-        f"7. characters 写这段经历里与{name}有关的其他人物（原文名字）。\n"
-        f"8. 如果片段里能明确看出{name}此时的时间（如「高一上学期」「第三年春天」），写在 time；看不出就写空字符串。\n\n"
+        f"7. characters 写这段经历里与{p}有关的其他人物（原文名字）。\n"
+        f"8. 如果片段里能明确看出{p}此时的时间（如「高一上学期」「第三年春天」），写在 time；看不出就写空字符串。\n\n"
         "严格输出 JSON 数组，不要其他内容：\n"
         '[{"memory": "第一人称记忆文本", "emotion": "情感标签", "characters": ["涉及的其他人物"], "time": ""}]\n\n'
         "如果无法提取有效记忆，输出：[]"
@@ -213,17 +232,19 @@ def setting_excerpt(paragraphs: Sequence[str], basis: Iterable[int], *, limit: i
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def timeline_prompts(*, name: str, paragraphs: Sequence[str]) -> tuple[str, str]:
+def timeline_prompts(*, name: str, paragraphs: Sequence[str], pronoun: str = DEFAULT_PRONOUN) -> tuple[str, str]:
     """按设定起草人生时间线：阶段 + 关键事件，每个阶段注明依据的设定段落编号。"""
+    p = _pronoun(pronoun)
     system = (
-        f"你在为一个角色「{name}」整理她进入群聊之前的人生经历。下面给出她的设定，按段编号。\n"
-        "请按时间顺序起草她的人生时间线，分成 3-8 个阶段（如童年、求学、某次变故之后……），每个阶段写：\n"
+        f"你在为一个角色「{name}」整理{p}进入群聊之前的人生经历。下面给出{p}的设定，按段编号。\n"
+        f"请按时间顺序起草{p}的人生时间线，分成 3-8 个阶段（如童年、求学、某次变故之后……），每个阶段写：\n"
         "- title：阶段名（10 字以内）\n"
-        "- story_time：她自己的时间（如「七岁到十二岁」「第三年春」），看不出就写大致年龄段\n"
+        f"- story_time：{p}自己的时间（如「七岁到十二岁」「第三年春」），看不出就写大致年龄段\n"
         "- description：这一阶段的概况（60 字以内）\n"
         "- key_events：2-5 个关键事件，每个一句话，写成 {\"text\": \"事件\", \"basis\": [依据的设定段落编号]}\n"
         "- basis：这个阶段依据的设定段落编号数组；设定里没写、合理推演的填 []\n\n"
-        "要求：不要和设定矛盾；不要写她进群之后的事；设定没写的细节可以合理推演，但要少而克制。\n"
+        f"要求：不要和设定矛盾；不要写{p}进群之后的事；设定没写的细节可以合理推演，但要少而克制；"
+        f"文字里{pronoun_note(name, p)}。\n"
         '只输出 JSON，不要其他内容：{"stages": [{"title": "", "story_time": "", "description": "", '
         '"key_events": [{"text": "", "basis": [1]}], "basis": [1]}]}'
     )
@@ -239,10 +260,13 @@ def expand_prompts(
     stage_time: str,
     stage_description: str,
     event: str,
+    pronoun: str = DEFAULT_PRONOUN,
 ) -> tuple[str, str]:
     """把时间线上的一个关键事件展开成 1–3 条第一人称记忆。"""
+    p = _pronoun(pronoun)
     system = (
-        f"你是「{name}」本人，正在回忆自己进群之前的一段经历。\n"
+        f"你是「{name}」本人，正在回忆自己进群之前的一段经历。"
+        f"下面的设定是用第三人称写的，里面的{name}（{p}{'，不假定性别' if p == 'ta' else ''}）就是你自己。\n"
         f"写 1-3 条第一人称记忆，每条 50-150 字：像日记里的回忆，有具体的场景、细节和当时的感受；语气符合设定。\n"
         "不要和设定矛盾，不要写进群之后的事；设定没写的细节可以合理想象，但不要引入会改变人设的大事件。\n"
         f"emotion 从这些标签里选一个：{_EMOTION_TEXT}；characters 写涉及的其他人物（没有就空数组）。\n"

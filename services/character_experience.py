@@ -34,6 +34,7 @@ try:
         CharacterExperienceSettings,
         eligible_stage_keys,
         natural_key,
+        normalize_pronoun,
         stage_title_from_key,
     )
     from ..engine.db import fts_cjk
@@ -53,6 +54,7 @@ except ImportError:  # 仓库测试把插件根目录当顶层包
         CharacterExperienceSettings,
         eligible_stage_keys,
         natural_key,
+        normalize_pronoun,
         stage_title_from_key,
     )
     from engine.db import fts_cjk
@@ -396,6 +398,7 @@ class CharacterExperienceService:
             "settings": {
                 "enabled": settings.enabled,
                 "current_stage": settings.current_stage,
+                "pronoun": settings.pronoun,
                 "top_k": settings.top_k,
                 "max_chars": settings.max_chars,
                 "min_score": settings.min_score,
@@ -436,10 +439,12 @@ class CharacterExperienceService:
     def update_settings(self, bot_id: str, patch: Mapping[str, Any], *, expected_version: int, changed_by: str = "webui") -> Any:
         """改 Bot 资料的 ``character_experience`` 段（版本对不上抛 BotProfileConflict → 409）。"""
         profile = self._require_profile(bot_id)
-        allowed = {"enabled", "current_stage", "top_k", "max_chars", "min_score", "legacy_sources", "lore_categories"}
+        allowed = {"enabled", "current_stage", "pronoun", "top_k", "max_chars", "min_score", "legacy_sources", "lore_categories"}
         unknown = set(patch) - allowed
         if unknown:
             raise CharacterExperienceError("unknown_fields", f"不能修改这些字段：{', '.join(sorted(unknown))}")
+        if "pronoun" in patch and normalize_pronoun(patch.get("pronoun")) is None:
+            raise CharacterExperienceError("invalid_pronoun", "代词只能是 她 / 他 / ta")
         if "current_stage" in patch:
             key = str(patch.get("current_stage") or "").strip()
             if key and self.repo.get_stage(bot_id, key) is None:
@@ -902,13 +907,17 @@ class CharacterExperienceService:
             if scene.key in confirmed and scene.key not in by_request and (params["redo"] or scene.key not in processed)
         ]
         stages = await asyncio.to_thread(self.repo.list_stages, bot_id)
+        # 代词每次运行时读 Bot 资料：改了代词再续跑，剩下的场景就用新的
+        pronoun = self.settings_for(bot_id).pronoun
         totals = {"done": len(confirmed) - len(todo), "memories": 0, "empty": 0, "failed": 0}
         total = len(confirmed)
         consecutive_failures = 0
         stopped = False
         for start in range(0, len(todo), params["concurrency"]):
             batch = todo[start:start + params["concurrency"]]
-            outputs = await asyncio.gather(*(self._extract_scene(client, params, scene) for scene in batch), return_exceptions=True)
+            outputs = await asyncio.gather(
+                *(self._extract_scene(client, params, scene, pronoun=pronoun) for scene in batch), return_exceptions=True,
+            )
             for scene, output in zip(batch, outputs):
                 if isinstance(output, BaseException) or output is None:
                     error = output if isinstance(output, BaseException) else ValueError("unparseable_model_output")
@@ -942,10 +951,18 @@ class CharacterExperienceService:
         ).fetchall()
         return {str(row[0]) for row in rows}
 
-    async def _extract_scene(self, client: Any, params: Mapping[str, Any], scene: extract.Scene) -> list[dict[str, Any]] | None:
+    async def _extract_scene(
+        self,
+        client: Any,
+        params: Mapping[str, Any],
+        scene: extract.Scene,
+        *,
+        pronoun: str = extract.DEFAULT_PRONOUN,
+    ) -> list[dict[str, Any]] | None:
         system, user = extract.extract_prompts(
             name=params["name"], aliases=params["aliases"], description=params["description"],
             chapter_title=scene.title, scene_text=extract.clip_scene(scene.text, params["max_scene_chars"]),
+            pronoun=pronoun,
         )
         return extract.parse_memory_list(await self._chat(client, system, user))
 
@@ -992,7 +1009,9 @@ class CharacterExperienceService:
         if client is None:
             raise RuntimeError("character_experience_model_unavailable")
         paragraphs = extract.split_setting_paragraphs(str(payload.get("setting") or ""))
-        system, user = extract.timeline_prompts(name=str(payload.get("name") or ""), paragraphs=paragraphs)
+        system, user = extract.timeline_prompts(
+            name=str(payload.get("name") or ""), paragraphs=paragraphs, pronoun=self.settings_for(bot_id).pronoun,
+        )
         stages = extract.parse_timeline(await self._chat(client, system, user), paragraph_count=len(paragraphs))
         if not stages:
             raise RuntimeError("模型没有给出可用的时间线（输出不是约定的 JSON）；可以换个模型或改改设定再试")
@@ -1038,6 +1057,7 @@ class CharacterExperienceService:
                 key = extract.event_key(stage["stage_key"], event["text"])
                 if key in confirmed and key not in by_request:
                     todo.append((stage, index, event, key))
+        pronoun = self.settings_for(bot_id).pronoun
         totals = {"done": len(confirmed) - len(todo), "memories": 0, "empty": 0, "failed": 0}
         total = len(confirmed)
         consecutive_failures = 0
@@ -1048,7 +1068,7 @@ class CharacterExperienceService:
             system, user = extract.expand_prompts(
                 name=str(payload.get("name") or ""), setting=excerpt or setting[:3000],
                 stage_title=stage["title"], stage_time=stage["story_time"], stage_description=stage["description"],
-                event=event["text"],
+                event=event["text"], pronoun=pronoun,
             )
             try:
                 memories = extract.parse_memory_list(await self._chat(client, system, user))

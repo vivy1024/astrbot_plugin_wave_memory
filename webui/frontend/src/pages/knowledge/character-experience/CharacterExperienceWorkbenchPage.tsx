@@ -5,7 +5,9 @@ import { toast } from 'sonner'
 
 import {
   CANON_LABELS,
+  DEFAULT_PRONOUN,
   EMOTIONS,
+  PRONOUN_OPTIONS,
   SOURCE_KIND_LABELS,
   STATUS_LABELS,
   UNASSIGNED_STAGE,
@@ -22,6 +24,7 @@ import {
   type CanonLevel,
   type CharacterExperience,
   type CharacterOverview,
+  type CharacterPronoun,
   type ExperienceStatus,
   type RecallPreview,
 } from '@/api/characterExperience'
@@ -196,6 +199,13 @@ function CharacterSummary({ botId, overview, onChanged }: { botId: string; overv
           <span className="text-muted-foreground">
             {current ? `只会想起「${current.title}」及之前的经历` : settings.current_stage ? '当前时间点不在时间线里' : '没有时间点限制'}
           </span>
+          <label className="flex items-center gap-2">
+            <span className="text-muted-foreground">代词</span>
+            <select aria-label="代词" className={selectClass} value={settings.pronoun ?? DEFAULT_PRONOUN} disabled={busy}
+              onChange={(event) => void patch({ pronoun: event.target.value as CharacterPronoun }, '代词已更新：之后的提取、起草与展开都用它')}>
+              {PRONOUN_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
           {(Object.keys(STATUS_LABELS) as ExperienceStatus[]).map((key) => (

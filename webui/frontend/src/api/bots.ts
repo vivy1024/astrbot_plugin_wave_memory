@@ -1,4 +1,5 @@
 import { fetchJson } from './client'
+import { DEFAULT_PRONOUN, type CharacterPronoun } from './characterExperience'
 
 export type BindingHost = 'astrbot' | 'cortico' | 'bilibili'
 
@@ -71,6 +72,8 @@ export interface CharacterExperienceDto {
   enabled: boolean
   /** 当前时间点（时间线阶段 key）；空 = 不限，能想起所有阶段 */
   current_stage: string
+  /** 提取、起草、展开的提示词里指代角色用的代词（她 / 他 / ta，默认 ta）；旧资料没有这个字段时按默认值 */
+  pronoun?: CharacterPronoun
   top_k: number
   max_chars: number
   min_score: number
@@ -81,7 +84,7 @@ export interface CharacterExperienceDto {
 }
 
 export function emptyCharacterExperience(): CharacterExperienceDto {
-  return { enabled: false, current_stage: '', top_k: 3, max_chars: 600, min_score: 0.35, legacy_sources: [], lore_categories: [] }
+  return { enabled: false, current_stage: '', pronoun: DEFAULT_PRONOUN, top_k: 3, max_chars: 600, min_score: 0.35, legacy_sources: [], lore_categories: [] }
 }
 
 export interface BotProfileDto {

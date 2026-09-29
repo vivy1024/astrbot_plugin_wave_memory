@@ -111,9 +111,11 @@ def test_migration_imports_legacy_rows_once_and_enables_bot(tmp_path):
     settings = profile.character_experience
     assert settings.enabled and settings.current_stage == "arc02_书院求学", "当前时间点 = 最后一个阶段（她能想起全部）"
     assert settings.legacy_sources == ["bzz_experience"] and settings.lore_categories == ["白真真经历"]
+    assert settings.pronoun == "她", "开启角色经历时按映射把代词设为「她」"
     assert "bzz_experience" in bot_identity.taken_over_sources()
     assert "白真真经历" in bot_identity.personal_lore_categories()
     assert not registry.get("oc_other").character_experience.enabled
+    assert registry.get("oc_other").character_experience.pronoun == "ta", "别的 Bot 不受影响，仍是默认值"
 
     version = profile.version
     [again] = service.migrate_legacy()
@@ -145,6 +147,7 @@ def test_lore_only_library_still_registers_personal_category(tmp_path):
     assert report["status"] == "nothing_to_migrate" and report["lore_notes"] == 3
     settings = registry.get("baizz").character_experience
     assert settings.lore_categories == ["白真真经历"] and not settings.enabled
+    assert settings.pronoun == "ta", "没开启角色经历就不动代词"
     db.close()
 
 
@@ -193,6 +196,7 @@ def test_profile_update_retried_on_next_run_when_it_failed(tmp_path):
     )
     assert second["status"] == "applied" and second["profile_updated"] is True
     assert registry.get("baizz").character_experience.enabled
+    assert registry.get("baizz").character_experience.pronoun == "她", "补写配置时同样设代词"
     assert db.character_experiences.counts("baizz")["total"] == 4, "只补配置，不重复导入"
     db.close()
 

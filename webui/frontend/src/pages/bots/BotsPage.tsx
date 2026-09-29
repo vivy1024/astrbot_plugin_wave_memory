@@ -22,6 +22,7 @@ import {
   type CharacterExperienceDto,
   type MoodDto,
 } from '@/api/bots'
+import { DEFAULT_PRONOUN, PRONOUN_OPTIONS, type CharacterPronoun } from '@/api/characterExperience'
 import { isRequestCancelled } from '@/api/client'
 import { listProviders, type ProviderPayload } from '@/api/config'
 import { QueryState } from '@/components/shared'
@@ -178,6 +179,14 @@ function CharacterExperienceEditor({ value, onChange, dbId, isNew }: {
       </Field>
       <TextField id="bot-ce-stage" label="当前时间点（阶段 key）" value={value.current_stage} onChange={(v) => set('current_stage', v.trim())}
         placeholder="留空 = 不限" hint="只会想起这个阶段及之前的经历（避免剧透）。在角色经历工作台的时间线里点「设为当前时间点」更方便。" />
+      <Field className="gap-1">
+        <FieldLabel htmlFor="bot-ce-pronoun">代词</FieldLabel>
+        <select id="bot-ce-pronoun" className="h-9 rounded-md border bg-background px-2 text-sm" value={value.pronoun ?? DEFAULT_PRONOUN}
+          onChange={(event) => set('pronoun', event.target.value as CharacterPronoun)}>
+          {PRONOUN_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+        <FieldDescription>从原著提取、按设定起草时间线、展开经历的提示词里指代这个角色用的代词。默认 ta，不假定性别。</FieldDescription>
+      </Field>
       <NumberField id="bot-ce-topk" label="每次最多想起几条（1~10）" value={value.top_k} min={1} max={10} onChange={(v) => set('top_k', Math.round(v))} />
       <NumberField id="bot-ce-chars" label="注入上限（字）" value={value.max_chars} min={100} max={4000} onChange={(v) => set('max_chars', Math.round(v))}
         hint="一次注入的经历正文总字数上限。" />

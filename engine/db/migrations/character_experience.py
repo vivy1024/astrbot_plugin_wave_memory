@@ -122,9 +122,9 @@ def ensure_character_experience_schema(cm: ConnectionManager) -> None:
 
 # ─── v5 旧经历的迁移数据 ──────────────────────────────────────────────
 
-# 记忆表里的旧来源值 → 归属的 Bot 与书设库里对应的个人经历类别。
+# 记忆表里的旧来源值 → 归属的 Bot、书设库里对应的个人经历类别，以及开启角色经历时设的代词。
 LEGACY_CHARACTER_EXPERIENCES: dict[str, dict[str, str]] = {
-    "bzz_experience": {"bot_id": "baizz", "lore_category": "白真真经历"},
+    "bzz_experience": {"bot_id": "baizz", "lore_category": "白真真经历", "pronoun": "她"},
 }
 
 _NOTE_ID_RE = re.compile(r"_ch(\d+)_s(\d+)_(\d+)$")
@@ -310,12 +310,14 @@ def migrate_legacy_character_experiences(
     - 旧行不删除、不修改；由 Bot 配置 ``legacy_sources`` 让普通记忆召回不再返回它们；
     - 目标 Bot 还不存在时跳过且不写标记（之后建了 Bot 会在下次启动或管理台里再迁）；
     - 没有旧数据的库写一个「无需迁移」标记，之后启动不再扫描记忆表；
-    - 迁移完为该 Bot 开启角色经历、当前时间点设为最后一个阶段（等价于原来：她能想起全部）。
+    - 迁移完为该 Bot 开启角色经历、当前时间点设为最后一个阶段（等价于原来：能想起全部），
+      映射里写了代词（白真真是「她」）就一并设上。
     """
     reports: list[dict[str, Any]] = []
     for source, target in (mapping or LEGACY_CHARACTER_EXPERIENCES).items():
         bot_id = str(target.get("bot_id") or "")
         category = str(target.get("lore_category") or "")
+        pronoun = str(target.get("pronoun") or "")
         key = migration_key(source, bot_id)
         report: dict[str, Any] = {"key": key, "source": source, "bot_id": bot_id, "lore_category": category, "dry_run": dry_run}
         state = repo.get_migration(key)
@@ -337,6 +339,7 @@ def migrate_legacy_character_experiences(
                 profile_get, profile_save, bot_id,
                 enable=state.get("status") == "applied",
                 last_stage=str(previous.get("last_stage") or ""),
+                pronoun=pronoun,
                 sources=[source] if state.get("status") == "applied" else [],
                 categories=[category] if category and (state.get("status") == "applied" or previous.get("lore_notes")) else [],
             )
@@ -375,7 +378,7 @@ def migrate_legacy_character_experiences(
         repo.put_migration(key, "applied", {**report, "profile_updated": False})
         report["profile_updated"] = _update_profile(
             profile_get, profile_save, bot_id, enable=True, last_stage=last_stage,
-            sources=[source], categories=[category] if category else [],
+            sources=[source], categories=[category] if category else [], pronoun=pronoun,
         )
         repo.put_migration(key, "applied", report)
         reports.append({**report, "status": "applied"})
@@ -391,8 +394,9 @@ def _update_profile(
     last_stage: str,
     sources: Sequence[str],
     categories: Sequence[str],
+    pronoun: str = "",
 ) -> bool:
-    """为 Bot 开启角色经历、登记接管的旧来源与个人经历类别；版本冲突时重读重试一次。"""
+    """为 Bot 开启角色经历（顺带设代词）、登记接管的旧来源与个人经历类别；版本冲突时重读重试一次。"""
     for _attempt in range(2):
         profile = profile_get(bot_id)
         if profile is None:
@@ -403,6 +407,8 @@ def _update_profile(
             settings["enabled"] = True
             if last_stage:
                 settings["current_stage"] = last_stage
+            if pronoun:
+                settings["pronoun"] = pronoun
         settings["legacy_sources"] = _merge(settings.get("legacy_sources"), sources)
         settings["lore_categories"] = _merge(settings.get("lore_categories"), categories)
         data["character_experience"] = settings

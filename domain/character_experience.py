@@ -40,6 +40,10 @@ STAGE_STATUSES = ("draft", "confirmed")
 # 提示词里给模型的情绪标签（与 v5 白真真经历的标签一致）；导入的其他情绪词原样保留。
 EMOTIONS = ("日常", "温馨", "战斗", "紧张", "伤感", "搞笑", "愤怒", "感动")
 
+# 提示词里指代角色用的代词；ta 不假定性别（默认）。
+PRONOUNS = ("她", "他", "ta")
+DEFAULT_PRONOUN = "ta"
+
 _STAGE_KEY_RE = re.compile(r"^[^\s/\\:?#]{1,64}$")
 
 
@@ -73,6 +77,14 @@ def _bool(value: Any, default: bool) -> bool:
     return bool(value)
 
 
+def normalize_pronoun(value: Any) -> str | None:
+    """「她」「他」「ta」（ta 不分大小写）→ 规范值；其他值返回 None。"""
+    text = _text(value)
+    if text.lower() == "ta":
+        return "ta"
+    return text if text in PRONOUNS else None
+
+
 def _int(value: Any, default: int, low: int, high: int) -> int:
     try:
         parsed = int(float(value))
@@ -99,6 +111,9 @@ class CharacterExperienceSettings:
     enabled: bool = False
     # 当前时间点：时间线阶段的 key。只召回这个阶段及之前的经历；空 = 不限（能想起所有阶段）。
     current_stage: str = ""
+    # 提取、起草、展开的提示词里指代这个角色用的代词：她 / 他 / ta（默认 ta，不假定性别）。
+    # 旧配置没有这个字段、或值不认识时按默认值。
+    pronoun: str = DEFAULT_PRONOUN
     # 每次最多想起几条。
     top_k: int = 3
     # 注入正文上限（字）。
@@ -118,6 +133,7 @@ class CharacterExperienceSettings:
         return cls(
             enabled=_bool(data.get("enabled"), defaults.enabled),
             current_stage=_text(data.get("current_stage")),
+            pronoun=normalize_pronoun(data.get("pronoun")) or defaults.pronoun,
             top_k=_int(data.get("top_k"), defaults.top_k, 1, 10),
             max_chars=_int(data.get("max_chars"), defaults.max_chars, 100, 4000),
             min_score=_float(data.get("min_score"), defaults.min_score, 0.0, 1.0),
@@ -192,7 +208,9 @@ __all__ = [
     "CANON_LABELS",
     "CANON_LEVELS",
     "CharacterExperienceSettings",
+    "DEFAULT_PRONOUN",
     "EMOTIONS",
+    "PRONOUNS",
     "SOURCE_KINDS",
     "SOURCE_KIND_LABELS",
     "STAGE_STATUSES",
@@ -202,6 +220,7 @@ __all__ = [
     "eligible_stage_keys",
     "natural_key",
     "normalize_content",
+    "normalize_pronoun",
     "stage_title_from_key",
     "union_values",
     "validate_stage_key",

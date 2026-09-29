@@ -116,6 +116,9 @@ describe('BotsPage 角色经历', () => {
     const toggle = await screen.findByRole('switch', { name: '启用角色经历' })
     expect(toggle).not.toBeChecked()
     await user.click(toggle)
+    const pronoun = screen.getByLabelText('代词')
+    expect(pronoun).toHaveValue('ta')
+    await user.selectOptions(pronoun, '她')
     const topK = screen.getByLabelText('每次最多想起几条（1~10）')
     await user.clear(topK)
     await user.type(topK, '5')
@@ -125,7 +128,7 @@ describe('BotsPage 角色经历', () => {
     await waitFor(() => expect(api.saveBot).toHaveBeenCalled())
     const [, item, version] = api.saveBot.mock.calls[0]
     expect(version).toBe(3)
-    expect(item.character_experience).toMatchObject({ enabled: true, current_stage: '', top_k: 5, legacy_sources: ['demo_source'] })
+    expect(item.character_experience).toMatchObject({ enabled: true, current_stage: '', pronoun: '她', top_k: 5, legacy_sources: ['demo_source'] })
   })
 })
 

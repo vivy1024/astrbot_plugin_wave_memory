@@ -7,6 +7,15 @@ export const UNASSIGNED_STAGE = '__unassigned__'
 export type ExperienceStatus = 'draft' | 'active' | 'archived'
 export type CanonLevel = 'canon' | 'inferred' | 'invented'
 export type StageStatus = 'draft' | 'confirmed'
+/** 提取、起草、展开的提示词里指代角色用的代词；ta 不假定性别（默认） */
+export type CharacterPronoun = '她' | '他' | 'ta'
+
+export const DEFAULT_PRONOUN: CharacterPronoun = 'ta'
+export const PRONOUN_OPTIONS: Array<{ value: CharacterPronoun; label: string }> = [
+  { value: 'ta', label: 'ta（不假定性别）' },
+  { value: '她', label: '她' },
+  { value: '他', label: '他' },
+]
 
 export const STATUS_LABELS: Record<ExperienceStatus, string> = { draft: '草稿', active: '启用', archived: '归档' }
 export const CANON_LABELS: Record<CanonLevel, string> = { canon: '原著', inferred: '推演', invented: '编造' }
@@ -83,6 +92,8 @@ export interface CharacterSettings {
   enabled: boolean
   /** 当前时间点（阶段 key）；空 = 不限，能想起所有阶段 */
   current_stage: string
+  /** 提示词里指代角色用的代词 */
+  pronoun: CharacterPronoun
   top_k: number
   max_chars: number
   min_score: number

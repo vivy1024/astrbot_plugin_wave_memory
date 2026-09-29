@@ -48,7 +48,7 @@ const stages = [
 const persona = '青芷生在山村，爹娘都是采药人。\n\n十二岁那年她下山拜师。'
 const overview = {
   bot: { db_id: 'oc_demo', name: '青芷', aliases: ['阿芷'], enabled: true, version: 7, persona_text: persona },
-  settings: { enabled: false, current_stage: 's1', top_k: 3, max_chars: 600, min_score: 0.35, legacy_sources: [], lore_categories: [] },
+  settings: { enabled: false, current_stage: 's1', pronoun: 'ta', top_k: 3, max_chars: 600, min_score: 0.35, legacy_sources: [], lore_categories: [] },
   stages,
   unassigned: zero,
   counts: { total: 2, by_status: { draft: 1, active: 1, archived: 0 }, by_stage: { s1: { draft: 1, active: 1, archived: 0 } }, by_canon: { canon: 1, inferred: 0, invented: 1 }, by_source: { manual: 2 }, active_missing_vectors: 0 },
@@ -133,6 +133,16 @@ describe('CharacterExperienceWorkbenchPage', () => {
     const select = await screen.findByRole('combobox', { name: '当前时间点' })
     await user.selectOptions(select, 's2')
     await waitFor(() => expect(api.saveCharacterSettings).toHaveBeenCalledWith('oc_demo', 7, { current_stage: 's2' }))
+  })
+
+  it('概况里改代词，同样写进 Bot 资料并带上版本', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const select = await screen.findByRole('combobox', { name: '代词' })
+    expect(select).toHaveValue('ta')
+    expect(within(select).getAllByRole('option').map((option) => option.getAttribute('value'))).toEqual(['ta', '她', '他'])
+    await user.selectOptions(select, '他')
+    await waitFor(() => expect(api.saveCharacterSettings).toHaveBeenCalledWith('oc_demo', 7, { pronoun: '他' }))
   })
 
   it('批量启用带上每条读到的版本', async () => {
