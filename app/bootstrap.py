@@ -396,6 +396,8 @@ class BootstrapMixin:
             logger.error(f"[WaveMemory] Bot 注册表接入数据库失败，暂用静态配置: {exc}")
             _record_err("BotRegistry", exc)
         self._bot_qq_ids[:] = list(self._bot_registry)
+        # 游戏知识库：按游戏分库的攻略常识（所有 Bot 共用）；直播请求带 game 时经 game_knowledge 通道注入。
+        self.game_knowledge = self._build_game_knowledge()
         if getattr(self.db, "soul_repository", None):
             self.db.soul_repository.manual_adjustment_delta_cap = _positive_float(
                 affinity_cfg.get("manual_adjustment_delta_cap"), 20.0
@@ -968,13 +970,32 @@ class BootstrapMixin:
             mode_provider=lambda: getattr(self, "runtime_mode_name", "full"),
             recent_messages=lambda scope, limit: self._get_recent_messages(None, scope=scope, max_messages=limit),
             exclude_sources_for=_exclude_sources,
+            game_context_sink=self._note_active_game,
         )
         get_container().runtime_context_preparer = self.runtime_context_preparer
+        get_container().game_knowledge = getattr(self, "game_knowledge", None)
         get_container().ingress_health = self.ingress_health
         get_container().tag_worker_getter = lambda: getattr(self, "tag_worker", None)
         get_container().book_lore_workbench = self._build_book_lore_workbench()
         get_container().character_experience = getattr(self, "character_experience", None)
         get_container().observation_ingestor = self.ingest_observation
+
+    def _build_game_knowledge(self):
+        """游戏知识库服务；建表或构造失败只影响这一项功能（通道与工具会报告不可用）。"""
+        try:
+            from ..services.game_knowledge import GameKnowledgeService
+
+            return GameKnowledgeService(self.db.game_knowledge)
+        except Exception as exc:
+            logger.warning(f"[WaveMemory] 游戏知识库初始化失败: {exc}")
+            _record_err("GameKnowledge", exc)
+            return None
+
+    def _note_active_game(self, scope, game) -> None:
+        """记下这个 Bot / 会话正在玩的游戏，查询工具省略游戏时用。"""
+        service = getattr(self, "game_knowledge", None)
+        if service is not None:
+            service.note_active_game(scope, game)
 
     def _build_book_lore_workbench(self):
         """书设工作台：书设库与书设向量索引都加载了才提供。原文只从插件数据目录与 novel_docs 读。"""

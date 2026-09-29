@@ -78,6 +78,7 @@ def _bool_or_none(value: Any) -> bool | None:
 _LINK_FIELD_KEYS = (
     "group_id", "sender_id", "title", "note_id", "community_id", "belief_ids", "example_id",
     "rowid", "subject", "predicate", "object", "word", "subject_principal_id", "block",
+    "game_id", "card_id", "term_id",
 )
 
 

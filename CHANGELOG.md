@@ -37,6 +37,11 @@
    - `/context/prepare` 响应新增 `safety_prompt`：与 AstrBot 路径加在系统提示词开头的身份安全提示同一段，外部应用自己放进系统级位置；请求里的未知字段照旧忽略，旧客户端不受影响。
    - `/observations/batch` 新增 `kind: "game_event"`：Bot 自己的游戏经历（死亡、目标、进入新维度、胜负等）按 Bot 经历入库（`source=game_event`，内容保留「[我的世界]」这类游戏前缀），与弹幕、她说的话在直播间会话里按时间交错；按 event_id 幂等；不走群友相关处理。召回时标注「[你的游戏经历]」。
    - 每日日记把当天的游戏经历单独成段当素材（最多 20 条，死亡太多时只留首尾并注明次数）；只打了游戏、没说话的日子，直播间会话也会写日记。
+17. **游戏知识库**：直播玩的游戏不止一个，攻略常识改由 WaveMemory 统一管理，按游戏分库、所有 Bot 共用；WaveMemory 里不写任何针对具体游戏的代码，新增游戏只需在管理台建库导入。
+   - 知识卡（阶段、要点、注意、出处）+ 词条；触发条件为关键词 + 可选的状态条件（如 `cycle 30..60`、`health <= 6`、`time_of_day == night`），由 Runtime 请求的 `game`（`{id, state, keywords}`）匹配。
+   - 新注入通道 `game_knowledge`（只在请求带 game 时工作，最多 2 张卡 + 词条）与工具 `wave_memory_game_knowledge`；草稿不注入、不可查。
+   - 管理台「游戏知识库」页：游戏库、知识卡与词条编辑（版本检查）、草稿审核、导入导出、「试一下」模拟注入。
+   - 导入器：通用 JSON 格式；缺氧教程资产（23 张策略卡 + 23 集时间线，导入即启用）；记忆表里 300 条旧 `oni_lore` 知识点可一键迁为草稿（原行不动）；我的世界起始包 38 张卡、31 个词条（模型离线起草，全部为草稿，需人工审核后启用）。
 
 ### 后续阶段（本地开发，尚未发版）
 
@@ -58,7 +63,7 @@
   - `Inject_Settings.enable_holyman_persona` 废弃（保留键，填 true 只打警告）；已保存的通道配置里残留 `holyman_persona` 会被忽略。
   - 移除 `Affinity_Settings.relationship_tiers_json`（旧配置残留会被忽略）。
 - 首次启动自动执行一次角色经历迁移：记忆表里 `source='bzz_experience'` 的无归属旧行导入为 Bot `baizz` 的角色经历（启用、原著，按原剧情分卷建阶段），并为 baizz 开启角色经历、当前时间点设为最后一个阶段、代词设为「她」；旧行不删除，但不再被其他 Bot 召回。库里没有旧数据或没有 baizz 时安全跳过。迁移后情绪与在场人物为空，可在工作台用原始 JSONL「补上空字段」导入补齐。
-- 首次启动新增 `person_relationship_portraits`、`person_relationship_portrait_history`、`bot_beliefs`、`bot_belief_events`、`bot_belief_reflection_runs`、`character_experiences`（及其 FTS 索引、`character_timeline_stages`、`character_experience_scene_log`、`character_experience_migrations`）表（只新增、可重复执行）；旧 `scoped_beliefs` 全部迁为 `legacy_archived`，不删除。
+- 首次启动新增 `person_relationship_portraits`、`person_relationship_portrait_history`、`bot_beliefs`、`bot_belief_events`、`bot_belief_reflection_runs`、`game_libraries`、`game_knowledge_cards`、`game_knowledge_terms`（及其 FTS 索引）、`character_experiences`（及其 FTS 索引、`character_timeline_stages`、`character_experience_scene_log`、`character_experience_migrations`）表（只新增、可重复执行）；旧 `scoped_beliefs` 全部迁为 `legacy_archived`，不删除。
 - 移除工具 `wave_memory_propose_belief`（内置工具 18 个）；信念管理台旧的逐条审核/归档/批量接口返回 410，新接口为 `GET /api/beliefs?bot_id=` 与 `POST /api/beliefs/<id>/veto|restore`。**部署前必须重建管理台**，否则旧页面调用已变更的接口。
 - Bot Profile 新增 `mood` 段（未配置时用中性默认值）；`Lifecycle_Settings.mood_duration_hours` 语义改为「默认恢复半衰期」。
 - 首次启动新增 `bot_mood_events`、`bot_mood_state` 两张表（只新增、可重复执行）；旧 `scoped_soul_mood` 不读不改，升级后心情从基线加最近 12 小时关系事件起步。

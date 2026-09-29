@@ -435,6 +435,9 @@ COMMAND_SCOPE_MATRIX: Mapping[str, ScopeRequirement] = MappingProxyType({
     "meme_hint.inject": ScopeRequirement(("runtime",), ("group", "private")),
     # 角色经历是 Bot 本人进群前的过去，只按 bot_id 读她自己的经历、不读任何会话数据；群聊与私聊都注入。
     "character_experience.inject": ScopeRequirement(("runtime",), ("group", "private")),
+    # 游戏知识库所有 Bot 共用、不含会话数据：注入（请求带 game 时）与查询工具群聊私聊都可用。
+    "game_knowledge.inject": ScopeRequirement(("runtime",), ("group", "private")),
+    "game_knowledge.read": ScopeRequirement(("runtime",), ("group", "private")),
     "affinity.update": ScopeRequirement(("runtime",), ("group",), subject_required=True),
     # 私聊里同样会形成对当前私聊对象的印象与好感；具体内容只在该私聊可见。
     "social_impression.record": ScopeRequirement(("runtime",), ("group", "private"), subject_required=True),

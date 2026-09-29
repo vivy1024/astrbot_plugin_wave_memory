@@ -54,6 +54,7 @@ _OPTIONAL = (
     ("bot_home", "bot_home_bp"),
     ("book_lore_workbench", "book_lore_workbench_bp"),
     ("character_experience", "character_experience_bp"),
+    ("game_knowledge", "game_knowledge_bp"),
 )
 
 _NAMES = [n for _, n in _CORE] + [n for _, n in _OPTIONAL]

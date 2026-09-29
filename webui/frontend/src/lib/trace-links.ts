@@ -133,6 +133,16 @@ export function traceItemLink(channel: string, item: LinkFields, ctx: TraceLinkC
     }
     case 'soul_state':
       return { to: href('/soul', scope), label: '打开心智状态', precise: false }
+    case 'game_knowledge': {
+      // 游戏知识库所有 Bot 共用，不带作用域；知识卡 / 词条按编号直接打开
+      const game = text(link.game_id)
+      if (!game) return { to: '/knowledge/games', label: '打开游戏知识库', precise: false }
+      const card = text(link.card_id)
+      const term = text(link.term_id)
+      if (/^\d+$/.test(card)) return { to: href('/knowledge/games', { game, card }), label: '打开这张攻略卡', precise: true }
+      if (/^\d+$/.test(term)) return { to: href('/knowledge/games', { game, term }), label: '打开这个词条', precise: true }
+      return { to: href('/knowledge/games', { game }), label: '打开游戏知识库', precise: false }
+    }
     default:
       // persona / meme_hint / safety 等来自人设或静态资产与规则，没有可浏览的对象页
       return null

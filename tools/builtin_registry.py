@@ -1,4 +1,4 @@
-"""内置工具登记：原来写在 ``main.py`` 里的 21 个工具实例化，按组搬到这里。
+"""内置工具登记：原来写在 ``main.py`` 里的工具实例化，按组搬到这里（v6 起新增的也登记在这里）。
 
 每个工厂接收插件对象（``deps``），只读取它需要的服务；依赖为 None 时由工具自己
 按 fail-closed 规则处理，行为与 v5 一致。新增工具只需要在这里加一条 ToolSpec，
@@ -149,8 +149,31 @@ def _jargon_tools() -> list[ToolSpec]:
     ]
 
 
+def _game_knowledge_tools() -> list[ToolSpec]:
+    from .game_knowledge import WaveMemoryGameKnowledgeTool
+
+    # 只读游戏知识库（所有 Bot 共用）；纯记忆/兼容模式随 game_knowledge 能力一起关闭。
+    return [
+        ToolSpec(
+            "wave_memory_game_knowledge",
+            lambda d: WaveMemoryGameKnowledgeTool(service=getattr(d, "game_knowledge", None)),
+            group="game_knowledge",
+            capability="game_knowledge",
+            capability_default=True,
+            description="查游戏攻略与机制常识；查自己以前玩过的事用记忆搜索",
+        ),
+    ]
+
+
 def builtin_tool_specs() -> list[ToolSpec]:
-    return [*_memory_tools(), *_agent_feedback_tools(), *_social_tools(), *_book_lore_tools(), *_jargon_tools()]
+    return [
+        *_memory_tools(),
+        *_agent_feedback_tools(),
+        *_social_tools(),
+        *_book_lore_tools(),
+        *_jargon_tools(),
+        *_game_knowledge_tools(),
+    ]
 
 
 __all__ = ["builtin_tool_specs"]

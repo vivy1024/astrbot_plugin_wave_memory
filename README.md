@@ -173,7 +173,7 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 
 ### 并行注入通道
 
-`InjectionOrchestrator` 并发运行 **13** 条通道；每通道独立 `timeout_ms`，单通道 timeout/error 不阻塞整体注入。总耗时超过 2000ms 打慢注入警告。
+`InjectionOrchestrator` 并发运行 **14** 条通道；每通道独立 `timeout_ms`，单通道 timeout/error 不阻塞整体注入。总耗时超过 2000ms 打慢注入警告。
 
 ```
 ├─ safety（近期上下文去重 · 身份污染过滤）
@@ -185,6 +185,7 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 ├─ jargon（已确认黑话）
 ├─ fewshot（已批准健康风格样本）
 ├─ book_lore（世界观知识）
+├─ game_knowledge（游戏攻略参考：Runtime 请求带 game 时按游戏选库，注入命中的知识卡与词条）
 ├─ character_experience（角色经历：书中角色 / OC 进群之前的第一人称过去，按 Bot 启用，只召回当前时间点之前的阶段）
 ├─ affinity（关系小传或印象时间线摘要为主 · 共同交往锚点 · 末尾一行好感分数仅供参考）
 ├─ meme_hint（用梗提示：话题相关时提示 1–2 个可以用的梗，默认关闭）
@@ -327,6 +328,7 @@ v5.0.0 彻底收敛了历史堆叠的工具集，常驻工具数量减半，释�
 | **`wave_memory_note_concern`** | **灵魂关切管理**：记录并推进 Bot 挂在心上的未决事件（群友生病/考试/约定等） | full，群 Scope |
 | **`wave_memory_mark_cultural_moment`** | **文化时刻标记**：现场提审本群特色黑话梗（jargon）或高光风骨回复（style），进入审核工作台 | full，群 Scope |
 | **`wave_memory_propose_fact`** | **客观事实提审**：发现群友新事实，自动反查当轮真实消息 ID 并绑定 `source_quote` 证据入库 | full，群 Scope |
+| **`wave_memory_game_knowledge`** | **游戏攻略查询**：按游戏查知识卡与词条（机制、打法、坑）；想查自己以前玩过的事用记忆搜索 | 群聊 / 私聊 |
 | **`wave_memory_meme_lookup`** | **梗百科**：看不懂梗或想接梗时查释义与例句（含神言语料），敏感条目带分寸标注 | 随黑话能力开关 |
 | **`wave_memory_note_episode`** | **群经历大事件**：记录解决群体问题或关系转折的重大经历片段，自动锚定记忆 | full，群 Scope |
 | **`wave_memory_record_diary_episode`** | **Bot 亲笔日记**：记录今日生活随笔与心智历程，带 6 小时冷却并钉入经历时间线主干 | full，群 Scope |

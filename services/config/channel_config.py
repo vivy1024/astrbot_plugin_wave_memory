@@ -42,18 +42,19 @@ KNOWN_CHANNELS = (
     "affinity",
     "soul_state",
     "character_experience",
+    "game_knowledge",
 )
 # 已退役通道：旧 Channel_Settings / Bot 通道覆盖 / 分层配置里可能仍保存其覆盖项；
 # 校验时静默忽略而不是拒绝。holyman_persona（神人风格人格包）已下线，神人包改作梗百科。
 RETIRED_CHANNELS = frozenset({"timeline", "holyman_persona"})
 # 历史有效层写入时还没有、后来才加入的通道：缺失时用默认值补齐。
-_LATE_ADDED_CHANNELS = frozenset({"meme_hint", "character_experience"})
+_LATE_ADDED_CHANNELS = frozenset({"meme_hint", "character_experience", "game_knowledge"})
 
-_ADVANCED_FULL_ONLY = {"persona", "belief", "jargon", "meme_hint", "fewshot", "book_lore", "affinity", "soul_state", "character_experience"}
-# 私聊安全包络里保留配置值的通道：只读静态资产、不读任何会话数据；
-# 是否真在私聊里生效仍由通道自己的场合开关决定（默认关）。
+_ADVANCED_FULL_ONLY = {"persona", "belief", "jargon", "meme_hint", "fewshot", "book_lore", "affinity", "soul_state", "character_experience", "game_knowledge"}
+# 私聊安全包络里保留配置值的通道：只读静态资产 / 所有 Bot 共用的知识库、不读任何会话数据；
+# 是否真在私聊里生效仍由通道自己决定（meme_hint 看场合开关，game_knowledge 只在请求带 game 时工作）。
 # 角色经历只按 bot_id 读 Bot 本人进群前的经历（是否启用看 Bot 资料），同样不读会话数据。
-_PRIVATE_PASSTHROUGH = frozenset({"meme_hint", "character_experience"})
+_PRIVATE_PASSTHROUGH = frozenset({"meme_hint", "character_experience", "game_knowledge"})
 _OPTIONAL_MEMORY_ONLY = {"facts", "fts5"}
 _QUERY_STAGE_NAMES = frozenset({"epa", "pyramid", "spike", "geodesic"})
 _QUERY_PARAM_LIMITS = {
@@ -250,6 +251,8 @@ def build_default_channel_config(
         "soul_state": ChannelConfig("soul_state", _enabled_for("soul_state", mode, inject_cfg), priority=67, max_items=1, token_budget=260, timeout_ms=180, modes=_modes_for("soul_state", mode)),
         # 角色经历：只对在 Bot 资料里启用了角色经历的 Bot 生效；召回条数、注入上限、相似度下限按 Bot 设（这里只是总预算上限）。
         "character_experience": ChannelConfig("character_experience", _enabled_for("character_experience", mode, inject_cfg), priority=69, token_budget=400, timeout_ms=800, modes=_modes_for("character_experience", mode)),
+        # 游戏攻略参考：默认开启，但只有 Runtime 请求带 game 时才工作；max_items=卡片数（上限 2），top_k=词条数。
+        "game_knowledge": ChannelConfig("game_knowledge", _enabled_for("game_knowledge", mode, inject_cfg), priority=58, top_k=3, max_items=2, token_budget=320, timeout_ms=200, modes=_modes_for("game_knowledge", mode)),
     }
     query_stages = {
         "epa": _bool(query_cfg.get("enable_epa"), True),

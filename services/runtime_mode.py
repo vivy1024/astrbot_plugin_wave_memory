@@ -49,6 +49,7 @@ MEMORY_ONLY_DISABLED_CAPABILITIES = {
     "fewshot",
     "book_lore",
     "book_lore_tools",
+    "game_knowledge",
     "study",
     "self_reflect",
 }

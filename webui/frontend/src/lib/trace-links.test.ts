@@ -61,6 +61,16 @@ describe('trace-links 链接规则', () => {
     expect(traceItemLink('meme_hint', {}, ctx)).toBeNull()
   })
 
+  it('游戏攻略条目按编号打开游戏知识库，不带作用域', () => {
+    const card = traceItemLink('game_knowledge', { link: { game_id: 'minecraft', card_id: 12 } }, ctx)!
+    expect(card.precise).toBe(true)
+    expect(card.to).toBe('/knowledge/games?game=minecraft&card=12')
+    const term = traceItemLink('game_knowledge', { link: { game_id: 'minecraft', term_id: 3 } }, ctx)!
+    expect(term.to).toBe('/knowledge/games?game=minecraft&term=3')
+    expect(traceItemLink('game_knowledge', { link: { game_id: 'oni' } }, ctx)?.to).toBe('/knowledge/games?game=oni')
+    expect(traceItemLink('game_knowledge', {}, ctx)?.to).toBe('/knowledge/games')
+  })
+
   it('通道、记忆、观测台链接格式', () => {
     expect(channelConfigHref('memory')).toBe('/channels?channel=memory')
     expect(memoryHref(5, { botId: 'yushu' })).toBe('/memories?bot_id=yushu&memory_id=5')

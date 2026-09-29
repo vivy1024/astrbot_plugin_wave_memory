@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 
-const GROUP_LABELS: Record<string, string> = { memory: '记忆', social: '社交与经历', agent_feedback: '自诊断', book_lore: '书设' }
+const GROUP_LABELS: Record<string, string> = { memory: '记忆', social: '社交与经历', agent_feedback: '自诊断', book_lore: '书设', game_knowledge: '游戏知识' }
 
 function serviceState(service: ServiceDto): { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' } {
   if (!service.created) return { label: '未创建', variant: 'outline' }

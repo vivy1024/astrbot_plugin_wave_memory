@@ -139,7 +139,8 @@ class ChannelRegistry:
 
 
 def builtin_channel_specs() -> list[ChannelSpec]:
-    """内置 13 个通道。v5 的 holyman_persona 风格通道已下线，同位置换成默认关闭的 meme_hint；角色经历在最后。"""
+    """内置 14 个通道。v5 的 holyman_persona 风格通道已下线，同位置换成默认关闭的 meme_hint；
+    game_knowledge（游戏攻略参考）只在 Runtime 请求带 game 时工作；角色经历在最后。"""
     from ..persona_composer import PersonaComposer
     from .channels.belief import BeliefChannel
     from .channels.book_lore import BookLoreChannel
@@ -147,6 +148,7 @@ def builtin_channel_specs() -> list[ChannelSpec]:
     from .channels.facts import FactsChannel
     from .channels.fewshot import FewShotChannel
     from .channels.fts5 import FTS5Channel
+    from .channels.game_knowledge import GameKnowledgeChannel
     from .channels.jargon import JargonChannel
     from .channels.meme_hint import MemeHintChannel, meme_hint_scene_switches
     from .channels.memory_recall import MemoryRecallChannel
@@ -183,6 +185,8 @@ def builtin_channel_specs() -> list[ChannelSpec]:
         ChannelSpec("fewshot", lambda d, b: FewShotChannel(few_shot_service=getattr(d, "few_shot_service", None))),
         ChannelSpec("affinity", lambda d, b: RelationshipChannel(repository=d.db.soul_repository, db=d.db)),
         ChannelSpec("soul_state", lambda d, b: SoulStateChannel(repository=d.db.soul_repository, mood_service=getattr(d, "mood_service", None))),
+        # 游戏攻略参考：按请求里的 game.id 选游戏库（所有 Bot 共用）；不带 game 时不工作。
+        ChannelSpec("game_knowledge", lambda d, b: GameKnowledgeChannel(service=getattr(d, "game_knowledge", None))),
         ChannelSpec(
             "book_lore",
             lambda d, b: BookLoreChannel(

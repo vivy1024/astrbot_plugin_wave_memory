@@ -6,7 +6,9 @@ v5 的 ``/context/prepare`` 是另写的简化版（书设写死、``LIKE`` 模�
 
 - 没有 AstrBot 事件：最近上下文由调用方传入，或从该会话最近的已解析记忆里取；
 - 按 ``tier`` 选通道子集（Cortico 首轮 full、后续 light、工具调用 minimal）；
-- trace 标注 ``source``（如 ``cortico``），注入观测台可以按来源筛选。
+- trace 标注 ``source``（如 ``cortico``），注入观测台可以按来源筛选；
+- 游戏直播时请求可带 ``game``（``domain.game_knowledge.GameContext``）：只有 ``game_knowledge`` 通道读它，
+  同时记下这个 Bot / 会话正在玩的游戏（查询工具省略游戏时用）。不带 ``game`` 时行为不变。
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ except ImportError:  # top-level import in isolated tests
 # 通道名以 channel.name 为准（关系通道叫 affinity）。
 TIER_CHANNELS: dict[str, frozenset[str] | None] = {
     "full": None,
-    "light": frozenset({"safety", "memory", "fts5", "facts", "persona", "belief", "jargon", "meme_hint", "affinity", "soul_state", "character_experience"}),
+    "light": frozenset({"safety", "memory", "fts5", "facts", "persona", "belief", "jargon", "meme_hint", "affinity", "soul_state", "character_experience", "game_knowledge"}),
     "minimal": frozenset({"safety", "memory", "fts5", "facts", "affinity"}),
 }
 
@@ -51,6 +53,7 @@ class RuntimeContextPreparer:
         mode_provider: Callable[[], str] = lambda: "full",
         recent_messages: Callable[[RuntimeScope, int], list[str]] | None = None,
         exclude_sources_for: Callable[[str], list[str]] | None = None,
+        game_context_sink: Callable[[RuntimeScope, Any], None] | None = None,
     ) -> None:
         self._channels_provider = channels_provider
         self._config_resolver = config_resolver
@@ -60,6 +63,7 @@ class RuntimeContextPreparer:
         self._mode_provider = mode_provider
         self._recent_messages = recent_messages
         self._exclude_sources_for = exclude_sources_for
+        self._game_context_sink = game_context_sink
 
     def available(self) -> bool:
         return bool(list(self._channels_provider() or ()))
@@ -76,6 +80,7 @@ class RuntimeContextPreparer:
         source: str = "runtime",
         dry_run: bool = False,
         channel_filter: Iterable[str] | None = None,
+        game: Any = None,
     ) -> OrchestrationResult:
         if not isinstance(scope, RuntimeScope):
             raise ValueError("scope must be a RuntimeScope")
@@ -96,6 +101,11 @@ class RuntimeContextPreparer:
                 recent_context = []
         recent_context = [str(item) for item in (recent_context or []) if str(item or "").strip()][-12:]
         exclude_sources = self._exclude_sources_for(scope.bot_id) if self._exclude_sources_for else []
+        if game is not None and not dry_run and self._game_context_sink is not None:
+            try:
+                self._game_context_sink(scope, game)
+            except Exception:  # 记录「正在玩什么」失败不影响注入
+                pass
 
         trace_id = f"{source}-{time.time_ns()}"
         group_id = scope.session.conversation_id if scope.session is not None and scope.visibility == "group" else None
@@ -124,6 +134,7 @@ class RuntimeContextPreparer:
             now=time.time(),
             trace_id=trace_id,
             source=source,
+            game=game,
         )
         orchestrator = InjectionOrchestrator(
             channels=channels,

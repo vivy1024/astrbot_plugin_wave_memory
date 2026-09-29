@@ -88,6 +88,8 @@ class ServiceContainer:
         self.book_lore_workbench: Any = None
         # 角色经历（services.character_experience.CharacterExperienceService）：角色经历工作台用。
         self.character_experience: Any = None
+        # 游戏知识库（services.game_knowledge.GameKnowledgeService）：管理台「游戏知识库」页用。
+        self.game_knowledge: Any = None
 
         # ─── 认证 ───
         self.password: str = ""
