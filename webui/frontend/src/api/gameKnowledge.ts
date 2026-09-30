@@ -9,28 +9,26 @@ export type ImportOnExisting = 'skip' | 'update' | 'merge'
 
 export interface StatusCounts { draft: number; active: number; archived: number }
 
+/** 直播请求里见过的状态键（只读）：键 → 一个示例值与首次见到的时间。 */
+export type GameStateKeys = Record<string, { example?: string; seen_at?: number; [extra: string]: unknown }>
+
 export interface GameLibrary {
   id: string
   name: string
   aliases: string[]
   description: string
   enabled: boolean
+  /** 允许 Bot 在这个游戏里从自己的经历写经验卡（总开关是 Learning_Settings.game_lesson_enabled）。 */
+  lessons_enabled?: boolean
+  state_keys?: GameStateKeys
   version: number
   created_at: number
   updated_at: number
-  counts: { cards: StatusCounts; terms: StatusCounts }
+  /** cards 只算共用的攻略卡；lessons 是各 Bot 经验卡的合计。 */
+  counts: { cards: StatusCounts; terms: StatusCounts; lessons?: StatusCounts }
 }
 
-export interface GamePack {
-  id: string
-  title: string
-  description: string
-  force_status: string | null
-  game: { id: string; name: string }
-  cards: number
-  terms: number
-  game_exists: boolean
-}
+export interface GameBot { id: string; name: string }
 
 export interface LegacySource {
   source: string
@@ -46,15 +44,18 @@ export interface LegacySource {
 
 export interface GameOverview {
   games: GameLibrary[]
-  packs: GamePack[]
   legacy_sources: LegacySource[]
+  bots: GameBot[]
+  /** 游戏经验总开关（Learning_Settings.game_lesson_enabled）是否开着、服务是否在跑。 */
+  lessons_enabled: boolean
   statuses: Record<GameItemStatus, string>
   source_types: Record<string, string>
   import_modes: ImportOnExisting[]
   trigger_rule: string
 }
 
-export interface GameCondition { key: string; op: string; value?: unknown; min?: number; max?: number; required?: boolean }
+/** required：缺键不触发；soft（「参考」）：只影响排序，不挡触发。 */
+export interface GameCondition { key: string; op: string; value?: unknown; min?: number; max?: number; required?: boolean; soft?: boolean }
 
 interface ItemBase {
   id: number
@@ -80,7 +81,53 @@ export interface GameCard extends ItemBase {
   conditions: GameCondition[]
   conditions_text: string[]
   trigger_mode: 'keywords' | 'conditions' | 'none'
+  /** 空串 = 所有 Bot 共用的攻略；否则是这个 Bot 自己的经验卡。 */
+  bot_id?: string
+  experience?: boolean
 }
+
+export interface LessonEvidence { memory_id: number; at: number; type: string; text: string }
+
+/** 经验卡的 meta（points 是「做法」，pitfalls 是「经过」）。 */
+export interface LessonMeta {
+  times?: number
+  first_at?: number
+  last_at?: number
+  evidence?: LessonEvidence[]
+  revisions?: number
+  revised_why?: string
+  vetoed?: boolean
+  vetoed_at?: number
+  [extra: string]: unknown
+}
+
+export type LessonTrigger = 'event' | 'daily' | 'manual' | string
+
+export interface LessonRun {
+  id: number
+  bot_id: string
+  /** 一次回想可能同时想了几个游戏：逗号分隔。 */
+  game_id: string
+  trigger: LessonTrigger
+  status: string
+  started_at: number
+  finished_at: number | null
+  from_memory_id: number
+  to_memory_id: number
+  events: number
+  model_calls: number
+  counts: Record<string, number>
+  error: string
+}
+
+export interface LessonPage extends ItemPage<GameCard> {
+  enabled: boolean
+  runs: LessonRun[]
+  stats: Record<string, number>
+  pending: string[]
+}
+
+export interface ReflectResult { ok: boolean; status: 'started' | 'running' | 'disabled' | string }
 
 export interface GameTerm extends ItemBase {
   term: string
@@ -91,7 +138,8 @@ export interface GameTerm extends ItemBase {
 
 export interface ItemPage<T> { items: T[]; total: number; limit: number; offset: number }
 
-export interface ItemQuery { status?: string; stage?: string; q?: string; source_type?: string; limit?: number; offset?: number }
+/** owner（只对知识卡）：shared = 共用的攻略（默认）/ all / 某个 Bot 的标识（它自己的经验卡）。 */
+export interface ItemQuery { status?: string; stage?: string; q?: string; source_type?: string; owner?: string; limit?: number; offset?: number }
 
 export interface MutationResult<T> { ok: boolean; revision: number; item: T }
 
@@ -134,7 +182,6 @@ export interface ImportResult {
   invalid: { cards: number; terms: number }
   errors: ImportPreview['errors']
   warnings: string[]
-  pack?: string
   created_game?: boolean
 }
 
@@ -150,10 +197,22 @@ export interface LegacyMigrateResult extends Partial<ImportResult> {
   created_game: boolean
 }
 
-export interface TrialCard { id: number; key: string; title: string; stage: string; status: GameItemStatus; score: number; reason: string }
+export interface TrialCard {
+  id: number
+  key: string
+  title: string
+  stage: string
+  status: GameItemStatus
+  /** 空串 = 共用的攻略；否则是这个 Bot 自己的经验卡。 */
+  bot_id?: string
+  experience?: boolean
+  score: number
+  reason: string
+}
 
 export interface TrialResult {
   game_id: string
+  bot_id?: string
   include_drafts: boolean
   state: Record<string, unknown>
   keywords: string[]
@@ -167,7 +226,7 @@ export interface TrialResult {
   rule: string
 }
 
-export interface GamePayload { id?: string; name?: string; aliases?: string[] | string; description?: string; enabled?: boolean }
+export interface GamePayload { id?: string; name?: string; aliases?: string[] | string; description?: string; enabled?: boolean; lessons_enabled?: boolean }
 
 function query(params: Record<string, string | number | undefined>): string {
   const search = new URLSearchParams()
@@ -238,12 +297,30 @@ export function exportGame(gameId: string, status?: string) {
   return fetchJson<Record<string, unknown>>(`${gamePath(gameId)}/export${query({ status })}`)
 }
 
-export function trialGameMatch(gameId: string, body: { message: string; keywords: string[]; state: Record<string, string | number | boolean>; include_drafts: boolean }) {
+export function trialGameMatch(gameId: string, body: { message: string; keywords: string[]; state: Record<string, string | number | boolean>; include_drafts: boolean; bot_id?: string }) {
   return fetchJson<TrialResult>(`${gamePath(gameId)}/trial`, { method: 'POST', body: JSON.stringify(body) })
 }
 
-export function importGamePack(packId: string) {
-  return fetchJson<ImportResult>(`${BASE}/packs/${encodeURIComponent(packId)}/import`, { method: 'POST', body: '{}', timeoutMs: 60000 })
+export interface LessonQuery { bot_id: string; status?: string; q?: string; limit?: number; offset?: number }
+
+/** 某个 Bot 在这个游戏里自己写下的经验卡与最近的回想记录。 */
+export function listGameLessons(gameId: string, params: LessonQuery, signal?: AbortSignal) {
+  return fetchJson<LessonPage>(`${gamePath(gameId)}/lessons${query({ ...params })}`, { signal })
+}
+
+/** 「现在想一次」：后台回想这个 Bot 还没想过的游戏经历，立即返回。 */
+export function reflectGameLessons(gameId: string, botId: string) {
+  return fetchJson<ReflectResult>(`${gamePath(gameId)}/lessons/reflect`, { method: 'POST', body: JSON.stringify({ bot_id: botId }) })
+}
+
+/** 删掉一条经验（否决：她不会再写意思相近的）。 */
+export function vetoGameLesson(gameId: string, cardId: number, botId: string, version: number) {
+  return fetchJson<MutationResult<GameCard>>(`${gamePath(gameId)}/lessons/${cardId}/veto`, { method: 'POST', body: JSON.stringify({ bot_id: botId, version }) })
+}
+
+/** 恢复一条删掉 / 归档的经验。 */
+export function restoreGameLesson(gameId: string, cardId: number, botId: string, version: number) {
+  return fetchJson<MutationResult<GameCard>>(`${gamePath(gameId)}/lessons/${cardId}/restore`, { method: 'POST', body: JSON.stringify({ bot_id: botId, version }) })
 }
 
 export function scanLegacySource(source: string) {

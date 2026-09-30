@@ -7,6 +7,7 @@ import {
   previewGameImport,
   runGameImport,
   trialGameMatch,
+  type GameBot,
   type GameLibrary,
   type ImportOnExisting,
   type ImportPreview,
@@ -209,18 +210,25 @@ export function ImportPanel({ game, onChanged }: { game: GameLibrary; onChanged:
   )
 }
 
-export function TrialPanel({ game }: { game: GameLibrary }) {
+function botName(bots: GameBot[], id: string | undefined): string {
+  return bots.find((bot) => bot.id === id)?.name ?? id ?? ''
+}
+
+export function TrialPanel({ game, bots = [] }: { game: GameLibrary; bots?: GameBot[] }) {
   const [message, setMessage] = useState('')
   const [keywords, setKeywords] = useState('')
   const [stateText, setStateText] = useState('')
   const [includeDrafts, setIncludeDrafts] = useState(false)
+  const [botId, setBotId] = useState('')
   const [result, setResult] = useState<TrialResult | null>(null)
   const [busy, setBusy] = useState(false)
 
   async function run() {
     setBusy(true)
     try {
-      setResult(await trialGameMatch(game.id, { message, keywords: splitList(keywords), state: parseStateLines(stateText), include_drafts: includeDrafts }))
+      const body = { message, keywords: splitList(keywords), state: parseStateLines(stateText), include_drafts: includeDrafts }
+      // 选了 Bot 就连它自己的经验卡一起算（和直播时她的请求一样）
+      setResult(await trialGameMatch(game.id, botId ? { ...body, bot_id: botId } : body))
     } catch (reason) {
       toast.error(errorText(reason, '试匹配失败'))
     } finally {
@@ -239,6 +247,12 @@ export function TrialPanel({ game }: { game: GameLibrary }) {
         <Input aria-label="试匹配关键词" value={keywords} onChange={(event) => setKeywords(event.target.value)} placeholder="keywords，如 夜晚、河边" />
         <Textarea aria-label="试匹配状态" rows={3} value={stateText} onChange={(event) => setStateText(event.target.value)} placeholder={'state，每行 键=值，如\ntime_of_day=night\nhealth=6'} />
         <div className="flex flex-wrap items-center gap-2">
+          {bots.length ? (
+            <select aria-label="试匹配 Bot" className={selectClass} value={botId} onChange={(event) => setBotId(event.target.value)}>
+              <option value="">只算共用的攻略</option>
+              {bots.map((bot) => <option key={bot.id} value={bot.id}>连 {bot.name} 自己的经验一起算</option>)}
+            </select>
+          ) : null}
           <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={includeDrafts} onChange={(event) => setIncludeDrafts(event.target.checked)} />把草稿也算上（审核前看看启用后会不会触发）</label>
           <Button type="button" size="sm" disabled={busy} onClick={() => void run()}><FlaskConicalIcon aria-hidden="true" />试匹配</Button>
         </div>
@@ -248,11 +262,16 @@ export function TrialPanel({ game }: { game: GameLibrary }) {
             {result.cards.length || result.terms.length ? null : <p className="text-muted-foreground">没有会注入的内容（{result.reason === 'game_library_disabled' ? '游戏库已停用' : result.reason === 'nothing_to_match' ? '消息、关键词、状态都是空的' : '没有卡或词条被触发'}）。</p>}
             {result.cards.map((card) => (
               <div key={card.id} className="rounded-md border p-2">
-                <div className="flex flex-wrap items-center gap-2"><span className="font-medium">{card.title}</span><Badge variant="outline">得分 {number.format(card.score)}</Badge>{card.status !== 'active' ? <Badge variant="secondary">{STATUS_LABELS[card.status]}</Badge> : null}</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">{card.title}</span>
+                  {card.experience ? <Badge variant="secondary" title={botName(bots, card.bot_id)}>她自己的经验</Badge> : null}
+                  <Badge variant="outline">得分 {number.format(card.score)}</Badge>
+                  {card.status !== 'active' ? <Badge variant="secondary">{STATUS_LABELS[card.status]}</Badge> : null}
+                </div>
                 <p className="text-xs text-muted-foreground">{card.reason}</p>
               </div>
             ))}
-            {result.overflow.length ? <p className="text-xs text-muted-foreground">也被触发但超出 2 张上限：{result.overflow.map((card) => `${card.title}（${number.format(card.score)}）`).join('、')}</p> : null}
+            {result.overflow.length ? <p className="text-xs text-muted-foreground">也被触发但超出 2 张上限：{result.overflow.map((card) => `${card.title}${card.experience ? '〔她自己的经验〕' : ''}（${number.format(card.score)}）`).join('、')}</p> : null}
             {result.terms.length ? <p className="text-xs">词条：{result.terms.map((term) => term.term).join('、')}</p> : null}
             {result.blocked.length ? <p className="text-xs text-muted-foreground">关键词命中但被条件挡住：{result.blocked.map((item) => `${item.title}（${item.reason}）`).join('；')}</p> : null}
             {result.text ? <pre className="whitespace-pre-wrap rounded-md bg-muted/50 p-2 text-xs">{result.text}</pre> : null}

@@ -162,8 +162,9 @@ describe('配置文案不暴露实现术语', () => {
     // 模型分工 10 项（每个后台大模型任务一项）；
     // Jargon_Settings 用梗提示的群聊/私聊/直播三个场合开关（+3）；
     // 信念反思 5 项（belief_reflection_enabled / _every_n_days、belief_form_min_days、belief_decay_days、belief_max_active）；
-    // 角色经历的模型分工 1 项（Model_Routing_Settings.character_experience）。
-    expect(total).toBe(179)
+    // 角色经历的模型分工 1 项（Model_Routing_Settings.character_experience）；
+    // 游戏经验 5 项（Learning_Settings.game_lesson_enabled / _delay_seconds / _daily_limit / _max_active，Model_Routing_Settings.game_lesson）。
+    expect(total).toBe(184)
     expect(noType).toEqual([])
   })
 

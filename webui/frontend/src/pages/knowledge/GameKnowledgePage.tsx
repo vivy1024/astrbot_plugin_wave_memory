@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { DatabaseZapIcon, Gamepad2Icon, PackagePlusIcon, PlusIcon, RefreshCwIcon, SaveIcon } from 'lucide-react'
+import { DatabaseZapIcon, Gamepad2Icon, PlusIcon, RefreshCwIcon, SaveIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { isRequestCancelled } from '@/api/client'
@@ -8,14 +8,12 @@ import {
   createGame,
   getGame,
   getGameOverview,
-  importGamePack,
   migrateLegacySource,
   scanLegacySource,
   updateGame,
   type GameItemKind,
   type GameLibrary,
   type GameOverview,
-  type GamePack,
   type LegacySource,
 } from '@/api/gameKnowledge'
 import { QueryState } from '@/components/shared'
@@ -27,6 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 
 import { CardsPanel, ReviewPanel, TermsPanel } from './game-knowledge/GameItems'
+import { LessonsPanel } from './game-knowledge/GameLessons'
 import { ImportPanel, TrialPanel } from './game-knowledge/GameTools'
 import { errorText, number, splitList, when } from './game-knowledge/shared'
 
@@ -110,8 +109,9 @@ export function GameKnowledgePage() {
           <h1 className="text-xl font-bold tracking-tight">游戏知识库</h1>
           <p className="text-xs text-muted-foreground">
             按游戏分库的攻略常识，所有 Bot 共用。直播时 Cortico 在 /context/prepare 带上 game，通道 game_knowledge 按游戏标识选库，
-            注入命中的攻略卡（最多 2 张）与相关词条；工具 wave_memory_game_knowledge 可以随时查。她自己玩过的事走记忆，
-            玩出来的心得走 <Link className="underline" to="/beliefs">看法</Link>，都不在这里。新增一个游戏 = 建一个库、导入知识。
+            注入命中的攻略卡（最多 2 张）与相关词条；工具 wave_memory_game_knowledge 可以随时查。她自己玩过的事走记忆；
+            从这些经历里总结出的做法写成她自己的经验卡（「经验」标签页，只属于她），对人和事的看法走 <Link className="underline" to="/beliefs">看法</Link>。
+            新增一个游戏 = 建一个库、导入知识。
           </p>
         </header>
         <Button type="button" size="sm" variant="outline" onClick={() => void changed()}><RefreshCwIcon aria-hidden="true" />刷新</Button>
@@ -122,7 +122,6 @@ export function GameKnowledgePage() {
           <div className="grid gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]">
             <div className="flex flex-col gap-4">
               <GamesCard games={games} selectedId={selectedId} onSelect={select} onCreated={async (id) => { await load(); select(id) }} />
-              <PacksCard packs={overview.packs} onImported={async (gameId) => { await load(); select(gameId) }} />
               <LegacyCard sources={overview.legacy_sources} onMigrated={async (gameId) => { await load(); if (gameId) select(gameId) }} />
             </div>
             {selected ? (
@@ -133,6 +132,7 @@ export function GameKnowledgePage() {
                     <TabsTrigger value="cards">知识卡</TabsTrigger>
                     <TabsTrigger value="terms">词条</TabsTrigger>
                     <TabsTrigger value="review">草稿审核{selected.counts.cards.draft + selected.counts.terms.draft ? `（${selected.counts.cards.draft + selected.counts.terms.draft}）` : ''}</TabsTrigger>
+                    <TabsTrigger value="lessons">经验{selected.counts.lessons?.active ? `（${selected.counts.lessons.active}）` : ''}</TabsTrigger>
                     <TabsTrigger value="import">导入导出</TabsTrigger>
                     <TabsTrigger value="trial">试一下</TabsTrigger>
                     <TabsTrigger value="settings">设置</TabsTrigger>
@@ -147,14 +147,17 @@ export function GameKnowledgePage() {
                     <ReviewPanel key={`review-${selected.id}`} game={selected} version={itemsVersion} onChanged={changed} onEdit={edit} />
                   </TabsContent>
                   <TabsContent value="import"><ImportPanel key={`import-${selected.id}`} game={selected} onChanged={changed} /></TabsContent>
-                  <TabsContent value="trial"><TrialPanel key={`trial-${selected.id}`} game={selected} /></TabsContent>
-                  <TabsContent value="settings"><GameSettings key={`settings-${selected.id}-${selected.version}`} game={selected} onSaved={changed} /></TabsContent>
+                  <TabsContent value="lessons">
+                    <LessonsPanel key={`lessons-${selected.id}`} game={selected} bots={overview.bots ?? []} lessonsEnabled={overview.lessons_enabled} version={itemsVersion} onChanged={changed} />
+                  </TabsContent>
+                  <TabsContent value="trial"><TrialPanel key={`trial-${selected.id}`} game={selected} bots={overview.bots ?? []} /></TabsContent>
+                  <TabsContent value="settings"><GameSettings key={`settings-${selected.id}-${selected.version}`} game={selected} lessonsEnabled={overview.lessons_enabled} onSaved={changed} /></TabsContent>
                 </Tabs>
               </div>
             ) : (
               <Card className="border-border/60">
                 <CardContent className="p-6 text-sm text-muted-foreground">
-                  还没有游戏库。先在左侧新建一个（如 minecraft、oni、slay_the_spire），或导入仓库自带的起始包。
+                  还没有游戏库。先在左侧新建一个（如 minecraft、oni、slay_the_spire），再导入知识或手工录入。
                 </CardContent>
               </Card>
             )}
@@ -257,52 +260,6 @@ function GamesCard({ games, selectedId, onSelect, onCreated }: {
   )
 }
 
-function PacksCard({ packs, onImported }: { packs: GamePack[]; onImported: (gameId: string) => Promise<void> }) {
-  const [confirming, setConfirming] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  if (!packs.length) return null
-
-  async function run(pack: GamePack) {
-    setBusy(true)
-    try {
-      const result = await importGamePack(pack.id)
-      toast.success(`「${pack.title}」已导入为草稿：知识卡 ${result.cards.created} 张、词条 ${result.terms.created} 个${result.cards.skipped ? `（${result.cards.skipped} 张已存在，跳过）` : ''}`)
-      setConfirming(null)
-      await onImported(pack.game.id)
-    } catch (reason) {
-      toast.error(errorText(reason, '导入起始包失败'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Card className="border-border/60">
-      <CardHeader className="border-b pb-3">
-        <CardTitle className="text-sm">起始包</CardTitle>
-        <CardDescription>仓库自带、由模型离线起草的起步知识；导入后全部是草稿，审核后再启用。</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2 p-2">
-        {packs.map((pack) => (
-          <div key={pack.id} className="flex flex-col gap-1 rounded-md border p-2 text-sm">
-            <span className="font-medium">{pack.title}</span>
-            <span className="text-xs text-muted-foreground">{pack.game.name}（{pack.game.id}）· {pack.cards} 张卡 · {pack.terms} 个词条{pack.game_exists ? ' · 游戏库已存在，已有的键会跳过' : ''}</span>
-            <span className="line-clamp-3 text-xs text-muted-foreground">{pack.description}</span>
-            {confirming === pack.id ? (
-              <div className="flex gap-2">
-                <Button type="button" size="sm" disabled={busy} onClick={() => void run(pack)}>确认导入为草稿</Button>
-                <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => setConfirming(null)}>取消</Button>
-              </div>
-            ) : (
-              <Button type="button" size="sm" variant="outline" className="self-start" onClick={() => setConfirming(pack.id)}><PackagePlusIcon aria-hidden="true" />导入起始包</Button>
-            )}
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  )
-}
-
 function LegacyCard({ sources, onMigrated }: { sources: LegacySource[]; onMigrated: (gameId: string | null) => Promise<void> }) {
   const [confirming, setConfirming] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -369,14 +326,27 @@ function LegacyCard({ sources, onMigrated }: { sources: LegacySource[]; onMigrat
   )
 }
 
-function GameSettings({ game, onSaved }: { game: GameLibrary; onSaved: () => Promise<void> }) {
-  const [form, setForm] = useState({ name: game.name, aliases: game.aliases.join('、'), description: game.description, enabled: game.enabled })
+function GameSettings({ game, lessonsEnabled, onSaved }: { game: GameLibrary; lessonsEnabled: boolean; onSaved: () => Promise<void> }) {
+  const [form, setForm] = useState({
+    name: game.name,
+    aliases: game.aliases.join('、'),
+    description: game.description,
+    enabled: game.enabled,
+    lessons_enabled: game.lessons_enabled !== false,
+  })
   const [busy, setBusy] = useState(false)
+  const stateKeys = Object.entries(game.state_keys ?? {})
 
   async function save() {
     setBusy(true)
     try {
-      await updateGame(game.id, { name: form.name.trim(), aliases: splitList(form.aliases), description: form.description.trim(), enabled: form.enabled }, game.version)
+      await updateGame(game.id, {
+        name: form.name.trim(),
+        aliases: splitList(form.aliases),
+        description: form.description.trim(),
+        enabled: form.enabled,
+        lessons_enabled: form.lessons_enabled,
+      }, game.version)
       toast.success('已保存')
       await onSaved()
     } catch (reason) {
@@ -397,7 +367,22 @@ function GameSettings({ game, onSaved }: { game: GameLibrary; onSaved: () => Pro
         <Input aria-label="设置别名" value={form.aliases} onChange={(event) => setForm({ ...form, aliases: event.target.value })} placeholder="别名，用逗号分隔（工具与请求里写别名也能找到这个库）" />
         <Textarea aria-label="设置说明" rows={3} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="说明" />
         <label className="flex items-center gap-1 text-xs"><input type="checkbox" aria-label="启用游戏库" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} />启用（直播时注入、工具可查）</label>
+        <label className="flex items-center gap-1 text-xs">
+          <input type="checkbox" aria-label="允许写经验卡" checked={form.lessons_enabled} onChange={(event) => setForm({ ...form, lessons_enabled: event.target.checked })} />
+          允许 Bot 在这个游戏里从自己的经历写经验卡
+          {lessonsEnabled ? null : <span className="text-muted-foreground">（游戏经验总开关 Learning_Settings.game_lesson_enabled 没开，开了才生效）</span>}
+        </label>
         <Button type="button" size="sm" className="self-start" disabled={busy || !form.name.trim()} onClick={() => void save()}><SaveIcon aria-hidden="true" />保存</Button>
+        <div className="flex flex-col gap-1 border-t pt-2">
+          <span className="text-xs font-medium">直播请求里见过的状态键（只读）</span>
+          {stateKeys.length ? (
+            <ul className="flex flex-wrap gap-1" aria-label="见过的状态键">
+              {stateKeys.map(([key, info]) => (
+                <li key={key}><Badge variant="outline" className="font-mono">{key}{info?.example !== undefined && info.example !== '' ? ` = ${info.example}` : ''}</Badge></li>
+              ))}
+            </ul>
+          ) : <span className="text-xs text-muted-foreground">还没见过（Cortico 在 /context/prepare 的 game.state 里带上后会自动记下，写条件时可以参考）。</span>}
+        </div>
       </CardContent>
     </Card>
   )

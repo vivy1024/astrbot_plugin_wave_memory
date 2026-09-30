@@ -24,16 +24,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 
-import { SOURCE_TYPE_LABELS, STATUS_LABELS, STATUS_VARIANTS, errorText, number, selectClass, splitLines, splitList, when } from './shared'
+import { EXPERIENCE_SOURCE_TYPE, SOURCE_TYPE_LABELS, STATUS_LABELS, STATUS_VARIANTS, errorText, number, selectClass, splitLines, splitList, triggerSummary, when } from './shared'
 
 const PAGE_SIZE = 30
-
-function triggerSummary(card: Pick<GameCard, 'keywords' | 'conditions_text'>): string {
-  const parts: string[] = []
-  if (card.keywords.length) parts.push(`关键词：${card.keywords.slice(0, 6).join('、')}${card.keywords.length > 6 ? '…' : ''}`)
-  if (card.conditions_text.length) parts.push(`条件：${card.conditions_text.join('；')}`)
-  return parts.join(' · ') || '没有触发条件：只能通过工具查到，不会自动注入'
-}
 
 function StatusBadge({ status }: { status: GameItemStatus }) {
   return <Badge variant={STATUS_VARIANTS[status]}>{STATUS_LABELS[status]}</Badge>
@@ -151,7 +144,8 @@ export function CardsPanel({ game, stages, triggerRule, focusId, focusNonce, ver
 
   useEffect(() => {
     const controller = new AbortController()
-    listGameCards(game.id, { ...filters, limit: PAGE_SIZE, offset }, controller.signal)
+    // 只列共用的攻略；各 Bot 自己的经验卡在「经验」里看
+    listGameCards(game.id, { ...filters, owner: 'shared', limit: PAGE_SIZE, offset }, controller.signal)
       .then((page) => { setRows(page.items); setTotal(page.total) })
       .catch((reason) => { if (!isRequestCancelled(reason)) toast.error(errorText(reason, '知识卡加载失败')) })
     return () => controller.abort()
@@ -264,7 +258,7 @@ export function CardsPanel({ game, stages, triggerRule, focusId, focusNonce, ver
               <Textarea aria-label="要点" rows={5} value={editing.points} onChange={(event) => set({ points: event.target.value })} placeholder="要点 / 建议，每行一条" />
               <Textarea aria-label="注意" rows={3} value={editing.pitfalls} onChange={(event) => set({ pitfalls: event.target.value })} placeholder="坑 / 注意，每行一条" />
               <Input aria-label="触发关键词" value={editing.keywords} onChange={(event) => set({ keywords: event.target.value })} placeholder="触发关键词，用逗号或顿号分隔，如 苦力怕、爬行者" />
-              <Textarea aria-label="数值条件" rows={2} value={editing.conditions} onChange={(event) => set({ conditions: event.target.value })} placeholder={'数值条件，每行一条：cycle 30..60 · health < 8 · time_of_day == night · dimension in nether, end · 前面加「必须」表示缺键不触发'} />
+              <Textarea aria-label="数值条件" rows={2} value={editing.conditions} onChange={(event) => set({ conditions: event.target.value })} placeholder={'数值条件，每行一条：cycle 30..60 · health < 8 · time_of_day == night · dimension in nether, end · 前面加「必须」表示缺键不触发 · 前面加「参考」（如 参考 cycle 30..100）只影响排序，不挡触发'} />
               <div className="grid gap-2 sm:grid-cols-2">
                 <Input aria-label="出处" value={editing.source} onChange={(event) => set({ source: event.target.value })} placeholder="出处（教程、版本、作者…）" />
                 <Input aria-label="出处链接" value={editing.source_url} onChange={(event) => set({ source_url: event.target.value })} placeholder="https://…" />
@@ -497,7 +491,7 @@ export function ReviewPanel({ game, version, onChanged, onEdit }: {
   useEffect(() => {
     const controller = new AbortController()
     const params = { status: 'draft', source_type: sourceType, limit: 200 }
-    const request = kind === 'cards' ? listGameCards(game.id, params, controller.signal) : listGameTerms(game.id, params, controller.signal)
+    const request = kind === 'cards' ? listGameCards(game.id, { ...params, owner: 'shared' }, controller.signal) : listGameTerms(game.id, params, controller.signal)
     request
       .then((page) => { setRows(toDraftRows(kind, page.items)); setTotal(page.total); setSelected(new Set()) })
       .catch((reason) => { if (!isRequestCancelled(reason)) toast.error(errorText(reason, '草稿加载失败')) })
@@ -536,7 +530,7 @@ export function ReviewPanel({ game, version, onChanged, onEdit }: {
     <Card className="border-border/60">
       <CardHeader className="gap-2 border-b pb-3">
         <CardTitle className="text-sm">草稿审核（{number.format(total)}）</CardTitle>
-        <CardDescription>导入的起始包、记忆表迁移来的知识点都是草稿：看过、改好再启用。启用后直播时才会注入，工具才查得到。</CardDescription>
+        <CardDescription>文件导入为草稿的、记忆表迁移来的知识点都是草稿：看过、改好再启用。启用后直播时才会注入，工具才查得到。Bot 自己写的经验卡不经过审核，在「经验」里看。</CardDescription>
         <div className="flex flex-wrap items-center gap-2">
           <select aria-label="草稿类型" className={selectClass} value={kind} onChange={(event) => setKind(event.target.value as GameItemKind)}>
             <option value="cards">知识卡</option>
@@ -544,7 +538,7 @@ export function ReviewPanel({ game, version, onChanged, onEdit }: {
           </select>
           <select aria-label="草稿来源" className={selectClass} value={sourceType} onChange={(event) => setSourceType(event.target.value)}>
             <option value="">全部来源</option>
-            {Object.entries(SOURCE_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            {Object.entries(SOURCE_TYPE_LABELS).filter(([value]) => value !== EXPERIENCE_SOURCE_TYPE).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
           <label className="flex items-center gap-1 text-xs"><input type="checkbox" aria-label="全选草稿" checked={allSelected} onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map((row) => row.id)))} />全选（本页 {rows.length} 条）</label>
         </div>

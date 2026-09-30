@@ -1,5 +1,5 @@
 import type { ApiError } from '@/api/client'
-import type { GameItemStatus } from '@/api/gameKnowledge'
+import type { GameCard, GameItemStatus } from '@/api/gameKnowledge'
 import { humanizeApiError } from '@/lib/reason-label'
 
 export const STATUS_LABELS: Record<GameItemStatus, string> = { draft: '草稿', active: '启用', archived: '归档' }
@@ -8,9 +8,11 @@ export const SOURCE_TYPE_LABELS: Record<string, string> = {
   manual: '手工录入',
   import: '文件导入',
   tutorial: '教程整理',
-  starter_pack: '起始包',
   memory_migration: '记忆表迁移',
+  experience: '自己玩出来的经验',
 }
+/** Bot 从自己的游戏经历里写的经验卡（只属于这个 Bot，不走导入、不进草稿审核）。 */
+export const EXPERIENCE_SOURCE_TYPE = 'experience'
 export const selectClass = 'h-8 rounded-md border bg-background px-2 text-xs text-foreground'
 export const number = new Intl.NumberFormat('zh-CN')
 
@@ -58,4 +60,17 @@ export function parseStateLines(text: string): Record<string, string | number | 
 
 export function when(ts: number): string {
   return ts ? new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false }) : '—'
+}
+
+/** 一张卡怎么触发：关键词 + 条件（条件文字由后端给，带「必须 / 参考」前缀）。 */
+export function triggerSummary(card: Pick<GameCard, 'keywords' | 'conditions_text'>): string {
+  const parts: string[] = []
+  if (card.keywords.length) parts.push(`关键词：${card.keywords.slice(0, 6).join('、')}${card.keywords.length > 6 ? '…' : ''}`)
+  if (card.conditions_text.length) parts.push(`条件：${card.conditions_text.join('；')}`)
+  return parts.join(' · ') || '没有触发条件：只能通过工具查到，不会自动注入'
+}
+
+/** 只要日期（秒级时间戳）。 */
+export function day(ts: number | null | undefined): string {
+  return ts ? new Date(ts * 1000).toLocaleDateString('zh-CN') : '—'
 }
