@@ -48,11 +48,12 @@ class _Plugin:
     pass
 
 
-_METHODS = _methods("_init_learning_services", "_portrait_llm", "_create_belief_reflection", "_belief_reflection_llm")
-_Plugin._init_learning_services = _METHODS["_init_learning_services"]
-_Plugin._portrait_llm = _METHODS["_portrait_llm"]
-_Plugin._create_belief_reflection = _METHODS["_create_belief_reflection"]
-_Plugin._belief_reflection_llm = _METHODS["_belief_reflection_llm"]
+_METHODS = _methods(
+    "_init_learning_services", "_portrait_llm", "_create_belief_reflection", "_belief_reflection_llm",
+    "_create_game_lessons", "_game_lesson_llm",
+)
+for _name, _method in _METHODS.items():
+    setattr(_Plugin, _name, _method)
 
 
 @pytest.fixture
@@ -130,6 +131,37 @@ def test_enabled_portrait_starts_loop_under_learning_owner(plugin):
     assert ("wave-memory:learning:relationship-portrait", "learning") in plugin.spawned
     assert portrait_injection_enabled() is True
     assert service._bot_ids() == ["yushu"]
+
+
+def test_game_lessons_off_by_default(plugin):
+    plugin.config = {"Learning_Settings": {}}
+    plugin.game_knowledge = SimpleNamespace()
+    plugin._init_learning_services()
+    assert plugin.game_lessons is None and get_container().game_lessons is None
+    assert get_container().learning_stats_getter()["game_lesson"] is None
+
+
+def test_game_lessons_enabled_wire_into_container_and_model_routing(plugin):
+    from services.game_knowledge import GameKnowledgeService
+    from services.game_knowledge.lessons import GameLessonService
+
+    plugin.game_knowledge = GameKnowledgeService(plugin.db.game_knowledge)
+    plugin.config = {"Learning_Settings": {"game_lesson_enabled": True, "game_lesson_daily_limit": 7, "game_lesson_delay_seconds": 60}}
+    plugin._init_learning_services()
+    service = plugin.game_lessons
+    assert isinstance(service, GameLessonService) and service.enabled is True
+    assert service.daily_limit == 7 and service.delay_seconds == 60
+    assert get_container().game_lessons is service
+    assert plugin.llm_routing.chain("game_lesson") == ["meta-model"], "留空时跟 MetaThinking 默认模型一族"
+    assert plugin._game_lesson_llm("yushu").bot_id == "yushu", "可按 Bot 覆盖"
+    assert service._candidate_bots() == ["yushu"]
+
+
+def test_game_lessons_need_game_knowledge(plugin):
+    plugin.config = {"Learning_Settings": {"game_lesson_enabled": True}}
+    plugin.game_knowledge = None
+    plugin._init_learning_services()
+    assert plugin.game_lessons is None
 
 
 def test_enabled_without_llm_keeps_rule_summary(plugin):

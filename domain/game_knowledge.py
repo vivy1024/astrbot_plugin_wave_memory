@@ -20,9 +20,12 @@
     time_of_day == night                   time_of_day != day    等值（数字或短字符串，不分大小写）
     dimension in nether, end                                      属于其中之一
     必须 dimension in nether, end                                 前面加「必须」：状态里没有这个键时算不满足
+    参考 cycle 30..100                                            前面加「参考」：只影响排序，不满足也不挡
 
 判定（:func:`evaluate_condition`）：状态里没有这个键、或数值比较遇到非数字时记为「未判定」，
 不算满足也不算不满足（标了「必须」的条件缺键时算不满足）；知识卡怎么用这三种结果见 :func:`card_trigger`。
+「参考」条件适合「大致在什么阶段用得上」这类提示（如缺氧教程每集的周期范围）：眼前的周期对不上时，
+这张卡照样能被关键词触发，只是排在对得上的卡后面。
 """
 
 from __future__ import annotations
@@ -40,9 +43,11 @@ SOURCE_TYPE_LABELS = {
     "manual": "手工录入",
     "import": "文件导入",
     "tutorial": "教程整理",
-    "starter_pack": "起始包",
     "memory_migration": "记忆表迁移",
+    "experience": "自己玩出来的经验",
 }
+# Bot 从自己的游戏经历里写下的经验卡（services/game_knowledge/lessons.py）：只属于这个 Bot，不走导入。
+EXPERIENCE_SOURCE_TYPE = "experience"
 
 GAME_ID_MAX = 40
 KEY_MAX = 80
@@ -213,6 +218,7 @@ _RANGE_DASH_RE = re.compile(r"^(?P<key>" + _STATE_KEY + r")\s+(?P<lo>\d+(?:\.\d+
 _PLUS_RE = re.compile(rf"^(?P<key>{_STATE_KEY})\s+(?P<lo>{_NUM})\s*\+$")
 _IN_RE = re.compile(rf"^(?P<key>{_STATE_KEY})\s+(?:in|属于)\s+(?P<values>.+)$", re.I)
 _REQUIRED_RE = re.compile(r"^(?:必须|required|must)\s*[:：]?\s*", re.I)
+_SOFT_RE = re.compile(r"^(?:参考|soft|prefer)\s*[:：]?\s*", re.I)
 _COMPARE_RE = re.compile(rf"^(?P<key>{_STATE_KEY})\s*(?P<op>==|!=|<>|<=|>=|=|<|>)\s*(?P<value>.+)$")
 
 
@@ -227,6 +233,8 @@ class Condition:
     max: float | None = None
     # 必须判定：状态里没有这个键时算不满足（默认缺键不判定、不挡关键词）
     required: bool = False
+    # 参考条件：只影响排序（满足排前、不满足排后），不挡住关键词触发；与「必须」互斥
+    soft: bool = False
 
     @property
     def folded_key(self) -> str:
@@ -241,11 +249,13 @@ class Condition:
             payload = {"key": self.key, "op": self.op, "value": _plain_number(self.value)}
         if self.required:
             payload["required"] = True
+        if self.soft:
+            payload["soft"] = True
         return payload
 
     def text(self) -> str:
         """一行文字形式（管理台展示与编辑）；能被 :func:`parse_condition` 原样解析回来。"""
-        prefix = "必须 " if self.required else ""
+        prefix = "必须 " if self.required else "参考 " if self.soft else ""
         if self.op == "between":
             return f"{prefix}{self.key} {_number_text(self.min)}..{_number_text(self.max)}"
         if self.op == "in":
@@ -261,7 +271,7 @@ class Condition:
         else:
             words = {"eq": "是", "ne": "不是", "lt": "小于", "lte": "不超过", "gt": "大于", "gte": "至少"}
             text = f"{self.key} {words[self.op]} {_value_text(self.value)}"
-        return text + ("（必须）" if self.required else "")
+        return text + ("（必须）" if self.required else "（参考）" if self.soft else "")
 
 
 def _plain_number(value: Any) -> Any:
@@ -365,13 +375,18 @@ def parse_condition(raw: Any) -> Condition:
     for old, new in _TEXT_REPLACEMENTS:
         text = text.replace(old, new)
     text = unicodedata.normalize("NFKC", text).strip()
-    required = False
+    required = soft = False
     marker = _REQUIRED_RE.match(text)
     if marker:
         required, text = True, text[marker.end():].strip()
+    marker = _SOFT_RE.match(text)
+    if marker:
+        soft, text = True, text[marker.end():].strip()
+    if required and soft:
+        raise GameKnowledgeError("invalid_condition", f"条件「{source}」不能同时是「必须」和「参考」")
     if not text:
         raise GameKnowledgeError("invalid_condition", "条件不能为空")
-    return replace(_parse_condition_text(text, source), required=required)
+    return replace(_parse_condition_text(text, source), required=required, soft=soft)
 
 
 def _parse_condition_text(text: str, source: str) -> Condition:
@@ -401,11 +416,17 @@ def _parse_condition_text(text: str, source: str) -> Condition:
     )
 
 
+def _flag(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 def _parse_condition_mapping(raw: Mapping[str, Any]) -> Condition:
-    required = raw.get("required")
-    if isinstance(required, str):
-        required = required.strip().lower() in {"1", "true", "yes", "on"}
-    return replace(_parse_condition_fields(raw), required=bool(required))
+    required, soft = _flag(raw.get("required")), _flag(raw.get("soft"))
+    if required and soft:
+        raise GameKnowledgeError("invalid_condition", "条件不能同时是「必须」（required）和「参考」（soft）")
+    return replace(_parse_condition_fields(raw), required=required, soft=soft)
 
 
 def _parse_condition_fields(raw: Mapping[str, Any]) -> Condition:
@@ -510,7 +531,7 @@ def evaluate_condition(condition: Condition, state: Mapping[str, Any]) -> tuple[
         ok = _equal(raw, condition.value)
     else:  # ne
         ok = not _equal(raw, condition.value)
-    described = replace(condition, required=False).describe()
+    described = replace(condition, required=False, soft=False).describe()
     return (PASS, f"{shown}（{described}）") if ok else (FAIL, f"{shown}，不满足「{described}」")
 
 
@@ -680,9 +701,15 @@ class TriggerResult:
     def passed_conditions(self) -> int:
         return sum(1 for _, outcome, _ in self.conditions if outcome == PASS)
 
+    @property
+    def soft_failed(self) -> int:
+        """没满足的「参考」条件数：不挡触发，只让这张卡排在后面。"""
+        return sum(1 for condition, outcome, _ in self.conditions if outcome == FAIL and condition.soft)
+
 
 TRIGGER_RULE_TEXT = (
-    "写了关键词：关键词命中才触发，数值条件用来限定（状态里没有该键时不判定；条件前加「必须」则缺键时不触发）；"
+    "写了关键词：关键词命中才触发，数值条件用来限定（状态里没有该键时不判定；条件前加「必须」则缺键时不触发；"
+    "条件前加「参考」则只影响排序，不满足也照样触发、排在后面）；"
     "没写关键词：数值条件全部满足才触发；两样都没写：只能通过工具查到，不会自动注入。"
 )
 
@@ -690,7 +717,8 @@ TRIGGER_RULE_TEXT = (
 def card_trigger(keywords: Sequence[str], conditions: Sequence[Condition], haystack: KeywordHaystack, state: Mapping[str, Any]) -> TriggerResult:
     """一张知识卡是否被这次请求触发（规则见 :data:`TRIGGER_RULE_TEXT`）。``state`` 的键已 casefold。"""
     results = tuple((condition, *evaluate_condition(condition, state)) for condition in conditions)
-    failed = [detail for _, outcome, detail in results if outcome == FAIL]
+    # 没写关键词的卡只靠条件触发：「参考」条件在这里也得满足（否则什么都挡不住，每轮都会触发）
+    failed = [detail for condition, outcome, detail in results if outcome == FAIL and (not condition.soft or not keywords)]
     if failed:
         return TriggerResult(False, (), results, "条件不满足：" + "；".join(failed))
     if keywords:
@@ -705,7 +733,10 @@ def card_trigger(keywords: Sequence[str], conditions: Sequence[Condition], hayst
             return TriggerResult(False, (), results, "关键词没有命中")
         parts = ["关键词 " + "、".join(hit.describe() for hit in hits[:4])]
         if results:
-            parts.append("条件 " + "；".join(detail for _, _, detail in results))
+            parts.append("条件 " + "；".join(
+                detail + ("（参考条件，不挡，排在后面）" if condition.soft and outcome == FAIL else "")
+                for condition, outcome, detail in results
+            ))
         return TriggerResult(True, tuple(hits), results, "；".join(parts))
     if results and all(outcome == PASS for _, outcome, _ in results):
         return TriggerResult(True, (), results, "条件全部满足：" + "；".join(detail for _, _, detail in results))
@@ -744,7 +775,10 @@ def auto_item_key(prefix: str, text: str) -> str:
 
 
 def normalize_game_fields(payload: Mapping[str, Any], *, partial: bool = False) -> dict[str, Any]:
-    """游戏库字段：``id``（新建时）、``name``、``aliases``、``description``、``enabled``。"""
+    """游戏库字段：``id``（新建时）、``name``、``aliases``、``description``、``enabled``、``lessons_enabled``。
+
+    ``lessons_enabled``：允许 Bot 从自己在这个游戏里的经历写经验卡（总开关是 Learning_Settings.game_lesson_enabled）。
+    """
     if not isinstance(payload, Mapping):
         raise GameKnowledgeError("invalid_payload", "游戏信息必须是对象")
     fields: dict[str, Any] = {}
@@ -762,10 +796,9 @@ def normalize_game_fields(payload: Mapping[str, Any], *, partial: bool = False) 
     if not partial or "description" in payload:
         fields["description"] = clean_text(payload.get("description"), limit=TEXT_MAX)
     if not partial or "enabled" in payload:
-        enabled = payload.get("enabled", True)
-        if isinstance(enabled, str):
-            enabled = enabled.strip().lower() in {"1", "true", "yes", "on"}
-        fields["enabled"] = bool(enabled)
+        fields["enabled"] = _flag(payload.get("enabled", True))
+    if not partial or "lessons_enabled" in payload:
+        fields["lessons_enabled"] = _flag(payload.get("lessons_enabled", True))
     return fields
 
 
@@ -871,6 +904,7 @@ def normalize_term_fields(payload: Mapping[str, Any], *, partial: bool = False) 
 __all__ = [
     "CONDITION_OPS",
     "Condition",
+    "EXPERIENCE_SOURCE_TYPE",
     "FAIL",
     "GameContext",
     "GameKnowledgeConflict",

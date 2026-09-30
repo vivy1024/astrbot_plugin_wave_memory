@@ -90,6 +90,8 @@ class ServiceContainer:
         self.character_experience: Any = None
         # 游戏知识库（services.game_knowledge.GameKnowledgeService）：管理台「游戏知识库」页用。
         self.game_knowledge: Any = None
+        # 游戏经验（services.game_knowledge.lessons.GameLessonService）；game_lesson_enabled 关闭时为 None。
+        self.game_lessons: Any = None
 
         # ─── 认证 ───
         self.password: str = ""

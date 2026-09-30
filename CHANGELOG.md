@@ -37,11 +37,13 @@
    - `/context/prepare` 响应新增 `safety_prompt`：与 AstrBot 路径加在系统提示词开头的身份安全提示同一段，外部应用自己放进系统级位置；请求里的未知字段照旧忽略，旧客户端不受影响。
    - `/observations/batch` 新增 `kind: "game_event"`：Bot 自己的游戏经历（死亡、目标、进入新维度、胜负等）按 Bot 经历入库（`source=game_event`，内容保留「[我的世界]」这类游戏前缀），与弹幕、她说的话在直播间会话里按时间交错；按 event_id 幂等；不走群友相关处理。召回时标注「[你的游戏经历]」。
    - 每日日记把当天的游戏经历单独成段当素材（最多 20 条，死亡太多时只留首尾并注明次数）；只打了游戏、没说话的日子，直播间会话也会写日记。
-17. **游戏知识库**：直播玩的游戏不止一个，攻略常识改由 WaveMemory 统一管理，按游戏分库、所有 Bot 共用；WaveMemory 里不写任何针对具体游戏的代码，新增游戏只需在管理台建库导入。
-   - 知识卡（阶段、要点、注意、出处）+ 词条；触发条件为关键词 + 可选的状态条件（如 `cycle 30..60`、`health <= 6`、`time_of_day == night`），由 Runtime 请求的 `game`（`{id, state, keywords}`）匹配。
-   - 新注入通道 `game_knowledge`（只在请求带 game 时工作，最多 2 张卡 + 词条）与工具 `wave_memory_game_knowledge`；草稿不注入、不可查。
-   - 管理台「游戏知识库」页：游戏库、知识卡与词条编辑（版本检查）、草稿审核、导入导出、「试一下」模拟注入。
-   - 导入器：通用 JSON 格式；缺氧教程资产（23 张策略卡 + 23 集时间线，导入即启用）；记忆表里 300 条旧 `oni_lore` 知识点可一键迁为草稿（原行不动）；我的世界起始包 38 张卡、31 个词条（模型离线起草，全部为草稿，需人工审核后启用）。
+17. **游戏知识库**：直播玩的游戏不止一个，游戏知识改由 WaveMemory 统一管理，按游戏分库；WaveMemory 里不写任何针对具体游戏的代码，新增游戏只需在管理台建库（或等 Bot 第一次写经验卡时自动建）。
+   - 知识卡（阶段、要点、注意、出处）+ 词条；触发条件为关键词 + 可选的状态条件（如 `cycle 30..60`、`health <= 6`、`time_of_day == night`；前缀「必须」缺键也挡，「参考」只影响排序不挡），由 Runtime 请求的 `game`（`{id, state, keywords}`）匹配。
+   - 新注入通道 `game_knowledge`（只在请求带 game 时工作，最多 2 张卡 + 词条；卡片要点多时挑和这句话相关的几条）与工具 `wave_memory_game_knowledge`；草稿不注入、不可查。
+   - 管理台「游戏知识库」页：游戏库、知识卡与词条编辑（版本检查）、草稿审核、导入导出、「试一下」模拟注入、各 Bot 的经验卡。
+   - 导入器：通用 JSON 格式；缺氧教程资产（23 张策略卡 + 23 集时间线，导入即启用，每集周期导入为「参考」条件，周期对不上时照样能选、排在后面）；记忆表里 300 条旧 `oni_lore` 知识点可一键迁为草稿（原行不动）。
+   - **不预设攻略**：我的世界这类模型本来就懂的游戏不准备攻略（开发期起草的我的世界起始包已删除）；只给真人自己玩都难的游戏（如缺氧）导入教程。
+   - **经验卡**（`Learning_Settings.game_lesson_enabled`，默认关闭）：Bot 回想 Cortico 写回的游戏经历（死亡、目标、发现、对局结果……）与当时自己说的话、弹幕的反应，把吃过的亏、摸索出来的办法写成只属于自己的经验卡（做法、经过、触发词、条件、依据的具体经历）。死亡 / 危机后等 3 分钟想一次（同一场直播里就能用上），每日日记后补想，管理台可手动；同一条经历不重复计数，同样的亏再吃一次加次数，新经历证明不对就改写；直接生效不用审，管理台删掉的不再写回来；每个游戏有上限，最久没再经历的先归档；每个游戏可单独关。注入时她自己的经验排在攻略前、措辞分开（「你亲身经历过、自己总结的」vs「不是你的亲身经历」），别的 Bot 看不到。模型走模型分工新任务 `game_lesson`（可按 Bot 覆盖）。进度记在新表 `game_lesson_runs`，失败或中途退出的下次重来。
 
 ### 后续阶段（本地开发，尚未发版）
 
@@ -58,12 +60,13 @@
 - 升级用户需检查配置：
   - 新增 `Social_Settings.per_turn_impression_tag`（默认关闭）。
   - 新增 `Learning_Settings` 关系小传 7 项（`relationship_portrait_enabled` 默认关闭，`portrait_min_new_events`、`portrait_refresh_days`、`portrait_min_events`、`portrait_max_chars`、`portrait_max_per_round`、`portrait_daily_limit`）与信念反思 5 项（`belief_reflection_enabled` 默认关闭，`belief_reflection_every_n_days`、`belief_form_min_days`、`belief_decay_days`、`belief_max_active`），均需重启生效；信念反思依赖每日日记。
-  - 新增 `Model_Routing_Settings` 11 项（默认全空 = 行为不变）。**检查各 Bot Profile 的 `model` 字段**：此前被忽略，现在对内心判断、事后记账、每日日记、关系小传、信念反思、角色经历生效。
+  - 新增 `Learning_Settings` 游戏经验 4 项（`game_lesson_enabled` 默认关闭，`game_lesson_delay_seconds`、`game_lesson_daily_limit`、`game_lesson_max_active`），需重启生效；每日补想依赖每日日记，死亡 / 危机后的即时回想与管理台手动不依赖。
+  - 新增 `Model_Routing_Settings` 12 项（默认全空 = 行为不变）。**检查各 Bot Profile 的 `model` 字段**：此前被忽略，现在对内心判断、事后记账、每日日记、关系小传、信念反思、角色经历、游戏经验生效。
   - 新增 `Jargon_Settings.meme_hint_group`（默认开）、`meme_hint_private`、`meme_hint_live`（默认关）；`meme_hint` 通道本身默认关闭。
   - `Inject_Settings.enable_holyman_persona` 废弃（保留键，填 true 只打警告）；已保存的通道配置里残留 `holyman_persona` 会被忽略。
   - 移除 `Affinity_Settings.relationship_tiers_json`（旧配置残留会被忽略）。
 - 首次启动自动执行一次角色经历迁移：记忆表里 `source='bzz_experience'` 的无归属旧行导入为 Bot `baizz` 的角色经历（启用、原著，按原剧情分卷建阶段），并为 baizz 开启角色经历、当前时间点设为最后一个阶段、代词设为「她」；旧行不删除，但不再被其他 Bot 召回。库里没有旧数据或没有 baizz 时安全跳过。迁移后情绪与在场人物为空，可在工作台用原始 JSONL「补上空字段」导入补齐。
-- 首次启动新增 `person_relationship_portraits`、`person_relationship_portrait_history`、`bot_beliefs`、`bot_belief_events`、`bot_belief_reflection_runs`、`game_libraries`、`game_knowledge_cards`、`game_knowledge_terms`（及其 FTS 索引）、`character_experiences`（及其 FTS 索引、`character_timeline_stages`、`character_experience_scene_log`、`character_experience_migrations`）表（只新增、可重复执行）；旧 `scoped_beliefs` 全部迁为 `legacy_archived`，不删除。
+- 首次启动新增 `person_relationship_portraits`、`person_relationship_portrait_history`、`bot_beliefs`、`bot_belief_events`、`bot_belief_reflection_runs`、`game_libraries`、`game_knowledge_cards`、`game_knowledge_terms`（及其 FTS 索引）、`game_lesson_runs`、`character_experiences`（及其 FTS 索引、`character_timeline_stages`、`character_experience_scene_log`、`character_experience_migrations`）表（只新增、可重复执行）；旧 `scoped_beliefs` 全部迁为 `legacy_archived`，不删除。
 - 移除工具 `wave_memory_propose_belief`（内置工具 18 个）；信念管理台旧的逐条审核/归档/批量接口返回 410，新接口为 `GET /api/beliefs?bot_id=` 与 `POST /api/beliefs/<id>/veto|restore`。**部署前必须重建管理台**，否则旧页面调用已变更的接口。
 - Bot Profile 新增 `mood` 段（未配置时用中性默认值）；`Lifecycle_Settings.mood_duration_hours` 语义改为「默认恢复半衰期」。
 - 首次启动新增 `bot_mood_events`、`bot_mood_state` 两张表（只新增、可重复执行）；旧 `scoped_soul_mood` 不读不改，升级后心情从基线加最近 12 小时关系事件起步。

@@ -185,7 +185,7 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 ├─ jargon（已确认黑话）
 ├─ fewshot（已批准健康风格样本）
 ├─ book_lore（世界观知识）
-├─ game_knowledge（游戏攻略参考：Runtime 请求带 game 时按游戏选库，注入命中的知识卡与词条）
+├─ game_knowledge（游戏知识：Runtime 请求带 game 时按游戏选库，注入她自己的经验卡与命中的攻略卡、词条）
 ├─ character_experience（角色经历：书中角色 / OC 进群之前的第一人称过去，按 Bot 启用，只召回当前时间点之前的阶段）
 ├─ affinity（关系小传或印象时间线摘要为主 · 共同交往锚点 · 末尾一行好感分数仅供参考）
 ├─ meme_hint（用梗提示：话题相关时提示 1–2 个可以用的梗，默认关闭）
@@ -328,7 +328,7 @@ v5.0.0 彻底收敛了历史堆叠的工具集，常驻工具数量减半，释�
 | **`wave_memory_note_concern`** | **灵魂关切管理**：记录并推进 Bot 挂在心上的未决事件（群友生病/考试/约定等） | full，群 Scope |
 | **`wave_memory_mark_cultural_moment`** | **文化时刻标记**：现场提审本群特色黑话梗（jargon）或高光风骨回复（style），进入审核工作台 | full，群 Scope |
 | **`wave_memory_propose_fact`** | **客观事实提审**：发现群友新事实，自动反查当轮真实消息 ID 并绑定 `source_quote` 证据入库 | full，群 Scope |
-| **`wave_memory_game_knowledge`** | **游戏攻略查询**：按游戏查知识卡与词条（机制、打法、坑）；想查自己以前玩过的事用记忆搜索 | 群聊 / 私聊 |
+| **`wave_memory_game_knowledge`** | **游戏知识查询**：按游戏查攻略卡、词条（机制、打法、坑）与自己玩出来的经验；想查以前玩过的具体经过用记忆搜索 | 群聊 / 私聊 |
 | **`wave_memory_meme_lookup`** | **梗百科**：看不懂梗或想接梗时查释义与例句（含神言语料），敏感条目带分寸标注 | 随黑话能力开关 |
 | **`wave_memory_note_episode`** | **群经历大事件**：记录解决群体问题或关系转折的重大经历片段，自动锚定记忆 | full，群 Scope |
 | **`wave_memory_record_diary_episode`** | **Bot 亲笔日记**：记录今日生活随笔与心智历程，带 6 小时冷却并钉入经历时间线主干 | full，群 Scope |
@@ -550,6 +550,10 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | belief_form_min_days | 2 | 看法在多少个不同日子里得到支持并被再次印证才算形成 |
 | belief_decay_days | 30 | 多少天没被印证就降一级（稳固→形成→动摇→淡出） |
 | belief_max_active | 20 | 每个 Bot 同时有效的看法上限，超出时最弱的淡出 |
+| game_lesson_enabled | false | 游戏经验：Bot 回想 Cortico 写回的游戏经历与当时的对话，把教训写成只属于自己的经验卡（不预设攻略）；每个游戏可在游戏知识库设置里单独关 |
+| game_lesson_delay_seconds | 180 | 死亡 / 危机后等几秒再回想；同一个 Bot 两次之间至少隔 10 分钟 |
+| game_lesson_daily_limit | 30 | 每个 Bot 每天最多调用几次模型回想游戏经验 |
+| game_lesson_max_active | 60 | 每个游戏最多保留多少条有效经验，超出时最久没再经历的先归档 |
 
 ### 风格学习 (FewShot_Settings)
 
@@ -673,6 +677,7 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | portrait | （空） | 关系小传；留空跟随 MetaThinking 默认模型 |
 | belief_reflection | （空） | 信念反思；留空跟随 MetaThinking 默认模型 |
 | character_experience | （空） | 角色经历的原著提取、时间线起草与展开；留空跟随 MetaThinking 默认模型 |
+| game_lesson | （空） | 游戏经验（从自己的游戏经历写经验卡）；留空跟随 MetaThinking 默认模型 |
 
 ### MetaThinking (MetaThinking_Settings)
 

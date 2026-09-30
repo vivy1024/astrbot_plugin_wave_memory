@@ -1,9 +1,11 @@
-"""游戏知识库仓储：游戏库、知识卡、词条（自有小表，不经 DomainCommand，不进 outbox）。
+"""游戏知识库仓储：游戏库、知识卡、词条、经验反思进度（自有小表，不经 DomainCommand，不进 outbox）。
 
 - ``version`` 做乐观锁：编辑带上读到的版本号，对不上就拒绝（与关系小传、Bot Profile 相同写法）；
 - 知识卡 / 词条的中文检索索引（``fts_game_cards`` / ``fts_game_terms``）与正文在同一个写事务里维护，
   切词沿用 ``fts_cjk``（中日韩字串切相邻两字，字母数字按词小写）；
-- 导入在一个事务里完成：已有同键条目按 ``skip`` / ``update`` / ``merge`` 处理，已有条目的状态不变。
+- 导入在一个事务里完成：已有同键条目按 ``skip`` / ``update`` / ``merge`` 处理，已有条目的状态不变；
+- 知识卡的 ``bot_id``：空串 = 所有 Bot 共用的攻略，否则是这个 Bot 自己的经验卡（导入、导出、阶段统计都只看共用的）；
+- 经验反思读记忆表里的游戏经历（``source='game_event'``，只读），进度记在 ``game_lesson_runs``。
 
 字段规整与校验在 :mod:`domain.game_knowledge`，这里只负责落库与读取。
 """
@@ -54,11 +56,17 @@ except ImportError:  # pragma: no cover - 仓库测试以插件根目录为顶�
 IMPORT_MODES = ("skip", "update", "merge")
 LIST_LIMIT_MAX = 200
 
-_GAME_COLUMNS = "game_id, name, aliases, description, enabled, version, created_at, updated_at"
+_GAME_COLUMNS = "game_id, name, aliases, description, enabled, version, created_at, updated_at, lessons_enabled, state_keys"
 _CARD_COLUMNS = (
     "id, game_id, card_key, title, stage, points, pitfalls, keywords, conditions, source, source_url, "
-    "source_type, status, version, note, meta, created_at, updated_at"
+    "source_type, status, version, note, meta, created_at, updated_at, bot_id"
 )
+_RUN_COLUMNS = (
+    "id, bot_id, game_id, trigger, status, started_at, finished_at, from_memory_id, to_memory_id, events, "
+    "model_calls, counts, error"
+)
+# 直播请求里见过的状态键最多记这么多个（写经验卡的条件时给模型看）
+STATE_KEYS_MAX = 40
 _TERM_COLUMNS = (
     "id, game_id, term_key, term, aliases, explanation, related, source, source_url, source_type, status, "
     "version, note, meta, created_at, updated_at"
@@ -93,6 +101,8 @@ def _game_row(row: Any) -> dict[str, Any]:
         "version": int(row[5] or 1),
         "created_at": float(row[6] or 0.0),
         "updated_at": float(row[7] or 0.0),
+        "lessons_enabled": bool(row[8]) if len(row) > 8 and row[8] is not None else True,
+        "state_keys": _loads(row[9], {}) if len(row) > 9 else {},
     }
 
 
@@ -116,6 +126,25 @@ def _card_row(row: Any) -> dict[str, Any]:
         "meta": _loads(row[15], {}),
         "created_at": float(row[16] or 0.0),
         "updated_at": float(row[17] or 0.0),
+        "bot_id": str(row[18] or "") if len(row) > 18 else "",
+    }
+
+
+def _run_row(row: Any) -> dict[str, Any]:
+    return {
+        "id": int(row[0]),
+        "bot_id": str(row[1] or ""),
+        "game_id": str(row[2] or ""),
+        "trigger": str(row[3] or ""),
+        "status": str(row[4] or ""),
+        "started_at": float(row[5] or 0.0),
+        "finished_at": float(row[6]) if row[6] is not None else None,
+        "from_memory_id": int(row[7] or 0),
+        "to_memory_id": int(row[8] or 0),
+        "events": int(row[9] or 0),
+        "model_calls": int(row[10] or 0),
+        "counts": _loads(row[11], {}),
+        "error": str(row[12] or ""),
     }
 
 
@@ -196,13 +225,18 @@ class GameKnowledgeRepo:
         return games
 
     def counts(self, game_id: str | None = None) -> dict[str, dict[str, dict[str, int]]]:
+        """各状态计数：``cards`` 只算共用的攻略卡，``lessons`` 是各 Bot 的经验卡合计。"""
         result: dict[str, dict[str, dict[str, int]]] = {}
-        for table, kind in (("game_knowledge_cards", "cards"), ("game_knowledge_terms", "terms")):
-            sql = f"SELECT game_id, status, COUNT(*) FROM {table}"
-            params: list[Any] = []
+        for table, kind, owner in (
+            ("game_knowledge_cards", "cards", "bot_id=''"),
+            ("game_knowledge_cards", "lessons", "bot_id<>''"),
+            ("game_knowledge_terms", "terms", ""),
+        ):
+            where, params = [owner] if owner else [], []
             if game_id is not None:
-                sql += " WHERE game_id=?"
+                where.append("game_id=?")
                 params.append(game_id)
+            sql = f"SELECT game_id, status, COUNT(*) FROM {table}" + (f" WHERE {' AND '.join(where)}" if where else "")
             for gid, status, count in self._read(sql + " GROUP BY game_id, status", params).fetchall():
                 bucket = result.setdefault(str(gid), _empty_counts())
                 bucket[kind][str(status)] = int(count)
@@ -227,10 +261,11 @@ class GameKnowledgeRepo:
             if tx.execute("SELECT 1 FROM game_libraries WHERE game_id=?", (fields["game_id"],)).fetchone():
                 raise GameKnowledgeConflict("game_exists", message=f"游戏库 {fields['game_id']} 已存在")
             tx.execute(
-                """INSERT INTO game_libraries (game_id, name, aliases, description, enabled, version, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, 1, ?, ?)""",
+                """INSERT INTO game_libraries (game_id, name, aliases, description, enabled, version, created_at, updated_at,
+                                               lessons_enabled)
+                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)""",
                 (fields["game_id"], fields["name"], _dumps(fields["aliases"]), fields["description"],
-                 1 if fields["enabled"] else 0, stamp, stamp),
+                 1 if fields["enabled"] else 0, stamp, stamp, 1 if fields.get("lessons_enabled", True) else 0),
             )
         game = self.get_game(fields["game_id"])
         assert game is not None
@@ -251,7 +286,7 @@ class GameKnowledgeRepo:
             if changed:
                 assignments = ", ".join(f"{name}=?" for name in changed)
                 values = [
-                    _dumps(value) if name in _JSON_FIELDS else (1 if value else 0) if name == "enabled" else value
+                    _dumps(value) if name in _JSON_FIELDS else (1 if value else 0) if name in {"enabled", "lessons_enabled"} else value
                     for name, value in changed.items()
                 ]
                 tx.execute(
@@ -307,12 +342,15 @@ class GameKnowledgeRepo:
     def _normalize(self, kind: str, payload: Mapping[str, Any], *, partial: bool = False) -> dict[str, Any]:
         return normalize_card_fields(payload, partial=partial) if kind == "card" else normalize_term_fields(payload, partial=partial)
 
-    def _insert(self, tx, kind: str, game_id: str, fields: Mapping[str, Any], *, status: str, now: float) -> dict[str, Any]:
+    def _insert(self, tx, kind: str, game_id: str, fields: Mapping[str, Any], *, status: str, now: float, bot_id: str = "") -> dict[str, Any]:
         table, key_column, _, _, _, content = self._spec(kind)
         key = fields.get(key_column) or auto_item_key("c" if kind == "card" else "t", fields["title" if kind == "card" else "term"])
         values = {name: fields.get(name, _default(name)) for name in content}
         names = ["game_id", key_column, *content, "status", "version", "created_at", "updated_at"]
         params = [game_id, key, *(_dumps(values[n]) if n in _JSON_FIELDS else values[n] for n in content), status, 1, now, now]
+        if kind == "card" and bot_id:
+            names.append("bot_id")
+            params.append(str(bot_id))
         try:
             cursor = tx.execute(
                 f"INSERT INTO {table} ({', '.join(names)}) VALUES ({', '.join('?' for _ in names)})",
@@ -447,12 +485,17 @@ class GameKnowledgeRepo:
         stage: str | None = None,
         query: str = "",
         source_type: str | None = None,
+        bot_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> dict[str, Any]:
+        """``bot_id``（只对知识卡）：None = 全部；空串 = 共用的攻略；某个 Bot = 它自己的经验卡。"""
         table, key_column, columns, fts_table, to_item, _ = self._spec(kind)
         gid = validate_game_id(game_id)
         where, params = ["game_id=?"], [gid]
+        if kind == "card" and bot_id is not None:
+            where.append("bot_id=?")
+            params.append(str(bot_id))
         statuses = [status] if isinstance(status, str) else list(status or [])
         statuses = [validate_status(s) for s in statuses if s]
         if statuses:
@@ -494,7 +537,7 @@ class GameKnowledgeRepo:
 
     def stage_facets(self, game_id: str) -> list[dict[str, Any]]:
         rows = self._read(
-            "SELECT stage, COUNT(*) FROM game_knowledge_cards WHERE game_id=? GROUP BY stage ORDER BY MIN(id)",
+            "SELECT stage, COUNT(*) FROM game_knowledge_cards WHERE game_id=? AND bot_id='' GROUP BY stage ORDER BY MIN(id)",
             (validate_game_id(game_id),),
         ).fetchall()
         return [{"name": str(row[0] or ""), "count": int(row[1])} for row in rows]
@@ -504,9 +547,15 @@ class GameKnowledgeRepo:
         rows = self._read(f"SELECT {columns} FROM {table} WHERE game_id=? AND status='active' ORDER BY id", (game_id,)).fetchall()
         return [to_item(row) for row in rows]
 
-    def all_items(self, kind: str, game_id: str, *, statuses: Sequence[str] | None = None) -> list[dict[str, Any]]:
+    def all_items(
+        self, kind: str, game_id: str, *, statuses: Sequence[str] | None = None, bot_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """``bot_id``（只对知识卡）：None = 共用的攻略与所有 Bot 的经验卡；空串 = 只要共用的；某个 Bot = 只要它的。"""
         table, _, columns, _, to_item, _ = self._spec(kind)
         where, params = "game_id=?", [game_id]
+        if kind == "card" and bot_id is not None:
+            where += " AND bot_id=?"
+            params.append(str(bot_id))
         if statuses:
             where += f" AND status IN ({','.join('?' for _ in statuses)})"
             params += list(statuses)
@@ -537,6 +586,227 @@ class GameKnowledgeRepo:
             (game_id, game_id, game_id),
         ).fetchone()
         return tuple(row) if row else ()
+
+    # ─────────────────────────── 直播状态键 ───────────────────────────
+
+    def note_state_keys(self, game_id: str, state: Mapping[str, Any], *, now: float | None = None) -> bool:
+        """记下直播请求里出现过的状态键与一个示例值（只在出现新键时写一次，不改版本号）。"""
+        gid = validate_game_id(game_id)
+        with self.cm.write_transaction() as tx:
+            row = tx.execute("SELECT state_keys FROM game_libraries WHERE game_id=?", (gid,)).fetchone()
+            if row is None:
+                return False
+            known = _loads(row[0], {})
+            added = False
+            for key, value in state.items():
+                name = str(key)
+                if name in known or len(known) >= STATE_KEYS_MAX:
+                    continue
+                known[name] = {"example": str(value)[:24], "seen_at": float(now if now is not None else time.time())}
+                added = True
+            if added:
+                tx.execute("UPDATE game_libraries SET state_keys=? WHERE game_id=?", (_dumps(known), gid))
+            return added
+
+    def ensure_game(self, game_id: str, name: str, *, now: float | None = None) -> dict[str, Any]:
+        """没有这个游戏库就按标识和显示名新建一个（经验卡要落在某个库里）；已有时原样返回。"""
+        game = self.get_game(game_id)
+        if game is not None:
+            return game
+        try:
+            return self.create_game({"id": game_id, "name": name or game_id}, now=now)
+        except GameKnowledgeConflict:
+            game = self.get_game(game_id)
+            assert game is not None
+            return game
+
+    # ─────────────────────────── 经验卡与反思进度 ───────────────────────────
+
+    def game_events(self, bot_id: str, *, after_id: int, limit: int) -> list[dict[str, Any]]:
+        """这个 Bot 在记忆表位置 ``after_id`` 之后的游戏经历（Cortico 写回的 source=game_event，按写入顺序）。"""
+        rows = self._read(
+            """SELECT id, session_id, visibility, content, timestamp, provenance FROM memories
+                WHERE id > ? AND bot_id=? AND source='game_event' AND COALESCE(quarantine, 0)=0
+                  AND COALESCE(resolution_state, '') <> 'deleted'
+                ORDER BY id LIMIT ?""",
+            (int(after_id), str(bot_id), max(1, int(limit))),
+        ).fetchall()
+        events = []
+        for row in rows:
+            try:
+                meta = json.loads(row[5] or "{}").get("metadata") or {}
+            except (TypeError, ValueError, AttributeError):
+                meta = {}
+            origin = str(meta.get("origin_kind") or "")
+            parts = origin.split(":")
+            game_id, event_type = (parts[2], parts[3]) if len(parts) >= 4 and origin.startswith("runtime:game_event:") else ("", "")
+            events.append({
+                "memory_id": int(row[0]),
+                "session_id": str(row[1] or ""),
+                "visibility": str(row[2] or ""),
+                "content": str(row[3] or ""),
+                "timestamp": float(row[4] or 0.0),
+                "game_id": game_id,
+                "event_type": event_type,
+            })
+        return events
+
+    def max_memory_id(self) -> int:
+        row = self._read("SELECT COALESCE(MAX(id), 0) FROM memories").fetchone()
+        return int(row[0] or 0) if row else 0
+
+    def around_event(
+        self, bot_id: str, session_id: str, visibility: str, *, start: float, end: float, limit: int = 30,
+    ) -> list[dict[str, Any]]:
+        """一段游戏经历前后，同一会话里她说的话与别人（弹幕、群友）说的话；不含游戏经历本身。"""
+        rows = self._read(
+            """SELECT sender_id, content, timestamp FROM memories
+                WHERE bot_id=? AND session_id=? AND visibility=? AND timestamp >= ? AND timestamp <= ?
+                  AND COALESCE(source, '') <> 'game_event' AND COALESCE(quarantine, 0)=0
+                  AND COALESCE(resolution_state, '') <> 'deleted'
+                ORDER BY timestamp, id LIMIT ?""",
+            (str(bot_id), str(session_id), str(visibility), float(start), float(end), max(1, int(limit))),
+        ).fetchall()
+        return [{"self": str(row[0] or "") == "bot", "content": str(row[1] or ""), "timestamp": float(row[2] or 0.0)} for row in rows]
+
+    def lesson_cursor(self, bot_id: str) -> int:
+        """这个 Bot 的游戏经历已经想到记忆表的哪个位置（成功或跳过的反思里最大的 to_memory_id）。"""
+        row = self._read(
+            "SELECT COALESCE(MAX(to_memory_id), 0) FROM game_lesson_runs WHERE bot_id=? AND status IN ('succeeded', 'skipped')",
+            (str(bot_id),),
+        ).fetchone()
+        return int(row[0] or 0) if row else 0
+
+    def claim_lesson_run(
+        self, bot_id: str, *, trigger: str, from_memory_id: int, now: float, stale_after: float,
+    ) -> int | None:
+        """开始一次反思；同一个 Bot 已有进行中的（且没超时）就返回 None。超时的记为失败。"""
+        with self.cm.write_transaction() as tx:
+            running = tx.execute(
+                "SELECT id, started_at FROM game_lesson_runs WHERE bot_id=? AND status='running' ORDER BY id DESC",
+                (str(bot_id),),
+            ).fetchall()
+            for run_id, started_at in running:
+                if now - float(started_at or 0.0) < stale_after:
+                    return None
+                tx.execute(
+                    "UPDATE game_lesson_runs SET status='failed', finished_at=?, error='stale' WHERE id=?",
+                    (now, int(run_id)),
+                )
+            cursor = tx.execute(
+                """INSERT INTO game_lesson_runs (bot_id, trigger, status, started_at, from_memory_id, to_memory_id)
+                   VALUES (?, ?, 'running', ?, ?, ?)""",
+                (str(bot_id), str(trigger), now, int(from_memory_id), int(from_memory_id)),
+            )
+            return int(cursor.lastrowid)
+
+    def finish_lesson_run(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        now: float,
+        to_memory_id: int | None = None,
+        game_id: str = "",
+        events: int = 0,
+        model_calls: int = 0,
+        counts: Mapping[str, Any] | None = None,
+        error: str = "",
+    ) -> None:
+        with self.cm.write_transaction() as tx:
+            tx.execute(
+                """UPDATE game_lesson_runs
+                      SET status=?, finished_at=?, to_memory_id=COALESCE(?, to_memory_id), game_id=?, events=?,
+                          model_calls=?, counts=?, error=?
+                    WHERE id=?""",
+                (status, now, None if to_memory_id is None else int(to_memory_id), str(game_id or ""), int(events),
+                 int(model_calls), _dumps(dict(counts or {})), str(error or "")[:500], int(run_id)),
+            )
+
+    def lesson_runs(
+        self, *, bot_id: str | None = None, game_id: str | None = None, limit: int = 20, meaningful: bool = True,
+    ) -> list[dict[str, Any]]:
+        """最近的反思记录；``meaningful`` 时去掉「没读到经历」的空跑（它们只用来推进游标）。"""
+        where, params = (["(events > 0 OR status IN ('failed', 'running'))"] if meaningful else []), []
+        if bot_id is not None:
+            where.append("bot_id=?")
+            params.append(str(bot_id))
+        if game_id is not None:
+            # 一次反思可能同时想了几个游戏：game_id 记的是逗号分隔的列表
+            where.append("(',' || game_id || ',') LIKE ?")
+            params.append(f"%,{game_id},%")
+        sql = f"SELECT {_RUN_COLUMNS} FROM game_lesson_runs" + (f" WHERE {' AND '.join(where)}" if where else "")
+        rows = self._read(sql + " ORDER BY id DESC LIMIT ?", (*params, max(1, int(limit)))).fetchall()
+        return [_run_row(row) for row in rows]
+
+    def lesson_model_calls_since(self, bot_id: str, since: float) -> int:
+        row = self._read(
+            "SELECT COALESCE(SUM(model_calls), 0) FROM game_lesson_runs WHERE bot_id=? AND started_at >= ?",
+            (str(bot_id), float(since)),
+        ).fetchone()
+        return int(row[0] or 0) if row else 0
+
+    def lesson_bot_ids(self) -> list[str]:
+        """写过经验卡、或有过反思记录的 Bot。"""
+        rows = self._read(
+            """SELECT bot_id FROM game_knowledge_cards WHERE bot_id<>''
+               UNION SELECT bot_id FROM game_lesson_runs WHERE bot_id<>''"""
+        ).fetchall()
+        return sorted({str(row[0]) for row in rows if row[0]})
+
+    def apply_lessons(
+        self,
+        game_id: str,
+        bot_id: str,
+        *,
+        creates: Sequence[Mapping[str, Any]] = (),
+        updates: Sequence[tuple[int, int, Mapping[str, Any]]] = (),
+        archives: Sequence[tuple[int, int]] = (),
+        now: float | None = None,
+    ) -> dict[str, list[int]]:
+        """在一个事务里写一次反思的结果。``updates`` / ``archives`` 是 (卡 id, 读到的版本, …)：
+        版本对不上（反思期间管理员改过）就跳过这一条，列在 conflicts 里。"""
+        gid = validate_game_id(game_id)
+        stamp = float(now if now is not None else time.time())
+        result: dict[str, list[int]] = {"created": [], "updated": [], "archived": [], "conflicts": []}
+        with self.cm.write_transaction() as tx:
+            if not tx.execute("SELECT 1 FROM game_libraries WHERE game_id=?", (gid,)).fetchone():
+                raise GameKnowledgeError("game_not_found", f"没有游戏库 {gid}")
+            for card_id, version, fields in updates:
+                current = self._get("card", card_id, game_id=gid, connection=tx)
+                if current is None or current.get("bot_id") != bot_id or current["version"] != int(version):
+                    result["conflicts"].append(int(card_id))
+                    continue
+                normalized = normalize_card_fields(fields, partial=True)
+                status = normalized.pop("status", None)
+                item, changed = self._write_content(tx, "card", current, normalized, now=stamp)
+                if status is not None and status != item["status"]:
+                    tx.execute(
+                        f"UPDATE game_knowledge_cards SET status=?, version=version+{0 if changed else 1}, updated_at=? WHERE id=?",
+                        (status, stamp, int(item["id"])),
+                    )
+                    changed = True
+                if changed:
+                    result["updated"].append(int(item["id"]))
+            for card_id, version in archives:
+                row = tx.execute(
+                    "SELECT version, bot_id, status FROM game_knowledge_cards WHERE id=? AND game_id=?", (int(card_id), gid),
+                ).fetchone()
+                if row is None or str(row[1]) != bot_id or int(row[0]) != int(version):
+                    result["conflicts"].append(int(card_id))
+                    continue
+                if str(row[2]) != "archived":
+                    tx.execute(
+                        "UPDATE game_knowledge_cards SET status='archived', version=version+1, updated_at=? WHERE id=?",
+                        (stamp, int(card_id)),
+                    )
+                    result["archived"].append(int(card_id))
+            for raw in creates:
+                fields = normalize_card_fields(raw)
+                status = fields.pop("status", "active")
+                item = self._insert(tx, "card", gid, fields, status=status, now=stamp, bot_id=bot_id)
+                result["created"].append(int(item["id"]))
+        return result
 
     # ─────────────────────────── 导入 ───────────────────────────
 
@@ -653,7 +923,7 @@ class GameKnowledgeRepo:
 
 
 def _empty_counts() -> dict[str, dict[str, int]]:
-    return {kind: {status: 0 for status in STATUSES} for kind in ("cards", "terms")}
+    return {kind: {status: 0 for status in STATUSES} for kind in ("cards", "lessons", "terms")}
 
 
 def _default(name: str) -> Any:
@@ -671,4 +941,4 @@ def validated_conditions(raw: Any) -> list[dict[str, Any]]:
     return [condition.to_dict() for condition in parse_conditions(raw)]
 
 
-__all__ = ["GameKnowledgeRepo", "IMPORT_MODES", "card_search_text", "term_search_text", "validated_conditions"]
+__all__ = ["GameKnowledgeRepo", "IMPORT_MODES", "STATE_KEYS_MAX", "card_search_text", "term_search_text", "validated_conditions"]

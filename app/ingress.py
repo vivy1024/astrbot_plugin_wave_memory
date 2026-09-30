@@ -845,6 +845,13 @@ class IngressMixin:
         except GameEventError as exc:
             return {"status": "rejected", "error": exc.code}
         await self.writer.enqueue(item)
+        # 死亡 / 危机这类刚发生的经历：几分钟后让她回想一次，同一场直播里就能用上
+        lessons = getattr(self, "game_lessons", None)
+        if lessons is not None:
+            try:
+                lessons.note_event(runtime_scope.bot_id, str(observation.get("event_type") or ""), item["timestamp"])
+            except Exception as exc:
+                logger.debug(f"[WaveMemory] 游戏经验回想没排上: {exc!r}")
         return {"status": "accepted", "kind": "game_event"}
 
     def _get_bot(self, bot_id: str) -> Optional[BotProfile]:

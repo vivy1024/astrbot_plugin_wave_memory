@@ -1,4 +1,5 @@
-"""游戏知识库管理台 API：游戏库、知识卡 / 词条编辑（版本 409）、批量启用归档、导入预览与导入、导出、起始包、迁移、试匹配。"""
+"""游戏知识库管理台 API：游戏库、知识卡 / 词条编辑（版本 409）、批量启用归档、导入预览与导入、导出、迁移、试匹配，
+以及各 Bot 自己的经验卡（列表、删除 / 恢复、「现在想一次」）。"""
 
 from __future__ import annotations
 
@@ -19,14 +20,14 @@ def client(tmp_path):
     cm = ConnectionManager(str(tmp_path / "gk.sqlite"))
     service = GameKnowledgeService(GameKnowledgeRepo(cm))
     container = get_container()
-    saved = (container.password, getattr(container, "game_knowledge", None))
-    container.password, container.game_knowledge = "", service
+    saved = (container.password, getattr(container, "game_knowledge", None), getattr(container, "game_lessons", None))
+    container.password, container.game_knowledge, container.game_lessons = "", service, None
     app = Quart(__name__)
     app.register_blueprint(game_knowledge_bp)
     try:
         yield app.test_client(), service
     finally:
-        container.password, container.game_knowledge = saved
+        container.password, container.game_knowledge, container.game_lessons = saved
         cm.close()
 
 
@@ -46,7 +47,8 @@ async def test_games_overview_create_and_update_with_version(client):
     status, overview = await _json(await http.get(f"{BASE}/overview"))
     assert status == 200 and [g["id"] for g in overview["games"]] == ["slay_the_spire"]
     assert overview["games"][0]["counts"]["cards"] == {"draft": 0, "active": 0, "archived": 0}, "杀戮尖塔可以建空库，心得以后积累"
-    assert overview["packs"][0]["id"] == "minecraft_starter" and overview["legacy_sources"][0]["source"] == "oni_lore"
+    assert "packs" not in overview, "仓库不带预设攻略"
+    assert overview["legacy_sources"][0]["source"] == "oni_lore" and overview["lessons_enabled"] is False
     assert overview["statuses"] == {"draft": "草稿", "active": "启用", "archived": "归档"} and "关键词" in overview["trigger_rule"]
     status, missing_version = await _json(await http.put(f"{BASE}/games/slay_the_spire", json={"enabled": False}))
     assert status == 400 and missing_version["error"]["code"] == "version_required"
@@ -133,14 +135,9 @@ async def test_import_preview_import_export_and_trial(client):
 
 
 @pytest.mark.asyncio
-async def test_pack_import_and_legacy_migration_endpoints(client):
+async def test_legacy_migration_endpoints(client):
     http, service = client
-    status, result = await _json(await http.post(f"{BASE}/packs/minecraft_starter/import", json={}))
-    assert status == 200 and result["created_game"] and result["cards"]["created"] >= 25
-    game = service.get_game("minecraft")
-    assert game["counts"]["cards"]["active"] == 0, "起始包全部是草稿"
-    status, missing = await _json(await http.post(f"{BASE}/packs/nope/import", json={}))
-    assert status == 404 and missing["error"]["code"] == "pack_not_found"
+    assert (await http.post(f"{BASE}/packs/minecraft_starter/import", json={})).status_code == 404, "起始包接口已下线"
     status, scan = await _json(await http.post(f"{BASE}/legacy/oni_lore/scan"))
     assert status == 200 and scan["rows"] == 0, "测试库没有 memories 表时安全返回 0"
     status, migrated = await _json(await http.post(f"{BASE}/legacy/oni_lore/migrate"))
@@ -156,3 +153,54 @@ async def test_unavailable_service_returns_503(client):
     container.game_knowledge = None
     status, payload = await _json(await http.get(f"{BASE}/overview"))
     assert status == 503 and payload["error"]["code"] == "game_knowledge_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_lesson_endpoints_list_veto_and_restore(client):
+    """经验卡：只在 lessons 接口里按 Bot 列出（知识卡列表默认只列共用的攻略）；删掉 = 归档并记为否决，可以恢复。"""
+    http, service = client
+    service.create_game({"id": "minecraft", "name": "我的世界"})
+    service.create_item("card", "minecraft", {"title": "苦力怕", "points": ["听到嘶嘶声后退"], "keywords": ["苦力怕"], "status": "active"})
+    created = service.repo.apply_lessons("minecraft", "bot-demo", creates=[{
+        "key": "exp:bot-demo:1", "title": "夜里别在河边待", "points": ["天黑前离开水边"], "pitfalls": ["9 月 18 日夜里在河边被溺尸戳死"],
+        "keywords": ["河边", "溺尸"], "source": "自己的经历", "source_type": "experience", "status": "active",
+        "meta": {"times": 2, "last_at": 1790000000.0, "evidence": [{"memory_id": 11, "at": 1790000000.0, "type": "death", "text": "被溺尸戳死"}]},
+    }])
+    lesson_id = created["created"][0]
+
+    status, cards = await _json(await http.get(f"{BASE}/games/minecraft/cards"))
+    assert status == 200 and [c["title"] for c in cards["items"]] == ["苦力怕"], "知识卡列表默认只列共用的攻略"
+    status, everything = await _json(await http.get(f"{BASE}/games/minecraft/cards?owner=all"))
+    assert status == 200 and everything["total"] == 2
+
+    assert (await http.get(f"{BASE}/games/minecraft/lessons")).status_code == 400
+    status, lessons = await _json(await http.get(f"{BASE}/games/minecraft/lessons?bot_id=bot-demo"))
+    assert status == 200 and lessons["enabled"] is False and lessons["runs"] == []
+    [lesson] = lessons["items"]
+    assert lesson["experience"] is True and lesson["bot_id"] == "bot-demo" and lesson["meta"]["times"] == 2
+    status, others = await _json(await http.get(f"{BASE}/games/minecraft/lessons?bot_id=bot-other"))
+    assert others["items"] == [], "别的 Bot 看不到这条经验"
+
+    status, overview = await _json(await http.get(f"{BASE}/overview"))
+    assert overview["games"][0]["counts"]["cards"]["active"] == 1 and overview["games"][0]["counts"]["lessons"]["active"] == 1
+
+    status, stale = await _json(await http.post(f"{BASE}/games/minecraft/lessons/{lesson_id}/veto", json={"bot_id": "bot-demo", "version": 99}))
+    assert status == 409
+    status, wrong = await _json(await http.post(f"{BASE}/games/minecraft/lessons/{lesson_id}/veto", json={"bot_id": "bot-other", "version": lesson["version"]}))
+    assert status == 404 and wrong["error"]["code"] == "lesson_not_found"
+    status, vetoed = await _json(await http.post(f"{BASE}/games/minecraft/lessons/{lesson_id}/veto", json={"bot_id": "bot-demo", "version": lesson["version"]}))
+    assert status == 200 and vetoed["item"]["status"] == "archived" and vetoed["item"]["meta"]["vetoed"] is True
+    status, restored = await _json(await http.post(
+        f"{BASE}/games/minecraft/lessons/{lesson_id}/restore", json={"bot_id": "bot-demo", "version": vetoed["item"]["version"]},
+    ))
+    assert status == 200 and restored["item"]["status"] == "active" and "vetoed" not in restored["item"]["meta"]
+
+    status, off = await _json(await http.post(f"{BASE}/games/minecraft/lessons/reflect", json={"bot_id": "bot-demo"}))
+    assert status == 409 and off["error"]["code"] == "game_lessons_disabled"
+
+    # 试一下：带上 bot_id 才算上她自己的经验
+    status, trial = await _json(await http.post(f"{BASE}/games/minecraft/trial", json={"message": "河边好多溺尸", "bot_id": "bot-demo"}))
+    assert status == 200 and trial["cards"][0]["title"] == "夜里别在河边待" and trial["cards"][0]["experience"] is True
+    assert "你自己玩出来的经验" in trial["text"]
+    status, anonymous = await _json(await http.post(f"{BASE}/games/minecraft/trial", json={"message": "河边好多溺尸"}))
+    assert anonymous["cards"] == []

@@ -1,30 +1,25 @@
 """游戏知识库的导入格式：WaveMemory 通用 JSON，以及现有资产的一次性适配。
 
-- **通用格式**（``format = "wavememory.game_knowledge"``，见 ``docs/game-knowledge.md``）：管理台导入 / 导出、
-  仓库里的起始包（``assets/game_knowledge/*.json``）都用它。
+- **通用格式**（``format = "wavememory.game_knowledge"``，见 ``docs/game-knowledge.md``）：管理台导入 / 导出都用它。
+  仓库里不带任何预设攻略：游戏自己的经验由 Bot 从经历里写（``lessons.py``），复杂的游戏再导入教程。
 - **现有资产适配**：缺氧教程的 ``oni_tutorial_cards.json``（策略卡）与 ``oni_timeline.json``（B 站《缺氧从新开始》
   时间线），以及线上记忆表里 ``source='oni_lore'`` 的字幕知识点。这些适配只做格式转换（集数 → 条目键、周期提示 →
-  ``cycle`` 条件、bvid → 出处），不进入注入与匹配逻辑；注入与匹配对所有游戏一视同仁。
+  「参考」的 ``cycle`` 条件、bvid → 出处），不进入注入与匹配逻辑；注入与匹配对所有游戏一视同仁。
 
 适配器只产出「原始条目」字典，字段规整与校验统一走 :mod:`domain.game_knowledge`。
 """
 
 from __future__ import annotations
 
-import json
-import logging
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 try:
     from ...domain.game_knowledge import GameKnowledgeError, clean_text, fold
 except ImportError:  # pragma: no cover - 仓库测试以插件根目录为顶层
     from domain.game_knowledge import GameKnowledgeError, clean_text, fold
-
-logger = logging.getLogger("astrbot")
 
 FORMAT_ID = "wavememory.game_knowledge"
 FORMAT_VERSION = 1
@@ -35,7 +30,6 @@ FORMAT_LABELS = {
     "legacy_memory": "记忆表旧知识点",
 }
 IMPORT_MAX_ITEMS = 2000
-PACKS_DIR = Path(__file__).resolve().parents[2] / "assets" / "game_knowledge"
 
 
 @dataclass
@@ -47,7 +41,7 @@ class ImportPackage:
     cards: list[dict[str, Any]] = field(default_factory=list)
     terms: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    # 起始包等强制状态（"draft"）；None 时按条目自带状态，没有就是草稿。
+    # 文件 ``pack.force_status`` 指定的强制状态（"draft" / "active"）；None 时按条目自带状态，没有就是草稿。
     force_status: str | None = None
     pack: dict[str, Any] | None = None
 
@@ -340,14 +334,17 @@ def _as_int(value: Any) -> int | None:
 
 
 def cycle_conditions(hint: Any) -> list[str]:
-    """周期提示 → ``cycle`` 条件："0-30" → cycle 0..30；"200+" → cycle >= 200；认不出返回空。"""
+    """周期提示 → 「参考」的 ``cycle`` 条件："0-30" → 参考 cycle 0..30；"200+" → 参考 cycle >= 200；认不出返回空。
+
+    教程每集的周期只是大致进度：周期对不上时卡片照样能被问到，只是排在对得上的后面（不挡）。
+    """
     text = str(hint or "").strip()
     match = re.fullmatch(r"(\d+)\s*[-~–—]\s*(\d+)", text)
     if match and int(match[1]) <= int(match[2]):
-        return [f"cycle {int(match[1])}..{int(match[2])}"]
+        return [f"参考 cycle {int(match[1])}..{int(match[2])}"]
     match = re.fullmatch(r"(\d+)\s*\+", text)
     if match:
-        return [f"cycle >= {int(match[1])}"]
+        return [f"参考 cycle >= {int(match[1])}"]
     return []
 
 
@@ -651,61 +648,6 @@ def oni_lore_package(rows: Sequence[Mapping[str, Any]], *, episode_sources: Mapp
     return ImportPackage(format="legacy_memory", game=dict(ONI_GAME), cards=cards), stats
 
 
-# ─────────────────────────── 仓库自带的起始包 ───────────────────────────
-
-
-def _pack_path(pack_id: str) -> Path:
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", str(pack_id or "")):
-        raise GameKnowledgeError("pack_not_found", f"没有起始包 {pack_id!r}")
-    path = PACKS_DIR / f"{pack_id}.json"
-    if not path.is_file():
-        raise GameKnowledgeError("pack_not_found", f"没有起始包 {pack_id!r}")
-    return path
-
-
-def load_pack_document(pack_id: str) -> dict[str, Any]:
-    path = _pack_path(pack_id)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise GameKnowledgeError("pack_unreadable", f"起始包 {pack_id} 读取失败：{exc}") from exc
-    if not isinstance(data, Mapping):
-        raise GameKnowledgeError("pack_unreadable", f"起始包 {pack_id} 不是通用格式")
-    return dict(data)
-
-
-def load_pack(pack_id: str) -> ImportPackage:
-    package = adapt_generic(load_pack_document(pack_id))
-    package.pack = {**(package.pack or {}), "id": pack_id}
-    if not package.game.get("id"):
-        raise GameKnowledgeError("pack_unreadable", f"起始包 {pack_id} 没有写 game.id")
-    return package
-
-
-def list_packs() -> list[dict[str, Any]]:
-    """``assets/game_knowledge/*.json`` 里的起始包概要（导入按钮用）。"""
-    packs: list[dict[str, Any]] = []
-    if not PACKS_DIR.is_dir():
-        return packs
-    for path in sorted(PACKS_DIR.glob("*.json")):
-        try:
-            package = load_pack(path.stem)
-        except GameKnowledgeError as exc:
-            logger.warning("[WaveMemory] 游戏知识起始包 %s 读取失败: %s", path.name, exc)
-            continue
-        info = package.pack or {}
-        packs.append({
-            "id": path.stem,
-            "title": str(info.get("title") or path.stem),
-            "description": str(info.get("description") or ""),
-            "force_status": package.force_status,
-            "game": {"id": package.game.get("id"), "name": package.game.get("name") or package.game.get("id")},
-            "cards": len(package.cards),
-            "terms": len(package.terms),
-        })
-    return packs
-
-
 __all__ = [
     "FORMAT_ID",
     "FORMAT_LABELS",
@@ -721,8 +663,6 @@ __all__ = [
     "drop_common_keywords",
     "export_document",
     "flag_shared_sources",
-    "list_packs",
-    "load_pack",
     "oni_lore_package",
     "parse_oni_lore_content",
     "split_points",

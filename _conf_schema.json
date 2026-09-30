@@ -46,7 +46,7 @@
   },
   "Model_Routing_Settings": {
     "description": "模型分工",
-    "hint": "给每个后台大模型任务单独指定模型。留空 = 跟随它原来的默认（标签一族跟 tag_llm_provider_id + 回退链，内心判断/事后记账/日记/关系小传跟 MetaThinking_Settings.default_model）。指定后该模型在前，失败时依次回退到原来的默认链；可填逗号分隔的多个 ID。在 9876 保存后立即生效，不用重启。内心判断、事后记账、每日日记、关系小传、信念反思、角色经历还可以在 Bot 管理里按 Bot 覆盖。向量模型不在这里。",
+    "hint": "给每个后台大模型任务单独指定模型。留空 = 跟随它原来的默认（标签一族跟 tag_llm_provider_id + 回退链，内心判断/事后记账/日记/关系小传跟 MetaThinking_Settings.default_model）。指定后该模型在前，失败时依次回退到原来的默认链；可填逗号分隔的多个 ID。在 9876 保存后立即生效，不用重启。内心判断、事后记账、每日日记、关系小传、信念反思、角色经历、游戏经验还可以在 Bot 管理里按 Bot 覆盖。向量模型不在这里。",
     "type": "object",
     "items": {
       "tag": {
@@ -115,6 +115,13 @@
       "belief_reflection": {
         "description": "信念反思",
         "hint": "每日日记写完后的信念反思（Learning_Settings.belief_reflection_enabled）。留空跟随 MetaThinking_Settings.default_model。可按 Bot 覆盖。",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+      },
+      "game_lesson": {
+        "description": "游戏经验",
+        "hint": "Bot 回想自己的游戏经历、把教训写成经验卡（Learning_Settings.game_lesson_enabled）：死亡 / 危机后几分钟、每日日记之后、管理台手动时调用。留空跟随 MetaThinking_Settings.default_model（MetaThinking 未运行时跟标签模型链）。可按 Bot 覆盖。",
         "type": "string",
         "default": "",
         "_special": "select_provider"
@@ -1184,6 +1191,34 @@
         "default": 20,
         "restart_required": true,
         "hint": "已形成、稳固、动摇中的看法合计超过上限时，最弱的淡出（萌芽另按同一上限，最早的先淡出）。留空按 20。"
+      },
+      "game_lesson_enabled": {
+        "description": "游戏经验（从自己的游戏经历里总结教训）",
+        "type": "bool",
+        "default": false,
+        "restart_required": true,
+        "hint": "默认关闭（会新增模型调用）。开启后，Bot 会回想 Cortico 写回的游戏经历（死亡、目标、发现、对局结果……）和当时的弹幕与自己说的话，把吃过的亏、摸索出来的办法写成经验卡，放进这个游戏的知识库，只属于这个 Bot，直播时相关的场面会想起来。死亡 / 危机后等一会儿想一次，每日日记写完后把没想过的补一遍，管理台也能手动触发。不预设任何攻略；某个游戏不想要经验卡，在游戏知识库的设置里单独关。修改后重启插件生效。"
+      },
+      "game_lesson_delay_seconds": {
+        "description": "死亡 / 危机后等几秒再回想",
+        "type": "int",
+        "default": 180,
+        "restart_required": true,
+        "hint": "等她说完话、弹幕的反应也进来了再想。同一个 Bot 两次回想之间至少隔 10 分钟。留空按 180。"
+      },
+      "game_lesson_daily_limit": {
+        "description": "每个 Bot 每天最多调用几次模型回想游戏经验",
+        "type": "int",
+        "default": 30,
+        "restart_required": true,
+        "hint": "到上限后当天不再回想，没想过的经历留到第二天。补录的历史经历较多时，每日一轮会分几天消化完。留空按 30。"
+      },
+      "game_lesson_max_active": {
+        "description": "每个游戏最多保留多少条有效经验",
+        "type": "int",
+        "default": 60,
+        "restart_required": true,
+        "hint": "超过时最久没再经历的经验先归档（不算否决，以后经历到还能想回来）。留空按 60。"
       }
     }
   },

@@ -1,8 +1,9 @@
-"""导入器：通用格式导入导出、缺氧策略卡 / 时间线适配（虚构样例，结构同原资产）、oni_lore 记忆迁移、我的世界起始包。"""
+"""导入器：通用格式导入导出、缺氧策略卡 / 时间线适配（虚构样例，结构同原资产）、oni_lore 记忆迁移；仓库不带预设攻略。"""
 
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
 import pytest
 
@@ -16,8 +17,6 @@ from services.game_knowledge.importers import (
     adapt_oni_tutorial_cards,
     cycle_conditions,
     detect_format,
-    list_packs,
-    load_pack,
     parse_oni_lore_content,
     split_points,
     suggest_keywords,
@@ -104,9 +103,10 @@ def test_detect_formats():
 
 
 def test_cycle_hint_conversion_and_keyword_helpers():
-    assert cycle_conditions("0-30") == ["cycle 0..30"]
-    assert cycle_conditions("100 - 200") == ["cycle 100..200"]
-    assert cycle_conditions("200+") == ["cycle >= 200"]
+    # 教程每集的周期只是大致进度：写成「参考」条件，对不上时不挡、只排后
+    assert cycle_conditions("0-30") == ["参考 cycle 0..30"]
+    assert cycle_conditions("100 - 200") == ["参考 cycle 100..200"]
+    assert cycle_conditions("200+") == ["参考 cycle >= 200"]
     assert cycle_conditions("早期") == [] and cycle_conditions(None) == []
     assert title_segments("入门第二道坎：制氧模块，包教包会") == ["制氧模块"]
     assert "我会出手" not in title_segments("冷却模块。无所谓，我会出手")
@@ -121,7 +121,7 @@ def test_oni_tutorial_cards_adapter():
     assert package.format == "oni_tutorial_cards" and package.game["id"] == "oni"
     first, second, third = package.cards
     assert first["key"] == "oni_ep01" and first["title"] == "EP01 虚构开局要点" and first["stage"] == "筑基开局"
-    assert first["conditions"] == ["cycle 0..30"] and third["conditions"] == ["cycle >= 200"]
+    assert first["conditions"] == ["参考 cycle 0..30"] and third["conditions"] == ["参考 cycle >= 200"]
     assert first["status"] == "active" and first["source_type"] == "tutorial"
     assert first["source"] == "B站教程《缺氧从新开始》EP01「虚构开局要点」（BV1AAAAAAAAA）"
     assert first["source_url"] == "https://www.bilibili.com/video/BV1AAAAAAAAA"
@@ -140,7 +140,7 @@ def test_oni_timeline_adapter():
     assert first["key"] == "oni_ep01" and first["title"] == "EP01 虚构开局要点" and first["stage"] == "筑基开局"
     assert first["points"] == ["开局先解决如厕", "先造【虚构厕所】再造床", "拍下两个茅厕和洗手盆", "选挖掘兴趣的小人"], "目标 → 分步 → 其余建议"
     assert first["pitfalls"] == ["典型痛点：第一天没有厕所，全家生病。", "开局搞复杂自动化", "洗手盆朝向装反"]
-    assert first["conditions"] == ["cycle 0..30"]
+    assert first["conditions"] == ["参考 cycle 0..30"]
     assert first["source"] == "B站教程《缺氧从新开始》EP01「虚构开局要点」（BV1AAAAAAAAA）"
     assert first["meta"]["knowledge_point_ids"] == ["kp_001"] and first["meta"]["series_title"].startswith("【缺氧从新开始#01】")
     assert second["meta"]["prerequisites"] == [1, 2] and "字幕知识点偏少" in second["note"]
@@ -166,6 +166,10 @@ def test_oni_cards_then_timeline_merge_into_same_active_cards(service):
     # 周期条件 + 关键词：第 45 周期问「电解水」命中 EP08，不命中 EP01
     match = service.match(parse_game_context({"id": "oni", "state": {"cycle": 45}}), message="电解水怎么造")
     assert [hit.card["key"] for hit in match.cards] == ["oni_ep08"]
+    # 周期对不上（第 12 周期就想造电解水）：「参考」条件不挡，照样给 EP08，只是分数低一些
+    early = service.match(parse_game_context({"id": "oni", "state": {"cycle": 12}}), message="电解水怎么造")
+    assert [hit.card["key"] for hit in early.cards] == ["oni_ep08"]
+    assert early.cards[0].score < match.cards[0].score and "参考条件，不挡" in early.cards[0].reason
 
 
 def test_generic_import_export_round_trip_and_validation(service):
@@ -253,7 +257,7 @@ def test_oni_lore_migration_to_drafts_is_idempotent_and_keeps_memories(tmp_path)
         assert set(cards) == {"oni_lore_m101", "oni_lore_m102", "oni_lore_m104"}
         point = cards["oni_lore_m101"]
         assert point["status"] == "draft" and point["title"] == "水的相变温度" and point["stage"] == "工业转型与自动化"
-        assert point["conditions"] == [{"key": "cycle", "op": "between", "min": 30, "max": 100}]
+        assert point["conditions"] == [{"key": "cycle", "op": "between", "min": 30, "max": 100, "soft": True}]
         assert point["source"] == "B站教程《缺氧从新开始》EP06「挖向原油区，野外炼钢详细注意事项」字幕知识点 #18/30"
         assert point["source_url"] == "https://www.bilibili.com/video/BV1DDDDDDDDD", "同集的教程卡有出处链接时沿用"
         assert point["meta"]["memory_id"] == 101 and "错字较多" in point["note"]
@@ -283,38 +287,7 @@ def test_oni_lore_migration_skips_safely_without_rows(tmp_path):
         db.close()
 
 
-def test_minecraft_starter_pack_imports_everything_as_drafts(service):
-    packs = {pack["id"]: pack for pack in list_packs()}
-    info = packs["minecraft_starter"]
-    assert info["force_status"] == "draft" and 25 <= info["cards"] <= 40 and info["terms"] >= 20
-    package = load_pack("minecraft_starter")
-    names = {fold(package.game["id"]), fold(package.game["name"]), *(fold(a) for a in package.game["aliases"])}
-    for card in package.cards:
-        trigger = card.get("trigger") or {}
-        parse_conditions(trigger.get("conditions"))  # 条件都合法
-        assert card.get("points") or card.get("pitfalls")
-        assert trigger.get("keywords") or trigger.get("conditions"), f"{card['key']} 没有触发条件"
-        assert not ({fold(k) for k in trigger.get("keywords") or []} & names), "触发词里不放游戏名"
-    result = service.import_pack("minecraft_starter")
-    assert result["created_game"] is True and result["status_mode"] == "draft"
-    assert result["cards"]["created"] == info["cards"] and result["terms"]["created"] == info["terms"]
-    assert result["invalid"] == {"cards": 0, "terms": 0} and result["errors"] == []
-    game = service.get_game("minecraft")
-    assert game["name"] == "我的世界" and game["counts"]["cards"]["draft"] == info["cards"] and game["counts"]["cards"]["active"] == 0
-    assert game["counts"]["terms"]["draft"] == info["terms"]
-    assert {c["source_type"] for c in service.list_items("card", "minecraft", limit=200)["items"]} == {"starter_pack"}
-    again = service.import_pack("minecraft_starter")
-    assert again["cards"]["skipped"] == info["cards"] and again["created_game"] is False
-    assert service.list_packs()[0]["game_exists"] is True
-    # 草稿不注入；审核启用后才生效
-    context = parse_game_context({"id": "minecraft", "state": {"time_of_day": "night"}, "keywords": ["夜晚"]})
-    assert service.match(context, message="门口有苦力怕").cards == []
-    creeper = service.repo.get_item_by_key("card", "minecraft", "mc_creeper")
-    service.set_status("card", "minecraft", [creeper["id"]], "active")
-    assert [hit.card["key"] for hit in service.match(context, message="门口有苦力怕").cards] == ["mc_creeper"]
-
-
-def test_pack_ids_are_validated():
-    with pytest.raises(GameKnowledgeError) as info:
-        load_pack("../etc/passwd")
-    assert info.value.code == "pack_not_found"
+def test_no_bundled_preset_packs():
+    """仓库不带预设攻略：游戏自己的经验由 Bot 从经历里写，复杂的游戏再由管理员导入教程。"""
+    root = Path(__file__).resolve().parents[1]
+    assert not (root / "assets" / "game_knowledge").exists()

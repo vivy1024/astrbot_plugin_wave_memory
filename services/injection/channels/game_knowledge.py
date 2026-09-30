@@ -1,8 +1,10 @@
-"""游戏攻略参考通道（``game_knowledge``）：只在请求带 ``game`` 时工作（Cortico 直播的 ``/context/prepare``）。
+"""游戏知识通道（``game_knowledge``）：只在请求带 ``game`` 时工作（Cortico 直播的 ``/context/prepare``）。
 
 - 按 ``game.id`` 选游戏库（显示名、别名也认），注入被触发的知识卡（最多 2 张）与提到的词条；
+- 卡片分两种：所有 Bot 共用的攻略，和这个 Bot 自己从经历里写下的经验卡（只在它自己的请求里出现、排在前面）；
 - 只注入「启用」的内容，草稿与归档不注入；游戏库停用时整段跳过；
-- 措辞写明这是攻略参考、不是她的亲身经历（她自己玩过的事走记忆通道，心得走信念）；
+- 措辞分开写：攻略写明不是她的亲身经历；经验写明是她自己经历过、自己总结的（具体经过走记忆通道）；
+- 卡片要点多时，挑和这句话、命中的关键词相关的几条；
 - 观测台：每条命中带 ``matched_by``（命中了哪些关键词、哪些条件），超出 2 张上限的卡记在 filtered 里。
 
 请求不带 ``game`` 时返回 ``disabled``，编排器直接丢弃，注入结果、trace 与通道统计都和没有这个通道时一样。
@@ -21,6 +23,8 @@ try:
         DEFAULT_INJECT_TERMS,
         MAX_INJECT_CARDS,
         MAX_INJECT_TERMS,
+        focus_words,
+        is_experience,
         render_card,
         render_injection,
         render_term,
@@ -31,6 +35,8 @@ except ImportError:  # pragma: no cover - 顶层导入回退
         DEFAULT_INJECT_TERMS,
         MAX_INJECT_CARDS,
         MAX_INJECT_TERMS,
+        focus_words,
+        is_experience,
         render_card,
         render_injection,
         render_term,
@@ -78,6 +84,7 @@ def _preview(text: str, limit: int = 160) -> str:
 
 def _card_item(hit: Any, game_id: str, *, rendered: str) -> dict[str, Any]:
     card = hit.card
+    experience = is_experience(card)
     return {
         "id": card["id"],
         "card_id": card["id"],
@@ -87,8 +94,9 @@ def _card_item(hit: Any, game_id: str, *, rendered: str) -> dict[str, Any]:
         "stage": card.get("stage") or "",
         "status": card.get("status"),
         "source": "game_knowledge",
-        "source_layer": "game_card",
-        "reference_only": True,
+        "source_layer": "game_experience" if experience else "game_card",
+        "experience": experience,
+        "reference_only": not experience,
         "matched_by": hit.reason,
         "score": hit.score,
         "preview": _preview(rendered),
@@ -117,7 +125,7 @@ def _term_item(hit: Any, game_id: str, *, rendered: str) -> dict[str, Any]:
 
 
 class GameKnowledgeChannel:
-    """按请求里的 ``game`` 注入攻略参考；不写任何数据。"""
+    """按请求里的 ``game`` 注入她自己的经验与攻略参考；不写任何数据。"""
 
     name = "game_knowledge"
     # build 里没有 await、全是同步读库（带缓存）：编排器放到工作线程跑，不占事件循环
@@ -149,8 +157,12 @@ class GameKnowledgeChannel:
         max_cards = max(0, min(_as_int(cfg.get("max_items"), MAX_INJECT_CARDS), MAX_INJECT_CARDS))
         max_terms = max(0, min(_as_int(cfg.get("top_k"), DEFAULT_INJECT_TERMS), MAX_INJECT_TERMS))
         warnings = list(getattr(game, "warnings", ()) or ())
+        message = str(getattr(ctx, "message", "") or "")
         try:
-            match = self.service.match(game, message=str(getattr(ctx, "message", "") or ""), max_cards=max_cards, max_terms=max_terms)
+            match = self.service.match(
+                game, message=message, bot_id=str(getattr(runtime_scope, "bot_id", "") or ""),
+                max_cards=max_cards, max_terms=max_terms,
+            )
         except Exception as exc:  # pragma: no cover - 防御性错误通道
             result = InjectionResult.error_result(self.name, exc)
             result.latency_ms = self._latency_ms(started)
@@ -168,10 +180,11 @@ class GameKnowledgeChannel:
             return InjectionResult.skipped(self.name, reason=f"game_library_disabled：游戏库 {match.game['id']} 已停用")
 
         game_id = str(match.game["id"]) if match.game else game.id
+        focus = focus_words(message, match.cards)
         filtered: list[dict[str, Any]] = []
         cards = []
         for hit in match.cards:
-            block = render_card(hit.card)
+            block = render_card(hit.card, focus=focus)
             if is_identity_contamination(block):
                 filtered.append({**_card_item(hit, game_id, rendered=block), "filter_reason": "identity_contamination", "filter_channel": self.name})
                 continue
@@ -184,7 +197,7 @@ class GameKnowledgeChannel:
                 continue
             terms.append(hit)
         for hit in match.overflow:
-            block = render_card(hit.card)
+            block = render_card(hit.card, focus=focus)
             filtered.append({
                 **_card_item(hit, game_id, rendered=block),
                 "filter_reason": f"game_knowledge_max_cards：命中但超过本通道 {max_cards} 张上限",
@@ -197,7 +210,7 @@ class GameKnowledgeChannel:
             result.warnings.extend(warnings)
             return result
 
-        text, card_blocks, term_lines = render_injection(match.game, cards, terms)
+        text, card_blocks, term_lines = render_injection(match.game, cards, terms, focus=focus)
         items = [_card_item(hit, game_id, rendered=block) for hit, block in zip(cards, card_blocks)]
         items += [_term_item(hit, game_id, rendered=line) for hit, line in zip(terms, term_lines)]
         return InjectionResult.hit(self.name, text, items=items, filtered=filtered, warnings=warnings, latency_ms=self._latency_ms(started))

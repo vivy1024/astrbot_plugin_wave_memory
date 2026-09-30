@@ -1,14 +1,16 @@
 """游戏知识库服务：直播注入的匹配与渲染、工具查询、管理台读写、导入导出、当前在玩的游戏。
 
-一个会玩游戏的人分几层知识，WaveMemory 只管其中两层：
+一个会玩游戏的人分几层知识，WaveMemory 管其中三层：
 
-- **游戏知识（攻略常识）**：这里。按游戏分库，所有 Bot 共用；直播时 Cortico 在 ``/context/prepare`` 带上
-  ``game``，``game_knowledge`` 通道按 ``game.id`` 选库，注入命中的知识卡（最多 2 张）与相关词条。
-- 游玩经历：Cortico 把游戏事件写回记忆；游戏心得：每日日记之后的信念反思；存档状态：留在 Cortico。
+- **攻略常识**：按游戏分库，所有 Bot 共用（如缺氧的教程整理）；
+- **自己玩出来的经验**：每个 Bot 从自己的游戏经历里写下的经验卡（``services/game_knowledge/lessons.py``），
+  同一个库里 ``bot_id`` 不为空的卡，只在这个 Bot 的请求里出现；
+- **游玩经历**：Cortico 把游戏事件写回记忆（经验就是从这里想出来的）。存档状态留在 Cortico。
 
-匹配只看知识卡自己的触发条件（关键词 + 数值条件，规则见 ``domain.game_knowledge.card_trigger``），
-不调用模型、不做向量检索；工具查询用与记忆相同的中文两字切词全文检索（``engine/db/fts_cjk.py``）。
-草稿与归档的内容不注入、工具也查不到，只在管理台可见。
+直播时 Cortico 在 ``/context/prepare`` 带上 ``game``，``game_knowledge`` 通道按 ``game.id`` 选库，注入命中的卡
+（合计最多 2 张，她自己的经验排在前面）与相关词条。匹配只看卡片自己的触发条件（关键词 + 数值条件，
+规则见 ``domain.game_knowledge.card_trigger``），不调用模型、不做向量检索；工具查询用与记忆相同的
+中文两字切词全文检索（``engine/db/fts_cjk.py``）。草稿与归档的内容不注入、工具也查不到，只在管理台可见。
 """
 
 from __future__ import annotations
@@ -19,10 +21,12 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 try:
     from ...domain.game_knowledge import (
+        EXPERIENCE_SOURCE_TYPE,
         GameContext,
         GameKnowledgeError,
         KeywordHaystack,
@@ -43,6 +47,7 @@ try:
     from . import importers
 except ImportError:  # pragma: no cover - 仓库测试以插件根目录为顶层
     from domain.game_knowledge import (
+        EXPERIENCE_SOURCE_TYPE,
         GameContext,
         GameKnowledgeError,
         KeywordHaystack,
@@ -80,12 +85,23 @@ _ACTIVE_MAX_ENTRIES = 512
 _SOURCE_WEIGHT = {"message": 3.0, "keywords": 2.5, "state": 2.5}
 _PURE_CONDITION_WEIGHT = 2.8
 _REFINING_CONDITION_WEIGHT = 1.0
+# 没满足的「参考」条件：照样触发，但排在对得上的卡后面
+_SOFT_FAIL_PENALTY = 1.5
+# 她自己吃过的亏比攻略先想起来
+_EXPERIENCE_BONUS = 0.5
 
 INJECTION_HEADER = (
     "[游戏攻略参考 · {name}：以下是这个游戏的通用攻略常识，不是你的亲身经历，也不一定适合眼前的局面；"
     "用不用、怎么说由你结合实况自己判断]"
 )
+EXPERIENCE_HEADER = (
+    "[你自己玩出来的经验 · {name}：这些是你以前玩的时候亲身经历过、自己总结的；眼前用不用得上由你判断]"
+)
 TOOL_FOOTER = "（以上是攻略参考，不是你的亲身经历；想查自己以前玩过的事，用记忆搜索 wave_memory_search）"
+TOOL_FOOTER_WITH_EXPERIENCE = (
+    "（标了「你自己的经验」的是你亲身经历过、自己总结的；其余是攻略参考，不是你的亲身经历。"
+    "想查以前玩过的具体经过，用记忆搜索 wave_memory_search）"
+)
 _QUERY_STOPWORDS = frozenset({
     "怎么", "怎么办", "如何", "什么", "为什么", "怎样", "可以", "应该", "需要", "这个", "那个", "一下", "我们",
     "你们", "他们", "现在", "还是", "就是", "没有", "不是", "知道", "办法", "攻略", "教程", "一个", "有没有",
@@ -163,18 +179,54 @@ def _clip(text: Any, limit: int) -> str:
     return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
 
 
-def render_card(card: Mapping[str, Any], *, with_source: bool = False) -> str:
-    """一张卡的注入文本：标题行、要点、注意（各取前几条），查询结果里再加出处。"""
+def is_experience(card: Mapping[str, Any]) -> bool:
+    return bool(card.get("bot_id")) and card.get("source_type") == EXPERIENCE_SOURCE_TYPE
+
+
+def pick_items(items: Sequence[Any], limit: int, focus: Sequence[str] = ()) -> list[str]:
+    """条目多于 ``limit`` 时，先留下提到 ``focus`` 里的词最多的几条（保持原顺序）；都没提到就取前几条。"""
+    texts = [str(item) for item in items if str(item or "").strip()]
+    if len(texts) <= limit or not focus:
+        return texts[:limit]
+    words = [fold(word) for word in focus if len(fold(word)) >= 2]
+    scored = [(sum(1 for word in words if word in fold(text)), index) for index, text in enumerate(texts)]
+    if not any(score for score, _ in scored):
+        return texts[:limit]
+    keep = sorted(sorted(scored, key=lambda pair: (-pair[0], pair[1]))[:limit], key=lambda pair: pair[1])
+    return [texts[index] for _, index in keep]
+
+
+def _experience_note(card: Mapping[str, Any]) -> str:
+    meta = card.get("meta") or {}
+    times = int(meta.get("times") or 1)
+    last = meta.get("last_at")
+    when = ""
+    if last:
+        stamp = datetime.fromtimestamp(float(last))
+        when = f"，最近 {stamp.month}月{stamp.day}日"
+    return f"{times} 次经历{when}"
+
+
+def render_card(card: Mapping[str, Any], *, with_source: bool = False, focus: Sequence[str] = ()) -> str:
+    """一张卡的注入文本：标题行、要点、注意（条目多时挑和 ``focus`` 相关的几条），查询结果里再加出处。
+
+    她自己的经验卡：标题后注明经历过几次，要点写作「做法」、注意写作「经过」。
+    """
+    experience = is_experience(card)
     stage = str(card.get("stage") or "").strip()
-    lines = [f"【{card.get('title')}{' · ' + stage if stage else ''}】"]
-    points = [_clip(item, ITEM_CHARS) for item in (card.get("points") or [])[:CARD_POINTS_LIMIT]]
-    pitfalls = [_clip(item, ITEM_CHARS) for item in (card.get("pitfalls") or [])[:CARD_PITFALLS_LIMIT]]
+    suffix = f"（{_experience_note(card)}）" if experience else ""
+    lines = [f"【{card.get('title')}{' · ' + stage if stage else ''}】{suffix}"]
+    points = [_clip(item, ITEM_CHARS) for item in pick_items(card.get("points") or [], CARD_POINTS_LIMIT, focus)]
+    pitfalls = [_clip(item, ITEM_CHARS) for item in pick_items(card.get("pitfalls") or [], CARD_PITFALLS_LIMIT, focus)]
     if points := [p for p in points if p]:
-        lines.append("要点：" + "；".join(points))
+        lines.append(("做法：" if experience else "要点：") + "；".join(points))
     if pitfalls := [p for p in pitfalls if p]:
-        lines.append("注意：" + "；".join(pitfalls))
-    if with_source and card.get("source"):
-        lines.append("出处：" + _clip(card.get("source"), 120))
+        lines.append(("经过：" if experience else "注意：") + "；".join(pitfalls))
+    if with_source:
+        if experience:
+            lines.append("出处：你自己的经历")
+        elif card.get("source"):
+            lines.append("出处：" + _clip(card.get("source"), 120))
     return "\n".join(lines)
 
 
@@ -184,11 +236,23 @@ def render_term(term: Mapping[str, Any]) -> str:
     return f"- {label}：{_clip(term.get('explanation'), TERM_CHARS)}"
 
 
-def render_injection(game: Mapping[str, Any], cards: Sequence[CardHit], terms: Sequence[TermHit]) -> tuple[str, list[str], list[str]]:
-    """注入块：攻略参考说明 + 知识卡 + 词条。返回 (全文, 每张卡的文本, 每个词条的行)。"""
-    card_blocks = [render_card(hit.card) for hit in cards]
+def render_injection(
+    game: Mapping[str, Any], cards: Sequence[CardHit], terms: Sequence[TermHit], *, focus: Sequence[str] = (),
+) -> tuple[str, list[str], list[str]]:
+    """注入块：她自己的经验（有的话）在前、攻略参考在后，各带一行说明；最后是词条。
+
+    返回 (全文, 每张卡的文本（与 ``cards`` 同序）, 每个词条的行)。
+    """
+    name = game.get("name") or game.get("id")
+    card_blocks = [render_card(hit.card, focus=focus) for hit in cards]
     term_lines = [render_term(hit.term) for hit in terms]
-    parts = [INJECTION_HEADER.format(name=game.get("name") or game.get("id")), *card_blocks]
+    own = [block for hit, block in zip(cards, card_blocks) if is_experience(hit.card)]
+    reference = [block for hit, block in zip(cards, card_blocks) if not is_experience(hit.card)]
+    parts: list[str] = []
+    if own:
+        parts += [EXPERIENCE_HEADER.format(name=name), *own]
+    if reference or (term_lines and not own):
+        parts += [INJECTION_HEADER.format(name=name), *reference]
     if term_lines:
         parts.append("词条：\n" + "\n".join(term_lines))
     return "\n".join(parts), card_blocks, term_lines
@@ -197,12 +261,18 @@ def render_injection(game: Mapping[str, Any], cards: Sequence[CardHit], terms: S
 def render_search(result: GameSearch, *, max_chars: int = TOOL_MAX_CHARS) -> str:
     """工具返回：卡片（带出处）+ 词条，总长不超过 ``max_chars``。"""
     game = result.game or {}
-    header = f"[游戏攻略参考 · {game.get('name') or game.get('id')}｜查「{_clip(result.query, 30)}」]"
-    budget = max(200, int(max_chars)) - len(header) - len(TOOL_FOOTER) - 2
+    has_experience = any(is_experience(card) for card in result.cards)
+    label = "游戏知识" if has_experience else "游戏攻略参考"
+    header = f"[{label} · {game.get('name') or game.get('id')}｜查「{_clip(result.query, 30)}」]"
+    footer = TOOL_FOOTER_WITH_EXPERIENCE if has_experience else TOOL_FOOTER
+    budget = max(200, int(max_chars)) - len(header) - len(footer) - 2
+    focus = query_words(result.query)
     body: list[str] = []
     used = 0
     for card in result.cards:
-        block = render_card(card, with_source=True)
+        block = render_card(card, with_source=True, focus=focus)
+        if is_experience(card):
+            block = "（你自己的经验）" + block
         if used + len(block) + 1 > budget:
             room = budget - used - 1
             if room > 80 and not body:
@@ -221,7 +291,7 @@ def render_search(result: GameSearch, *, max_chars: int = TOOL_MAX_CHARS) -> str
             used += len(line) + 1
         if kept:
             body.append("词条：\n" + "\n".join(kept))
-    return "\n".join([header, *body, TOOL_FOOTER])
+    return "\n".join([header, *body, footer])
 
 
 # ─────────────────────────── 查询词 ───────────────────────────
@@ -264,6 +334,8 @@ class GameKnowledgeService:
         self._active_sessions: dict[tuple[str, str], tuple[str, float]] = {}
         self._active_bots: dict[str, tuple[str, float]] = {}
         self._legacy_scans: dict[str, dict[str, Any]] = {}
+        # 每个游戏库已经记下的状态键（出现新键时才写库）
+        self._known_state_keys: dict[str, set[str]] = {}
 
     # ─────────────── 游戏库 ───────────────
 
@@ -331,6 +403,31 @@ class GameKnowledgeService:
     def stage_facets(self, game_id: str) -> list[dict[str, Any]]:
         return self.repo.stage_facets(game_id)
 
+    def _note_state_keys(self, game: GameContext, *, now: float) -> None:
+        """直播请求里出现了新的状态键：记到游戏库里（她写经验卡的条件时只能用这些键）。"""
+        if not game.state:
+            return
+        game_id = self.resolve_game_id(game.id)
+        if game_id is None:
+            return
+        with self._lock:
+            known = self._known_state_keys.get(game_id)
+        if known is None:
+            stored = self.repo.get_game(game_id) or {}
+            known = set((stored.get("state_keys") or {}).keys())
+            with self._lock:
+                self._known_state_keys[game_id] = known
+        fresh = {key: value for key, value in game.state.items() if key not in known}
+        if not fresh:
+            return
+        try:
+            self.repo.note_state_keys(game_id, fresh, now=now)
+        except Exception as exc:  # pragma: no cover - 只影响经验卡能用的条件
+            logger.debug("[WaveMemory] 记录游戏状态键失败 %s: %s", game_id, exc)
+            return
+        with self._lock:
+            known.update(fresh)
+
     # ─────────────── 缓存 ───────────────
 
     def _invalidate(self, game_id: str | None = None) -> None:
@@ -378,26 +475,39 @@ class GameKnowledgeService:
     # ─────────────── 注入匹配 ───────────────
 
     @staticmethod
-    def _card_score(trigger: Any) -> float:
+    def _card_score(trigger: Any, card: Mapping[str, Any] | None = None) -> float:
         if trigger.keyword_hits:
             score = sum(_SOURCE_WEIGHT.get(hit.source, 1.0) + min(len(fold(hit.keyword)), 8) * 0.05 for hit in trigger.keyword_hits[:3])
-            score += _REFINING_CONDITION_WEIGHT * trigger.passed_conditions
+            score += _REFINING_CONDITION_WEIGHT * (trigger.passed_conditions)
+            score -= _SOFT_FAIL_PENALTY * trigger.soft_failed
         else:
             # 纯条件卡（如「血量低先撤」）由实况状态直接触发，排在单个场景关键词前面
             score = _PURE_CONDITION_WEIGHT * trigger.passed_conditions
+        if card is not None and is_experience(card):
+            score += _EXPERIENCE_BONUS
         return round(score, 3)
+
+    @staticmethod
+    def _visible(card: Mapping[str, Any], bot_id: str) -> bool:
+        """共用的攻略谁都能看到；经验卡只属于写下它的 Bot。"""
+        owner = str(card.get("bot_id") or "")
+        return not owner or owner == str(bot_id or "")
 
     def match(
         self,
         game: GameContext,
         *,
         message: str = "",
+        bot_id: str = "",
         max_cards: int = MAX_INJECT_CARDS,
         max_terms: int = DEFAULT_INJECT_TERMS,
         include_drafts: bool = False,
         explain: bool = False,
     ) -> GameMatch:
-        """按 ``game.id`` 选库，返回命中的卡（最多 2 张，其余记为 overflow）与消息里提到的词条。"""
+        """按 ``game.id`` 选库，返回命中的卡（最多 2 张，其余记为 overflow）与消息里提到的词条。
+
+        ``bot_id``：谁在玩——共用的攻略之外，只看这个 Bot 自己的经验卡。
+        """
         requested = str(getattr(game, "id", "") or "")
         game_id = self.resolve_game_id(requested)
         if game_id is None:
@@ -412,9 +522,11 @@ class GameKnowledgeService:
         hits: list[CardHit] = []
         blocked: list[dict[str, Any]] = []
         for entry in index.cards:
+            if not self._visible(entry.card, bot_id):
+                continue
             trigger = card_trigger(entry.keywords, entry.conditions, haystack, state)
             if trigger.triggered:
-                hits.append(CardHit(entry.card, self._card_score(trigger), trigger.reason, trigger.keyword_hits, trigger.passed_conditions))
+                hits.append(CardHit(entry.card, self._card_score(trigger, entry.card), trigger.reason, trigger.keyword_hits, trigger.passed_conditions))
             elif explain and entry.keywords and trigger.reason.startswith("条件不满足"):
                 words = [hit.describe() for hit in (haystack.find(k) for k in entry.keywords) if hit is not None]
                 if words:
@@ -450,18 +562,23 @@ class GameKnowledgeService:
         keywords: Any = None,
         state: Any = None,
         include_drafts: bool = False,
+        bot_id: str = "",
     ) -> dict[str, Any]:
-        """管理台「试一下」：给一句消息 + 状态 + 关键词，看会注入哪些卡、为什么（可把草稿也算上）。"""
+        """管理台「试一下」：给一句消息 + 状态 + 关键词，看会注入哪些卡、为什么（可把草稿也算上）。
+
+        ``bot_id`` 给了就连这个 Bot 自己的经验卡一起算（和直播时她的请求一样）。
+        """
         gid = validate_game_id(game_id)
         self.repo.require_game(gid)
         context = parse_game_context({"id": gid, "state": state if isinstance(state, Mapping) else {}, "keywords": keywords})
         assert context is not None
-        match = self.match(context, message=message, include_drafts=include_drafts, explain=True)
+        match = self.match(context, message=message, bot_id=bot_id, include_drafts=include_drafts, explain=True)
         text = ""
         if match.game is not None and (match.cards or match.terms):
-            text = render_injection(match.game, match.cards, match.terms)[0]
+            text = render_injection(match.game, match.cards, match.terms, focus=focus_words(message, match.cards))[0]
         return {
             "game_id": gid,
+            "bot_id": bot_id,
             "include_drafts": include_drafts,
             "state": dict(context.state),
             "keywords": list(context.keywords),
@@ -477,8 +594,13 @@ class GameKnowledgeService:
 
     # ─────────────── 工具查询 ───────────────
 
-    def search(self, game_ref: Any, query: str, *, max_cards: int = TOOL_MAX_CARDS, max_terms: int = TOOL_MAX_TERMS) -> GameSearch:
-        """在一个游戏库里查已启用的卡与词条：中文两字切词全文检索 + 触发词 / 标题 / 术语直接命中。"""
+    def search(
+        self, game_ref: Any, query: str, *, bot_id: str = "", max_cards: int = TOOL_MAX_CARDS, max_terms: int = TOOL_MAX_TERMS,
+    ) -> GameSearch:
+        """在一个游戏库里查已启用的卡与词条：中文两字切词全文检索 + 触发词 / 标题 / 术语直接命中。
+
+        共用的攻略之外，只查 ``bot_id`` 自己的经验卡。
+        """
         text = str(query or "").strip()
         game_id = self.resolve_game_id(game_ref)
         if game_id is None:
@@ -497,7 +619,8 @@ class GameKnowledgeService:
         for position, (term_id, _rank) in enumerate(self.repo.search_ids("term", game_id, expr, limit=20)):
             term_scores[term_id] = term_scores.get(term_id, 0.0) + 3.0 / (1 + position)
         haystack = KeywordHaystack(message=text)
-        for entry in index.cards:
+        visible = [entry for entry in index.cards if self._visible(entry.card, bot_id)]
+        for entry in visible:
             card_id = int(entry.card["id"])
             hits = [k for k in entry.keywords if haystack.find(k) is not None]
             if hits:
@@ -515,7 +638,7 @@ class GameKnowledgeService:
                 if len(folded_name) >= 2 and folded_name in folded or (len(folded) >= 2 and folded in folded_name):
                     term_scores[term_id] = term_scores.get(term_id, 0.0) + 4.0
                     break
-        cards_by_id = {int(entry.card["id"]): entry.card for entry in index.cards}
+        cards_by_id = {int(entry.card["id"]): entry.card for entry in visible}
         terms_by_id = {int(term["id"]): term for term, _ in index.terms}
         cards = [cards_by_id[cid] for cid, _ in sorted(card_scores.items(), key=lambda kv: (-kv[1], kv[0])) if cid in cards_by_id]
         terms = [terms_by_id[tid] for tid, _ in sorted(term_scores.items(), key=lambda kv: (-kv[1], kv[0])) if tid in terms_by_id]
@@ -542,6 +665,7 @@ class GameKnowledgeService:
             if len(self._active_sessions) > _ACTIVE_MAX_ENTRIES:
                 cutoff = stamp - ACTIVE_GAME_TTL_SECONDS
                 self._active_sessions = {k: v for k, v in self._active_sessions.items() if v[1] >= cutoff}
+        self._note_state_keys(game, now=stamp)
 
     def active_game(self, scope: Any, *, now: float | None = None) -> tuple[str, str] | None:
         """(游戏标识, 来源 session|bot)：先看同一会话，再看这个 Bot 最近在别处玩的；超过 30 分钟不算。"""
@@ -692,28 +816,11 @@ class GameKnowledgeService:
         package = importers.to_package(data, fmt)
         return self._import_package(game, package, status_mode=status_mode, on_existing=on_existing)
 
-    def list_packs(self) -> list[dict[str, Any]]:
-        packs = importers.list_packs()
-        for pack in packs:
-            game_id = str(pack["game"].get("id") or "")
-            pack["game_exists"] = bool(game_id) and self.repo.get_game(game_id) is not None
-        return packs
-
-    def import_pack(self, pack_id: str, *, on_existing: str = "skip") -> dict[str, Any]:
-        """导入仓库自带的起始包：游戏库不存在就按包里的信息新建；起始包里的内容一律导入为草稿。"""
-        package = importers.load_pack(pack_id)
-        game_id = validate_game_id(package.game.get("id"))
-        game = self.repo.get_game(game_id)
-        created_game = game is None
-        if game is None:
-            game = self.repo.create_game(normalize_game_fields({**package.game, "id": game_id}))
-        result = self._import_package(game, package, status_mode="draft", on_existing=on_existing, default_source_type="starter_pack")
-        return {**result, "pack": pack_id, "created_game": created_game}
-
     def export_game(self, game_id: str, *, statuses: Sequence[str] | None = None) -> dict[str, Any]:
+        """导出共用的攻略卡与词条（各 Bot 自己的经验卡不导出）。"""
         game = self.repo.require_game(game_id)
         wanted = [validate_status(s) for s in statuses or [] if s] or None
-        cards = self.repo.all_items("card", game["id"], statuses=wanted)
+        cards = self.repo.all_items("card", game["id"], statuses=wanted, bot_id="")
         terms = self.repo.all_items("term", game["id"], statuses=wanted)
         return importers.export_document(game, cards, terms, exported_at=self._clock())
 
@@ -774,7 +881,7 @@ class GameKnowledgeService:
         if game is None:
             game = self.repo.create_game(normalize_game_fields(dict(spec.game)))
         episode_sources: dict[int, str] = {}
-        for card in self.repo.all_items("card", game_id):
+        for card in self.repo.all_items("card", game_id, bot_id=""):
             meta = card.get("meta") or {}
             ep = meta.get("ep")
             if isinstance(ep, int) and card.get("source_url") and not meta.get("legacy_source"):
@@ -782,6 +889,16 @@ class GameKnowledgeService:
         package, stats = importers.oni_lore_package(rows, episode_sources=episode_sources)
         result = self._import_package(game, package, status_mode="draft", on_existing="skip")
         return {**base, **stats, **result, "skipped": False, "created_game": created_game}
+
+
+def focus_words(message: str, cards: Sequence[CardHit] = ()) -> list[str]:
+    """挑要点用的词：消息里的词加上命中的关键词。"""
+    words = query_words(message)
+    for hit in cards:
+        for keyword_hit in hit.keyword_hits:
+            if keyword_hit.keyword not in words:
+                words.append(keyword_hit.keyword)
+    return words
 
 
 def _hit_payload(hit: CardHit) -> dict[str, Any]:
@@ -792,6 +909,8 @@ def _hit_payload(hit: CardHit) -> dict[str, Any]:
         "title": card["title"],
         "stage": card.get("stage") or "",
         "status": card.get("status"),
+        "bot_id": card.get("bot_id") or "",
+        "experience": is_experience(card),
         "score": hit.score,
         "reason": hit.reason,
     }
@@ -801,6 +920,7 @@ __all__ = [
     "ACTIVE_GAME_TTL_SECONDS",
     "CardHit",
     "DEFAULT_INJECT_TERMS",
+    "EXPERIENCE_HEADER",
     "GameKnowledgeService",
     "GameMatch",
     "GameSearch",
@@ -810,6 +930,9 @@ __all__ = [
     "TOOL_FOOTER",
     "TOOL_MAX_CHARS",
     "TermHit",
+    "focus_words",
+    "is_experience",
+    "pick_items",
     "query_words",
     "render_card",
     "render_injection",

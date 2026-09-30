@@ -1,7 +1,8 @@
-"""游戏知识库 API：游戏库、知识卡、词条的增改与启用 / 归档，导入导出，起始包，记忆表旧知识点迁移，试匹配。
+"""游戏知识库 API：游戏库、知识卡、词条的增改与启用 / 归档，导入导出，记忆表旧知识点迁移，试匹配，
+以及各 Bot 自己玩出来的经验卡（查看、删除 / 恢复、「现在想一次」）。
 
-写入全部委托 ``services.game_knowledge.GameKnowledgeService``（本文件不写 SQL）；编辑带 ``version``，
-版本对不上返回 409。批量启用 / 归档可带 ``versions``（逐条核对，对不上的列在 conflicts 里）。
+写入全部委托 ``services.game_knowledge.GameKnowledgeService`` 与 ``GameLessonService``（本文件不写 SQL）；
+编辑带 ``version``，版本对不上返回 409。批量启用 / 归档可带 ``versions``（逐条核对，对不上的列在 conflicts 里）。
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ try:
         parse_conditions,
     )
     from ...engine.db.game_knowledge_repo import IMPORT_MODES
+    from ...services.game_knowledge.lessons import restore_lesson, veto_lesson
 except ImportError:  # pragma: no cover - 插件根目录直接导入
     from domain.game_knowledge import (
         SOURCE_TYPE_LABELS,
@@ -35,6 +37,7 @@ except ImportError:  # pragma: no cover - 插件根目录直接导入
         parse_conditions,
     )
     from engine.db.game_knowledge_repo import IMPORT_MODES
+    from services.game_knowledge.lessons import restore_lesson, veto_lesson
 
 game_knowledge_bp = Blueprint("game_knowledge", __name__, url_prefix="/api/game-knowledge")
 
@@ -43,6 +46,31 @@ _KINDS = {"cards": "card", "terms": "term"}
 
 def _service() -> Any:
     return getattr(get_container(), "game_knowledge", None)
+
+
+def _lessons() -> Any:
+    return getattr(get_container(), "game_lessons", None)
+
+
+def _bots() -> list[dict[str, str]]:
+    registry = getattr(get_container(), "bot_registry", None)
+    listing = getattr(registry, "all", None)
+    if not callable(listing):
+        return []
+    bots = []
+    for profile in listing():
+        db_id = str(getattr(profile, "db_id", "") or "")
+        if db_id:
+            bots.append({"id": db_id, "name": str(getattr(profile, "name", "") or db_id)})
+    return bots
+
+
+def _owner(raw: Any) -> str | None:
+    """列表的 ``owner``：shared（默认，共用的攻略）/ all / 某个 Bot 的标识（它自己的经验卡）。"""
+    text = str(raw or "shared").strip()
+    if text == "all":
+        return None
+    return "" if text == "shared" else text
 
 
 def _unavailable():
@@ -73,7 +101,12 @@ def _condition_texts(item: dict[str, Any]) -> list[str]:
 def _card_payload(card: dict[str, Any]) -> dict[str, Any]:
     keywords, conditions = card.get("keywords") or [], card.get("conditions") or []
     trigger_mode = "keywords" if keywords else ("conditions" if conditions else "none")
-    return {**card, "conditions_text": _condition_texts(card), "trigger_mode": trigger_mode}
+    return {
+        **card,
+        "conditions_text": _condition_texts(card),
+        "trigger_mode": trigger_mode,
+        "experience": bool(card.get("bot_id")) and card.get("source_type") == "experience",
+    }
 
 
 def _item_payload(kind: str, item: dict[str, Any]) -> dict[str, Any]:
@@ -96,20 +129,21 @@ def _statuses(raw: Any) -> list[str]:
 @game_knowledge_bp.route("/overview", methods=["GET"])
 @require_auth
 async def overview():
-    """游戏库列表（带各状态计数）、仓库自带的起始包、可迁移的记忆表旧知识点。"""
+    """游戏库列表（带各状态计数）、可迁移的记忆表旧知识点、Bot 列表与游戏经验是否开启。"""
     service = _service()
     if service is None:
         return _unavailable()
     try:
         games = await asyncio.to_thread(service.list_games)
-        packs = await asyncio.to_thread(service.list_packs)
         legacy = await asyncio.to_thread(service.legacy_sources)
     except Exception as exc:
         return _error(exc)
+    lessons = _lessons()
     return jsonify({
         "games": games,
-        "packs": packs,
         "legacy_sources": legacy,
+        "bots": _bots(),
+        "lessons_enabled": bool(lessons is not None and getattr(lessons, "enabled", False)),
         "statuses": STATUS_LABELS,
         "source_types": SOURCE_TYPE_LABELS,
         "import_modes": list(IMPORT_MODES),
@@ -178,6 +212,7 @@ async def list_items(game_id: str, kind: str):
             source_type=str(args.get("source_type") or "") or None,
             limit=int(args.get("limit") or 50),
             offset=int(args.get("offset") or 0),
+            **({"bot_id": _owner(args.get("owner"))} if kind == "cards" else {}),
         )
     except Exception as exc:
         return _error(exc)
@@ -331,25 +366,78 @@ async def trial_match(game_id: str):
             keywords=body.get("keywords"),
             state=body.get("state") if isinstance(body.get("state"), dict) else {},
             include_drafts=bool(body.get("include_drafts")),
+            bot_id=str(body.get("bot_id") or ""),
         )
     except Exception as exc:
         return _error(exc)
     return jsonify(result)
 
 
-@game_knowledge_bp.route("/packs/<pack_id>/import", methods=["POST"])
+@game_knowledge_bp.route("/games/<game_id>/lessons", methods=["GET"])
 @require_auth
-async def import_pack(pack_id: str):
-    """导入仓库自带的起始包（游戏库不存在会新建）；起始包内容一律是草稿。"""
+async def list_lessons(game_id: str):
+    """某个 Bot 在这个游戏里自己写下的经验卡（``bot_id`` 必填，``status`` 可选）与最近的回想记录。"""
+    service = _service()
+    if service is None:
+        return _unavailable()
+    args = request.args
+    bot_id = str(args.get("bot_id") or "").strip()
+    if not bot_id:
+        return jsonify(error_payload("bot_id_required", "要带上 bot_id（看哪个 Bot 的经验）")), 400
+    try:
+        page = service.list_items(
+            "card", game_id, bot_id=bot_id, status=_statuses(args.get("status")) or None,
+            query=str(args.get("q") or ""), limit=int(args.get("limit") or 100), offset=int(args.get("offset") or 0),
+        )
+        lessons = _lessons()
+        if lessons is not None:
+            activity = await asyncio.to_thread(lessons.overview, game_id, bot_id=bot_id)
+        else:
+            activity = {"enabled": False, "runs": [], "stats": {}, "pending": []}
+    except Exception as exc:
+        return _error(exc)
+    page["items"] = [_card_payload(item) for item in page["items"]]
+    return jsonify({**page, **activity})
+
+
+@game_knowledge_bp.route("/games/<game_id>/lessons/reflect", methods=["POST"])
+@require_auth
+async def reflect_lessons(game_id: str):
+    """「现在想一次」：让这个 Bot 在后台回想还没想过的游戏经历（所有游戏一起想），立即返回。"""
+    lessons = _lessons()
+    if lessons is None:
+        return jsonify(error_payload("game_lessons_disabled", "游戏经验没有开启（Learning_Settings.game_lesson_enabled）")), 409
+    body = await request.get_json(silent=True) or {}
+    try:
+        result = await lessons.request_reflect(str(body.get("bot_id") or ""))
+    except Exception as exc:
+        return _error(exc)
+    if result.get("status") == "bot_required":
+        return jsonify(error_payload("bot_id_required", "要带上 bot_id")), 400
+    return jsonify({"ok": result.get("status") in {"started", "running"}, **result})
+
+
+@game_knowledge_bp.route("/games/<game_id>/lessons/<int:card_id>/<any(veto, restore):action>", methods=["POST"])
+@require_auth
+async def change_lesson(game_id: str, card_id: int, action: str):
+    """删掉（否决：她不会再写意思相近的）或恢复一条经验：``bot_id``、``version``。游戏经验没开也能管。"""
     service = _service()
     if service is None:
         return _unavailable()
     body = await request.get_json(silent=True) or {}
     try:
-        result = await asyncio.to_thread(service.import_pack, pack_id, on_existing=str(body.get("on_existing") or "skip"))
+        expected = _version(body)
+        if expected is None:
+            raise GameKnowledgeError("version_required", "要带上读到的 version")
+        change = veto_lesson if action == "veto" else restore_lesson
+        item = await asyncio.to_thread(change, service.repo, game_id, card_id, version=expected, bot_id=str(body.get("bot_id") or ""))
+        service._invalidate(game_id)
     except Exception as exc:
         return _error(exc)
-    return jsonify({"ok": True, **result})
+    return jsonify(mutation_response(
+        operation_kind=f"game_knowledge.lesson.{action}", status="succeeded", revision=item["version"],
+        item=_card_payload(item), include_item=True,
+    ))
 
 
 @game_knowledge_bp.route("/legacy/<source>/scan", methods=["POST"])

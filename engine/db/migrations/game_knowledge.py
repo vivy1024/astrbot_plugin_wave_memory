@@ -1,13 +1,16 @@
-"""游戏知识库的纯增量 schema：按游戏分库的攻略常识，所有 Bot 共用（不按 Bot / 会话分）。
+"""游戏知识库的纯增量 schema：按游戏分库的攻略常识（所有 Bot 共用），加上每个 Bot 自己玩出来的经验卡。
 
-- ``game_libraries``：一个游戏一行，``game_id`` 为小写标识（如 minecraft、oni）。
+- ``game_libraries``：一个游戏一行，``game_id`` 为小写标识（如 minecraft、oni）；``lessons_enabled`` 是
+  这个游戏允不允许 Bot 写经验卡，``state_keys`` 记下直播请求里见过的状态键（写经验卡的条件时用）。
 - ``game_knowledge_cards``：知识卡——标题、阶段、要点、坑、触发关键词与数值条件、出处、状态、版本号、来源类型。
+  ``bot_id`` 为空 = 所有 Bot 共用的攻略；不为空 = 这个 Bot 从自己的经历里写下的经验卡（source_type=experience）。
 - ``game_knowledge_terms``：词条——术语、别名、解释、相关条目。
 - ``fts_game_cards`` / ``fts_game_terms``：知识卡与词条的中文检索索引，与 ``fts_memories_cjk`` 相同的
   「相邻两字」切词（``engine/db/fts_cjk.py``）；rowid 就是卡片 / 词条 id，由仓储在同一个写事务里维护。
+- ``game_lesson_runs``：经验反思的进度，每次一行；``to_memory_id`` 是读到的记忆表位置（按 Bot 算游标）。
 
-「游玩经历」「游戏心得」「存档状态」都不在这里：经历由 Cortico 写回记忆，心得来自每日日记之后的信念反思，
-存档状态留在 Cortico。本迁移不读取、不改写任何旧表；全部 ``IF NOT EXISTS``，缺列只补列，重复执行无副作用。
+游玩经历本身由 Cortico 写回记忆表（source=game_event），存档状态留在 Cortico。本迁移不读取、不改写任何旧表；
+全部 ``IF NOT EXISTS``，缺列只补列，重复执行无副作用。
 """
 
 from __future__ import annotations
@@ -23,7 +26,9 @@ CREATE TABLE IF NOT EXISTS game_libraries (
     enabled INTEGER NOT NULL DEFAULT 1,
     version INTEGER NOT NULL DEFAULT 1,
     created_at REAL NOT NULL,
-    updated_at REAL NOT NULL
+    updated_at REAL NOT NULL,
+    lessons_enabled INTEGER NOT NULL DEFAULT 1,
+    state_keys TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE IF NOT EXISTS game_knowledge_cards (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,6 +49,7 @@ CREATE TABLE IF NOT EXISTS game_knowledge_cards (
     meta TEXT NOT NULL DEFAULT '{}',
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
+    bot_id TEXT NOT NULL DEFAULT '',
     UNIQUE (game_id, card_key)
 );
 CREATE TABLE IF NOT EXISTS game_knowledge_terms (
@@ -64,6 +70,21 @@ CREATE TABLE IF NOT EXISTS game_knowledge_terms (
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
     UNIQUE (game_id, term_key)
+);
+CREATE TABLE IF NOT EXISTS game_lesson_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bot_id TEXT NOT NULL,
+    game_id TEXT NOT NULL DEFAULT '',
+    trigger TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'succeeded', 'failed', 'skipped')),
+    started_at REAL NOT NULL,
+    finished_at REAL,
+    from_memory_id INTEGER NOT NULL DEFAULT 0,
+    to_memory_id INTEGER NOT NULL DEFAULT 0,
+    events INTEGER NOT NULL DEFAULT 0,
+    model_calls INTEGER NOT NULL DEFAULT 0,
+    counts TEXT NOT NULL DEFAULT '{}',
+    error TEXT NOT NULL DEFAULT ''
 )
 """
 # 索引与检索表在补列之后建：更早版本留下的表缺列时，先补列再建索引
@@ -72,6 +93,10 @@ CREATE INDEX IF NOT EXISTS idx_game_knowledge_cards_game_status
     ON game_knowledge_cards (game_id, status, updated_at);
 CREATE INDEX IF NOT EXISTS idx_game_knowledge_terms_game_status
     ON game_knowledge_terms (game_id, status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_game_knowledge_cards_owner
+    ON game_knowledge_cards (game_id, bot_id, status);
+CREATE INDEX IF NOT EXISTS idx_game_lesson_runs_bot
+    ON game_lesson_runs (bot_id, id);
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_game_cards USING fts5(tokens, tokenize='unicode61');
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_game_terms USING fts5(tokens, tokenize='unicode61')
 """
@@ -83,6 +108,8 @@ _COLUMNS: dict[str, dict[str, str]] = {
         "description": "TEXT NOT NULL DEFAULT ''",
         "enabled": "INTEGER NOT NULL DEFAULT 1",
         "version": "INTEGER NOT NULL DEFAULT 1",
+        "lessons_enabled": "INTEGER NOT NULL DEFAULT 1",
+        "state_keys": "TEXT NOT NULL DEFAULT '{}'",
     },
     "game_knowledge_cards": {
         "status": "TEXT NOT NULL DEFAULT 'draft'",
@@ -97,6 +124,7 @@ _COLUMNS: dict[str, dict[str, str]] = {
         "version": "INTEGER NOT NULL DEFAULT 1",
         "note": "TEXT NOT NULL DEFAULT ''",
         "meta": "TEXT NOT NULL DEFAULT '{}'",
+        "bot_id": "TEXT NOT NULL DEFAULT ''",
     },
     "game_knowledge_terms": {
         "status": "TEXT NOT NULL DEFAULT 'draft'",
@@ -118,6 +146,7 @@ GAME_KNOWLEDGE_TABLES = (
     "game_knowledge_terms",
     "fts_game_cards",
     "fts_game_terms",
+    "game_lesson_runs",
 )
 
 

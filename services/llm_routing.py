@@ -150,6 +150,14 @@ TASKS: tuple[TaskSpec, ...] = (
         bot_overridable=True,
     ),
     TaskSpec(
+        "game_lesson", "游戏经验", "meta",
+        "Bot 回想自己的游戏经历（Cortico 写回的死亡、目标、发现……），把教训和办法写成经验卡"
+        "（Learning_Settings.game_lesson_enabled）。死亡 / 危机后几分钟、每日日记之后、管理台手动时调用。",
+        "[GameLesson]",
+        consumers=("游戏经验（死亡 / 危机后、每日日记之后、管理台手动）",),
+        bot_overridable=True,
+    ),
+    TaskSpec(
         "character_experience", "角色经历", "meta",
         "角色经历工作台手动发起：从原著把角色出场的场景写成她的第一人称记忆；按设定起草人生时间线、再展开成第一人称经历。",
         "[CharacterExperience]",

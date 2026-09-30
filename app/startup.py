@@ -937,6 +937,7 @@ class StartupMixin:
         configure_portrait_injection(enabled=portrait_settings.enabled and self.relationship_portrait is not None)
 
         self.belief_reflection = self._create_belief_reflection(cfg, _flag, _num)
+        self.game_lessons = self._create_game_lessons(_flag, _num)
         # 关系注入据此决定群聊里是否还要提示「该结算了」：记账已启动时交给它回看结算
         from ..services.impression_timeline import configure_impression_prompting
 
@@ -947,6 +948,7 @@ class StartupMixin:
         get_container().reply_decision = self.reply_decision
         get_container().relationship_portrait = self.relationship_portrait
         get_container().belief_reflection = self.belief_reflection
+        get_container().game_lessons = self.game_lessons
 
         def _learning_stats() -> dict:
             def _of(service) -> dict | None:
@@ -962,18 +964,20 @@ class StartupMixin:
                 "daily_diary": _of(self.daily_diary),
                 "relationship_portrait": _of(getattr(self, "relationship_portrait", None)),
                 "belief_reflection": _of(self.belief_reflection),
+                "game_lesson": _of(getattr(self, "game_lessons", None)),
                 "mood": _of(getattr(self, "mood_service", None)),
             }
 
         get_container().learning_stats_getter = _learning_stats
         logger.info(
             "[WaveMemory] 记账与学习: auto_approve=%s proactive_reply=%s bookkeeping=%s daily_diary=%s "
-            "relationship_portrait=%s belief_reflection=%s",
+            "relationship_portrait=%s belief_reflection=%s game_lesson=%s",
             bool(self.auto_reviewer and self.auto_reviewer.enabled),
             bool(self.concern_followup and self.concern_followup.enabled),
             self.post_reply_bookkeeper is not None, self.daily_diary is not None,
             bool(self.relationship_portrait and self.relationship_portrait.enabled),
             self.belief_reflection is not None,
+            self.game_lessons is not None,
         )
 
     def _portrait_llm(self, bot_id: str = ""):
@@ -999,6 +1003,7 @@ class StartupMixin:
             "fewshot": few_shot is not None and getattr(few_shot, "_llm", None) is not None,
             "self_reflect": getattr(self, "self_reflect", None) is not None,
             "belief_reflection": getattr(self, "belief_reflection", None) is not None,
+            "game_lesson": getattr(self, "game_lessons", None) is not None,
             # 标签审计每次维护任务现建审计器、现解析模型：配了模型就能跑，从不需要重启。
             "tag_audit": True,
             # 角色经历同理：工作台每次发起任务时现解析模型（含按 Bot 覆盖）。
@@ -1031,7 +1036,7 @@ class StartupMixin:
                 logger.info(
                     f"[WaveMemory] 模型分工: Bot {profile.db_id} 的模型覆盖生效 "
                     f"model={getattr(profile, 'model', '') or '-'} models={overrides or '-'}"
-                    "（只作用于内心判断、事后记账、每日日记、关系小传、信念反思、角色经历）"
+                    "（只作用于内心判断、事后记账、每日日记、关系小传、信念反思、角色经历、游戏经验）"
                 )
 
     def _belief_reflection_llm(self, bot_id: str = ""):
@@ -1041,6 +1046,52 @@ class StartupMixin:
             return None
         client = routing.client("belief_reflection")
         return client.for_bot(bot_id) if bot_id else client
+
+    def _game_lesson_llm(self, bot_id: str = ""):
+        """游戏经验用的模型客户端，走模型分工的 ``game_lesson`` 任务（按 Bot 覆盖用 for_bot）。"""
+        routing = getattr(self, "llm_routing", None)
+        if routing is None or not routing.available("game_lesson"):
+            return None
+        client = routing.client("game_lesson")
+        return client.for_bot(bot_id) if bot_id else client
+
+    def _create_game_lessons(self, _flag, _num):
+        """游戏经验：Bot 从自己的游戏经历（Cortico 写回的 game_event）里写经验卡（Learning_Settings.game_lesson_*）。
+
+        默认关闭（会新增模型调用）。死亡 / 危机后等几分钟想一次；每日日记写完一轮后把没想过的补一遍
+        （日记没启动时只有即时与管理台手动两种）。经验卡落在游戏知识库里，只属于这个 Bot。
+        """
+        if not _flag("game_lesson_enabled", False):
+            return None
+        repo = getattr(getattr(self, "db", None), "game_knowledge", None)
+        knowledge = getattr(self, "game_knowledge", None)
+        if repo is None or knowledge is None:
+            logger.warning("[WaveMemory] 游戏经验已开启但游戏知识库没有就绪，未启动")
+            return None
+        try:
+            from ..services.game_knowledge.lessons import GameLessonService
+
+            service = GameLessonService(
+                repo,
+                knowledge=knowledge,
+                llm_for_bot=self._game_lesson_llm,
+                enabled=True,
+                delay_seconds=_num("game_lesson_delay_seconds", 180),
+                daily_limit=int(_num("game_lesson_daily_limit", 30)),
+                max_active=int(_num("game_lesson_max_active", 60)),
+                bot_name_for=self._bot_display_name,
+                bot_ids_for=lambda: [p.db_id for p in self.bot_registry.all() if p.db_id],
+                spawn=lambda coro, name: self._spawn(coro, name=name, owner="learning"),
+            )
+            if getattr(self, "daily_diary", None) is not None:
+                self.daily_diary.add_pass_listener(service.on_diary_pass)
+            else:
+                logger.info("[WaveMemory] 每日日记没有启动：游戏经验只在死亡 / 危机后与管理台手动时回想")
+            return service
+        except Exception as e:
+            logger.warning(f"[WaveMemory] GameLessons init failed: {e}")
+            _record_err("GameLessons", e)
+            return None
 
     def _create_belief_reflection(self, cfg: dict, _flag, _num):
         """信念 v2：每日日记写完一轮后，按 Bot 反思这段时间的经历（Learning_Settings.belief_reflection_*）。
