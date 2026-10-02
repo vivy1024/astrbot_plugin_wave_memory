@@ -273,6 +273,7 @@ def export_document(game: Mapping[str, Any], cards: Sequence[Mapping[str, Any]],
                 "key": card.get("key"),
                 "title": card.get("title"),
                 "stage": card.get("stage") or "",
+                "topic": card.get("topic") or "",
                 "points": list(card.get("points") or []),
                 "pitfalls": list(card.get("pitfalls") or []),
                 "trigger": {
@@ -367,6 +368,32 @@ def _episode_markers(ep: int) -> list[str]:
     return [f"EP{ep:02d}", f"第{ep}集"]
 
 
+ONI_TOPIC_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("开局与选人", ("开局", "选人", "小人")),
+    ("厕所与卫生", ("厕所", "污染水", "洗手", "病菌", "卫生")),
+    ("食物与餐厅", ("食物", "食堂", "餐厅", "种植", "作物")),
+    ("氧气与气压", ("氧气", "制氧", "藻类箱", "气压", "电解水")),
+    ("电力与自动化", ("电力", "自动化", "电路", "电池", "信号线")),
+    ("温度与冷却", ("冷却", "温度", "液冷", "变温", "蒸汽")),
+    ("原油与炼钢", ("原油", "炼钢", "石油", "塑料")),
+    ("小动物与资源", ("小动物", "养殖", "动物", "芦苇")),
+    ("基地规划与士气", ("房间", "士气", "基地", "研究", "日程")),
+    ("太空与火箭", ("太空", "火箭", "地堡", "火山", "裂口")),
+)
+
+
+def oni_topic(texts: Sequence[str]) -> str:
+    """把缺氧教程放进可筛选的主题；没有明显主题时留空，由人工补。"""
+    haystack = fold(" ".join(str(text) for text in texts if text))
+    best = ""
+    best_score = 0
+    for topic, terms in ONI_TOPIC_RULES:
+        score = sum(1 for term in terms if fold(term) in haystack)
+        if score > best_score:
+            best, best_score = topic, score
+    return best
+
+
 def adapt_oni_tutorial_cards(data: Any) -> ImportPackage:
     """``oni_tutorial_cards.json``：每集一张策略卡 → 一张知识卡（键 ``oni_ep01``…，与时间线同键）。"""
     if not isinstance(data, list):
@@ -400,6 +427,7 @@ def adapt_oni_tutorial_cards(data: Any) -> ImportPackage:
             "key": f"oni_ep{ep:02d}",
             "title": f"EP{ep:02d} {plain_title}",
             "stage": stage,
+            "topic": oni_topic([plain_title, *prefer, *_strs(raw.get("avoid"))]),
             "points": prefer,
             "pitfalls": _dedupe(_strs(raw.get("avoid"))),
             "keywords": suggest_keywords(plain_title, prefer[:4], extra=[*markers, *short_triggers]),
@@ -407,7 +435,7 @@ def adapt_oni_tutorial_cards(data: Any) -> ImportPackage:
             "source": f"B站教程{ONI_SERIES}EP{ep:02d}「{plain_title}」" + (f"（{bvid}）" if bvid else ""),
             "source_url": urls[0] if urls else "",
             "source_type": "tutorial",
-            "status": "active",
+            "status": "draft",
             "note": "" if stability in {"", "current"} else f"资产标记 stability={stability}，建议复核",
             "meta": {
                 "asset": "oni_tutorial_cards",
@@ -472,6 +500,7 @@ def adapt_oni_timeline(data: Any) -> ImportPackage:
             "key": f"oni_ep{ep:02d}",
             "title": f"EP{ep:02d} {plain_title}",
             "stage": stage,
+            "topic": oni_topic([plain_title, *points, *pitfalls]),
             "points": points,
             "pitfalls": pitfalls,
             "keywords": suggest_keywords(plain_title, goals, extra=[*markers, *(t for s in step_titles for t in _BRACKET_RE.findall(s))]),
@@ -479,7 +508,7 @@ def adapt_oni_timeline(data: Any) -> ImportPackage:
             "source": f"B站教程{series}EP{ep:02d}「{plain_title}」" + (f"（{bvid}）" if bvid else ""),
             "source_url": str(raw.get("source_url") or (f"https://www.bilibili.com/video/{bvid}" if bvid else "")),
             "source_type": "tutorial",
-            "status": "active",
+            "status": "draft",
             "note": "；".join(notes),
             "meta": {
                 "asset": "oni_timeline",

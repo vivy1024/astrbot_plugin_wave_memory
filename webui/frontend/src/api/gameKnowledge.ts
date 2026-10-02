@@ -75,6 +75,7 @@ interface ItemBase {
 export interface GameCard extends ItemBase {
   title: string
   stage: string
+  topic?: string
   points: string[]
   pitfalls: string[]
   keywords: string[]
@@ -139,7 +140,7 @@ export interface GameTerm extends ItemBase {
 export interface ItemPage<T> { items: T[]; total: number; limit: number; offset: number }
 
 /** owner（只对知识卡）：shared = 共用的攻略（默认）/ all / 某个 Bot 的标识（它自己的经验卡）。 */
-export interface ItemQuery { status?: string; stage?: string; q?: string; source_type?: string; owner?: string; limit?: number; offset?: number }
+export interface ItemQuery { status?: string; stage?: string; topic?: string; q?: string; source_type?: string; owner?: string; limit?: number; offset?: number }
 
 export interface MutationResult<T> { ok: boolean; revision: number; item: T }
 
@@ -252,7 +253,7 @@ export function updateGame(gameId: string, payload: GamePayload, version: number
 }
 
 export function getGame(gameId: string, signal?: AbortSignal) {
-  return fetchJson<{ item: GameLibrary; stages: Array<{ name: string; count: number }> }>(gamePath(gameId), { signal })
+  return fetchJson<{ item: GameLibrary; stages: Array<{ name: string; count: number }>; topics: Array<{ name: string; count: number }> }>(gamePath(gameId), { signal })
 }
 
 export function listGameCards(gameId: string, params: ItemQuery = {}, signal?: AbortSignal) {

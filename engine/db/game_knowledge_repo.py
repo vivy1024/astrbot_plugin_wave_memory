@@ -58,7 +58,7 @@ LIST_LIMIT_MAX = 200
 
 _GAME_COLUMNS = "game_id, name, aliases, description, enabled, version, created_at, updated_at, lessons_enabled, state_keys"
 _CARD_COLUMNS = (
-    "id, game_id, card_key, title, stage, points, pitfalls, keywords, conditions, source, source_url, "
+    "id, game_id, card_key, title, stage, topic, points, pitfalls, keywords, conditions, source, source_url, "
     "source_type, status, version, note, meta, created_at, updated_at, bot_id"
 )
 _RUN_COLUMNS = (
@@ -71,7 +71,7 @@ _TERM_COLUMNS = (
     "id, game_id, term_key, term, aliases, explanation, related, source, source_url, source_type, status, "
     "version, note, meta, created_at, updated_at"
 )
-_CARD_CONTENT = ("title", "stage", "points", "pitfalls", "keywords", "conditions", "source", "source_url", "source_type", "note", "meta")
+_CARD_CONTENT = ("title", "stage", "topic", "points", "pitfalls", "keywords", "conditions", "source", "source_url", "source_type", "note", "meta")
 _TERM_CONTENT = ("term", "aliases", "explanation", "related", "source", "source_url", "source_type", "note", "meta")
 _JSON_FIELDS = frozenset({"aliases", "points", "pitfalls", "keywords", "conditions", "related", "meta"})
 _LIST_FIELDS = frozenset({"aliases", "points", "pitfalls", "keywords", "related"})
@@ -113,20 +113,21 @@ def _card_row(row: Any) -> dict[str, Any]:
         "key": str(row[2]),
         "title": str(row[3] or ""),
         "stage": str(row[4] or ""),
-        "points": _loads(row[5], []),
-        "pitfalls": _loads(row[6], []),
-        "keywords": _loads(row[7], []),
-        "conditions": _loads(row[8], []),
-        "source": str(row[9] or ""),
-        "source_url": str(row[10] or ""),
-        "source_type": str(row[11] or "manual"),
-        "status": str(row[12] or "draft"),
-        "version": int(row[13] or 1),
-        "note": str(row[14] or ""),
-        "meta": _loads(row[15], {}),
-        "created_at": float(row[16] or 0.0),
-        "updated_at": float(row[17] or 0.0),
-        "bot_id": str(row[18] or "") if len(row) > 18 else "",
+        "topic": str(row[5] or ""),
+        "points": _loads(row[6], []),
+        "pitfalls": _loads(row[7], []),
+        "keywords": _loads(row[8], []),
+        "conditions": _loads(row[9], []),
+        "source": str(row[10] or ""),
+        "source_url": str(row[11] or ""),
+        "source_type": str(row[12] or "manual"),
+        "status": str(row[13] or "draft"),
+        "version": int(row[14] or 1),
+        "note": str(row[15] or ""),
+        "meta": _loads(row[16], {}),
+        "created_at": float(row[17] or 0.0),
+        "updated_at": float(row[18] or 0.0),
+        "bot_id": str(row[19] or "") if len(row) > 19 else "",
     }
 
 
@@ -171,7 +172,7 @@ def _term_row(row: Any) -> dict[str, Any]:
 
 def card_search_text(card: Mapping[str, Any]) -> str:
     """进检索索引的正文：标题、阶段、要点、注意、关键词、出处。"""
-    parts = [card.get("title"), card.get("stage"), *(card.get("points") or []), *(card.get("pitfalls") or []),
+    parts = [card.get("title"), card.get("stage"), card.get("topic"), *(card.get("points") or []), *(card.get("pitfalls") or []),
              *(card.get("keywords") or []), card.get("source")]
     return "\n".join(str(part) for part in parts if part)
 
@@ -483,6 +484,7 @@ class GameKnowledgeRepo:
         *,
         status: str | Sequence[str] | None = None,
         stage: str | None = None,
+        topic: str | None = None,
         query: str = "",
         source_type: str | None = None,
         bot_id: str | None = None,
@@ -504,6 +506,9 @@ class GameKnowledgeRepo:
         if stage is not None and kind == "card":
             where.append("stage=?")
             params.append(stage)
+        if topic is not None and kind == "card":
+            where.append("topic=?")
+            params.append(topic)
         if source_type:
             where.append("source_type=?")
             params.append(source_type)
@@ -541,6 +546,13 @@ class GameKnowledgeRepo:
             (validate_game_id(game_id),),
         ).fetchall()
         return [{"name": str(row[0] or ""), "count": int(row[1])} for row in rows]
+
+    def topic_facets(self, game_id: str) -> list[dict[str, Any]]:
+        rows = self._read(
+            "SELECT topic, COUNT(*) FROM game_knowledge_cards WHERE game_id=? AND bot_id='' GROUP BY topic ORDER BY MIN(id)",
+            (validate_game_id(game_id),),
+        ).fetchall()
+        return [{"name": str(row[0] or ""), "count": int(row[1])} for row in rows if str(row[0] or "").strip()]
 
     def active_items(self, kind: str, game_id: str) -> list[dict[str, Any]]:
         table, _, columns, _, to_item, _ = self._spec(kind)

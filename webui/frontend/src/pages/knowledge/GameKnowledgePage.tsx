@@ -43,6 +43,7 @@ export function GameKnowledgePage() {
   const [error, setError] = useState<unknown>()
   const [tab, setTab] = useState(() => (params.get('term') ? 'terms' : 'cards'))
   const [stages, setStages] = useState<Array<{ name: string; count: number }>>([])
+  const [topics, setTopics] = useState<Array<{ name: string; count: number }>>([])
   const [itemsVersion, setItemsVersion] = useState(0)
   const [focus, setFocus] = useState<Focus | null>(() => {
     const card = positiveInt(params.get('card'))
@@ -78,7 +79,7 @@ export function GameKnowledgePage() {
     if (!selectedId) return
     const controller = new AbortController()
     getGame(selectedId, controller.signal)
-      .then((detail) => setStages(detail.stages))
+      .then((detail) => { setStages(detail.stages); setTopics(detail.topics ?? []) })
       .catch((reason) => { if (!isRequestCancelled(reason)) setStages([]) })
     return () => controller.abort()
   }, [selectedId, itemsVersion])
@@ -138,7 +139,7 @@ export function GameKnowledgePage() {
                     <TabsTrigger value="settings">设置</TabsTrigger>
                   </TabsList>
                   <TabsContent value="cards">
-                    <CardsPanel key={`cards-${selected.id}`} game={selected} stages={stages} triggerRule={overview.trigger_rule} version={itemsVersion} onChanged={changed} focusId={focus?.kind === 'cards' ? focus.id : undefined} focusNonce={focus?.nonce} />
+                    <CardsPanel key={`cards-${selected.id}`} game={selected} stages={stages} topics={topics} triggerRule={overview.trigger_rule} version={itemsVersion} onChanged={changed} focusId={focus?.kind === 'cards' ? focus.id : undefined} focusNonce={focus?.nonce} />
                   </TabsContent>
                   <TabsContent value="terms">
                     <TermsPanel key={`terms-${selected.id}`} game={selected} version={itemsVersion} onChanged={changed} focusId={focus?.kind === 'terms' ? focus.id : undefined} focusNonce={focus?.nonce} />

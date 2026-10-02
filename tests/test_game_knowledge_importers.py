@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 
 import pytest
@@ -122,7 +123,7 @@ def test_oni_tutorial_cards_adapter():
     first, second, third = package.cards
     assert first["key"] == "oni_ep01" and first["title"] == "EP01 虚构开局要点" and first["stage"] == "筑基开局"
     assert first["conditions"] == ["参考 cycle 0..30"] and third["conditions"] == ["参考 cycle >= 200"]
-    assert first["status"] == "active" and first["source_type"] == "tutorial"
+    assert first["status"] == "draft" and first["source_type"] == "tutorial"
     assert first["source"] == "B站教程《缺氧从新开始》EP01「虚构开局要点」（BV1AAAAAAAAA）"
     assert first["source_url"] == "https://www.bilibili.com/video/BV1AAAAAAAAA"
     assert {"EP01", "第1集", "虚构厕所"} <= set(first["keywords"])
@@ -151,18 +152,18 @@ def test_oni_cards_then_timeline_merge_into_same_active_cards(service):
     service.create_game({"id": "oni", "name": "缺氧", "aliases": ["ONI", "Oxygen Not Included"]})
     preview = service.preview_import("oni", copy.deepcopy(ONI_CARDS))
     assert preview["format"] == "oni_tutorial_cards" and preview["cards"]["new"] == 3 and preview["default_status_mode"] == "auto"
-    first = service.import_data("oni", copy.deepcopy(ONI_CARDS))
+    first = service.import_data("oni", copy.deepcopy(ONI_CARDS), status_mode="active")
     assert first["cards"]["created"] == 3
     preview_timeline = service.preview_import("oni", copy.deepcopy(ONI_TIMELINE))
     assert preview_timeline["cards"]["existing"] == 2 and preview_timeline["cards"]["new"] == 0
-    merged = service.import_data("oni", copy.deepcopy(ONI_TIMELINE), on_existing="merge")
+    merged = service.import_data("oni", copy.deepcopy(ONI_TIMELINE), status_mode="active", on_existing="merge")
     assert merged["cards"] == {"created": 0, "updated": 2, "unchanged": 0, "skipped": 0}
     card = service.repo.get_item_by_key("card", "oni", "oni_ep01")
     assert card["status"] == "active"
     assert card["points"][:3] == ["开局先解决如厕", "先造【虚构厕所】再造床", "拍下两个茅厕和洗手盆"], "时间线的目标与分步排在前面"
     assert "典型痛点：第一天没有厕所，全家生病。" in card["pitfalls"]
     assert card["meta"]["asset"] == "oni_timeline" and card["meta"]["risk"] == "low", "meta 合并保留策略卡字段"
-    assert service.import_data("oni", copy.deepcopy(ONI_TIMELINE), on_existing="merge")["cards"]["unchanged"] == 2
+    assert service.import_data("oni", copy.deepcopy(ONI_TIMELINE), status_mode="active", on_existing="merge")["cards"]["unchanged"] == 2
     # 周期条件 + 关键词：第 45 周期问「电解水」命中 EP08，不命中 EP01
     match = service.match(parse_game_context({"id": "oni", "state": {"cycle": 45}}), message="电解水怎么造")
     assert [hit.card["key"] for hit in match.cards] == ["oni_ep08"]
@@ -287,7 +288,12 @@ def test_oni_lore_migration_skips_safely_without_rows(tmp_path):
         db.close()
 
 
-def test_no_bundled_preset_packs():
-    """仓库不带预设攻略：游戏自己的经验由 Bot 从经历里写，复杂的游戏再由管理员导入教程。"""
+def test_bundled_topic_pack_is_draft_only():
+    """仓库附带的缺氧主题整理只能作为草稿素材，不能变成默认启用的预设攻略。"""
     root = Path(__file__).resolve().parents[1]
-    assert not (root / "assets" / "game_knowledge").exists()
+    pack = root / "assets" / "game_knowledge" / "oni_topic_cards.v1.json"
+    assert pack.exists()
+    document = json.loads(pack.read_text(encoding="utf-8"))
+    assert document["pack"]["force_status"] == "draft"
+    assert document["game"]["id"] == "oni"
+    assert document["cards"] and all(card.get("status") == "draft" for card in document["cards"])

@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS game_knowledge_cards (
     card_key TEXT NOT NULL,
     title TEXT NOT NULL,
     stage TEXT NOT NULL DEFAULT '',
+    topic TEXT NOT NULL DEFAULT '',
     points TEXT NOT NULL DEFAULT '[]',
     pitfalls TEXT NOT NULL DEFAULT '[]',
     keywords TEXT NOT NULL DEFAULT '[]',
@@ -114,6 +115,7 @@ _COLUMNS: dict[str, dict[str, str]] = {
     "game_knowledge_cards": {
         "status": "TEXT NOT NULL DEFAULT 'draft'",
         "stage": "TEXT NOT NULL DEFAULT ''",
+        "topic": "TEXT NOT NULL DEFAULT ''",
         "points": "TEXT NOT NULL DEFAULT '[]'",
         "pitfalls": "TEXT NOT NULL DEFAULT '[]'",
         "keywords": "TEXT NOT NULL DEFAULT '[]'",

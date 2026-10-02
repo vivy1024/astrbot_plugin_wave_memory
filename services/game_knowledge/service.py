@@ -403,6 +403,9 @@ class GameKnowledgeService:
     def stage_facets(self, game_id: str) -> list[dict[str, Any]]:
         return self.repo.stage_facets(game_id)
 
+    def topic_facets(self, game_id: str) -> list[dict[str, Any]]:
+        return self.repo.topic_facets(game_id)
+
     def _note_state_keys(self, game: GameContext, *, now: float) -> None:
         """直播请求里出现了新的状态键：记到游戏库里（她写经验卡的条件时只能用这些键）。"""
         if not game.state:

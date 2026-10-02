@@ -833,6 +833,8 @@ def normalize_card_fields(payload: Mapping[str, Any], *, partial: bool = False) 
             fields["card_key"] = validate_item_key(raw_key)
     if present("stage"):
         fields["stage"] = clean_text(payload.get("stage"), limit=STAGE_MAX)
+    if present("topic"):
+        fields["topic"] = clean_text(payload.get("topic"), limit=STAGE_MAX)
     if present("points", "tips"):
         fields["points"] = clean_lines(payload.get("points", payload.get("tips")))
     if present("pitfalls", "cautions"):

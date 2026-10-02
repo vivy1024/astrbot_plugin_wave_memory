@@ -22,7 +22,7 @@
 WaveMemory 核心里没有任何游戏专用代码：新增一个游戏 = 在管理台「游戏知识库」建一个库（或等她第一次写经验卡时自动建），
 需要时再导入攻略。缺氧的专门处理只存在于导入适配器里（格式转换），不进入匹配与注入逻辑。
 
-存储在主库 `wave_memory.db`：`game_libraries`、`game_knowledge_cards`（`bot_id` 为空 = 共用攻略，否则是这个 Bot 的经验卡）、
+存储在主库 `wave_memory.db`：`game_libraries`、`game_knowledge_cards`（含阶段与主题；`bot_id` 为空 = 共用攻略，否则是这个 Bot 的经验卡）、
 `game_knowledge_terms`、`game_lesson_runs`（经验回想的进度），外加两个全文检索表 `fts_game_cards`、`fts_game_terms`
 （中文按二字组切分）。迁移幂等，旧库启动时自动建表、补列。
 
@@ -168,6 +168,7 @@ POST /context/prepare
       "key": "sts_elite_early",
       "title": "第一幕精英怎么打",
       "stage": "第一幕",
+      "topic": "战斗与路线",
       "points": ["先确认手里有没有能打多段伤害的牌"],
       "pitfalls": ["血量不到一半时别硬进精英房"],
       "trigger": {"keywords": ["精英", "乐加维林"], "conditions": ["act == 1"]},
@@ -199,6 +200,7 @@ POST /context/prepare
 | `key` | 可选，库内唯一键（`[A-Za-z0-9][A-Za-z0-9_.:-]*`，≤80）。不给时按标题生成 `c_<哈希>`，同标题重复导入落在同一个键上 |
 | `title` | 必填，≤80 字 |
 | `stage` | 阶段，自由填写（≤40 字），管理台可按阶段筛选 |
+| `topic` | 主题，自由填写（≤40 字），管理台可按主题筛选；适合把一集教程拆成氧气、温度、食物等可复用主题 |
 | `points`（别名 `tips`） | 要点，列表或按行的文字；每条 ≤300 字，最多 40 条 |
 | `pitfalls`（别名 `cautions`） | 注意 / 坑，同上。`points` 与 `pitfalls` 至少要有一条 |
 | `trigger.keywords` 或 `keywords` | 触发关键词，每个 ≤24 字，最多 30 个 |
@@ -285,13 +287,15 @@ POST /context/prepare
 
 ### 缺氧教程（B 站《缺氧从新开始》）
 
+仓库附带一份按主题拆开的草稿包：`assets/game_knowledge/oni_topic_cards.v1.json`。它不是运行时自动启用的预设，需在管理台导入、预览、校对后再批量启用。
+
 缺氧真人自己玩都难，所以准备教程。管理台选中 `oni` 库（没有就先建：标识 `oni`、显示名「缺氧」），依次导入：
 
-1. `oni_tutorial_cards.json`（策略卡，自动识别）：每集一张卡，键 `oni_ep01`…，标题 `EP01 …`；`prefer` → 要点，`avoid` → 注意；
+1. `oni_tutorial_cards.json`（策略卡，自动识别）：每集一张卡，键 `oni_ep01`…，标题 `EP01 …`；`prefer` → 要点，`avoid` → 注意；主题会按内容初步归类；
    `phase` → 阶段名（筑基开局 / 工业转型与自动化 / 中后期能源与工业 / 补天飞天与裂口毕业）；`approx_cycle_hint`
    `"0-30"` → `参考 cycle 0..30`，`"200+"` → `参考 cycle >= 200`；出处 `B站教程《缺氧从新开始》EPxx「标题」（BV…）` 加视频链接；
-   关键词取集数标记（`EP08`、`第8集`）、触发词与标题里的名词；状态为**启用**。
-2. `oni_timeline.json`（时间线）以「合并补全」导入：按集数对齐到同一张卡，补上阶段目标、分步做法、典型痛点。
+   关键词取集数标记（`EP08`、`第8集`）、触发词与标题里的名词；状态默认为**草稿**，审核后再启用。
+2. `oni_timeline.json`（时间线）以「合并补全」导入：按集数对齐到同一张卡，补上阶段目标、分步做法、典型痛点；合并后的卡仍保持草稿状态。
    `extras`（非主轴补充）只有知识点编号、没有正文，不导入并提示。
 
 资产整理自字幕，语音识别错字较多；同目录的 `*.proofread.json` 是校对过的版本（改动记录见 `PROOFREAD_NOTES.md`），导入时优先用它。

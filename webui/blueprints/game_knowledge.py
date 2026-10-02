@@ -174,7 +174,7 @@ async def get_game(game_id: str):
     game = service.get_game(game_id)
     if game is None:
         return jsonify(error_payload("game_not_found", f"没有游戏库 {game_id}")), 404
-    return jsonify({"item": game, "stages": service.stage_facets(game["id"])})
+    return jsonify({"item": game, "stages": service.stage_facets(game["id"]), "topics": service.topic_facets(game["id"])})
 
 
 @game_knowledge_bp.route("/games/<game_id>", methods=["PUT"])
@@ -208,6 +208,7 @@ async def list_items(game_id: str, kind: str):
             game_id,
             status=_statuses(args.get("status")) or None,
             stage=stage if stage is not None and stage != "__all__" else None,
+            topic=str(args.get("topic") or "") or None,
             query=str(args.get("q") or ""),
             source_type=str(args.get("source_type") or "") or None,
             limit=int(args.get("limit") or 50),

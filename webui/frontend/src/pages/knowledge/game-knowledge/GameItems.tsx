@@ -76,6 +76,7 @@ interface CardForm {
   status: GameItemStatus
   title: string
   stage: string
+  topic: string
   points: string
   pitfalls: string
   keywords: string
@@ -87,7 +88,7 @@ interface CardForm {
   updated_at?: number
 }
 
-const EMPTY_CARD: CardForm = { status: 'draft', title: '', stage: '', points: '', pitfalls: '', keywords: '', conditions: '', source: '', source_url: '', note: '' }
+const EMPTY_CARD: CardForm = { status: 'draft', title: '', stage: '', topic: '', points: '', pitfalls: '', keywords: '', conditions: '', source: '', source_url: '', note: '' }
 
 function cardForm(card: GameCard): CardForm {
   return {
@@ -96,6 +97,7 @@ function cardForm(card: GameCard): CardForm {
     status: card.status,
     title: card.title,
     stage: card.stage,
+    topic: card.topic ?? '',
     points: card.points.join('\n'),
     pitfalls: card.pitfalls.join('\n'),
     keywords: card.keywords.join('、'),
@@ -112,6 +114,7 @@ function cardPayload(form: CardForm): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     title: form.title.trim(),
     stage: form.stage.trim(),
+    topic: form.topic.trim(),
     points: splitLines(form.points),
     pitfalls: splitLines(form.pitfalls),
     keywords: splitList(form.keywords),
@@ -124,16 +127,17 @@ function cardPayload(form: CardForm): Record<string, unknown> {
   return payload
 }
 
-export function CardsPanel({ game, stages, triggerRule, focusId, focusNonce, version, onChanged }: {
+export function CardsPanel({ game, stages, topics, triggerRule, focusId, focusNonce, version, onChanged }: {
   game: GameLibrary
   stages: Array<{ name: string; count: number }>
+  topics: Array<{ name: string; count: number }>
   triggerRule: string
   focusId?: number
   focusNonce?: number
   version: number
   onChanged: () => Promise<void>
 }) {
-  const [filters, setFilters] = useState({ q: '', stage: '', status: '' })
+  const [filters, setFilters] = useState({ q: '', stage: '', topic: '', status: '' })
   const [draftQuery, setDraftQuery] = useState('')
   const [offset, setOffset] = useState(0)
   const [rows, setRows] = useState<GameCard[]>([])
@@ -203,6 +207,10 @@ export function CardsPanel({ game, stages, triggerRule, focusId, focusNonce, ver
               <option value="">全部阶段</option>
               {stages.filter((stage) => stage.name).map((stage) => <option key={stage.name} value={stage.name}>{stage.name}（{stage.count}）</option>)}
             </select>
+            <select aria-label="按主题筛选" className={selectClass} value={filters.topic} onChange={(event) => { setOffset(0); setFilters((f) => ({ ...f, topic: event.target.value })) }}>
+              <option value="">全部主题</option>
+              {topics.map((topic) => <option key={topic.name} value={topic.name}>{topic.name}（{topic.count}）</option>)}
+            </select>
             <select aria-label="按状态筛选" className={selectClass} value={filters.status} onChange={(event) => { setOffset(0); setFilters((f) => ({ ...f, status: event.target.value })) }}>
               <option value="">全部状态</option>
               <option value="active">启用</option>
@@ -220,6 +228,7 @@ export function CardsPanel({ game, stages, triggerRule, focusId, focusNonce, ver
                   <span className="flex flex-wrap items-center gap-2 text-sm">
                     <span className="font-medium">{card.title}</span>
                     {card.stage ? <Badge variant="outline">{card.stage}</Badge> : null}
+                    {card.topic ? <Badge variant="secondary">{card.topic}</Badge> : null}
                     <StatusBadge status={card.status} />
                   </span>
                   <span className="truncate text-xs text-muted-foreground">{triggerSummary(card)}</span>
@@ -255,6 +264,8 @@ export function CardsPanel({ game, stages, triggerRule, focusId, focusNonce, ver
               <Input aria-label="标题" value={editing.title} onChange={(event) => set({ title: event.target.value })} placeholder="标题，如「第一夜怎么过」" />
               <Input aria-label="阶段" list="game-stages" value={editing.stage} onChange={(event) => set({ stage: event.target.value })} placeholder="阶段（自由填写，如 前期 / 筑基开局）" />
               <datalist id="game-stages">{stages.filter((s) => s.name).map((s) => <option key={s.name} value={s.name} />)}</datalist>
+              <Input aria-label="主题" list="game-topics" value={editing.topic} onChange={(event) => set({ topic: event.target.value })} placeholder="主题（如 氧气、温度、食物、自动化）" />
+              <datalist id="game-topics">{topics.map((topic) => <option key={topic.name} value={topic.name} />)}</datalist>
               <Textarea aria-label="要点" rows={5} value={editing.points} onChange={(event) => set({ points: event.target.value })} placeholder="要点 / 建议，每行一条" />
               <Textarea aria-label="注意" rows={3} value={editing.pitfalls} onChange={(event) => set({ pitfalls: event.target.value })} placeholder="坑 / 注意，每行一条" />
               <Input aria-label="触发关键词" value={editing.keywords} onChange={(event) => set({ keywords: event.target.value })} placeholder="触发关键词，用逗号或顿号分隔，如 苦力怕、爬行者" />
@@ -466,12 +477,12 @@ export function TermsPanel({ game, focusId, focusNonce, version, onChanged }: { 
   )
 }
 
-type DraftRow = { id: number; version: number; title: string; stage: string; detail: string; note: string; source: string; sourceType: string }
+type DraftRow = { id: number; version: number; title: string; stage: string; topic: string; detail: string; note: string; source: string; sourceType: string }
 
 function toDraftRows(kind: GameItemKind, items: Array<GameCard | GameTerm>): DraftRow[] {
   return items.map((item) => kind === 'cards'
-    ? { id: item.id, version: item.version, title: (item as GameCard).title, stage: (item as GameCard).stage, detail: triggerSummary(item as GameCard), note: item.note, source: item.source, sourceType: item.source_type }
-    : { id: item.id, version: item.version, title: (item as GameTerm).term, stage: '', detail: (item as GameTerm).explanation, note: item.note, source: item.source, sourceType: item.source_type })
+    ? { id: item.id, version: item.version, title: (item as GameCard).title, stage: (item as GameCard).stage, topic: (item as GameCard).topic ?? '', detail: triggerSummary(item as GameCard), note: item.note, source: item.source, sourceType: item.source_type }
+    : { id: item.id, version: item.version, title: (item as GameTerm).term, stage: '', topic: '', detail: (item as GameTerm).explanation, note: item.note, source: item.source, sourceType: item.source_type })
 }
 
 export function ReviewPanel({ game, version, onChanged, onEdit }: {
@@ -557,6 +568,7 @@ export function ReviewPanel({ game, version, onChanged, onEdit }: {
                   <span className="flex flex-wrap items-center gap-2 text-sm">
                     <span className="font-medium">{row.title}</span>
                     {row.stage ? <Badge variant="outline">{row.stage}</Badge> : null}
+                    {row.topic ? <Badge variant="secondary">{row.topic}</Badge> : null}
                     <Badge variant="outline">{SOURCE_TYPE_LABELS[row.sourceType] ?? row.sourceType}</Badge>
                   </span>
                   <span className="truncate text-xs text-muted-foreground">{row.detail}</span>

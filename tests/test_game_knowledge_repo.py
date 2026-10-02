@@ -122,12 +122,14 @@ def test_batch_status_reports_changed_unchanged_missing_conflicts(repo):
 
 def test_list_filters_and_chinese_search(repo):
     repo.create_game({"id": "minecraft", "name": "我的世界"})
-    repo.create_item("card", "minecraft", _card(key="creeper", title="苦力怕", stage="前期", points=["听到嘶嘶声马上后退"], status="active"))
+    repo.create_item("card", "minecraft", _card(key="creeper", title="苦力怕", stage="前期", topic="战斗", points=["听到嘶嘶声马上后退"], status="active"))
     repo.create_item("card", "minecraft", _card(key="nether", title="去下界", stage="中期", points=["穿一件金护甲猪灵不打你"]))
     repo.create_item("card", "minecraft", _card(key="bed", title="床与重生点", stage="前期", points=["床用羊毛做"], status="archived"))
     assert repo.list_items("card", "minecraft")["total"] == 3
     assert [c["key"] for c in repo.list_items("card", "minecraft", status="active")["items"]] == ["creeper"]
     assert [c["key"] for c in repo.list_items("card", "minecraft", stage="中期")["items"]] == ["nether"]
+    assert [c["key"] for c in repo.list_items("card", "minecraft", topic="战斗")["items"]] == ["creeper"]
+    assert repo.topic_facets("minecraft") == [{"name": "战斗", "count": 1}]
     assert [c["key"] for c in repo.list_items("card", "minecraft", query="嘶嘶")["items"]] == ["creeper"]  # 两字切词命中正文
     assert [c["key"] for c in repo.list_items("card", "minecraft", query="护甲")["items"]] == ["nether"]
     assert [c["key"] for c in repo.list_items("card", "minecraft", query="床")["items"]] == ["bed"]  # 单字走 LIKE
