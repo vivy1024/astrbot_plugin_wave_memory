@@ -585,6 +585,7 @@ class BootstrapMixin:
         # 旧配置里残留的 Affinity_Settings.relationship_tiers_json（关系档位，已移除）不再读取，忽略即可。
         # 9876 保存的热参数覆盖（数据库持久化），叠加在静态配置之上。
         self._apply_persisted_hot_overrides()
+        self._apply_persisted_channel_settings()
         self.hot_config.on_change(self._on_core_hot_config_change)
         if self.spike_router:
             self.hot_config.on_change(self.spike_router.on_config_change)
@@ -920,7 +921,9 @@ class BootstrapMixin:
             return
         try:
             known = self.hot_config.tunable_keys()
-            stored = overrides_repo.values()
+            from ..services.config.channel_settings_store import STORE_KEY
+
+            stored = {key: value for key, value in overrides_repo.values().items() if key != STORE_KEY}
             applied = {key: value for key, value in stored.items() if key in known}
             unknown = sorted(set(stored) - known)
             if applied:
@@ -932,6 +935,20 @@ class BootstrapMixin:
             logger.warning(f"[WaveMemory] 读取热参数覆盖失败，使用静态配置: {exc}")
             _record_err("HotConfig", exc)
         self._on_core_hot_config_change({})
+
+    def _apply_persisted_channel_settings(self) -> None:
+        """把数据库里存的 9876 通道配置叠回插件配置并重建通道配置（AstrBot 加载时会删掉未声明的键）。"""
+        from ..services.config.channel_settings_store import restore_channel_settings
+
+        try:
+            config = restore_channel_settings(self.config, self.db)
+        except Exception as exc:
+            logger.warning(f"[WaveMemory] 已保存的通道配置无效或读取失败，使用静态配置: {exc}")
+            _record_err("ChannelSettings", exc)
+            return
+        if config is not None:
+            self.injection_channel_config = config
+            logger.info("[WaveMemory] 已加载 9876 保存的通道配置")
 
     def _on_core_hot_config_change(self, _changed: dict) -> None:
         from ..services.injection.orchestrator import set_slow_warning_ms

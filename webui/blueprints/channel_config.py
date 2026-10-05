@@ -416,6 +416,7 @@ def apply_channel_config_patch(container: Any, patch: Mapping[str, Any] | None) 
         cfg = getattr(container, "plugin_config", None)
         if isinstance(cfg, dict):
             cfg["Channel_Settings"] = copy.deepcopy(candidate_settings)
+            _persist_channel_settings(container, candidate_settings)
             save = getattr(cfg, "save_config", None)
             if callable(save):
                 save()
@@ -538,6 +539,15 @@ async def preview_channel_config_impact(
     )
 
 
+def _persist_channel_settings(container: Any, settings: Mapping[str, Any]) -> None:
+    """通道配置存进数据库：AstrBot 加载插件时会删掉静态配置里未声明的 Channel_Settings 键。"""
+    try:
+        from services.config.channel_settings_store import save_channel_settings
+    except Exception:  # pragma: no cover - AstrBot 包导入路径
+        from ...services.config.channel_settings_store import save_channel_settings
+    save_channel_settings(getattr(container, "db", None), settings)
+
+
 def reset_channel_config_to_defaults(container: Any) -> dict[str, Any]:
     """恢复当前运行模式的默认通道配置。"""
     plugin_config = dict(_plugin_config(container))
@@ -551,6 +561,7 @@ def reset_channel_config_to_defaults(container: Any) -> dict[str, Any]:
         cfg = getattr(container, "plugin_config", None)
         if isinstance(cfg, dict):
             cfg["Channel_Settings"] = {}
+            _persist_channel_settings(container, {})
             save = getattr(cfg, "save_config", None)
             if callable(save):
                 save()

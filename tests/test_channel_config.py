@@ -264,6 +264,41 @@ class ChannelConfigTest(unittest.TestCase):
         self.assertEqual(applied["revision"], preview["preflight_token"])
         self.assertIn("config_revision=", applied["verification_url"])
 
+    def test_applied_channel_settings_survive_restart_via_database(self):
+        """AstrBot 加载时删掉未声明的 Channel_Settings.channels；9876 改的通道配置要从数据库叠回。"""
+        import tempfile
+
+        from engine.db.config_override_repo import ConfigOverrideRepo
+        from engine.db.connection import ConnectionManager
+        from services.config.channel_config import build_default_channel_config
+        from services.config.channel_settings_store import STORE_KEY, restore_channel_settings
+        from webui.blueprints.channel_config import apply_channel_config_patch, validate_channel_config_patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = ConnectionManager(str(Path(tmp) / "channels.sqlite3"))
+            try:
+                db = SimpleNamespace(config_overrides=ConfigOverrideRepo(manager))
+                current = build_default_channel_config(runtime_mode="full")
+                container = SimpleNamespace(
+                    plugin_config={}, db=db, injection_channel_config=current,
+                    injection_channel_config_setter=lambda value: None,
+                )
+                patch = {"channels": {"meme_hint": {"enabled": True}}}
+                preview = validate_channel_config_patch({}, patch, current)
+                applied = apply_channel_config_patch(container, {**patch, "preflight_token": preview["preflight_token"], "confirmation": "apply"})
+                self.assertTrue(applied["ok"])
+                self.assertTrue(db.config_overrides.values()[STORE_KEY]["channels"]["meme_hint"]["enabled"])
+
+                # 模拟重启：静态配置里的 channels 已被 AstrBot 删掉，只剩数据库里的那份
+                plugin_config = {"Channel_Settings": {"layers": {}}}
+                restored = restore_channel_settings(plugin_config, db)
+                self.assertTrue(restored.channels["meme_hint"].enabled)
+                self.assertTrue(plugin_config["Channel_Settings"]["channels"]["meme_hint"]["enabled"])
+                # 没存过时不动静态配置
+                self.assertIsNone(restore_channel_settings({}, SimpleNamespace(config_overrides=None)))
+            finally:
+                manager.close()
+
     def test_timeline_half_life_falls_back_and_strict_overrides_round_trip(self):
         from services.config.channel_config import (
             apply_channel_overrides,
