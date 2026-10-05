@@ -169,6 +169,13 @@ def test_record_social_impression_preserves_source_quote_evidence(tmp_path):
         # provenance 中有结构化的 source_quote 与 source_memory_id
         assert prov_dict.get("source_quote") == "你全部的好感度变更都没有带聊天证据，气死我了"
         assert prov_dict.get("source_memory_id") == 999888
+        # 正式好感事件同样能追到依据：来源记忆 + 具体观感，而不只是一句笼统理由
+        reason, memory_id, evidence = db.conn.execute(
+            "SELECT reason, source_memory_id, evidence FROM scoped_soul_relationship_events ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert memory_id == 999888
+        assert "当面严厉纠偏原话证据漏洞" in reason and "现场抓包严查提审规范的严格管理员" in reason
+        assert '"memory_id":999888' in evidence.replace(" ", "")
     finally:
         manager.close()
 

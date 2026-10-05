@@ -237,12 +237,17 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
         if requested != 0.0 and self.relationship_events is not None:
             formal_type = event_type_for_shift(verdict["dimension"], requested)
             try:
+                # 好感事件要能追到依据：理由写具体观感，挂上对方原话所在的记忆
+                event_reason = shift_reason or impression
+                if impression and impression not in event_reason:
+                    event_reason = f"{event_reason}：{impression}"
                 result = self.relationship_events.record_event(
                     scope=target_scope,
                     event_type=formal_type,
                     dimension=verdict["dimension"],
                     delta=requested,
-                    reason=shift_reason,
+                    reason=event_reason[:240],
+                    source_memory_id=source_memory_id,
                     created_at=now,
                 )
                 if result:
