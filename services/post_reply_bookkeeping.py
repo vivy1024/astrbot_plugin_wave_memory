@@ -59,7 +59,8 @@ PROMPT = """你是{bot_name}。下面是你刚在群里参与的一段对话（�
       "delta": 数字（本轮好感变化，范围见上，无变化填 0）, "source_quote": "对方的原话"}}
   ],
   "facts": [  // 群友关于自己或他人的客观事实（生日、职业、在玩的游戏、养的宠物……）
-    {{"subject": "谁", "predicate": "是/喜欢/在做…", "object": "什么", "source_quote": "原话"}}
+    {{"subject": "谁", "predicate": "是/喜欢/在做…", "object": "什么", "source_quote": "原话",
+      "importance": 1到5（5=身份/长期：职业、生日、家人、重大经历；3=一般喜好习惯；1=一时的琐事。都会记，只影响以后想起的先后）}}
   ],
   "jargon": [  // 群里特有的黑话、梗、昵称（外人看不懂的说法）
     {{"phrase": "词", "meaning": "在这个群里是什么意思，出自哪句话"}}
@@ -68,14 +69,18 @@ PROMPT = """你是{bot_name}。下面是你刚在群里参与的一段对话（�
     {{"user": "群友名字", "anchor_type": "bot_helped_user|user_helped_bot|bot_promised_user|boundary_hit",
       "summary": "发生了什么", "is_active_concern": true/false（需要日后跟进就填 true）}}
   ],
-  "concerns": [  // 你挂念、想之后跟进的事（对方说要去面试、身体不舒服、你答应了什么……）
-    {{"topic": "一句话", "target_user": "关于谁"}}
+  "concerns": [  // 待跟进的事：群友接下来要经历、之后值得问一句的事（考试、面试、看病、搬家、比赛、
+                 // 出远门……），或你答应过别人还没做的事。已经发生完的事写进 facts，不写这里
+    {{"topic": "一句话（谁、什么事）", "target_user": "关于谁",
+      "due_date": "能从原话推出哪天发生/出结果就写 YYYY-MM-DD（今天是 {today}），推不出留空"}}
   ],
   "resolved_concerns": [  // 上面列出的未了关切里，这段对话里已经了结的
     {{"concern_id": 数字, "note": "怎么了结的"}}
   ],
-  "mood": {{"direction": "up|down|none", "strength": 0到1, "reason": "一句话：这段对话里什么事让你心情变好或变差"}}
-  // 这段对话对你自己心情的影响；没什么影响就填 none
+  "mood": {{"direction": "up|down|none", "strength": 0到1, "reason": "一句话：谁对你做了什么 / 你自己遇到了什么"}}
+  // 这段对话对你自己心情的影响。只看冲着你来的事和你自己的遭遇：被夸、被感谢、被骂、被嘲讽、
+  // 被纠正、帮上了忙、事情办砸了（生图失败、答错）、被冷落。群里热闹或吵架本身不算。
+  // 同一句损话，熟人间斗嘴和真心冒犯不一样，按你对这个人的了解判断。没有这类事就填 none
 }}"""
 
 
@@ -295,6 +300,7 @@ class PostReplyBookkeeper:
             transcript=transcript,
             settle_block=self._settle_block(scope, rows),
             concern_block=self._concern_block(scope),
+            today=time.strftime("%Y-%m-%d"),
         )
         learning_enabled = self._learning_enabled()
         if learning_enabled:
@@ -346,6 +352,7 @@ class PostReplyBookkeeper:
                     "wave_memory_propose_fact", scope,
                     subject=str(item["subject"]), predicate=str(item["predicate"]), object=str(item["object"]),
                     source_quote=str(item["source_quote"]), context_evidence="事后回看群聊时记下",
+                    importance=item.get("importance"),
                 )
         for item in _items(payload, "jargon", 4):
             if item.get("phrase") and item.get("meaning"):
@@ -371,6 +378,7 @@ class PostReplyBookkeeper:
                 done += await self._call_action(
                     "wave_memory_note_concern", scope,
                     action="note", topic=str(item["topic"]), target_user=str(item.get("target_user") or ""),
+                    concern_type="follow_up", due_date=str(item.get("due_date") or ""),
                 )
         for item in _items(payload, "resolved_concerns", 4):
             if item.get("concern_id") and item.get("note"):

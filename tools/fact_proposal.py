@@ -33,6 +33,15 @@ except ImportError:  # pragma: no cover
     from tools.scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
 
 
+def fact_importance(value: Any) -> int:
+    """事实重要性 1-5（默认 3）：只用于想起时排序，不作入库门槛。"""
+    try:
+        number = int(float(value))
+    except (TypeError, ValueError):
+        return 3
+    return max(1, min(5, number))
+
+
 def _auto_reviewer():
     try:
         from ..services.auto_review import get_auto_reviewer
@@ -155,6 +164,11 @@ class WaveMemoryProposeFactTool(FunctionTool[AstrAgentContext]):
                 "type": "string",
                 "description": "可选，原话明确给出的截止日期或 ISO 8601 时间；日期含当天，时间为排他上界",
             },
+            "importance": {
+                "type": "integer",
+                "description": "可选，1-5：这件事对了解这个人有多重要。5=身份/长期（职业、生日、家人、重大经历），"
+                "3=一般喜好习惯，1=一时的琐事。只影响以后想起它的先后，不会因为不重要就不记。默认 3",
+            },
         },
         "required": ["subject", "predicate", "object", "source_quote", "context_evidence"],
     })
@@ -256,6 +270,7 @@ class WaveMemoryProposeFactTool(FunctionTool[AstrAgentContext]):
             "source_timestamp": (source or {}).get("timestamp"),
             "resolved_subject": resolve_subject(cm.conn, runtime_scope, subject, source, source_quote),
             "temporal_policy": {**validity.metadata(), "timezone": policy.timezone},
+            "importance": fact_importance(kwargs.get("importance")),
         }
 
         try:

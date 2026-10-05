@@ -509,3 +509,79 @@ def test_followup_cooldown_survives_restart(tmp_path):
     restarted = ConcernFollowupService(_concern_db(concerns), enabled=True, quiet_hours=(0, 0), state_path=state)
     assert restarted.recently_followed(1)
     assert restarted.claim_followup(_scope(), "u1", "小明", "在吗", now=time.time() + 3600) is None
+
+
+# ─── 待跟进的事：到期日、对方的反应、自己决定说不说 ───
+
+
+def test_followup_waits_until_due_date_and_hint_offers_silence():
+    from services.concern_followup import SILENCE_MARK, concern_due_date
+
+    evidence = json.dumps([{"kind": "subject", "user_id": "u1"}, {"kind": "due", "date": "2026-09-30"}])
+    assert concern_due_date(evidence) == "2026-09-30"
+    db = _concern_db([(1, "小明 9 月 30 日考科目三", "active", evidence)])
+    service = ConcernFollowupService(db, enabled=True)
+    # 还没到日子：不去问结果
+    assert service.claim_followup(_scope(), "u1", "小明", "在吗在吗", now=NOON) is None
+    after = datetime(2026, 9, 30, 20, 0).timestamp()
+    chosen = service.claim_followup(_scope(), "u1", "小明", "我回来了", now=after)
+    assert chosen["id"] == 1 and chosen["due"] == "2026-09-30"
+    hint = service.hint(chosen, "小明", proactive=True, reactions="最近一个月 ta 对你说的话：接住了你的话 2 次")
+    assert SILENCE_MARK in hint and "接住了你的话 2 次" in hint and "2026-09-30" in hint
+    assert SILENCE_MARK not in service.hint(chosen, "小明", proactive=False)
+
+
+def test_reaction_summary_reads_reply_feedback_for_that_person():
+    db = _concern_db([])
+    db.conn.execute(
+        """CREATE TABLE reply_feedback_events (id INTEGER PRIMARY KEY, bot_id TEXT, session_id TEXT, visibility TEXT,
+           speaker_id TEXT, outcome TEXT, source_quote TEXT, created_at REAL)"""
+    )
+    rows = [("u1", "accepted", "哈哈对"), ("u1", "rejected", "别烦我"), ("u2", "accepted", "好")]
+    for speaker, outcome, quote in rows:
+        db.conn.execute(
+            "INSERT INTO reply_feedback_events (bot_id, session_id, visibility, speaker_id, outcome, source_quote, created_at)"
+            " VALUES ('yushu', 'qq:group:g1', 'group', ?, ?, ?, ?)",
+            (speaker, outcome, quote, NOON),
+        )
+    service = ConcernFollowupService(db, enabled=True, clock=lambda: NOON + 60)
+    summary = service.reaction_summary(_scope(), "u1")
+    assert "接住了你的话 1 次" in summary and "不想理你" in summary and "别烦我" in summary
+    assert service.reaction_summary(_scope(), "u9") == ""
+    # 没开过回复效果反馈（没有这张表）时安静返回空串
+    assert ConcernFollowupService(_concern_db([]), enabled=True).reaction_summary(_scope(), "u1") == ""
+
+
+def test_bookkeeper_passes_follow_up_due_date_and_fact_importance():
+    db = _memory_db([
+        ("u1", "小明", "我 9 月 30 号考科目三"),
+        ("bot", "羽书", "加油！"),
+        ("u1", "小明", "我是程序员"),
+    ])
+    llm = _LLM({
+        "facts": [{"subject": "小明", "predicate": "职业是", "object": "程序员", "source_quote": "我是程序员", "importance": 5}],
+        "concerns": [{"topic": "小明考科目三", "target_user": "小明", "due_date": "2026-09-30"}],
+    })
+    registry = _Registry()
+    asyncio.run(PostReplyBookkeeper(db, registry, llm, bot_name_for=lambda _b: "羽书").run(_scope()))
+    calls = dict(registry.calls)
+    assert calls["wave_memory_propose_fact"]["importance"] == 5
+    assert calls["wave_memory_note_concern"]["concern_type"] == "follow_up"
+    assert calls["wave_memory_note_concern"]["due_date"] == "2026-09-30"
+    assert "今天是 20" in llm.prompts[0]
+
+
+def test_fact_importance_only_reorders_never_filters():
+    from services.injection.channels.facts import _row_to_fact
+    from tools.concern import _normalize_due_date
+    from tools.fact_proposal import fact_importance
+
+    assert fact_importance("5") == 5 and fact_importance(None) == 3 and fact_importance(99) == 5
+    assert _normalize_due_date("2026-09-30") == "2026-09-30" and _normalize_due_date("下周三") == ""
+    base = {"subject": "小明", "predicate": "是", "object": "x", "confidence": 0.8, "created_at": NOON, "updated_at": NOON}
+    trivial = _row_to_fact({**base, "provenance": {"importance": 1}}, now=NOON, decay_rate=0)
+    plain = _row_to_fact({**base, "provenance": {}}, now=NOON, decay_rate=0)
+    core = _row_to_fact({**base, "provenance": {"importance": 5}}, now=NOON, decay_rate=0)
+    assert trivial["effective_confidence"] < plain["effective_confidence"] < core["effective_confidence"]
+    assert trivial["effective_confidence"] > 0
+

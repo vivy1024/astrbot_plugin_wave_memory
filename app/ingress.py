@@ -523,6 +523,20 @@ class IngressMixin:
         import re as _re
         from astrbot.core.message.components import Plain
 
+        # 关切驱动的主动开口：她判断现在不合适时只回「[沉默]」，这里丢掉整条回复（消息链为空就不发送）
+        if getattr(event, "_wave_memory_concern_followup", None):
+            from ..services.concern_followup import SILENCE_MARK
+
+            texts = [comp.text for comp in result.chain if isinstance(comp, Plain) and comp.text]
+            only_text = len(texts) == len(result.chain)
+            if only_text and "".join(texts).strip().strip("。.").replace(" ", "") in {SILENCE_MARK, SILENCE_MARK.strip("[]")}:
+                result.chain.clear()
+                followup = getattr(self, "concern_followup", None)
+                if followup is not None:
+                    followup._count("chose_silence")
+                logger.info("[WaveMemory] 关切跟进：Bot 判断现在不合适开口，未发送")
+                return
+
         _IMPRESSION_RE = r'(?:<<\s*impression\s*[:：](.+?)>>|\[\s*impression\s*[:：](.+?)\])'
         extracted_impression = None
         extracted_impact = 1.0

@@ -75,6 +75,10 @@ class WaveMemoryNoteConcernTool(FunctionTool[AstrAgentContext]):
                 "type": "string",
                 "description": "这件事关于谁（群友名字/别名/QQ号）。填了之后，这个人下次在群里出现时你会想起并跟进",
             },
+            "due_date": {
+                "type": "string",
+                "description": "可选，YYYY-MM-DD：这件事哪天发生/哪天有结果（考试、面试、出院……）。到这天之前不会追问结果",
+            },
         },
         "required": ["action"],
     })
@@ -128,6 +132,10 @@ class WaveMemoryNoteConcernTool(FunctionTool[AstrAgentContext]):
             if subject_id:
                 # 关切表没有「关于谁」这一列；记在证据里，供惦记的人出现时主动跟进
                 evidence.append({"kind": "subject", "user_id": str(subject_id)})
+        due = _normalize_due_date(kwargs.get("due_date"))
+        if due:
+            # 和「关于谁」一样记在证据里：到这天之前主动跟进不会去问结果
+            evidence.append({"kind": "due", "date": due})
         try:
             result = await gateway.transition_concern(
                 scope=scope,
@@ -153,6 +161,16 @@ class WaveMemoryNoteConcernTool(FunctionTool[AstrAgentContext]):
         change = str(result.get("action") or action)
         template = _ACTION_MESSAGES.get(change, "已更新关切 concern:{id}。")
         return template.format(id=result.get("concern_id"), topic=topic)
+
+
+def _normalize_due_date(value: Any) -> str:
+    from datetime import date
+
+    text = str(value or "").strip()[:10]
+    try:
+        return date.fromisoformat(text).isoformat() if text else ""
+    except ValueError:
+        return ""
 
 
 __all__ = ["WaveMemoryNoteConcernTool"]

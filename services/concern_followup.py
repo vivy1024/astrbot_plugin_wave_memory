@@ -50,6 +50,24 @@ def concern_subject_ids(evidence: Any) -> set[str]:
     }
 
 
+def concern_due_date(evidence: Any) -> str:
+    """证据里记的「哪天发生/出结果」（YYYY-MM-DD），没有返回空串。"""
+    try:
+        items = json.loads(evidence) if isinstance(evidence, str) else evidence
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(items, list):
+        return ""
+    for item in items:
+        if isinstance(item, dict) and item.get("kind") == "due" and item.get("date"):
+            return str(item["date"])[:10]
+    return ""
+
+
+# 主动开口时她可以选择不说：只回复这个标记，发送前会被丢弃（app/ingress 的装饰阶段）
+SILENCE_MARK = "[沉默]"
+
+
 class ConcernFollowupService:
     def __init__(
         self,
@@ -143,6 +161,7 @@ class ConcernFollowupService:
                 found.append({
                     "id": int(row[0]), "topic": topic, "intensity": float(row[2] or 0), "status": row[3],
                     "created_at": row[5], "last_progress_at": row[7] or row[6],
+                    "concern_type": str(row[8] or ""), "due": concern_due_date(row[4]),
                 })
         return found
 
@@ -162,6 +181,9 @@ class ConcernFollowupService:
         except Exception as exc:
             logger.debug(f"[WaveMemory] 读取关切失败: {exc!r}")
             return None
+        # 还没到日子的事（明天才考试）不主动去问结果
+        today = datetime.fromtimestamp(stamp).strftime("%Y-%m-%d")
+        candidates = [item for item in candidates if not item.get("due") or item["due"] <= today]
         cooling = [self._followed[item["id"]] + self.cooldown_seconds - stamp
                    for item in candidates if self.recently_followed(item["id"], now=stamp)]
         candidates = [item for item in candidates if not self.recently_followed(item["id"], now=stamp)]
@@ -208,8 +230,32 @@ class ConcernFollowupService:
         previous = self._followed.get(int(concern_id))
         return previous is not None and stamp - previous < self.cooldown_seconds
 
+    def reaction_summary(self, scope: RuntimeScope, sender_id: str, *, days: float = 30.0) -> str:
+        """这个人最近怎么回应她的话（回复效果反馈记录的承接 / 纠正 / 拒绝）；没有记录返回空串。"""
+        conn = getattr(self.db, "conn", None)
+        if conn is None or scope.session is None or not sender_id:
+            return ""
+        try:
+            rows = conn.execute(
+                """SELECT outcome, source_quote FROM reply_feedback_events
+                    WHERE bot_id=? AND session_id=? AND visibility=? AND speaker_id=? AND outcome != 'unknown'
+                      AND created_at >= ? ORDER BY id DESC LIMIT 20""",
+                (scope.bot_id, scope.session.id, scope.visibility, str(sender_id), self.clock() - days * 86400),
+            ).fetchall()
+        except Exception:
+            return ""  # 回复效果反馈没开过时没有这张表
+        if not rows:
+            return ""
+        labels = {"accepted": "接住了你的话", "corrected": "纠正过你", "rejected": "不想理你 / 怼回来"}
+        counts: dict[str, int] = {}
+        for outcome, _quote in rows:
+            counts[outcome] = counts.get(outcome, 0) + 1
+        parts = [f"{labels[key]} {counts[key]} 次" for key in ("accepted", "corrected", "rejected") if counts.get(key)]
+        latest = next((str(quote) for _outcome, quote in rows if quote), "")
+        return f"最近一个月 ta 对你说的话：{'，'.join(parts)}" + (f"（最近一次 ta 说「{latest[:40]}」）" if latest else "")
+
     @staticmethod
-    def hint(concern: dict[str, Any], sender_name: str, *, proactive: bool) -> str:
+    def hint(concern: dict[str, Any], sender_name: str, *, proactive: bool, reactions: str = "") -> str:
         since = ""
         try:
             since = datetime.fromtimestamp(float(concern.get("created_at") or 0)).strftime("%m-%d")
@@ -217,12 +263,20 @@ class ConcernFollowupService:
             since = ""
         who = sender_name or "这位群友"
         opener = f"{who} 刚在群里说话，你没被点名，是你自己想开口" if proactive else f"你正在回复 {who}"
-        return (
+        due = f"，说是 {concern['due']} 的事" if concern.get("due") else ""
+        text = (
             f"【你惦记的事】{opener}。你之前记挂着：{concern.get('topic')}"
-            f"（concern:{concern.get('id')}{'，' + since + ' 记下' if since else ''}）。"
+            f"（concern:{concern.get('id')}{'，' + since + ' 记下' if since else ''}{due}）。"
             "合适就自然地问一句后来怎么样、或兑现答应过的事；不合适就正常说话，别硬转话题。"
             f"这件事已经了结就调用 wave_memory_note_concern(action=resolve, concern_id={concern.get('id')}, note=怎么了结的)。"
         )
+        if proactive:
+            text += (
+                (f"{reactions}。" if reactions else "")
+                + f"要不要开口由你自己决定：看看 ta 正在聊什么、现在插话会不会打扰或冒犯人，"
+                f"觉得现在不合适就只回复「{SILENCE_MARK}」四个字符，这句话不会发出去。"
+            )
+        return text
 
     # ─── 整理 ───
 
@@ -280,4 +334,4 @@ def _scope_from_row(bot_id: str, session_id: str, visibility: str) -> RuntimeSco
         return None
 
 
-__all__ = ["ConcernFollowupService", "concern_subject_ids"]
+__all__ = ["SILENCE_MARK", "ConcernFollowupService", "concern_due_date", "concern_subject_ids"]

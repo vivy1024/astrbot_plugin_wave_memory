@@ -338,8 +338,9 @@ def parse_bookkeeping_mood(raw: Any, settings: MoodSettings | None = None) -> tu
     if not reason:
         return None
     settings = settings or MoodSettings()
-    valence = sign * (0.35 if sign > 0 else 0.40) * strength * settings.sensitivity
-    arousal = (0.10 if sign > 0 else 0.15) * strength * settings.sensitivity
+    # 记账回看整段对话后判断的「冲着她来的事」是心情最可靠的来源，权重明显高于群氛围（0.15 × 0.5）
+    valence = sign * (0.50 if sign > 0 else 0.55) * strength * settings.sensitivity
+    arousal = (0.12 if sign > 0 else 0.18) * strength * settings.sensitivity
     return round(valence, 4), round(arousal, 4), round(strength, 4), reason
 
 

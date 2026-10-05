@@ -70,6 +70,14 @@ def _keywords(message: str, limit: int = 8) -> list[str]:
     return words
 
 
+def _importance(provenance: Any) -> int:
+    try:
+        value = int(float(_mapping(provenance).get("importance", 3)))
+    except (TypeError, ValueError):
+        return 3
+    return max(1, min(5, value))
+
+
 def _row_to_fact(row: Mapping[str, Any], *, now: float, decay_rate: float) -> dict[str, Any]:
     """Normalize the scoped repository DTO without exposing a legacy table row."""
     confidence = float(row.get("confidence") if row.get("confidence") is not None else 1.0)
@@ -79,6 +87,7 @@ def _row_to_fact(row: Mapping[str, Any], *, now: float, decay_rate: float) -> di
     except (TypeError, ValueError):
         age_days = 0.0
     decay = max(0.1, 1.0 - age_days * decay_rate) if decay_rate > 0 else 1.0
+    importance = _importance(row.get("provenance"))
     return {
         "rowid": row.get("id"),
         "subject": str(row.get("subject") or ""),
@@ -93,7 +102,9 @@ def _row_to_fact(row: Mapping[str, Any], *, now: float, decay_rate: float) -> di
         "provenance": row.get("provenance") if isinstance(row.get("provenance"), Mapping) else {},
         "last_reinforced": row.get("updated_at"),
         "created_at": row.get("created_at"),
-        "effective_confidence": confidence * decay,
+        # 重要性（1-5，默认 3）只调整先后：3 不变，5 为 ×1.4，1 为 ×0.6；不过滤任何事实
+        "importance": importance,
+        "effective_confidence": confidence * decay * (1.0 + 0.2 * (importance - 3)),
     }
 
 

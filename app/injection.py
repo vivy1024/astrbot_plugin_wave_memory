@@ -341,7 +341,14 @@ class InjectionMixin:
             sender_name = event.message_obj.sender.nickname or ""
         claimed = getattr(event, "_wave_memory_concern_followup", None)
         if isinstance(claimed, dict) and claimed.get("concern"):
-            return followup.hint(claimed["concern"], sender_name, proactive=True)
+            scope = getattr(event, "_wave_memory_runtime_scope", None)
+            reactions = ""
+            if isinstance(scope, RuntimeScope) and sender_id:
+                try:
+                    reactions = followup.reaction_summary(scope, sender_id)
+                except Exception as exc:
+                    logger.debug("[WaveMemory] concern followup reactions failed: %s", exc)
+            return followup.hint(claimed["concern"], sender_name, proactive=True, reactions=reactions)
         scope = getattr(event, "_wave_memory_runtime_scope", None)
         if not isinstance(scope, RuntimeScope) or not sender_id:
             return ""
