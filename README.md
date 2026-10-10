@@ -2,16 +2,16 @@
 
 # Wave Memory
 
-[![Version](https://img.shields.io/badge/version-v5.1.0-blue.svg)](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
+[![Version](https://img.shields.io/badge/version-v5.1.1-blue.svg)](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![AstrBot](https://img.shields.io/badge/AstrBot-≥4.14-green.svg)](https://github.com/AstrBotDevs/AstrBot)
 
 **给长期群 Bot 用的记忆层：记住这个群说过什么、谁是谁、关系好不好；回复时把相关记忆和其他通道一起注入。**
 
-v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现场由模型调工具提审，管理台人工审核后再注入；v5.2 起信念（Bot 自己的看法）改为每日日记之后由 Bot 反思经历形成。日常检索仍只依赖 Embedding，本地 SQLite 毫秒级召回。
+v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现场由模型调工具提审，管理台人工审核后再注入；v5.1.1 起信念（Bot 自己的看法）改为每日日记之后由 Bot 反思经历形成。日常检索仍只依赖 Embedding，本地 SQLite 毫秒级召回。
 
-[快速开始](#快速开始) · [为什么选我们](#为什么选我们) · [适合谁](#适合谁不适合谁) · [检索引擎](#-检索引擎) · [灵魂系统](#-灵魂系统) · [WebUI](#-webui-管理面板) · [Releases](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
+[快速开始](#快速开始) · [使用教程](docs/使用教程.md) · [设计哲学](docs/设计哲学.md) · [为什么选我们](#为什么选我们) · [适合谁](#适合谁不适合谁) · [检索引擎](#-检索引擎) · [灵魂系统](#-灵魂系统) · [WebUI](#-webui-管理面板) · [Releases](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
 
 </div>
 
@@ -29,6 +29,16 @@ v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现�
 - **中文管理台 + 关系图谱**：Bot 主页、记忆、人物、标签、事实、黑话、心智都在 9876 端口；关系图谱有平面分析和 3D「记忆星空 / 回忆回放」，另有给直播用的舞台页。
 
 三种模式：`full` 完整人格；`memory_only` 只要记忆注入；`compat_only` 给 SelfLearning / ChatPlus 当记忆后端，避免两套记忆一起注入。
+
+### 设计哲学（摘要）
+
+- **Bot 是一个人**：记忆、心情、信念、关切按 Bot 本人划界且只有一份，不按群拆成多个人格；她只记得自己亲历的事。
+- **记住一切，想起来再筛选**：存储是第一位（超忆症），拟人建立在记忆之上；检索负责「想起」，不为轻量牺牲完整。
+- **没有证据不进人格**：事实要有原话、黑话要有出处、信念要有日记依据；管理台人工审核是最后一道门。
+- **每一步都可观测**：每次注入都能逐通道回放「用了什么、为什么跳过」。
+- **零外部基础设施**：SQLite + Embedding，没有 Neo4j / ES / 独立向量库，数据全在本地。
+
+详见 [docs/设计哲学.md](docs/设计哲学.md)。
 
 ---
 
@@ -97,6 +107,7 @@ v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现�
 
 | 版本 | 日期 | 重点 |
 |------|------|------|
+| **v5.1.1** | 2026-10-11 | 心情 v2（一个 Bot 一份心情，由冲她来的事驱动）；关系小传（Bot 视角的人物小传）；信念反思（每日日记后形成自己的看法）；模型分工（10 个后台任务各自指定模型）；神人包改作梗百科；角色经历与游戏知识库；Cortico 直播写回；事实有效期与冲突裁决；表达学习与回复反馈、开口判断三模式；选择性不回复工具 `wave_memory_hold_peace`；修复黑话全部无法批准（422）；修复 9876 通道配置重启即丢；好感事件挂原话证据 |
 | **v5.1.0** | 2026-09-28 | 多 Bot 通用化：Bot 存进数据库、9876 管理且热生效，一个 Bot 可绑多个账号；Bot 是一个人（记忆按 Bot 本人隔离、私聊可写）；插件化：工具/通道注册表、扩展热重载、后台服务单独启停；Cortico 注入走完整编排器；配置来源总览与热参数；`main.py` 拆分（3761 → 164 行）、宿主端口、GitHub CI；部署脚本、备份修复、消息入库报警；中文全文索引（「张羽」召回 113 → 2696 条）；打分修正、召回提速与存储瘦身（4.7 → 2.8 GB）；共现图落盘与子进程构建；书设工作台；检索评测脚本；事后记账、每日日记、自动审核、关切驱动的主动回复；管理台重构：Bot 主页、配置中心、回复溯源、关系图谱（含 3D 星空与回忆回放）、直播舞台页 |
 | **v5.0.0** | 2026-09-09<br>（09-12 修订） | 现场提审取代后台盲抽 + Bot 亲笔日记；修复反思引导并明确工具调用；索引诊断性能提升 23 倍防超时；标签星云内嵌控制台 + 交互式类型透镜 + 算法实验室联动；WebUI 全量中文脱敏与配置分组折叠<br>**09-12 修订**：好感度跨群累加、事实去群限制、修复 WebUI 记忆作业；清理死模块/死函数/废弃配置/零引用脚本净减 4200 余行；README 配置参考 100% 覆盖并加自动化防漂移测试 |
 
@@ -326,6 +337,7 @@ v5.0.0 彻底收敛了历史堆叠的工具集，常驻工具数量减半，释�
 | **`wave_memory_record_social_impression`** | **社交动力学单出口**：统一记录阶段性主观定性并变迁好感五维、累加未决能量、触发定向跃迁并自动溯源原话 | full，群 Scope |
 | **`wave_memory_note_social_anchor`** | **人际纽带备忘**：记录重要人情借还、双向承诺与底线越界备忘，可挂入未了关切 | full，群 Scope |
 | **`wave_memory_note_concern`** | **灵魂关切管理**：记录并推进 Bot 挂在心上的未决事件（群友生病/考试/约定等） | full，群 Scope |
+| **`wave_memory_hold_peace`** | **保有沉默**：主动开口由关切触发时，Bot 自己决定不接这句，整条回复不发送，理由记入统计 | 主动开口场合 |
 | **`wave_memory_mark_cultural_moment`** | **文化时刻标记**：现场提审本群特色黑话梗（jargon）或高光风骨回复（style），进入审核工作台 | full，群 Scope |
 | **`wave_memory_propose_fact`** | **客观事实提审**：发现群友新事实，自动反查当轮真实消息 ID 并绑定 `source_quote` 证据入库 | full，群 Scope |
 | **`wave_memory_game_knowledge`** | **游戏知识查询**：按游戏查攻略卡、词条（机制、打法、坑）与自己玩出来的经验；想查以前玩过的具体经过用记忆搜索 | 群聊 / 私聊 |
@@ -356,6 +368,8 @@ v5.0.0 彻底收敛了历史堆叠的工具集，常驻工具数量减半，释�
 | `embedding_dimension` | 向量维度 | `1024` |
 
 AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
+
+> 首次部署后的检查清单、学习类开关怎么开、审核工作流、常见问题，见 [docs/使用教程.md](docs/使用教程.md)。
 
 ---
 

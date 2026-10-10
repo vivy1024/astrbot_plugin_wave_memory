@@ -1,6 +1,6 @@
 # Changelog
 
-## v5.2.0（开发中）：心情、关系小传、信念反思、模型分工与梗百科
+## v5.1.1（2026-10-11）：心情、关系小传、信念反思、模型分工与梗百科
 
 ### 行为变化
 
@@ -46,7 +46,7 @@
    - **不预设攻略**：我的世界这类模型本来就懂的游戏不准备攻略（开发期起草的我的世界起始包已删除）；只给真人自己玩都难的游戏（如缺氧）导入教程。
    - **经验卡**（`Learning_Settings.game_lesson_enabled`，默认关闭）：Bot 回想 Cortico 写回的游戏经历（死亡、目标、发现、对局结果……）与当时自己说的话、弹幕的反应，把吃过的亏、摸索出来的办法写成只属于自己的经验卡（做法、经过、触发词、条件、依据的具体经历）。死亡 / 危机后等 3 分钟想一次（同一场直播里就能用上），每日日记后补想，管理台可手动；同一条经历不重复计数，同样的亏再吃一次加次数，新经历证明不对就改写；直接生效不用审，管理台删掉的不再写回来；每个游戏有上限，最久没再经历的先归档；每个游戏可单独关。注入时她自己的经验排在攻略前、措辞分开（「你亲身经历过、自己总结的」vs「不是你的亲身经历」），别的 Bot 看不到。模型走模型分工新任务 `game_lesson`（可按 Bot 覆盖）。进度记在新表 `game_lesson_runs`，失败或中途退出的下次重来。
 
-### 后续阶段（本地开发，尚未发版）
+### 后续阶段
 
 - **事实可靠性**：基于来源消息时间推断明确的临时事实有效期，模糊日期留待审核；自动审核复查原话和主体。单值关系冲突不再静默覆盖，人工可选择取代或并存，旧记录与审核历史保留；事实页显示有效期与失效原因。
 - **表达学习与反馈**：复用事后记账同一次模型输出，记录可核验的回复反馈和短表达候选；表达必须先审核，再按当前情景选取。保留原工具记录的风格样例。无人回应是未知，不扣好感、不提升记忆重要度。
@@ -61,6 +61,7 @@
 - **主动开口由 Bot 自己决定**：关切触发主动开口时，提示里附上这个人最近一个月对 Bot 说话的反应（回复效果反馈记录的承接/纠正/拒绝次数与最近一句原话），Bot 觉得不合适可以只回复「[沉默]」，发送前整条丢弃（统计 `proactive_reply.chose_silence`）。
 - **事实重要性**：事实新增 1–5 的重要性（存 provenance，不改表结构，默认 3），由事后记账或 `wave_memory_propose_fact(importance=…)` 给出；只用于注入排序（5 为 ×1.4、1 为 ×0.6），不作任何门槛。
 - **记忆基准**：本版不做 LongMemEval / LoCoMo 等基准评测；以上是本地测试，不是 benchmark 成绩。
+- **选择性不回复做成正式工具 `wave_memory_hold_peace(reason=…)`**：主动开口由关切触发时，Bot 可以调用这个工具让整条回复不发送，理由记入统计（`proactive_reply.chose_silence_tool`）。这比在正文里回「[沉默]」更可追踪——每次克制都有原因可查。
 - **修复：黑话在 WebUI 全部无法批准（422 `query_trace_required`）**。2026-07-17 的审核门禁要求批准时请求必须带有效的 `query_trace_id`（提出黑话那次的检索记录），但管理台的审批请求从来不带、也拿不到这个字段，该门禁从未放行过任何一次批准。现在检索记录降为可选溯源信息：不带也能批准（证据锚点门禁不变），带了的必须有效（无效返回 422 `query_trace_invalid`）。
 
 ### 升级须知
@@ -75,7 +76,7 @@
   - 移除 `Affinity_Settings.relationship_tiers_json`（旧配置残留会被忽略）。
 - 首次启动自动执行一次角色经历迁移：记忆表里 `source='bzz_experience'` 的无归属旧行导入为 Bot `baizz` 的角色经历（启用、原著，按原剧情分卷建阶段），并为 baizz 开启角色经历、当前时间点设为最后一个阶段、代词设为「她」；旧行不删除，但不再被其他 Bot 召回。库里没有旧数据或没有 baizz 时安全跳过。迁移后情绪与在场人物为空，可在工作台用原始 JSONL「补上空字段」导入补齐。
 - 首次启动新增 `person_relationship_portraits`、`person_relationship_portrait_history`、`bot_beliefs`、`bot_belief_events`、`bot_belief_reflection_runs`、`game_libraries`、`game_knowledge_cards`、`game_knowledge_terms`（及其 FTS 索引）、`game_lesson_runs`、`character_experiences`（及其 FTS 索引、`character_timeline_stages`、`character_experience_scene_log`、`character_experience_migrations`）表（只新增、可重复执行）；旧 `scoped_beliefs` 全部迁为 `legacy_archived`，不删除。
-- 移除工具 `wave_memory_propose_belief`（内置工具 18 个）；信念管理台旧的逐条审核/归档/批量接口返回 410，新接口为 `GET /api/beliefs?bot_id=` 与 `POST /api/beliefs/<id>/veto|restore`。**部署前必须重建管理台**，否则旧页面调用已变更的接口。
+- 移除工具 `wave_memory_propose_belief`（内置工具 20 个（v5.1.1 新增 meme_lookup、game_knowledge、hold_peace））；信念管理台旧的逐条审核/归档/批量接口返回 410，新接口为 `GET /api/beliefs?bot_id=` 与 `POST /api/beliefs/<id>/veto|restore`。**部署前必须重建管理台**，否则旧页面调用已变更的接口。
 - Bot Profile 新增 `mood` 段（未配置时用中性默认值）；`Lifecycle_Settings.mood_duration_hours` 语义改为「默认恢复半衰期」。
 - 首次启动新增 `bot_mood_events`、`bot_mood_state` 两张表（只新增、可重复执行）；旧 `scoped_soul_mood` 不读不改，升级后心情从基线加最近 12 小时关系事件起步。
 - `/api/bot-home` 的 `soul.mood` 改为 Bot 本人心情（情绪词、原因、疲劳），旧的按群数值移到 `soul.atmosphere`。
