@@ -48,6 +48,11 @@ def _agent_feedback_tools() -> list[ToolSpec]:
     ]
 
 
+def _hold_peace():
+    from .hold_peace import WaveMemoryHoldPeaceTool
+    return WaveMemoryHoldPeaceTool()
+
+
 def _social_tools() -> list[ToolSpec]:
     from .concern import WaveMemoryNoteConcernTool
     from .cultural_moment import WaveMemoryMarkCulturalMomentTool
@@ -108,7 +113,7 @@ def _social_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             "wave_memory_hold_peace",
-            lambda d: __import__("tools.hold_peace", fromlist=["WaveMemoryHoldPeaceTool"]).WaveMemoryHoldPeaceTool(),
+            lambda d: _hold_peace(),
             group="memory", capability="memory_tools", description="决定这次不回复（调用后这条回复不发送）",
         ),
         ToolSpec(
