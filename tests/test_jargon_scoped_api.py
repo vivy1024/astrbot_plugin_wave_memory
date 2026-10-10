@@ -231,6 +231,70 @@ class JargonScopedApiTest(unittest.TestCase):
         ])
         self.assertEqual(validated, [("opaque-7", 7), ("opaque-7", 7)])
 
+    def test_approve_without_query_trace_passes_gate(self):
+        _, envelope = self._scope_envelope()
+        calls = []
+
+        class _Service:
+            def review(self, runtime_scope, jargon_id, action, query_trace_id=None, reason=None):
+                calls.append((jargon_id, action, query_trace_id))
+                return {"id": jargon_id, "status": "confirmed", "scope": runtime_scope}
+
+        original_require = self.module._require_object_ref
+        original_evidence = self.module._memory_evidence_available
+        self.module._require_object_ref = lambda *_args, **_kwargs: None
+        self.module._memory_evidence_available = lambda *_args, **_kwargs: True
+        self.module.get_container = lambda: types.SimpleNamespace(
+            db=types.SimpleNamespace(scoped_knowledge=self.repo),
+            jargon_service=_Service(),
+            injection_trace_store=None,
+        )
+        self.module.request = types.SimpleNamespace(get_json=lambda **_kwargs: _async_value({
+            "scope": envelope,
+            "object_ref": {"ref": "opaque-7"},
+        }))
+        try:
+            payload = asyncio.run(self.module.review_scoped_jargon.__wrapped__(7, "approve"))
+        finally:
+            self.module._require_object_ref = original_require
+            self.module._memory_evidence_available = original_evidence
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(calls, [(7, "approve", None)])
+
+    def test_approve_with_invalid_query_trace_fails(self):
+        _, envelope = self._scope_envelope()
+        calls = []
+
+        class _Service:
+            def review(self, *_args, **_kwargs):
+                calls.append(_args)
+                return {"id": 7, "status": "confirmed"}
+
+        original_require = self.module._require_object_ref
+        original_evidence = self.module._memory_evidence_available
+        self.module._require_object_ref = lambda *_args, **_kwargs: None
+        self.module._memory_evidence_available = lambda *_args, **_kwargs: True
+        self.module.get_container = lambda: types.SimpleNamespace(
+            db=types.SimpleNamespace(scoped_knowledge=self.repo),
+            jargon_service=_Service(),
+            injection_trace_store=None,
+        )
+        self.module.request = types.SimpleNamespace(get_json=lambda **_kwargs: _async_value({
+            "scope": envelope,
+            "object_ref": {"ref": "opaque-7"},
+            "query_trace_id": "not-a-real-trace",
+        }))
+        try:
+            payload, status = asyncio.run(self.module.review_scoped_jargon.__wrapped__(7, "approve"))
+        finally:
+            self.module._require_object_ref = original_require
+            self.module._memory_evidence_available = original_evidence
+
+        self.assertEqual(status, 422)
+        self.assertEqual(payload["error"]["code"], "query_trace_invalid")
+        self.assertEqual(calls, [])
+
     def test_single_review_fails_closed_on_scope_or_object_ref(self):
         _, envelope = self._scope_envelope()
         calls = []

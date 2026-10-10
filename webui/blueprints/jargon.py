@@ -970,8 +970,10 @@ async def review_scoped_jargon(jargon_id: int, action: str):
         _require_object_ref(body, kind="jargon", locator=jargon_id, scope=scope, item=current)
         if action == "approve" and not _memory_evidence_available(container, scope, current.get("source_memory_id")):
             raise ScopedKnowledgeScopeError("jargon_anchor_unavailable")
-        if action == "approve" and not _query_trace_valid(container, scope, body):
-            raise ScopedKnowledgeScopeError("query_trace_required")
+        # 检索记录只是可选的溯源信息：管理台审批时拿不到也无需提供。提供了就必须有效。
+        trace_id = str(body.get("query_trace_id") or "").strip()
+        if action == "approve" and trace_id and not _query_trace_valid(container, scope, body):
+            raise ScopedKnowledgeScopeError("query_trace_invalid")
         service = getattr(container, "jargon_service", None)
         review = getattr(service, "review", None)
         if not callable(review):
@@ -1023,8 +1025,9 @@ async def batch_review_scoped_jargon():
             _require_object_ref(entry, kind="jargon", locator=jargon_id, scope=scope, item=current)
             if action == "approve" and not _memory_evidence_available(container, scope, current.get("source_memory_id")):
                 raise ScopedKnowledgeScopeError("jargon_anchor_unavailable")
-            if action == "approve" and not _query_trace_valid(container, scope, body):
-                raise ScopedKnowledgeScopeError("query_trace_required")
+            trace_id = str(body.get("query_trace_id") or "").strip()
+            if action == "approve" and trace_id and not _query_trace_valid(container, scope, body):
+                raise ScopedKnowledgeScopeError("query_trace_invalid")
             validated.append(current)
 
         results = []
