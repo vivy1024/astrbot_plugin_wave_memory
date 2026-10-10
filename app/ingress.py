@@ -523,19 +523,26 @@ class IngressMixin:
         import re as _re
         from astrbot.core.message.components import Plain
 
-        # 关切驱动的主动开口：她判断现在不合适时只回「[沉默]」，这里丢掉整条回复（消息链为空就不发送）
-        if getattr(event, "_wave_memory_concern_followup", None):
+        # 决定「这次不回复」：模型显式调用 wave_memory_hold_peace、或回一句 [沉默]，都丢掉整条回复
+        hold_peace = getattr(event, "_wave_memory_hold_peace", None) or {}
+        chosen_silence_text = False
+        if getattr(event, "_wave_memory_concern_followup", None) and not hold_peace:
             from ..services.concern_followup import SILENCE_MARK
 
             texts = [comp.text for comp in result.chain if isinstance(comp, Plain) and comp.text]
             only_text = len(texts) == len(result.chain)
             if only_text and "".join(texts).strip().strip("。.").replace(" ", "") in {SILENCE_MARK, SILENCE_MARK.strip("[]")}:
-                result.chain.clear()
-                followup = getattr(self, "concern_followup", None)
-                if followup is not None:
-                    followup._count("chose_silence")
-                logger.info("[WaveMemory] 关切跟进：Bot 判断现在不合适开口，未发送")
-                return
+                chosen_silence_text = True
+        if hold_peace or chosen_silence_text:
+            result.chain.clear()
+            followup = getattr(self, "concern_followup", None)
+            if followup is not None:
+                followup._count("chose_silence_tool" if hold_peace else "chose_silence_text")
+            logger.info(
+                "[WaveMemory] 决定不回复已生效%s",
+                f"（{hold_peace['reason']}）" if hold_peace.get("reason") else "",
+            )
+            return
 
         _IMPRESSION_RE = r'(?:<<\s*impression\s*[:：](.+?)>>|\[\s*impression\s*[:：](.+?)\])'
         extracted_impression = None

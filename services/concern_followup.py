@@ -274,7 +274,8 @@ class ConcernFollowupService:
             text += (
                 (f"{reactions}。" if reactions else "")
                 + f"要不要开口由你自己决定：看看 ta 正在聊什么、现在插话会不会打扰或冒犯人，"
-                f"觉得现在不合适就只回复「{SILENCE_MARK}」四个字符，这句话不会发出去。"
+                f"觉得现在不合适就调用 wave_memory_hold_peace(reason=一句话) 保有沉默，这条回复不会发出去。"
+                f"（旧做法：只回复四个字「{SILENCE_MARK}」同样有效，但工具更能记清你当时为什么这么判断。）"
             )
         return text
 

@@ -107,6 +107,11 @@ def _social_tools() -> list[ToolSpec]:
             **common,
         ),
         ToolSpec(
+            "wave_memory_hold_peace",
+            lambda d: __import__("tools.hold_peace", fromlist=["WaveMemoryHoldPeaceTool"]).WaveMemoryHoldPeaceTool(),
+            group="memory", capability="memory_tools", description="决定这次不回复（调用后这条回复不发送）",
+        ),
+        ToolSpec(
             "wave_memory_note_concern",
             lambda d: WaveMemoryNoteConcernTool(
                 db=d.db,
