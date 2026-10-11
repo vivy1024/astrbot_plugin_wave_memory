@@ -999,6 +999,7 @@ class QueryEngine:
             "score_breakdown": final_breakdown,
         })
 
+        _t_touch = time.perf_counter()
         if memories and call_options.touch:
             # Cross-group recall is intentionally read-only: the current Scope
             # cannot be used to manufacture an exact-scope mutation for another
@@ -1015,6 +1016,7 @@ class QueryEngine:
                         self.db.touch_memories(touch_ids, importance_boost=0.0)
                 except Exception:
                     logger.warning("[WaveMemory] Safe memory touch failed", exc_info=True)
+        _touch_ms = (time.perf_counter() - _t_touch) * 1000
         self._trace_record(collector, "final", {
             "result_count": len(memories), "ids": final_ids, "score_breakdown": final_breakdown,
             "readonly": not call_options.touch, "touch": call_options.touch,
@@ -1025,11 +1027,16 @@ class QueryEngine:
         })
 
         total_ms = (time.perf_counter() - start) * 1000
-        logger.debug(
+        logger.info(
             f"[WaveMemory] Query done: {len(memories)} results, "
-            f"embed={embed_ms:.0f}ms, total={total_ms:.0f}ms"
+            f"embed={embed_ms:.0f}ms search={search_ms:.0f}ms touch={_touch_ms:.0f}ms total={total_ms:.0f}ms"
         )
-        self._trace_record(collector, "timing", {"embedding_ms": round(embed_ms, 1), "total_ms": round(total_ms, 1)})
+        self._trace_record(collector, "timing", {
+            "embedding_ms": round(embed_ms, 1),
+            "search_ms": round(search_ms, 1),
+            "touch_ms": round(_touch_ms, 1),
+            "total_ms": round(total_ms, 1),
+        })
         return memories
 
     def _wave_boost(
@@ -1285,15 +1292,18 @@ class QueryEngine:
             context_texts = []
         stored_vectors = self._stored_context_vectors(context_texts, resolved_scope)
         missing_texts = [item for item in dict.fromkeys(context_texts) if item not in stored_vectors]
+        _t_embed = time.time()
         if missing_texts:
             fetched = await self.embedding.get_embeddings([text, *missing_texts])
         else:
             fetched = [await self.embedding.get_embedding(text)]
+        _embed_ms = (time.time() - _t_embed) * 1000
         query_vec = fetched[0] if fetched else None
         if query_vec is None:
             return []
         fetched_vectors = dict(zip(missing_texts, fetched[1:]))
 
+        _t_search = time.time()
         if is_private:
             search_vec, energy_field = query_vec, {}
         else:
@@ -1381,6 +1391,8 @@ class QueryEngine:
         else:
             memories.sort(key=lambda m: m["score"], reverse=True)
             memories = memories[:top_k]
+        _search_ms = (time.time() - _t_search) * 1000
+        _t_touch = time.time()
 
         if memories:
             touch_ids = recall_policy.touchable_ids(memories)
@@ -1397,10 +1409,13 @@ class QueryEngine:
                 except Exception:
                     logger.warning("[WaveMemory] Safe memory touch failed", exc_info=True)
 
+        _touch_ms = (time.time() - _t_touch) * 1000
         total_ms = (time.time() - start) * 1000
-        logger.debug(
+        _setup_ms = total_ms - _embed_ms - _search_ms - _touch_ms
+        logger.info(
             f"[WaveMemory] Shotgun query done: {len(memories)} results, "
-            f"candidates={len(all_candidates)}, total={total_ms:.0f}ms"
+            f"candidates={len(all_candidates)}, embed={_embed_ms:.0f}ms search={_search_ms:.0f}ms "
+            f"touch={_touch_ms:.0f}ms setup={_setup_ms:.0f}ms total={total_ms:.0f}ms"
         )
         return memories
 
