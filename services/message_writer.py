@@ -256,6 +256,9 @@ class MessageWriter:
         self._write_count = 0
         self._save_threshold = 100
 
+        # 活跃记忆计数缓存：全表 COUNT 一次要几秒，本来每一批消息都在事件循环上跑一次
+        self._active_count_cache: tuple[float, int] = (0.0, 0)
+
         # 统计
         self._stats = {
             "core": 0,
@@ -503,6 +506,21 @@ class MessageWriter:
             return list(vectors or [])
         return None  # defensive: retry attempts are normalized to at least one
 
+    _ACTIVE_COUNT_TTL = 60.0
+
+    async def _current_active_count(self) -> int:
+        now = time.monotonic()
+        ts, value = self._active_count_cache
+        if now - ts < self._ACTIVE_COUNT_TTL:
+            return value
+        try:
+            # count_active_memories 经 ConnectionManager 走当前（工作）线程自己的读连接
+            value = await asyncio.to_thread(count_active_memories, self.db.conn)
+            self._active_count_cache = (now, int(value))
+        except Exception:
+            pass  # 算不出来就用上一次的缓存值
+        return self._active_count_cache[1]
+
     async def _process_batch(self, batch: list[dict]):
         """处理一批消息：分类 + embedding + 存储。"""
         batch = [self._normalize_scope_payload(item) for item in batch]
@@ -578,11 +596,8 @@ class MessageWriter:
             vectors = []
 
         # Soft canonical capacity: over-cap ordinary chat may keep text only.
-        # One COUNT per batch keeps the extra query off the hot per-message path.
-        try:
-            active_count = count_active_memories(self.db.conn)
-        except Exception:
-            active_count = 0
+        # 计数在工作线程并缓存 60 秒：全表 COUNT 几秒一次，不能再压在事件循环上
+        active_count = await self._current_active_count()
 
         # 写入有向量的消息（超额 chat 可降为冷落库）
         for item, vec in zip(need_embed, vectors):

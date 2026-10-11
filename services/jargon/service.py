@@ -28,6 +28,8 @@ class JargonService:
 
     def __init__(self, db: Any, llm_client: Any = None, enabled: bool = True, config: dict | None = None, trace_store: Any = None):
         self._db, self._enabled, self._config, self._llm = db, enabled, config or {}, llm_client
+        # 本群已知人名缓存：alias 判定曾每次全表扫 memories(sender_name)，占主线程近四成时间
+        self._person_alias_cache: dict[tuple[str, str], tuple[float, frozenset]] = {}
         self._trace_store = trace_store or getattr(db, "injection_trace_store", None)
         self._repo = getattr(db, "scoped_knowledge", None)
         self._min_frequency = int(self._config.get("min_frequency", 5))
@@ -637,29 +639,45 @@ class JargonService:
             }
         return base
 
+    _PERSON_ALIAS_TTL = 300.0
+
+    def _known_person_aliases(self, group_id: str, bot_id: str) -> frozenset:
+        key = (group_id, bot_id or "")
+        now = time.monotonic()
+        hit = self._person_alias_cache.get(key)
+        if hit and now - hit[0] < self._PERSON_ALIAS_TTL:
+            return hit[1]
+        names: set[str] = set()
+        conn = getattr(self._db, "conn", None)
+        if conn is not None:
+            try:
+                rows = conn.execute("SELECT DISTINCT sender_name FROM memories WHERE group_id = ?", (group_id,))
+                names |= {str(row[0]) for row in rows if row[0]}
+            except Exception:
+                pass
+            try:
+                if bot_id:
+                    rows = conn.execute(
+                        "SELECT DISTINCT nickname FROM user_profiles WHERE group_id = ? AND bot_id = ?",
+                        (group_id, bot_id),
+                    )
+                else:
+                    rows = conn.execute("SELECT DISTINCT nickname FROM user_profiles WHERE group_id = ?", (group_id,))
+                names |= {str(row[0]) for row in rows if row[0]}
+            except Exception:
+                pass
+        frozen = frozenset(names)
+        self._person_alias_cache[key] = (now, frozen)
+        return frozen
+
     def _is_known_person_alias(self, word: str, group_id: str, source_ctx: Dict[str, Any]) -> bool:
         word = (word or "").strip()
         if not word:
             return False
         if word in {str(source_ctx.get("sender_name") or "").strip(), str(source_ctx.get("sender_id") or "").strip()}:
             return True
-        conn = getattr(self._db, "conn", None)
-        if conn is None:
-            return False
         bot_id = str(source_ctx.get("bot_id") or "").strip()
-        profile_predicate = "group_id = ? AND nickname = ? AND bot_id = ?" if bot_id else "group_id = ? AND nickname = ?"
-        profile_params = (group_id, word, bot_id) if bot_id else (group_id, word)
-        checks = (
-            ("memories", "group_id = ? AND sender_name = ?", (group_id, word)),
-            ("user_profiles", profile_predicate, profile_params),
-        )
-        for table, predicate, params in checks:
-            try:
-                if conn.execute(f"SELECT 1 FROM {table} WHERE {predicate} LIMIT 1", params).fetchone():
-                    return True
-            except Exception:
-                continue
-        return False
+        return word in self._known_person_aliases(group_id, bot_id)
 
     @staticmethod
     def _is_technical_noise_candidate(word: str) -> bool:
