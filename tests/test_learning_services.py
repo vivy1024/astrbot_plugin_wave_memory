@@ -337,6 +337,28 @@ def test_bookkeeper_dispatches_items_to_formal_tools():
     assert keeper.stats["skip_short"] == 1
 
 
+def test_bookkeeper_reroutes_social_account_topics_to_social_anchor_type():
+    db = _memory_db([
+        ("u1", "小明", "记得给半桥补十个名片赞"),
+        ("bot", "羽书", "记下了"),
+        ("u1", "小明", "我下周三面试"),
+    ])
+    llm = _LLM({
+        "concerns": [
+            {"topic": "给半桥回赞平账", "target_user": "半桥"},
+            {"topic": "小明下周三面试", "target_user": "小明", "due_date": "2026-10-21"},
+        ],
+    })
+    registry = _Registry()
+    keeper = PostReplyBookkeeper(db, registry, llm, bot_name_for=lambda _b: "羽书")
+
+    result = asyncio.run(keeper.run(_scope()))
+
+    assert result["actions"] == 2
+    assert [kwargs.get("concern_type") for _name, kwargs in registry.calls] == ["social_anchor", "follow_up"]
+    assert registry.calls[1][1].get("due_date") == "2026-10-21"
+
+
 def test_bookkeeper_uses_target_subject_scope_and_counts_only_successful_actions():
     db = _memory_db([
         ("u1", "小明", "我下周三去面试"),
