@@ -94,3 +94,82 @@ async def test_memory_stats_and_tag_quality_still_answer(client):
     assert res.status_code == 200
     assert body["tagged_memories"] == 7 and body["coverage"] == 0.7
     assert body["orphan_memory_tag_refs"] == 0
+
+
+
+@pytest.mark.asyncio
+async def test_memory_list_returns_page_without_waiting_for_slow_count(monkeypatch):
+    """列表走 group_id 索引；同条件的 COUNT 慢时先返回列表、总数标为统计中，算完后给准确值。"""
+    import asyncio as _asyncio
+    import sqlite3
+    from types import SimpleNamespace
+
+    from domain.scope import RuntimeScope, SessionRef
+    from webui.blueprints import memories as module
+    from webui.middleware import auth as auth_module
+    from webui.api_contract import ObjectRefRegistry
+
+    clear_stat_cache()
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.execute(
+        """CREATE TABLE memories (id INTEGER PRIMARY KEY, group_id TEXT, sender_id TEXT, sender_name TEXT,
+           content TEXT, vector BLOB, timestamp REAL, importance REAL, access_count INTEGER, memory_type TEXT,
+           source TEXT, bot_id TEXT, session_id TEXT, visibility TEXT, resolution_state TEXT,
+           version INTEGER, quarantine INTEGER DEFAULT 0)"""
+    )
+    conn.execute("CREATE INDEX idx_memories_group ON memories(group_id)")
+    for mid in range(1, 4):
+        conn.execute(
+            "INSERT INTO memories (id, group_id, sender_id, content, timestamp, memory_type, source, bot_id,"
+            " session_id, visibility, resolution_state, version) VALUES (?, 'g1', 'u', 'hi', ?, 'message', 'chat',"
+            " 'yushu', 'qq:group:g1', 'group', 'resolved', 1)",
+            (mid, 1000 + mid),
+        )
+    plan = conn.execute(
+        "EXPLAIN QUERY PLAN SELECT id FROM memories WHERE group_id = ? ORDER BY id DESC LIMIT 25", ("g1",)
+    ).fetchall()
+    assert any("idx_memories_group" in str(row[3]) for row in plan)
+
+    scope = RuntimeScope(bot_id="yushu", visibility="group", session=SessionRef("qq:group:g1", "qq", "group", "g1"))
+    container = SimpleNamespace(db=SimpleNamespace(conn=conn), password="", sessions=set())
+    monkeypatch.setattr(module, "get_container", lambda: container)
+    monkeypatch.setattr(auth_module, "get_container", lambda: container)
+
+    class Provider:
+        def get_request_scope(self):
+            return scope
+
+    app = Quart(__name__)
+    app.extensions["wave_api_contract"] = {"request_scope_provider": Provider(), "object_refs": ObjectRefRegistry()}
+    app.register_blueprint(module.memories_bp)
+    client = app.test_client()
+    url = "/api/memories?bot_id=yushu&session_id=qq:group:g1&visibility=group&limit=25"
+
+    import webui.stat_cache as stat_cache
+
+    real_cached = stat_cache.cached_stat
+
+    def slow_compute(compute):
+        def run():
+            import time as _time
+
+            _time.sleep(0.3)  # 模拟线上 11 秒的群内 COUNT
+            return compute()
+        return run
+
+    async def slow_cached(key, ttl, compute, **kw):
+        if ":count:" in key:
+            compute = slow_compute(compute)
+        return await real_cached(key, ttl, compute, **kw)
+
+    monkeypatch.setattr(stat_cache, "cached_stat", slow_cached)
+    monkeypatch.setattr(module, "_COUNT_WAIT", 0.05)
+    first = await (await client.get(url)).get_json()
+    assert [item["id"] for item in first["items"]] == [3, 2, 1]
+    assert first["page"]["total_status"] == "unavailable"
+    assert first["page"]["reason_code"] == "total_counting"
+
+    await _asyncio.sleep(0.4)  # 后台计数算完写进缓存
+    second = await (await client.get(url)).get_json()
+    assert second["page"]["total_status"] == "exact" and second["page"]["total"] == 3
+    clear_stat_cache()

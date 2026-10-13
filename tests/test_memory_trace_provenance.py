@@ -191,7 +191,9 @@ async def test_memory_traces_route_returns_scoped_items(monkeypatch):
 
 
 def _memories_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
+    # 生产的 db.conn 是按线程分配读连接的 ConnectionManager；列表接口在工作线程里读库，
+    # 这里的单连接替身要允许跨线程使用。
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.execute(
         """CREATE TABLE memories (
             id INTEGER PRIMARY KEY, group_id TEXT, sender_id TEXT, sender_name TEXT, content TEXT,

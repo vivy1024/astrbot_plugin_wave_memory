@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import hashlib
 import json
 import secrets
@@ -371,7 +373,8 @@ async def list_memories():
         ))
     # List path is group-open: historical sessions use 羽书:group:… while runtime
     # emits qq:group:…. Exact bot/session filters would empty the management UI.
-    where = ["COALESCE(group_id, '') = ?"]
+    # 不能写成 COALESCE(group_id,'')=?：表达式会让 idx_memories_group 失效，退化成整表扫描。
+    where = ["group_id = ?"]
     params: list = [scope.session.conversation_id]
     if "quarantine" in columns:
         where.append("COALESCE(quarantine, 0) = 0")
@@ -421,9 +424,6 @@ async def list_memories():
         where.append("NOT EXISTS (SELECT 1 FROM memory_tags mt WHERE mt.memory_id = memories.id)")
 
     where_sql = " AND ".join(where)
-    total = int(conn.execute(
-        f"SELECT COUNT(*) FROM memories WHERE {where_sql}", params
-    ).fetchone()[0])
     selected = [
         name for name in (
             "id", "content", "sender_id", "sender_name", "group_id", "source",
@@ -432,17 +432,53 @@ async def list_memories():
         ) if name in columns
     ]
     select_sql = ", ".join(selected + ["vector IS NOT NULL AS has_vector"])
-    cursor = conn.execute(
-        f"SELECT {select_sql} FROM memories WHERE {where_sql} ORDER BY id DESC LIMIT ? OFFSET ?",
-        params + [limit, offset],
-    )
-    names = [str(column[0]) for column in cursor.description or ()]
+
+    def _page_rows():
+        cursor = conn.execute(
+            f"SELECT {select_sql} FROM memories WHERE {where_sql} ORDER BY id DESC LIMIT ? OFFSET ?",
+            params + [limit, offset],
+        )
+        names = [str(column[0]) for column in cursor.description or ()]
+        return [dict(zip(names, row)) for row in cursor.fetchall()]
+
+    # 取一页走 group_id 索引按 id 倒序，毫秒级；但同条件的 COUNT(*) 要把整个群
+    # （主群 25 万行）逐行读到 vector 之后的溢出页去过滤，线上约 11 秒。
+    # 两者都放工作线程；总数缓存 5 分钟，冷缓存时最多等 _COUNT_WAIT 秒，没算完就先
+    # 返回列表（总数标为未知、has_more 照常），计数在后台算完写进缓存。
+    rows = await asyncio.to_thread(_page_rows)
     items = []
-    for row in cursor.fetchall():
-        item = dict(zip(names, row))
+    for item in rows:
         item["has_vector"] = bool(item.get("has_vector"))
         items.append(_memory_ref_item(item))
-    return jsonify(page_response(items, total=total, limit=limit, offset=offset))
+    total = await _memory_list_total(c, where_sql, params)
+    return jsonify(page_response(
+        items, total=total, limit=limit, offset=offset, unavailable_reason="total_counting",
+    ))
+
+
+_COUNT_WAIT = 1.5
+_COUNT_TTL = 300.0
+_pending_counts: dict[str, asyncio.Task] = {}
+
+
+async def _memory_list_total(c, where_sql: str, params: list) -> int | None:
+    from ..stat_cache import cached_stat
+
+    conn = c.db.conn
+    key = f"memories:{id(c)}:count:{where_sql}:{params!r}"
+    task = _pending_counts.get(key)
+    if task is None or task.done():
+        task = asyncio.ensure_future(cached_stat(
+            key,
+            _COUNT_TTL,
+            lambda: int(conn.execute(f"SELECT COUNT(*) FROM memories WHERE {where_sql}", params).fetchone()[0]),
+        ))
+        _pending_counts[key] = task
+        task.add_done_callback(lambda done, k=key: _pending_counts.pop(k, None) if _pending_counts.get(k) is done else None)
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), timeout=_COUNT_WAIT)
+    except asyncio.TimeoutError:
+        return None
 
 
 @memories_bp.route("/memories/senders", methods=["GET"])
