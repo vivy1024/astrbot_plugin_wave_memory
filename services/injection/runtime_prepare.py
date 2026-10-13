@@ -51,7 +51,6 @@ class RuntimeContextPreparer:
         query_options_factory: Callable[[Any], Any],
         trace_store: Any = None,
         mode_provider: Callable[[], str] = lambda: "full",
-        recent_messages: Callable[[RuntimeScope, int], list[str]] | None = None,
         exclude_sources_for: Callable[[str], list[str]] | None = None,
         game_context_sink: Callable[[RuntimeScope, Any], None] | None = None,
     ) -> None:
@@ -61,7 +60,6 @@ class RuntimeContextPreparer:
         self._query_options_factory = query_options_factory
         self._trace_store = trace_store
         self._mode_provider = mode_provider
-        self._recent_messages = recent_messages
         self._exclude_sources_for = exclude_sources_for
         self._game_context_sink = game_context_sink
 
@@ -76,7 +74,6 @@ class RuntimeContextPreparer:
         sender_id: str = "",
         sender_name: str = "",
         tier: str = "full",
-        recent_context: list[str] | None = None,
         source: str = "runtime",
         dry_run: bool = False,
         channel_filter: Iterable[str] | None = None,
@@ -94,12 +91,6 @@ class RuntimeContextPreparer:
             allowed = requested if allowed is None else allowed & requested
         channels = [ch for ch in (self._channels_provider() or ()) if allowed is None or getattr(ch, "name", "") in allowed]
 
-        if recent_context is None and self._recent_messages is not None:
-            try:
-                recent_context = self._recent_messages(scope, 8)
-            except Exception:
-                recent_context = []
-        recent_context = [str(item) for item in (recent_context or []) if str(item or "").strip()][-12:]
         exclude_sources = self._exclude_sources_for(scope.bot_id) if self._exclude_sources_for else []
         if game is not None and not dry_run and self._game_context_sink is not None:
             try:
@@ -120,12 +111,10 @@ class RuntimeContextPreparer:
             bot_id=scope.bot_id,
             bot_profile_id=scope.bot_id,
             scope=scope,
-            recent_context=recent_context,
             mode=self._mode_provider(),
             config=self._context_config_builder(
                 channel_config=effective,
                 exclude_sources=exclude_sources,
-                recent_context=recent_context,
             ),
             channel_options=effective.to_dict()["channels"],
             query_options=self._query_options_factory(effective),

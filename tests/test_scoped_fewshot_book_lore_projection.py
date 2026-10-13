@@ -91,7 +91,6 @@ def test_book_lore_channel_requires_raw_catalog_dependencies():
         bot_id="10001",
         bot_profile_id="bot-a",
         scope=current,
-        recent_context=[],
         config={"channels": {"book_lore": {"top_k": 5}}},
         trace_id="trace-book-lore",
     )

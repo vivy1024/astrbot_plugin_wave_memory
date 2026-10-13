@@ -119,7 +119,7 @@ def _request_scope_from_container(container: Any) -> RuntimeScope | None:
 def _core_patch(body: Mapping[str, Any] | None) -> dict[str, Any]:
     transport = {
         "layer", "scope", "preflight_token", "confirmation", "message", "sender_id",
-        "sender_name", "recent_context", "max_items",
+        "sender_name", "max_items",
     }
     return {key: copy.deepcopy(value) for key, value in dict(body or {}).items() if key not in transport}
 
@@ -497,9 +497,6 @@ async def preview_channel_config_impact(
     sender_id = str(body.get("sender_id") or (subject.rsplit(":", 1)[-1] if subject else "preview-user"))
     if subject and not subject.endswith(f":{sender_id}"):
         return {"ok": False, "error_code": "cross_scope_preview_rejected", "errors": ["sender_id does not match Scope subject_principal_id"]}
-    recent_context = body.get("recent_context") or []
-    if not isinstance(recent_context, list) or any(not isinstance(item, str) for item in recent_context):
-        return {"ok": False, "error_code": "invalid_preview_request", "errors": ["recent_context must be a string array"]}
     message = body.get("message", "")
     if not isinstance(message, str):
         return {"ok": False, "error_code": "invalid_preview_request", "errors": ["message must be a string"]}
@@ -520,9 +517,8 @@ async def preview_channel_config_impact(
         bot_id=scope.bot_id,
         bot_profile_id=scope.bot_id,
         scope=scope,
-        recent_context=list(recent_context),
         mode=current_config.mode,
-        config={"memory_recall": {"context_messages": list(recent_context)}},
+        config={},
         now=time.time(),
     )
     return await run_config_impact_preview(

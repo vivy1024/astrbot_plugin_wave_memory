@@ -7,7 +7,8 @@
 1. **做梦引擎**（`services/dream.py`、`Lifecycle_Settings.enable_dream` 等 6 项）。它唯一的效果是给随机联想到的记忆加重要度，与 v5.1.1 修掉的「召回抬高重要度」相冲突；联想由共现图实时完成，做梦结果不落库也无读者。
 2. **噪声记忆删除**（`Eviction_Settings.enabled`、`noise_ttl_days`）。超忆症原则：记忆不删除，噪声只是不参与召回与注入。「记忆淘汰」服务改名「流水账清理」，只清 7 天前的 outbox/操作日志/投影水位。
 3. **表达模式聚合**（`PatternAggregator`，每 6 小时全表 GROUP BY 写 `expression_patterns`）。该表无读者，已被情景表达学习与风格样例取代；旧表数据保留。
-4. **注入死代码**：`realtime_ctx`（每次注入查「羽书最近一条提到对方的回复」，结果无人读取，约 200ms）、每小时 @ 计数（唯一读者是前者，且永不清理）、未被调用的影子注入链路。
+4. **会话最近消息作检索上下文**（`_get_recent_messages`、shotgun 的上下文分段检索、`ContextSegmenter`、SafetyChannel 的近期重复过滤、Runtime `/context/prepare` 的 `recent` 字段）。100 条真实查询评测：shotgun 带最近 8 条 nDCG@5 0.229、不带 0.390、普通检索 0.356（带上下文相对普通检索 −0.127，95% 区间 [−0.193, −0.061]）——上下文把召回带偏；AstrBot 本身已把群聊上下文给模型。shotgun 保留，只用当前这句。Runtime 调用方带 `recent` 会被忽略。
+5. **注入死代码**：`realtime_ctx`（每次注入查「羽书最近一条提到对方的回复」，结果无人读取，约 200ms）、每小时 @ 计数（唯一读者是前者，且永不清理）、未被调用的影子注入链路。
 
 ### 性能
 

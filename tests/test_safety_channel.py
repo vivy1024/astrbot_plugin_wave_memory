@@ -3,7 +3,7 @@ import unittest
 
 
 class SafetyChannelTest(unittest.TestCase):
-    def _ctx(self, *, message="hello", recent_context=None, mode="full", config=None):
+    def _ctx(self, *, message="hello", mode="full", config=None):
         from services.injection.context import InjectionContext
 
         return InjectionContext(
@@ -15,7 +15,6 @@ class SafetyChannelTest(unittest.TestCase):
             sender_name="用户",
             bot_id="bot",
             bot_profile_id="yushu",
-            recent_context=recent_context or [],
             mode=mode,
             config=config or {},
             trace_id="trace-safety",
@@ -45,22 +44,6 @@ class SafetyChannelTest(unittest.TestCase):
         self.assertEqual([item["id"] for item in kept], ["safe"])
         self.assertEqual(filtered[0]["id"], "polluted")
         self.assertEqual(filtered[0]["filter_reason"], "identity_contamination")
-
-    def test_filters_recent_context_duplicates(self):
-        from services.injection.channels.safety import SafetyChannel
-
-        channel = SafetyChannel()
-        ctx = self._ctx(recent_context=["刚刚已经说过：用户喜欢手冲咖啡，也喜欢黑巧。"])
-        items = [
-            {"id": "old", "content": "用户喜欢手冲咖啡，也喜欢黑巧。"},
-            {"id": "new", "content": "用户最近在研究注入编排器。"},
-        ]
-
-        kept, filtered = channel.filter_items(items, ctx=ctx)
-
-        self.assertEqual([item["id"] for item in kept], ["new"])
-        self.assertEqual(filtered[0]["id"], "old")
-        self.assertEqual(filtered[0]["filter_reason"], "recent_context_duplicate")
 
     def test_mode_policy_keeps_safety_but_disables_advanced_channels(self):
         from services.injection.channels.safety import is_channel_allowed_in_mode

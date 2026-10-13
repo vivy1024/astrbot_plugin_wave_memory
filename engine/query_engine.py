@@ -33,7 +33,6 @@ from .database import WaveMemoryDB
 from .vector_index import VectorIndex
 from .embedding import EmbeddingService
 from .directed_cooccurrence import DirectedCooccurrence
-from .context_segmenter import ContextSegmenter
 from .spike_routing import EnergyField, SpikeRouter
 from .residual_pyramid import ResidualPyramid
 from .epa import EPAModule
@@ -234,7 +233,6 @@ class QueryDebugCollector:
         })
 
 
-CONTEXT_VECTOR_WINDOW = 5000
 
 
 class QueryEngine:
@@ -1236,48 +1234,20 @@ class QueryEngine:
         return fused.astype(np.float32), energy_field
 
     # 上下文消息就是会话里最近几条记忆；在全表最近这么多行里找不到的（冷清的会话）改为现算
-    def _stored_context_vectors(self, texts: list[str], scope: RuntimeScope | None) -> dict[str, np.ndarray]:
-        """当前会话最近记忆里与 ``texts`` 原文相同的行已有向量，按原文取回（同文取最新一条）。"""
-        if not texts or not isinstance(scope, RuntimeScope) or scope.session is None:
-            return {}
-        wanted = set(texts)
-        try:
-            # 只扫全表最近 CONTEXT_VECTOR_WINDOW 行（主键范围）：按作用域索引取「最新 N 条」要把整个
-            # 会话的行读出来排序，线上活跃群一次 500 ms，还是在事件循环上同步执行。
-            rows = self.db.conn.execute(
-                """SELECT content, vector FROM memories NOT INDEXED
-                    WHERE id > (SELECT COALESCE(MAX(id), 0) FROM memories) - ?
-                      AND bot_id=? AND session_id=? AND visibility=? AND vector IS NOT NULL
-                    ORDER BY id DESC LIMIT ?""",
-                (CONTEXT_VECTOR_WINDOW, scope.bot_id, scope.session.id, scope.visibility, max(32, len(wanted) * 4)),
-            ).fetchall()
-        except Exception as error:
-            logger.debug(f"[WaveMemory] 读取上下文已存向量失败，改为全部现算: {error!r}")
-            return {}
-        found: dict[str, np.ndarray] = {}
-        for content, raw in rows:
-            if content not in wanted or content in found:
-                continue
-            if isinstance(raw, memoryview):
-                raw = raw.tobytes()
-            if not isinstance(raw, bytes) or not raw or len(raw) % 4:
-                continue
-            vector = np.frombuffer(raw, dtype=np.float32)
-            if np.isfinite(vector).all():
-                found[content] = vector
-        return found
-
     async def shotgun_query(
         self,
         text: str,
-        context_messages: list[str] = None,
         group_id: Optional[str] = None,
         top_k: int = 5,
         *,
         scope: RuntimeScope | None = None,
         touch: bool = True,
     ) -> list[dict]:
-        """多路霰弹枪检索。``touch=False`` 时只读（检索实验室与评测用），不写访问计数。"""
+        """霰弹枪检索：热路 + 冷路合并、SVD 去重。``touch=False`` 时只读（检索实验室与评测用）。
+
+        曾把会话最近几条消息分段后各检索一路；2026-10-13 评测（100 条真实查询）显示
+        带上下文 nDCG@5 0.229、不带 0.390、普通检索 0.356——上下文把召回带偏，已删除。
+        """
         resolved_scope = self._memory_scope(scope)
         if resolved_scope is None:
             logger.warning("[WaveMemory] Shotgun query rejected: resolved group/private RuntimeScope required")
@@ -1287,22 +1257,11 @@ class QueryEngine:
         is_private = resolved_scope.visibility == "private"
         start = time.time()
 
-        # 上下文消息入库时已经向量化过，直接用库里的向量；其余与当前消息合并成一次远端调用
-        context_texts = [str(item) for item in (context_messages or ()) if str(item or "").strip()]
-        if is_private:
-            context_texts = []
-        stored_vectors = self._stored_context_vectors(context_texts, resolved_scope)
-        missing_texts = [item for item in dict.fromkeys(context_texts) if item not in stored_vectors]
         _t_embed = time.time()
-        if missing_texts:
-            fetched = await self.embedding.get_embeddings([text, *missing_texts])
-        else:
-            fetched = [await self.embedding.get_embedding(text)]
+        query_vec = await self.embedding.get_embedding(text)
         _embed_ms = (time.time() - _t_embed) * 1000
-        query_vec = fetched[0] if fetched else None
         if query_vec is None:
             return []
-        fetched_vectors = dict(zip(missing_texts, fetched[1:]))
 
         _t_search = time.time()
         if is_private:
@@ -1311,26 +1270,8 @@ class QueryEngine:
             search_vec, energy_field = self._wave_boost(query_vec, scope=resolved_scope)
         main_results = self.memory_index.search(search_vec, k=top_k * 3)
 
-        segment_results = []
-        if context_texts:
-            segmenter = ContextSegmenter(
-                similarity_threshold=float(self.config.get("shotgun_similarity_threshold", 0.70)),
-                max_segments=int(self.config.get("shotgun_max_segments", 3)),
-            )
-            ctx_vecs = [
-                vector for vector in (stored_vectors.get(item, fetched_vectors.get(item)) for item in context_texts)
-                if vector is not None and vector.size == query_vec.size
-            ]
-            if ctx_vecs:
-                segment_vecs = segmenter.segment(ctx_vecs)
-                for seg_vec in segment_vecs:
-                    seg_results = self.memory_index.search(seg_vec, k=top_k * 2)
-                    segment_results.extend(seg_results)
-
         all_candidates = {}
         for mem_id, dist in main_results:
-            all_candidates[int(mem_id)] = min(all_candidates.get(int(mem_id), 999), float(dist))
-        for mem_id, dist in segment_results:
             all_candidates[int(mem_id)] = min(all_candidates.get(int(mem_id), 999), float(dist))
         if is_private:
             cold_candidates = []

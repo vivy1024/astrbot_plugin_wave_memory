@@ -74,7 +74,6 @@ class BookLoreChannelTest(unittest.TestCase):
             bot_id="bot-alpha",
             bot_profile_id="bot-alpha",
             scope=scope,
-            recent_context=[],
             mode=mode,
             config=config or {"channels": {"book_lore": {"top_k": 2, "min_score": 0.35, "token_budget": 260}}},
             trace_id="trace-book-lore",

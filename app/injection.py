@@ -51,7 +51,7 @@ from ..services.data_governance_jobs import DataGovernancePreviewJobs
 from ..services.scope_recovery import build_scope_recovery_handlers
 from ..services.quality_gate import QualityGate
 from ..services.pair_similarity import PairSimilarityService
-from ..services.hot_config import HotConfig, hot_value
+from ..services.hot_config import HotConfig
 from ..services.memory_index_policy import memory_index_policy_from_settings, select_hot_memory_candidates
 from ..services.maintenance_tokens import maintenance_repair_token
 from ..services.platform_context import PlatformContextManager
@@ -370,7 +370,7 @@ class InjectionMixin:
         registry = getattr(self, "channel_registry", None)
         return registry.with_external_defaults(config) if registry is not None else config
 
-    def _build_shadow_context_config(self, *, channel_config, exclude_sources, recent_context: list[str]) -> dict:
+    def _build_shadow_context_config(self, *, channel_config, exclude_sources) -> dict:
         from ..services.impression_timeline import normalize_timeline_half_life
 
         config = channel_config.to_dict() if channel_config is not None else {}
@@ -380,7 +380,6 @@ class InjectionMixin:
         )
         recall = dict(config.get("memory_recall") or {})
         recall.update({
-            "context_messages": recent_context,
             "exclude_sources": exclude_sources,
         })
         config["memory_recall"] = recall
@@ -417,11 +416,6 @@ class InjectionMixin:
             effective_config = self._effective_injection_config(runtime_scope)
             if effective_config is None:
                 return False
-            recent_context = self._get_recent_messages(
-                event,
-                scope=runtime_scope,
-                max_messages=hot_value("injection.recent_context_messages", 8),
-            )
             bot_profile_id = runtime_scope.bot_id
             trace_id = f"active-{time.time_ns()}"
             ctx = InjectionContext(
@@ -434,12 +428,10 @@ class InjectionMixin:
                 bot_id=bot_id,
                 bot_profile_id=bot_profile_id,
                 scope=runtime_scope,
-                recent_context=recent_context,
                 mode=getattr(self, "runtime_mode_name", "full"),
                 config=self._build_shadow_context_config(
                     channel_config=effective_config,
                     exclude_sources=exclude_sources,
-                    recent_context=recent_context,
                 ),
                 channel_options=effective_config.to_dict()["channels"],
                 query_options=QueryOptions(
@@ -506,32 +498,3 @@ class InjectionMixin:
             logger.warning(f"[WaveMemory] canonical injection orchestrator failed closed: {e}", exc_info=True)
             _record_err("InjectionActive", e)
             return False
-
-    def _get_recent_messages(
-        self,
-        event,
-        *,
-        scope: RuntimeScope | None,
-        max_messages: int = 8,
-    ) -> list[str]:
-        """仅返回当前已解析基础记忆 Scope 内的正式记忆；无法证明 Scope 时空返回。"""
-        if (
-            not isinstance(scope, RuntimeScope)
-            or scope.visibility not in {"group", "private"}
-            or scope.session is None
-        ):
-            return []
-        try:
-            if max_messages <= 0:
-                return []
-            rows = self.db.conn.execute(
-                """SELECT content FROM memories
-                   WHERE bot_id=? AND session_id=? AND visibility=?
-                     AND resolution_state='resolved' AND quarantine=0
-                     AND content IS NOT NULL
-                   ORDER BY timestamp DESC, id DESC LIMIT ?""",
-                (scope.bot_id, scope.session.id, scope.visibility, max_messages),
-            ).fetchall()
-            return [r[0] for r in reversed(rows)] if rows else []
-        except Exception:
-            return []

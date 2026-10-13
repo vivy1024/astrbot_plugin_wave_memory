@@ -43,7 +43,6 @@ class PersonaChannelTest(unittest.TestCase):
             bot_id="1336495069",
             bot_profile_id="baizhenzhen",
             scope=self._scope() if scope == "default" else scope,
-            recent_context=["芒果: 刚才争论有点乱"],
             mode=mode,
             config=config or {"channels": {"persona": {"max_items": 4, "token_budget": 500}}},
             trace_id="trace-persona",

@@ -115,8 +115,6 @@ class HotConfig:
              "description": "消息合并最长等待（秒）：从第一条算起，到点强制截断"},
             {"key": "injection.slow_warning_ms", "type": "int", "min": 200, "max": 20000, "default": 2000,
              "description": "注入总耗时超过这个值时记警告日志（毫秒）"},
-            {"key": "injection.recent_context_messages", "type": "int", "min": 0, "max": 40, "default": 8,
-             "description": "注入时取会话最近几条消息作为检索上下文（0 = 不取）"},
             {"key": "tags.admission_neighbor_limit", "type": "int", "min": 0, "max": 512, "default": 64,
              "description": "打标签判重时比对的目录邻居条数（0 = 不比对）"},
             {"key": "tags.admission_cache_seconds", "type": "int", "min": 0, "max": 1800, "default": 60,

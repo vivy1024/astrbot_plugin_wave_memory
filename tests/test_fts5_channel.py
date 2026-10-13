@@ -77,7 +77,6 @@ class FTS5ChannelTest(unittest.TestCase):
             bot_id="bot",
             bot_profile_id="yushu",
             scope=scope or self._scope(group_id=group_id),
-            recent_context=[],
             mode=mode,
             config=config or {"channels": {"fts5": {"top_k": 10, "token_budget": 500, "min_score": 0.0}}},
             trace_id="trace-fts5",

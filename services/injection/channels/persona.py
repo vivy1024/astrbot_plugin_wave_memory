@@ -125,7 +125,6 @@ class PersonaChannel:
                 sender_id=getattr(ctx, "sender_id", "") or "",
                 sender_name=getattr(ctx, "sender_name", "") or "",
                 message=getattr(ctx, "message", "") or "",
-                recent_context=list(getattr(ctx, "recent_context", []) or []),
                 scope=runtime_scope,
             )
             payload = _mapping(payload)

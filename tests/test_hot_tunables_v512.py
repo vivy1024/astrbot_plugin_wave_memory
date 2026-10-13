@@ -21,7 +21,7 @@ def hot():
 def test_new_tunables_registered_with_ranges(hot):
     keys = hot.tunable_keys()
     for key in (
-        "injection.recent_context_messages", "tags.admission_neighbor_limit", "tags.admission_cache_seconds",
+        "tags.admission_neighbor_limit", "tags.admission_cache_seconds",
         "storage.active_count_cache_seconds", "jargon.person_alias_cache_seconds", "people.nickname_cache_seconds",
         "webui.stats_cache_seconds", "webui.vector_count_cache_seconds", "webui.coverage_cache_seconds",
         "webui.legacy_quality_cache_seconds", "webui.list_count_cache_seconds", "webui.list_count_wait_seconds",
@@ -30,9 +30,9 @@ def test_new_tunables_registered_with_ranges(hot):
 
 
 def test_hot_value_casts_and_clamps(hot):
-    hot.update({"webui.stats_cache_seconds": 10**9, "injection.recent_context_messages": "3"})
+    hot.update({"webui.stats_cache_seconds": 10**9, "tags.admission_neighbor_limit": "3"})
     assert hc.hot_value("webui.stats_cache_seconds", 15) == 3600
-    assert hc.hot_value("injection.recent_context_messages", 8) == 3
+    assert hc.hot_value("tags.admission_neighbor_limit", 64) == 3
     assert hc.hot_value("not.registered", 7) == 7
 
 
@@ -80,6 +80,7 @@ def test_removed_dead_features_are_gone():
     assert not any(key.startswith(("enable_dream", "dream_")) for key in lifecycle)
     assert set(schema["Eviction_Settings"]["items"]) == {"interval_hours"}
     src = pathlib.Path("app/injection.py").read_text(encoding="utf-8")
-    for dead in ("_build_shadow_persona_realtime_ctx", "_hourly_reply_count", "_run_injection_shadow_trace", "realtime_ctx"):
+    for dead in ("_build_shadow_persona_realtime_ctx", "_hourly_reply_count", "_run_injection_shadow_trace", "realtime_ctx",
+                 "_get_recent_messages", "recent_context"):
         assert dead not in src
     assert "PatternAggregator" not in pathlib.Path("services/lifecycle.py").read_text(encoding="utf-8")

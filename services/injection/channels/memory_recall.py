@@ -244,10 +244,8 @@ class MemoryRecallChannel:
         # shotgun_query 尚无请求级 touch 接口；dry-run 必须走 batch6 正式 query
         # 的 QueryOptions(touch=False)，不能以访问计数写入换取“更像生产”的假预览。
         if enable_shotgun and not dry_run:
-            context_messages = recall_cfg.get("context_messages") or getattr(ctx, "recent_context", []) or []
             return await self.query_engine.shotgun_query(
                 text=getattr(ctx, "message", ""),
-                context_messages=list(context_messages),
                 group_id=getattr(ctx, "group_id", None),
                 top_k=top_k,
                 scope=getattr(ctx, "scope", None),

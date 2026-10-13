@@ -42,26 +42,6 @@ def _with_filter_reason(item: Any, reason: str) -> dict[str, Any]:
     return payload
 
 
-def is_recent_context_duplicate(
-    text: str | None,
-    recent_context: Iterable[str] | None,
-    *,
-    min_chars: int = 8,
-) -> bool:
-    """判断召回文本是否已经出现在近期上下文中。"""
-
-    compact_text = _compact(text)
-    if len(compact_text) < min_chars:
-        return False
-    for recent in recent_context or []:
-        compact_recent = _compact(recent)
-        if len(compact_recent) < min_chars:
-            continue
-        if compact_text in compact_recent or compact_recent in compact_text:
-            return True
-    return False
-
-
 def is_channel_allowed_in_mode(channel_name: str, mode: str) -> bool:
     """返回某通道在运行模式下是否允许参与原生注入。"""
 
@@ -92,22 +72,20 @@ class SafetyChannel:
         ctx: Any | None = None,
         text_fields: Sequence[str] = _TEXT_FIELDS,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """过滤身份污染与近期重复召回项，返回 `(kept, filtered)`。"""
+        """过滤身份污染召回项，返回 `(kept, filtered)`。
+
+        近期上下文去重已删除：记忆召回本身就跳过最近 recent_dedup_minutes 分钟的记忆。
+        """
 
         kept: list[dict[str, Any]] = []
         filtered: list[dict[str, Any]] = []
-        recent_context = getattr(ctx, "recent_context", []) if ctx is not None else []
-
         for item in items or []:
             text = _extract_text(item, text_fields)
             if is_identity_contamination(text):
                 filtered.append(_with_filter_reason(item, "identity_contamination"))
                 continue
-            if is_recent_context_duplicate(text, recent_context):
-                filtered.append(_with_filter_reason(item, "recent_context_duplicate"))
-                continue
             kept.append(dict(item))
         return kept, filtered
 
 
-__all__ = ["SafetyChannel", "is_channel_allowed_in_mode", "is_recent_context_duplicate"]
+__all__ = ["SafetyChannel", "is_channel_allowed_in_mode"]

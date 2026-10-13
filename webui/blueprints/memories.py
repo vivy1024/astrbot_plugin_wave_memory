@@ -857,16 +857,13 @@ async def query_test():
         max_total_bytes=48_000,
     )
     debug_requested = _bool_flag(body.get("debug"), True)
-    # mode=shotgun：走线上注入用的霰弹枪检索（当前消息 + context_messages 合并检索），只读
+    # mode=shotgun：走线上注入用的霰弹枪检索（热路 + 冷路合并、SVD 去重），只读
     shotgun = str(body.get("mode") or "").strip().lower() == "shotgun"
-    context_messages = body.get("context_messages") if isinstance(body.get("context_messages"), list) else []
-    context_messages = [str(item) for item in context_messages if str(item or "").strip()][:40]
     started = time.perf_counter()
     try:
         if shotgun:
             results = await query_engine.shotgun_query(
                 text,
-                context_messages=context_messages,
                 group_id=scope.session.conversation_id,
                 top_k=top_k,
                 scope=scope,

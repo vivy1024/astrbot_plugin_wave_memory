@@ -65,7 +65,6 @@ class FewShotChannelTest(unittest.TestCase):
             bot_id="1336495069",
             bot_profile_id="baizhenzhen",
             scope=runtime_scope,
-            recent_context=[],
             mode=mode,
             config=config or {"channels": {"fewshot": {"max_items": 2, "token_budget": 200}}},
             trace_id="trace-fewshot",

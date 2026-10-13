@@ -764,7 +764,7 @@ GET /api/injection/traces/<trace_id>
 | 现象 | 看哪里 | 处理 |
 |------|--------|------|
 | 同一内容在最终 prompt 重复 | trace detail → `final_preview` + channel previews | 检查多个通道是否命中同一内容；调低重复通道 `priority/top_k/max_items` |
-| AstrBot 最近上下文又被记忆注入 | trace detail → `filtered_items.reason=recent_context_duplicate` | 调大 `Inject_Settings.skip_recent_minutes` 或确认 SafetyChannel 正常 |
+| AstrBot 最近上下文又被记忆注入 | trace detail 看命中记忆的时间 | 调大 `Inject_Settings.skip_recent_minutes`（记忆召回跳过最近这段时间内的记忆） |
 | SelfLearning/ChatPlus 与 WaveMemory 都注入 | 兼容模式页 → duplicate warnings | 改 `runtime_mode=compat_only` 或关闭外部插件重复注入 |
 | 写入重复记忆 | writer 统计 duplicate / 同内容同群近期重复 | 统一 writer 去重会跳过重复写入，不删除旧数据 |
 

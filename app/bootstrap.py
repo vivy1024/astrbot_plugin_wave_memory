@@ -977,7 +977,6 @@ class BootstrapMixin:
             ),
             trace_store=getattr(self, "injection_trace_store", None),
             mode_provider=lambda: getattr(self, "runtime_mode_name", "full"),
-            recent_messages=lambda scope, limit: self._get_recent_messages(None, scope=scope, max_messages=limit),
             exclude_sources_for=_exclude_sources,
             game_context_sink=self._note_active_game,
         )

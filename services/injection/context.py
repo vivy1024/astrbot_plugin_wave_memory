@@ -27,7 +27,6 @@ class InjectionContext:
     bot_id: str
     bot_profile_id: str
     scope: RuntimeScope | None = None
-    recent_context: list[str] = field(default_factory=list)
     mode: str = "full"
     config: dict[str, Any] = field(default_factory=dict)
     channel_options: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)

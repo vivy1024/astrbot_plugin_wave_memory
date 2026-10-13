@@ -168,7 +168,6 @@ class PersonaBeliefReworkTest(unittest.TestCase):
             sender_id="u1",
             sender_name="芒果",
             message="你怎么看刚才那件事",
-            recent_context=["芒果: 刚才争论有点乱"],
             scope=scope,
         ))
 
@@ -204,7 +203,6 @@ class PersonaBeliefReworkTest(unittest.TestCase):
             sender_id="u9",
             sender_name="路人",
             message="随便聊聊",
-            recent_context=[],
             scope=other_group,
         ))
         self.assertIn("认真解释剑阵", elsewhere["experience_block"])

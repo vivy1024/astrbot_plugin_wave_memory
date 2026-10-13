@@ -28,7 +28,6 @@ class InjectionContractTest(unittest.TestCase):
             bot_id="30003",
             bot_profile_id="yushu",
             scope=scope,
-            recent_context=["上一句"],
             mode="memory_only",
             config={"channels": {}},
             now=123.45,

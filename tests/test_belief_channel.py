@@ -43,7 +43,6 @@ class BeliefChannelTest(unittest.TestCase):
             bot_id="10009999",
             bot_profile_id="bot-demo",
             scope=scope,
-            recent_context=[],
             mode=mode,
             config=config or {"channels": {"belief": {"max_items": 5, "token_budget": 200}}},
             trace_id="trace-belief",

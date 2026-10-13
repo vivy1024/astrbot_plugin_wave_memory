@@ -58,7 +58,6 @@ class PersonaComposer:
         sender_id: str,
         sender_name: str,
         message: str,
-        recent_context: list[str] | None,
         scope: RuntimeScope | None = None,
     ) -> dict[str, Any]:
         """Return persona/belief/experience/style blocks plus compact debug data.

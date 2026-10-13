@@ -93,7 +93,6 @@ class InjectionIntegrationTest(unittest.TestCase):
             sender_name="测试用户",
             bot_id="bot-qq",
             bot_profile_id="yushu",
-            recent_context=["上一轮上下文"],
             mode=mode,
             trace_id=trace_id,
         )

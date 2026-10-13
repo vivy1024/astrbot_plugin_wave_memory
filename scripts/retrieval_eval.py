@@ -6,7 +6,7 @@
     python retrieval_eval.py sample --n 100                 # 从注入 trace 抽真实查询，写 queries.jsonl（已存在则不覆盖）
     python retrieval_eval.py run full                       # 用当前线上配置跑一遍，写 runs/full.json
     python retrieval_eval.py run no_geodesic --stages '{"geodesic": false}'
-    python retrieval_eval.py run shotgun --mode shotgun --context 8   # 线上注入用的霰弹枪检索（带当时前 8 条上下文）
+    python retrieval_eval.py run shotgun --mode shotgun   # 线上注入用的霰弹枪检索
     python retrieval_eval.py judge full no_geodesic         # 池化各次运行的前 10 条，评审尚未评过的（结果缓存）
     python retrieval_eval.py report full no_geodesic        # 指标与逐条差异
 
@@ -106,35 +106,17 @@ def cmd_sample(args) -> None:
 
 # ─── run ───
 
-def _context_before(conn, query: dict, limit: int) -> list[str]:
-    """查询发生时，同会话里它前面的 ``limit`` 条消息（模拟注入时的「会话最近 N 条」）。"""
-    if limit <= 0:
-        return []
-    rows = conn.execute(
-        """SELECT content FROM memories
-            WHERE bot_id=? AND session_id=? AND visibility='group'
-              AND resolution_state='resolved' AND quarantine=0
-              AND content IS NOT NULL AND timestamp < ?
-            ORDER BY timestamp DESC, id DESC LIMIT ?""",
-        (query["bot_id"], query["session_id"], float(query["timestamp"]) - 1.0, limit + 1),
-    ).fetchall()
-    text = _normalize(query["text"])
-    picked = [str(row[0]) for row in rows if _normalize(row[0]) != text][:limit]
-    return list(reversed(picked))
-
-
 def cmd_run(args) -> None:
     queries = _read_jsonl(_path("queries.jsonl"))
     stages = json.loads(args.stages) if args.stages else {}
     params = json.loads(args.params) if args.params else {}
     results = {}
-    conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True) if args.mode == "shotgun" else None
     started = time.perf_counter()
     for query in queries:
         qs = urllib.parse.urlencode({"bot_id": query["bot_id"], "visibility": "group", "session_id": query["session_id"]})
         body = {"text": query["text"], "top_k": args.k, "stages": stages, "params": params}
-        if conn is not None:
-            body.update({"mode": "shotgun", "context_messages": _context_before(conn, query, args.context)})
+        if args.mode == "shotgun":
+            body["mode"] = "shotgun"
         request = urllib.request.Request(f"{QUERY_LAB}?{qs}", json.dumps(body).encode(), {"Content-Type": "application/json"})
         try:
             data = json.loads(urllib.request.urlopen(request, timeout=90).read())
@@ -145,7 +127,7 @@ def cmd_run(args) -> None:
             {"id": int(item["id"]), "score": round(float(item.get("score", 0) or 0), 4)} for item in data.get("results") or []
         ][: args.k]
     path = _path("runs", f"{args.name}.json")
-    json.dump({"name": args.name, "mode": args.mode, "context": args.context, "stages": stages, "params": params,
+    json.dump({"name": args.name, "mode": args.mode, "stages": stages, "params": params,
                "at": time.time(), "results": results},
               open(path, "w", encoding="utf-8"), ensure_ascii=False)
     print(f"{args.name}: {len(results)}/{len(queries)} 条，{time.perf_counter() - started:.0f}s → {path}")
@@ -288,7 +270,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("sample"); s.add_argument("--n", type=int, default=100); s.add_argument("--seed", type=int, default=20260927); s.add_argument("--force", action="store_true")
-    r = sub.add_parser("run"); r.add_argument("name"); r.add_argument("--stages"); r.add_argument("--params"); r.add_argument("--k", type=int, default=10); r.add_argument("--mode", choices=["query", "shotgun"], default="query"); r.add_argument("--context", type=int, default=8)
+    r = sub.add_parser("run"); r.add_argument("name"); r.add_argument("--stages"); r.add_argument("--params"); r.add_argument("--k", type=int, default=10); r.add_argument("--mode", choices=["query", "shotgun"], default="query")
     j = sub.add_parser("judge"); j.add_argument("runs", nargs="+"); j.add_argument("--depth", type=int, default=10)
     p = sub.add_parser("report"); p.add_argument("runs", nargs="+")
     args = parser.parse_args()

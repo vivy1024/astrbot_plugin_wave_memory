@@ -256,7 +256,6 @@ class TestChannelGateWiring:
                 visibility="group",
                 session=SessionRef("qq:group:g1", "qq", "group", "g1"),
             ),
-            recent_context=[],
             config={"channels": {"memory": {"top_k": 5}}},
         )
 

@@ -569,8 +569,7 @@ async def context_prepare():
         from services.identity_safety import prepend_identity_safety_system_prompt
         from services.injection.runtime_prepare import channel_stats, persona_lore_block
 
-    recent = body.get("recent")
-    recent_context = [str(item) for item in recent] if isinstance(recent, list) else None
+    # body["recent"]（调用方带的最近几条）不再使用：评测显示上下文会把召回带偏，旧调用方带了也忽略。
     requested_channels = body.get("channels")
     channel_filter = [str(item) for item in requested_channels] if isinstance(requested_channels, list) else None
     try:
@@ -587,7 +586,6 @@ async def context_prepare():
             sender_id=speaker_id,
             sender_name=speaker_name,
             tier=tier,
-            recent_context=recent_context,
             source=source,
             dry_run=bool(body.get("dry_run")),
             channel_filter=channel_filter,
