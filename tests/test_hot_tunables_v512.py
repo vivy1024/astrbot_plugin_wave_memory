@@ -116,3 +116,17 @@ def test_cold_recall_skips_broad_tags(hot, tmp_path):
     finally:
         ScopedKnowledgeRepo._BROAD_TAG_CACHE.clear()
         db.close()
+
+
+def test_jargon_blocklist_cache_invalidates_on_write(tmp_path):
+    from engine.database import WaveMemoryDB
+
+    db = WaveMemoryDB(str(tmp_path / "w.sqlite"), dimension=3)
+    try:
+        assert db.is_jargon_blocked("某词") is False
+        db.add_jargon_blocklist("某词", reason="test")
+        assert db.is_jargon_blocked("某词") is True
+        db.remove_jargon_blocklist("某词")
+        assert db.is_jargon_blocked("某词") is False
+    finally:
+        db.close()

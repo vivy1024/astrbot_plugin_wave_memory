@@ -872,8 +872,13 @@ class WaveMemoryDB:
         normalized = normalize_jargon_word(word)
         if not normalized:
             return False
-        rows = self.conn.execute("SELECT word FROM jargon_blocklist").fetchall()
-        return any(normalize_jargon_word(row[0]) == normalized for row in rows)
+        # 注入与入库对每个候选词都要查一次：缓存规范化后的整表，增删改时失效
+        blocked = getattr(self, "_jargon_blocked_cache", None)
+        if blocked is None:
+            rows = self.conn.execute("SELECT word FROM jargon_blocklist").fetchall()
+            blocked = frozenset(normalize_jargon_word(row[0]) for row in rows)
+            self._jargon_blocked_cache = blocked
+        return normalized in blocked
 
     def add_jargon_blocklist(
         self,
@@ -893,6 +898,7 @@ class WaveMemoryDB:
             (normalized, str(reason or "global_blocklist"), normalized_source, now),
         )
         self.conn.commit()
+        self._jargon_blocked_cache = None
         row = self.conn.execute(
             "SELECT id, word, reason, source, created_at FROM jargon_blocklist WHERE word=? AND source=?",
             (normalized, normalized_source),
@@ -927,6 +933,7 @@ class WaveMemoryDB:
             params.append(str(source))
         cursor = self.conn.execute(f"DELETE FROM jargon_blocklist WHERE {where}", params)
         self.conn.commit()
+        self._jargon_blocked_cache = None
         return max(0, int(cursor.rowcount or 0))
 
     def replace_jargon_blocklist_source(self, rows: list[dict[str, Any]], *, source: str) -> None:
@@ -946,6 +953,7 @@ class WaveMemoryDB:
                 (word, str(row.get("reason") or "global_blocklist"), normalized_source, row.get("created_at") or now),
             )
         self.conn.commit()
+        self._jargon_blocked_cache = None
 
     def replace_jargon_knowledge_table(self, table: str, rows: list[dict[str, Any]], *, unique_col: str = "word"):
         if table == "jargon_blocklist":
