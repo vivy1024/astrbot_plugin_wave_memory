@@ -183,6 +183,10 @@ CREATE INDEX IF NOT EXISTS idx_scoped_memory_tags_scope_tag
     ON scoped_memory_tags (bot_id, session_id, visibility, tag_id, memory_id);
 CREATE INDEX IF NOT EXISTS idx_scoped_memory_tags_tag
     ON scoped_memory_tags (tag_id, memory_id);
+-- 热索引投影/标签纠错按单条记忆取标签时不带 Scope（只有 memory_id），没有它要扫整张关联表
+-- （线上 131 万行，每条新消息约 185ms）；加上后 0.06ms，约 15MB。
+CREATE INDEX IF NOT EXISTS idx_scoped_memory_tags_memory
+    ON scoped_memory_tags (memory_id);
 CREATE INDEX IF NOT EXISTS idx_scoped_tag_relations_scope_source
     ON scoped_tag_relations (bot_id, session_id, visibility, source_tag_id);
 CREATE INDEX IF NOT EXISTS idx_scoped_beliefs_scope_status

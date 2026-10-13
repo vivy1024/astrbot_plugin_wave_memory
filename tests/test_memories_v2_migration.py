@@ -305,3 +305,17 @@ def test_cross_group_hot_recall_is_opt_in_and_rejects_non_group_partial_unresolv
     assert next(row for row in expanded if row["id"] == legacy)["_tag_lane"] == "legacy"
 
 
+
+
+def test_scoped_memory_tags_has_memory_id_index(tmp_path):
+    """按单条记忆取标签（热索引投影）不带 Scope，必须有以 memory_id 开头的索引。"""
+    from engine.database import WaveMemoryDB
+
+    db = WaveMemoryDB(str(tmp_path / "w.sqlite"), dimension=3)
+    try:
+        plan = db.conn.execute(
+            "EXPLAIN QUERY PLAN SELECT * FROM scoped_memory_tags WHERE memory_id = ?", (1,)
+        ).fetchall()
+        assert any("idx_scoped_memory_tags_memory" in str(row[3]) for row in plan)
+    finally:
+        db.close()
