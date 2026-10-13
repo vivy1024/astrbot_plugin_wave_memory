@@ -277,6 +277,10 @@ class QueryEngineScopeTest(unittest.TestCase):
         self.assertTrue(next(memory for memory in hot if memory["id"] == 2)["_is_cross_group"])
         self.assertEqual(db.cross_group_flags, [True, True])
         self.assertEqual([memory_ids for _scope, memory_ids in gateway.calls], [[1], [1]])
+        # 检索实验室/评测用的只读霰弹枪：结果相同，但不写访问计数
+        readonly = asyncio.run(engine.shotgun_query("关键词", scope=scope, touch=False))
+        self.assertEqual({memory["id"] for memory in readonly}, {1, 2})
+        self.assertEqual(len(gateway.calls), 2)
 
     def test_cross_group_disabled_keeps_hot_recall_exact_scope(self):
         from engine.query_engine import QueryEngine

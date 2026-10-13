@@ -1275,8 +1275,9 @@ class QueryEngine:
         top_k: int = 5,
         *,
         scope: RuntimeScope | None = None,
+        touch: bool = True,
     ) -> list[dict]:
-        """多路霰弹枪检索。"""
+        """多路霰弹枪检索。``touch=False`` 时只读（检索实验室与评测用），不写访问计数。"""
         resolved_scope = self._memory_scope(scope)
         if resolved_scope is None:
             logger.warning("[WaveMemory] Shotgun query rejected: resolved group/private RuntimeScope required")
@@ -1394,7 +1395,7 @@ class QueryEngine:
         _search_ms = (time.time() - _t_search) * 1000
         _t_touch = time.time()
 
-        if memories:
+        if memories and touch:
             touch_ids = recall_policy.touchable_ids(memories)
             if touch_ids:
                 try:

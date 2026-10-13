@@ -857,18 +857,32 @@ async def query_test():
         max_total_bytes=48_000,
     )
     debug_requested = _bool_flag(body.get("debug"), True)
+    # mode=shotgun：走线上注入用的霰弹枪检索（当前消息 + context_messages 合并检索），只读
+    shotgun = str(body.get("mode") or "").strip().lower() == "shotgun"
+    context_messages = body.get("context_messages") if isinstance(body.get("context_messages"), list) else []
+    context_messages = [str(item) for item in context_messages if str(item or "").strip()][:40]
     started = time.perf_counter()
     try:
-        results = await query_engine.query(
-            text,
-            group_id=scope.session.conversation_id,
-            top_k=top_k,
-            exclude_sources=exclude_sources,
-            source_filter=source_filter,
-            scope=scope,
-            options=options,
-            collector=collector,
-        )
+        if shotgun:
+            results = await query_engine.shotgun_query(
+                text,
+                context_messages=context_messages,
+                group_id=scope.session.conversation_id,
+                top_k=top_k,
+                scope=scope,
+                touch=False,
+            )
+        else:
+            results = await query_engine.query(
+                text,
+                group_id=scope.session.conversation_id,
+                top_k=top_k,
+                exclude_sources=exclude_sources,
+                source_filter=source_filter,
+                scope=scope,
+                options=options,
+                collector=collector,
+            )
     except Exception as exc:
         # 调试器失败不扩散到普通 WebUI 回复；返回稳定、可重试的调试 envelope。
         try:
@@ -891,6 +905,7 @@ async def query_test():
         "results": results,
         "timing": timing,
         "debug": debug,
+        "mode": "shotgun" if shotgun else "query",
         "readonly": True,
         "touch": False,
     }
