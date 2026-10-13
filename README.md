@@ -447,13 +447,12 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | cross_group_enabled | true | 开启广域跨群记忆共享 |
 | shared_memory_grants_enabled | false | 启用共享记忆只读授权 |
 
-### 存储与容量 (Storage_Settings)
+### 存储 (Storage_Settings)
+
+记忆总量不设上限（超忆症原则），新消息一律带向量入库。热向量索引的容量见 `Memory_Index_Settings.hot_max_vectors`。
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| max_memories | 100000 | 活跃记忆软上限（条） |
-| canonical_capacity_enabled | true | 启用记忆总量软上限 |
-| cold_chat_when_over_capacity | true | 超额时 chat 冷落库 |
 | facts_decay_rate | 0.005 | facts 时间衰减速率 |
 
 ### 记忆索引 (Memory_Index_Settings)
@@ -894,7 +893,6 @@ Runtime_Settings.runtime_mode = memory_only
 │   ├── bot_mood.py              # Bot 心情 v2（一个 Bot 一份心情）
 │   ├── subjective_time.py       # 主观时间
 │   ├── memory_budget_policy.py  # 内存预算档位
-│   ├── storage_capacity_policy.py  # 存储容量策略
 │   ├── data_governance_jobs.py  # 数据治理作业
 │   ├── scope_recovery.py        # Scope 恢复
 │   ├── backup_lifecycle.py      # 备份生命周期
@@ -930,7 +928,6 @@ Runtime_Settings.runtime_mode = memory_only
 | 策略 | 模块 | 关键配置 |
 |------|------|----------|
 | 内存档位 | [memory_budget_policy.py](services/memory_budget_policy.py) | `memory_profile` / `memory_budget_mb` / `baseline_reserved_mb` |
-| 存储容量软上限 | [storage_capacity_policy.py](services/storage_capacity_policy.py) | `max_memories` / `canonical_capacity_enabled` |
 | 热冷索引分层 | [memory_index_policy.py](services/memory_index_policy.py) | `hot_max_vectors` / `cold_recall_enabled` / `chat_hot_days` |
 | 标签索引容量 | [tag_index_capacity.py](services/tag_index_capacity.py) | `tag_index_max_vectors` |
 | 注入总预算 | `InjectionOrchestrator` | 超 2000ms 打慢注入告警 |

@@ -136,13 +136,6 @@ export const RISK_RULES: RiskRule[] = [
     affectsData: false,
   },
   {
-    key: 'Storage_Settings.max_memories',
-    reason: '活跃记忆的软上限，超出后按策略降级。',
-    impact: '调低会让更多普通聊天被冷落库、不再参与常规召回。',
-    restart: true,
-    affectsData: true,
-  },
-  {
     key: 'Runtime_Settings.runtime_mode',
     reason: '整机运行级别，决定哪些能力被启用。',
     impact: 'memory_only 关闭信念、事实等高级认知；compat_only 关闭原生主动注入。',

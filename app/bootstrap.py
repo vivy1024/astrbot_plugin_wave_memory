@@ -314,12 +314,7 @@ class BootstrapMixin:
             f"[WaveMemory] 运行模式: {self.runtime_mode.mode} ({self.runtime_mode.label})；"
             f"禁用高级能力: {disabled_caps}"
         )
-        # Storage_Settings.max_memories is the canonical SQLite soft cap (new writes).
-        # Hot HNSW capacity remains owned by Memory_Index_Settings.hot_max_vectors.
-        from ..services.storage_capacity_policy import StorageCapacityPolicy
-
-        self.storage_capacity_policy = StorageCapacityPolicy.from_settings(storage_cfg)
-        self.legacy_max_memories = int(self.storage_capacity_policy.max_active_memories)
+        # 记忆总量不设上限（超忆症原则）；热 HNSW 容量由 Memory_Index_Settings.hot_max_vectors 决定。
         self.max_memories = self.memory_index_policy.max_vectors
 
         # WebUI 配置
@@ -688,7 +683,6 @@ class BootstrapMixin:
             quality_gate=self.quality_gate,
             write_gateway=self.write_gateway,
             on_vector_backfill_requested=self._on_vector_backfill_requested,
-            storage_capacity_policy=self.storage_capacity_policy,
         )
 
         # LivingMemory-compatible surface（兼容已有记忆生态，不伪装插件名）

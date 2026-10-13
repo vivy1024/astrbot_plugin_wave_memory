@@ -237,27 +237,6 @@
     "hint": "数据库能保存多少记忆，以及是否给总量设软上限",
     "type": "object",
     "items": {
-      "max_memories": {
-        "description": "活跃记忆软上限（条）",
-        "hint": "统计 quarantine/noise 以外的活跃行。超过后新 chat 默认只写文本冷层，不再追加 embedding 字节。不自动删除旧数据。",
-        "type": "int",
-        "default": 100000,
-        "restart_required": true
-      },
-      "canonical_capacity_enabled": {
-        "description": "启用记忆总量软上限",
-        "hint": "关闭后新记忆会一直尝试带向量入库，只受热索引容量约束。显式关闭不会被默认值覆盖。",
-        "type": "bool",
-        "default": true,
-        "restart_required": true
-      },
-      "cold_chat_when_over_capacity": {
-        "description": "超额时 chat 冷落库",
-        "hint": "开启后，库容量已满时普通 chat 写入 vector=NULL，文本与元数据仍保留。core/book_lore 等耐用源不受影响。",
-        "type": "bool",
-        "default": true,
-        "restart_required": true
-      },
       "facts_decay_rate": {
         "description": "facts 时间衰减速率",
         "hint": "旧 facts 召回权重随时间衰减的速率（兼容字段）。",

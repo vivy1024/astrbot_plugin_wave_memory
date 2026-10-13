@@ -164,8 +164,8 @@ describe('配置文案不暴露实现术语', () => {
     // 信念反思 5 项（belief_reflection_enabled / _every_n_days、belief_form_min_days、belief_decay_days、belief_max_active）；
     // 角色经历的模型分工 1 项（Model_Routing_Settings.character_experience）；
     // 游戏经验 5 项（Learning_Settings.game_lesson_enabled / _delay_seconds / _daily_limit / _max_active，Model_Routing_Settings.game_lesson）。
-    // v5.1.2 删除做梦（6 项）与噪声删除（enabled、noise_ttl_days）：184 → 176
-    expect(total).toBe(176)
+    // v5.1.2 删除做梦（6 项）、噪声删除（2 项）、记忆总量软上限（3 项）：184 → 173
+    expect(total).toBe(173)
     expect(noType).toEqual([])
   })
 

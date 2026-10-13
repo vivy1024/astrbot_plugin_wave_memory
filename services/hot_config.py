@@ -119,8 +119,6 @@ class HotConfig:
              "description": "打标签判重时比对的目录邻居条数（0 = 不比对）"},
             {"key": "tags.admission_cache_seconds", "type": "int", "min": 0, "max": 1800, "default": 60,
              "description": "目录邻居缓存秒数（0 = 不缓存）"},
-            {"key": "storage.active_count_cache_seconds", "type": "int", "min": 60, "max": 86400, "default": 1800,
-             "description": "活跃记忆计数缓存秒数：数一次要读约 1.5GB，越长越省磁盘"},
             {"key": "jargon.person_alias_cache_seconds", "type": "int", "min": 0, "max": 3600, "default": 300,
              "description": "群友名单缓存秒数（黑话判重不再每次扫全群）"},
             {"key": "people.nickname_cache_seconds", "type": "int", "min": 0, "max": 3600, "default": 300,

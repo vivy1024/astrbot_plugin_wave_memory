@@ -10,11 +10,13 @@
 4. **会话最近消息作检索上下文**（`_get_recent_messages`、shotgun 的上下文分段检索、`ContextSegmenter`、SafetyChannel 的近期重复过滤、Runtime `/context/prepare` 的 `recent` 字段）。100 条真实查询评测：shotgun 带最近 8 条 nDCG@5 0.229、不带 0.390、普通检索 0.356（带上下文相对普通检索 −0.127，95% 区间 [−0.193, −0.061]）——上下文把召回带偏；AstrBot 本身已把群聊上下文给模型。shotgun 保留，只用当前这句。Runtime 调用方带 `recent` 会被忽略。
 5. **注入死代码**：`realtime_ctx`（每次注入查「羽书最近一条提到对方的回复」，结果无人读取，约 200ms）、每小时 @ 计数（唯一读者是前者，且永不清理）、未被调用的影子注入链路。
 
+3b. **记忆总量软上限**（`Storage_Settings.max_memories`、`canonical_capacity_enabled`、`cold_chat_when_over_capacity`，热参数 `storage.active_count_cache_seconds`）。活跃记忆超过上限（默认 10 万，线上 38 万早已超额）后，新聊天的向量算好了却被丢掉、以无向量入库，向量检索搜不到；每次重启时启动回填再重算一遍。结果是两次重启之间的新聊天羽书想不起来、向量白算两遍，与超忆症原则相反。现在一律带向量入库；每分钟一次、读约 1.5GB 的活跃记忆计数也随之删除。
+
 ### 性能
 
 - 会话最近消息按 `timestamp, id` 排序以吻合 `idx_memories_v2_scope`（线上 230ms → 0ms）；群氛围查询补全索引前缀（31ms → 0.1ms）。
 - 好感生命周期 tick、TagWorker 取批次挪到工作线程，不再阻塞事件循环。
-- 打标签的目录邻居查询（写锁事务内，占写线程约四成）按 tag_type 缓存；按昵称找人结果缓存（约 360ms/次）；活跃记忆计数（每次约 10 秒、读约 1.5GB）缓存拉长到默认 30 分钟。
+- 打标签的目录邻居查询（写锁事务内，占写线程约四成）按 tag_type 缓存；按昵称找人结果缓存（约 360ms/次）；活跃记忆计数随软上限一起删除。
 - 管理台：`/api/system`、`/api/memories/stats`、`/api/tags/quality` 的重统计挪出 WebUI 事件循环并缓存，删掉被覆盖率报告覆盖的白算全表扫描；记忆列表条件改回 `group_id=?` 走索引，慢计数不再挡住列表（线上记忆页 33 秒 → 0.06 秒）。
 
 - 新增索引 `idx_memories_bot_sender_name(bot_id, sender_name)`：按昵称找人从读 690MB 降到 0（约 11MB）；把线上早年手工建的 `idx_memories_sender` 补进建表迁移。启动时自动创建。
@@ -26,7 +28,7 @@
 
 ### 新增热参数（9876 热参数页，立即生效）
 
-`injection.recent_context_messages`、`tags.admission_neighbor_limit`、`tags.admission_cache_seconds`、`storage.active_count_cache_seconds`、`jargon.person_alias_cache_seconds`、`people.nickname_cache_seconds`、`webui.stats_cache_seconds`、`webui.vector_count_cache_seconds`、`webui.coverage_cache_seconds`、`webui.legacy_quality_cache_seconds`、`webui.list_count_cache_seconds`、`webui.list_count_wait_seconds`。均有上下限，原来写死在代码里的数值即默认值。
+`injection.recent_context_messages`、`tags.admission_neighbor_limit`、`tags.admission_cache_seconds`、`jargon.person_alias_cache_seconds`、`people.nickname_cache_seconds`、`webui.stats_cache_seconds`、`webui.vector_count_cache_seconds`、`webui.coverage_cache_seconds`、`webui.legacy_quality_cache_seconds`、`webui.list_count_cache_seconds`、`webui.list_count_wait_seconds`。均有上下限，原来写死在代码里的数值即默认值。
 
 ### 升级注意
 

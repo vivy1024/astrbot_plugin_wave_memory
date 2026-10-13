@@ -216,16 +216,8 @@ async def test_runtime_batch_does_not_attach_subject_to_game_event():
 def test_game_events_are_recallable_durable_and_labelled():
     from engine.query_engine import QueryEngine
     from services.injection.channels.memory_recall import _DEFAULT_SOURCE_FILTER
-    from services.storage_capacity_policy import StorageCapacityPolicy, decide_storage_admission
 
     assert "game_event" in _DEFAULT_SOURCE_FILTER
-    decision = decide_storage_admission(
-        source="game_event",
-        active_count=100,
-        policy=StorageCapacityPolicy(max_active_memories=100, cold_chat_when_over_capacity=True, enabled=True),
-        has_vector=True,
-    )
-    assert decision.keep_vector is True
     tag = QueryEngine._attribution_tag(
         {"sender_id": "bot", "source": "game_event", "content": "[我的世界] 驯服了狼"},
         speaker_id="10000001",

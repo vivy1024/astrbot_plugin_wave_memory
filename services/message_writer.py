@@ -18,27 +18,16 @@ from ..engine.database import WaveMemoryDB
 from ..engine.vector_index import VectorIndex
 from ..engine.embedding import EmbeddingService
 from .identity_safety import is_identity_contamination
-from .hot_config import hot_value as _hot_value
 try:
     from ..domain.display_name import sanitize_display_name
     from ..domain.quality import QualityDecision, QualityProposal
     from ..domain.scope import RuntimeScope
     from .quality_gate import QualityGate, decode_quality_evidence
-    from .storage_capacity_policy import (
-        StorageCapacityPolicy,
-        count_active_memories,
-        decide_storage_admission,
-    )
 except ImportError:  # 兼容独立测试/外部调用 services
     from domain.display_name import sanitize_display_name
     from domain.quality import QualityDecision, QualityProposal
     from domain.scope import RuntimeScope
     from services.quality_gate import QualityGate, decode_quality_evidence
-    from services.storage_capacity_policy import (
-        StorageCapacityPolicy,
-        count_active_memories,
-        decide_storage_admission,
-    )
 
 
 # noise 判定：这些消息不入向量索引
@@ -223,7 +212,6 @@ class MessageWriter:
         embedding_retry_attempts: int = 2,
         embedding_retry_backoff_seconds: float = 0.5,
         on_vector_backfill_requested: Any | None = None,
-        storage_capacity_policy: StorageCapacityPolicy | None = None,
     ):
         self.db = db
         self.memory_index = memory_index
@@ -237,7 +225,6 @@ class MessageWriter:
         self.write_gateway = write_gateway
         self.embedding_timeout = max(float(embedding_timeout), 0.1)
         self.on_vector_backfill_requested = on_vector_backfill_requested
-        self.storage_capacity_policy = storage_capacity_policy or StorageCapacityPolicy()
         try:
             self.embedding_retry_attempts = min(max(int(embedding_retry_attempts), 1), 5)
         except (TypeError, ValueError):
@@ -257,9 +244,6 @@ class MessageWriter:
         self._write_count = 0
         self._save_threshold = 100
 
-        # 活跃记忆计数缓存：全表 COUNT 一次要几秒，本来每一批消息都在事件循环上跑一次
-        self._active_count_cache: tuple[float, int] = (0.0, 0)
-
         # 统计
         self._stats = {
             "core": 0,
@@ -271,8 +255,6 @@ class MessageWriter:
             "embedding_retries": 0,
             "embedding_recovered_after_retry": 0,
             "embedding_terminal_timeouts": 0,
-            "cold_chat_writes": 0,
-            "capacity_over_writes": 0,
             "last_success_at": None,
         }
 
@@ -507,22 +489,6 @@ class MessageWriter:
             return list(vectors or [])
         return None  # defensive: retry attempts are normalized to at least one
 
-    async def _current_active_count(self) -> int:
-        # 计数要读 vector 之后的列（约 1.5GB），只用于软容量判定，近似值即可；
-        # 缓存秒数为热参数 storage.active_count_cache_seconds（默认 30 分钟）。
-        now = time.monotonic()
-        ts, value = self._active_count_cache
-        ttl = float(_hot_value("storage.active_count_cache_seconds", 1800))
-        if ts and now - ts < ttl:
-            return value
-        try:
-            # count_active_memories 经 ConnectionManager 走当前（工作）线程自己的读连接
-            value = await asyncio.to_thread(count_active_memories, self.db.conn)
-            self._active_count_cache = (now, int(value))
-        except Exception:
-            pass  # 算不出来就用上一次的缓存值
-        return self._active_count_cache[1]
-
     async def _process_batch(self, batch: list[dict]):
         """处理一批消息：分类 + embedding + 存储。"""
         batch = [self._normalize_scope_payload(item) for item in batch]
@@ -597,32 +563,14 @@ class MessageWriter:
         else:
             vectors = []
 
-        # Soft canonical capacity: over-cap ordinary chat may keep text only.
-        # 计数在工作线程并缓存 60 秒：全表 COUNT 几秒一次，不能再压在事件循环上
-        active_count = await self._current_active_count()
-
-        # 写入有向量的消息（超额 chat 可降为冷落库）
+        # 写入有向量的消息。记忆总量不设上限（超忆症原则）：算好的向量一律保留。
+        # 曾有「活跃记忆超过 max_memories（10 万）就把 chat 存成无向量」的软上限，线上 38 万条
+        # 早已超额，于是两次重启之间的新聊天都搜不到、重启时再补算一遍，已删除。
         for item, vec in zip(need_embed, vectors):
             try:
-                decision = decide_storage_admission(
-                    source=str(item.get("source") or "chat"),
-                    active_count=active_count,
-                    policy=self.storage_capacity_policy,
-                    has_vector=vec is not None,
-                )
-                write_vector = vec if decision.keep_vector else None
-                if decision.over_capacity:
-                    self._stats["capacity_over_writes"] = (
-                        self._stats.get("capacity_over_writes", 0) + 1
-                    )
-                if decision.demoted_to_cold:
-                    self._stats["cold_chat_writes"] = self._stats.get("cold_chat_writes", 0) + 1
-                    provenance_extra = item.setdefault("metadata", {})
-                    if isinstance(provenance_extra, dict):
-                        provenance_extra["storage_admission"] = decision.reason
                 memory_id = await self._persist_memory(
                     item,
-                    vector=write_vector,
+                    vector=vec,
                     importance=MemoryDedupPolicy._importance(item),
                     source=item["source"],
                 )
@@ -631,8 +579,6 @@ class MessageWriter:
                 # The committed memory.created event drives HNSW projection.
                 self._write_count += 1
                 self._stats[item["source"]] = self._stats.get(item["source"], 0) + 1
-                # Approximate subsequent inserts in this batch without re-counting.
-                active_count += 1
 
             except Exception as e:
                 logger.debug(f"[WaveMemory] Single write failed: {e}")
