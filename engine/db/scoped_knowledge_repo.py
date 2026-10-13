@@ -747,6 +747,42 @@ class ScopedKnowledgeRepo:
         ).fetchall()
         return [{"memory_id": r[0], "tag_id": r[1], "name": r[2], "tag_type": r[3], "relevance": r[4]} for r in rows]
 
+    # 「吐槽」「调侃」「群友互动」这类标签一个就关联两万多条记忆（中位数只有 1 条），
+    # 对冷召回几乎没有区分度，却会让展开一次取回十几万行（线上 3 秒）。关联数超过
+    # 热参数 query.cold_tag_max_links 的标签不参与冷召回展开；计数按标签缓存。
+    _BROAD_TAG_CACHE: dict[int, tuple[float, int]] = {}
+
+    def _drop_broad_tags(self, ids: list[int]) -> list[int]:
+        try:
+            from ...services.hot_config import hot_value
+        except ImportError:  # pragma: no cover - 独立测试
+            try:
+                from services.hot_config import hot_value
+            except ImportError:
+                return ids
+        threshold = int(hot_value("query.cold_tag_max_links", 2000))
+        if threshold <= 0:
+            return ids
+        ttl = float(hot_value("query.cold_tag_count_cache_seconds", 3600))
+        now = time.monotonic()
+        cache = self._BROAD_TAG_CACHE
+        missing = [tag_id for tag_id in ids if tag_id not in cache or now - cache[tag_id][0] >= ttl]
+        if missing:
+            counts = {tag_id: 0 for tag_id in missing}
+            for start in range(0, len(missing), 500):
+                chunk = missing[start:start + 500]
+                marks = ",".join("?" for _ in chunk)
+                for tag_id, count in self.cm.execute_read(
+                    f"SELECT tag_id, COUNT(*) FROM scoped_memory_tags WHERE tag_id IN ({marks}) GROUP BY tag_id",
+                    chunk,
+                ).fetchall():
+                    counts[int(tag_id)] = int(count)
+            if len(cache) > 50_000:
+                cache.clear()
+            for tag_id, count in counts.items():
+                cache[tag_id] = (now, count)
+        return [tag_id for tag_id in ids if cache.get(tag_id, (0.0, 0))[1] <= threshold]
+
     def list_scoped_cold_memory_candidates(
         self,
         scope: RuntimeScope,
@@ -772,6 +808,9 @@ class ScopedKnowledgeRepo:
             bounded_limit = min(512, max(1, int(limit)))
         except (TypeError, ValueError) as exc:
             raise ValueError("limit must be a positive integer") from exc
+        ids = self._drop_broad_tags(ids)
+        if not ids:
+            return []
 
         # `effective_tag_rows` deliberately falls back to the canonical automatic
         # baseline when the materialized projection is not backfilled yet. Cross

@@ -86,3 +86,33 @@ def test_removed_dead_features_are_gone():
                  "_get_recent_messages", "recent_context"):
         assert dead not in src
     assert "PatternAggregator" not in pathlib.Path("services/lifecycle.py").read_text(encoding="utf-8")
+
+
+def test_cold_recall_skips_broad_tags(hot, tmp_path):
+    """关联数超过 query.cold_tag_max_links 的万能标签不参与冷召回展开；0 = 不过滤。"""
+    from engine.database import WaveMemoryDB
+    from engine.db.scoped_knowledge_repo import ScopedKnowledgeRepo
+
+    db = WaveMemoryDB(str(tmp_path / "w.sqlite"), dimension=3)
+    try:
+        conn = db.conn
+        now = 1.0
+        for tag_id, links in ((1, 5), (2, 1)):
+            conn.execute(
+                "INSERT INTO scoped_tags (id, bot_id, session_id, visibility, name, created_at, updated_at)"
+                " VALUES (?, 'b', 'qq:group:g', 'group', ?, ?, ?)", (tag_id, f"t{tag_id}", now, now))
+            for mid in range(tag_id * 100, tag_id * 100 + links):
+                conn.execute(
+                    "INSERT INTO scoped_memory_tags (bot_id, session_id, visibility, memory_id, tag_id, created_at)"
+                    " VALUES ('b', 'qq:group:g', 'group', ?, ?, ?)", (mid, tag_id, now))
+        conn.commit()
+        repo = db.scoped_knowledge
+        ScopedKnowledgeRepo._BROAD_TAG_CACHE.clear()
+        hot.update({"query.cold_tag_max_links": 3})
+        assert repo._drop_broad_tags([1, 2]) == [2]
+        ScopedKnowledgeRepo._BROAD_TAG_CACHE.clear()
+        hot.update({"query.cold_tag_max_links": 0})
+        assert repo._drop_broad_tags([1, 2]) == [1, 2]
+    finally:
+        ScopedKnowledgeRepo._BROAD_TAG_CACHE.clear()
+        db.close()
