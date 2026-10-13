@@ -64,7 +64,7 @@ def test_new_legacy_table_receives_all_v2_columns_and_scope_index(manager):
 
     assert V2_COLUMNS <= _columns(manager)
     indexes = {row[1] for row in manager.execute_read("PRAGMA index_list(memories)").fetchall()}
-    assert "idx_memories_v2_scope" in indexes
+    assert {"idx_memories_v2_scope", "idx_memories_sender", "idx_memories_bot_sender_name"} <= indexes
     assert manager.execute_read("PRAGMA foreign_keys").fetchone()[0] == 1
 
 

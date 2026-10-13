@@ -17,6 +17,9 @@
 - 打标签的目录邻居查询（写锁事务内，占写线程约四成）按 tag_type 缓存；按昵称找人结果缓存（约 360ms/次）；活跃记忆计数（每次约 10 秒、读约 1.5GB）缓存拉长到默认 30 分钟。
 - 管理台：`/api/system`、`/api/memories/stats`、`/api/tags/quality` 的重统计挪出 WebUI 事件循环并缓存，删掉被覆盖率报告覆盖的白算全表扫描；记忆列表条件改回 `group_id=?` 走索引，慢计数不再挡住列表（线上记忆页 33 秒 → 0.06 秒）。
 
+- 新增索引 `idx_memories_bot_sender_name(bot_id, sender_name)`：按昵称找人从读 690MB 降到 0（约 11MB）；把线上早年手工建的 `idx_memories_sender` 补进建表迁移。启动时自动创建。
+- 新增维护脚本 `scripts/d1_reorder_memories.py`：把 `memories.vector` 挪到最后一列（需停机），实测过滤类全表查询读盘量降到 1/3.5～1/4.6。
+
 ### 配置
 
 - `backup_max_count` 可设为 0，关闭插件自己的整库备份（库与备份同盘、备份另有去处时用）。默认仍为 1。

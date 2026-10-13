@@ -28,6 +28,11 @@ _SCOPED_INDEX = """
     CREATE INDEX IF NOT EXISTS idx_memories_v2_scope
     ON memories(bot_id, session_id, visibility, resolution_state, quarantine, timestamp)
 """
+# 按发言人取最近一条/最近名字（Bot 主页、人物解析、好感 flush）；线上库早年手工建过，代码里补上。
+_SENDER_INDEX = "CREATE INDEX IF NOT EXISTS idx_memories_sender ON memories(sender_id)"
+# 按昵称找人（人物解析工具、事后记账）：没有它要按 bot_id 回表扫这个 Bot 的全部行，
+# 线上实测读 690MB；加上后 0 读盘，索引约 11MB。
+_SENDER_NAME_INDEX = "CREATE INDEX IF NOT EXISTS idx_memories_bot_sender_name ON memories(bot_id, sender_name)"
 
 
 def ensure_memories_v2_schema(cm: ConnectionManager) -> None:
@@ -47,6 +52,8 @@ def ensure_memories_v2_schema(cm: ConnectionManager) -> None:
             if name not in columns:
                 tx.execute(f"ALTER TABLE memories ADD COLUMN {name} {definition}")
         tx.execute(_SCOPED_INDEX)
+        tx.execute(_SENDER_INDEX)
+        tx.execute(_SENDER_NAME_INDEX)
 
 
 __all__ = ["MEMORIES_V2_VERSION", "ensure_memories_v2_schema"]
