@@ -173,6 +173,11 @@ class MaintenanceMixin:
         )
 
         vectors = await self.writer._embed_with_limited_retry([item[1] for item in selected]) if selected else []
+        # 向量服务没就绪（刚重启、provider 还没加载）时整批返回 None 而不报错；这和超时一样是
+        # 暂时失败，必须原游标重试，不能把整批当「向量不合格」跳过再推进游标——那样这批就永远
+        # 补不上了（10-13 重启后第一批 16 条就是这样漏掉的）。
+        if vectors is not None and selected and all(vector is None for vector in vectors):
+            vectors = None
         if vectors is None:
             # A terminal writer retry records a temporary failure. Requeue this
             # exact cursor only a small, explicit number of times; vector=NULL
@@ -230,8 +235,8 @@ class MaintenanceMixin:
             except (TypeError, ValueError) as exc:
                 skipped_vector += 1
                 logger.warning(
-                    "[WaveMemory] vector backfill skipped memory_id=%s bot=%s: %s: %s",
-                    memory_id, scope.bot_id, type(exc).__name__, exc,
+                    "[WaveMemory] vector backfill skipped memory_id=%s bot=%s: %s: %s (vector=%s)",
+                    memory_id, scope.bot_id, type(exc).__name__, exc, type(vector).__name__,
                 )
             except Exception:
                 write_failures += 1
