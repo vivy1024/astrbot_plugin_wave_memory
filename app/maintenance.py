@@ -227,8 +227,12 @@ class MaintenanceMixin:
                     idempotency_hint=f"{memory_id}:{hashlib.sha256(normalized.tobytes()).hexdigest()}",
                 )
                 updated += int(changed)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as exc:
                 skipped_vector += 1
+                logger.warning(
+                    "[WaveMemory] vector backfill skipped memory_id=%s bot=%s: %s: %s",
+                    memory_id, scope.bot_id, type(exc).__name__, exc,
+                )
             except Exception:
                 write_failures += 1
                 logger.warning(
