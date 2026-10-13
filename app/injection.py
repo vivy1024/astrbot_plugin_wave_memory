@@ -356,6 +356,20 @@ class InjectionMixin:
         """WebUI 热应用通道配置时更新运行时注入编排器配置。"""
         self.injection_channel_config = config
 
+    def _effective_injection_config(self, scope: RuntimeScope | None):
+        """按 exact RuntimeScope 解析请求级配置；非法层级 fail closed。"""
+        if not isinstance(scope, RuntimeScope):
+            return None
+        from ..services.config.channel_config import build_channel_config_from_plugin_config
+        profile = self.bot_registry.get(scope.bot_id) if getattr(self, "bot_registry", None) else None
+        config = build_channel_config_from_plugin_config(
+            self.config,
+            scope=scope,
+            bot_channels=getattr(profile, "channels", None) or None,
+        )
+        registry = getattr(self, "channel_registry", None)
+        return registry.with_external_defaults(config) if registry is not None else config
+
     def _build_shadow_context_config(self, *, channel_config, exclude_sources, recent_context: list[str]) -> dict:
         from ..services.impression_timeline import normalize_timeline_half_life
 
