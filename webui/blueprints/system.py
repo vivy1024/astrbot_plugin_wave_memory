@@ -296,14 +296,58 @@ def _registry_bots(container: Any) -> list[dict[str, Any]]:
     ]
 
 
+def _system_db_stats_sync(c, *, need_tag_counts: bool) -> dict:
+    """/api/system 需要的库内统计；在工作线程里跑（读连接按线程隔离）。"""
+    conn = c.db.conn
+    stats: dict[str, Any] = {
+        "total_mem": c.db.get_memory_count(),
+        "total_tags": c.db.get_tag_count(),
+        "structured_tags": conn.execute(
+            "SELECT COUNT(*) FROM tags WHERE tag_type != 'keyword'"
+        ).fetchone()[0],
+        "type_dist": conn.execute(
+            "SELECT tag_type, COUNT(*) FROM tags GROUP BY tag_type ORDER BY COUNT(*) DESC"
+        ).fetchall(),
+        "facts_count": conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0],
+        "active_moods": conn.execute(
+            "SELECT group_id, mood_type, intensity, description FROM bot_mood WHERE is_active = 1 AND typeof(start_time) IN ('real', 'integer')"
+        ).fetchall(),
+        "person_count": conn.execute("SELECT COUNT(*) FROM person_registry").fetchone()[0],
+        "user_profiles_count": conn.execute("SELECT COUNT(*) FROM user_profiles").fetchone()[0],
+        "active_users": conn.execute(
+            "SELECT COUNT(*) FROM user_profiles WHERE interaction_count > 0"
+        ).fetchone()[0],
+        "top_users": conn.execute(
+            "SELECT nickname, interaction_count FROM user_profiles WHERE interaction_count > 0 ORDER BY interaction_count DESC LIMIT 5"
+        ).fetchall(),
+        "pending_fewshot": 0,
+    }
+    try:
+        stats["pending_fewshot"] = conn.execute(
+            "SELECT COUNT(*) FROM few_shot_examples WHERE status = 'pending'"
+        ).fetchone()[0]
+    except Exception:
+        pass
+    if need_tag_counts:
+        # 只在统一覆盖率报告不可用时才走这两条全表扫描（线上各约 10 秒）
+        stats["tagged_memories"] = count_existing_tagged_memories(conn)
+        stats["untagged_count"] = count_untagged_memories(conn)
+    return stats
+
+
+# 只给面板看的大数：带向量的记忆数要读 vector 列判空，线上约 3 秒，缓存 10 分钟。
+_VECTOR_COUNT_TTL = 600.0
+# 其余小表计数很便宜，但一并放进线程，并短缓存，免得面板轮询反复打库。
+_SYSTEM_STATS_TTL = 15.0
+
+
 @system_bp.route("/system", methods=["GET"])
 @require_auth
 async def system_status():
     """系统健康状态。"""
+    from ..stat_cache import cached_stat
+
     c = get_container()
-    total_mem = c.db.get_memory_count()
-    with_vec = c.db.get_memory_count_with_vector()
-    total_tags = c.db.get_tag_count()
 
     # DB 体积监控 (v1.1.0 #4.4)
     db_size_mb = 0.0
@@ -318,53 +362,39 @@ async def system_status():
     except Exception:
         pass
 
-    tagged_memories = count_existing_tagged_memories(c.db.conn)
-
-    structured_tags = c.db.conn.execute(
-        "SELECT COUNT(*) FROM tags WHERE tag_type != 'keyword'"
-    ).fetchone()[0]
-
-    type_dist = c.db.conn.execute(
-        "SELECT tag_type, COUNT(*) FROM tags GROUP BY tag_type ORDER BY COUNT(*) DESC"
-    ).fetchall()
-
-    cooc_nodes = c.cooccurrence.node_count if c.cooccurrence else 0
-    cooc_edges = c.cooccurrence.edge_count if c.cooccurrence else 0
-
-    facts_count = c.db.conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
-    active_moods = c.db.conn.execute(
-        "SELECT group_id, mood_type, intensity, description FROM bot_mood WHERE is_active = 1 AND typeof(start_time) IN ('real', 'integer')"
-    ).fetchall()
-    person_count = c.db.conn.execute("SELECT COUNT(*) FROM person_registry").fetchone()[0]
-    user_profiles_count = c.db.conn.execute("SELECT COUNT(*) FROM user_profiles").fetchone()[0]
-
-    # v1.5.0: 认知体系统计
-    active_users = c.db.conn.execute(
-        "SELECT COUNT(*) FROM user_profiles WHERE interaction_count > 0"
-    ).fetchone()[0]
-    top_users = c.db.conn.execute(
-        "SELECT nickname, interaction_count FROM user_profiles WHERE interaction_count > 0 ORDER BY interaction_count DESC LIMIT 5"
-    ).fetchall()
-
-    # 与 /api/options/scopes 共用同一真实 registry 来源。
-    registry_bots = _registry_bots(c)
-
-    untagged_count = count_untagged_memories(c.db.conn)
     # 标签覆盖率与待办以统一的覆盖率报告为准（只算活跃记忆，正式 + 旧标签都算，区分按规则不提取）
     tag_coverage = None
     try:
         from .tags import cached_tag_coverage
 
         tag_coverage = await cached_tag_coverage(c)
-        tagged_memories = tag_coverage["counts"]["tagged"]
-        untagged_count = tag_coverage["backlog"]
     except Exception:
         tag_coverage = None
-    pending_fewshot = 0
-    try:
-        pending_fewshot = c.db.conn.execute("SELECT COUNT(*) FROM few_shot_examples WHERE status = 'pending'").fetchone()[0]
-    except Exception:
-        pass
+
+    stats = await cached_stat(
+        f"system:{id(c)}:{tag_coverage is None}",
+        _SYSTEM_STATS_TTL,
+        lambda: _system_db_stats_sync(c, need_tag_counts=tag_coverage is None),
+    )
+    with_vec = await cached_stat(
+        f"system:{id(c)}:with_vector",
+        _VECTOR_COUNT_TTL,
+        c.db.get_memory_count_with_vector,
+    )
+    total_mem = stats["total_mem"]
+    if tag_coverage is not None:
+        tagged_memories = tag_coverage["counts"]["tagged"]
+        untagged_count = tag_coverage["backlog"]
+    else:
+        tagged_memories = stats["tagged_memories"]
+        untagged_count = stats["untagged_count"]
+
+    cooc_nodes = c.cooccurrence.node_count if c.cooccurrence else 0
+    cooc_edges = c.cooccurrence.edge_count if c.cooccurrence else 0
+
+    # 与 /api/options/scopes 共用同一真实 registry 来源。
+    registry_bots = _registry_bots(c)
+
     has_errors = False
     try:
         from ...utils.health_registry import get_recent_errors
@@ -378,7 +408,7 @@ async def system_status():
     return jsonify({
         "plugin_version": _plugin_version(),
         "memories": {"total": total_mem, "with_vector": with_vec, "with_tags": tagged_memories},
-        "tags": {"total": total_tags, "structured": structured_tags, "type_distribution": {r[0]: r[1] for r in type_dist}},
+        "tags": {"total": stats["total_tags"], "structured": stats["structured_tags"], "type_distribution": {r[0]: r[1] for r in stats["type_dist"]}},
         "coverage": {
             "vector_pct": round(with_vec / total_mem * 100, 1) if total_mem > 0 else 0,
             "tag_pct": round(tag_coverage["coverage"] * 100, 1) if tag_coverage else (
@@ -397,16 +427,16 @@ async def system_status():
         "services_health": services_health,
         "services_summary": services_summary,
         "lifecycle": {
-            "facts": facts_count,
-            "persons": person_count,
-            "user_profiles": user_profiles_count,
-            "active_users": active_users,
-            "top_users": [{"name": r[0] or "?", "interactions": r[1]} for r in top_users],
-            "active_moods": [{"group_id": m[0], "type": m[1], "intensity": m[2], "desc": m[3]} for m in active_moods],
+            "facts": stats["facts_count"],
+            "persons": stats["person_count"],
+            "user_profiles": stats["user_profiles_count"],
+            "active_users": stats["active_users"],
+            "top_users": [{"name": r[0] or "?", "interactions": r[1]} for r in stats["top_users"]],
+            "active_moods": [{"group_id": m[0], "type": m[1], "intensity": m[2], "desc": m[3]} for m in stats["active_moods"]],
         },
         "todos": {
             "untagged_count": untagged_count,
-            "pending_fewshot": pending_fewshot,
+            "pending_fewshot": stats["pending_fewshot"],
             "has_errors": has_errors,
         },
         "registry_bots": registry_bots

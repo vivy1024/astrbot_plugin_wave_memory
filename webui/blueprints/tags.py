@@ -504,11 +504,39 @@ def build_tag_quality_payload(conn) -> dict:
 async def tag_quality():
     """Tag 质量概览：覆盖率、索引代次、提取能力与 RAG 降级状态。"""
     c = get_container()
-    payload = build_tag_quality_payload(c.db.conn)
-    # 覆盖率口径以统一的覆盖率报告为准（正式 + 旧标签、只算活跃记忆、区分按规则不提取）
+    # 覆盖率口径以统一的覆盖率报告为准（正式 + 旧标签、只算活跃记忆、区分按规则不提取）。
+    # 报告可用时只补两项便宜的小表计数；旧口径的 6 条全表扫描（线上约 12 秒，而且结果
+    # 会被报告整体覆盖）只在报告失败时才在工作线程里跑。
     try:
         report = await cached_tag_coverage(c)
+    except Exception as exc:
+        report = None
+        report_error = str(exc)
+    if report is None:
+        from ..stat_cache import cached_stat
+
+        payload = await cached_stat(
+            f"tags:{id(c)}:legacy_quality", 300.0, lambda: build_tag_quality_payload(c.db.conn)
+        )
+        payload = {**payload, "coverage_report_error": report_error}
+    else:
+        from ..stat_cache import cached_stat
+
+        conn = c.db.conn
         counts = report["counts"]
+        payload = {
+            "total_tags": conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0],
+            "orphan_memory_tag_refs": await cached_stat(
+                f"tags:{id(c)}:orphan_refs",
+                300.0,
+                lambda: conn.execute(
+                    """SELECT COUNT(DISTINCT mt.memory_id)
+                       FROM memory_tags mt
+                       LEFT JOIN memories m ON m.id = mt.memory_id
+                       WHERE m.id IS NULL"""
+                ).fetchone()[0],
+            ),
+        }
         payload.update({
             "total_memories": report["active_memories"],
             "tagged_memories": counts["tagged"],
@@ -518,15 +546,13 @@ async def tag_quality():
             "coverage": report["coverage"],
             "effective_coverage": report["effective_coverage"],
         })
-    except Exception as exc:  # 覆盖率报告失败时保留旧口径
-        payload["coverage_report_error"] = str(exc)
     payload["runtime"] = build_tag_runtime_payload(c)
     return jsonify(payload)
 
 
 # ---------------------------------------------------------------- 标签覆盖面板
 
-_COVERAGE_CACHE_SECONDS = 60.0
+_COVERAGE_CACHE_SECONDS = 300.0
 _coverage_lock = asyncio.Lock()
 
 
@@ -549,7 +575,7 @@ def _coverage_report_sync(db_path: str, worker_status: dict | None) -> dict:
 
 
 async def cached_tag_coverage(c, *, refresh: bool = False) -> dict:
-    """统一的标签覆盖率报告（线上约 1 秒，缓存 60 秒）。首页、维护页、标签页共用。"""
+    """统一的标签覆盖率报告（线上冷读约 12 秒，在工作线程里算，缓存 5 分钟）。首页、维护页、标签页共用。"""
     cached = getattr(c, "_tag_coverage_cache", None)
     now = time.time()
     if not refresh and cached and now - cached[0] < _COVERAGE_CACHE_SECONDS:

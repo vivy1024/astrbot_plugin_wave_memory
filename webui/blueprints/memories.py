@@ -737,10 +737,17 @@ async def batch_extract_tags_for_ids():
 @require_auth
 async def memory_stats():
     """各 source 记忆统计。"""
+    from ..stat_cache import cached_stat
+
     c = get_container()
-    rows = c.db.conn.execute(
-        "SELECT source, COUNT(*) FROM memories GROUP BY source ORDER BY COUNT(*) DESC"
-    ).fetchall()
+    # source 列在 4KB vector 之后，全表 GROUP BY 线上约 9 秒：放线程并缓存 5 分钟
+    rows = await cached_stat(
+        f"memories:{id(c)}:by_source",
+        300.0,
+        lambda: c.db.conn.execute(
+            "SELECT source, COUNT(*) FROM memories GROUP BY source ORDER BY COUNT(*) DESC"
+        ).fetchall(),
+    )
     total = sum(r[1] for r in rows)
     by_source = {r[0] or "unknown": r[1] for r in rows}
     return jsonify({"total": total, "by_source": by_source})
