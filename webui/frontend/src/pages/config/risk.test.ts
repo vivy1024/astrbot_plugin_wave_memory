@@ -83,15 +83,13 @@ describe('高风险判定', () => {
     expect(statusOf(routed, 'tag_llm_provider_id').status).toBe('normal')
   })
 
-  it('跨项判定：compat_only 下强行开原生注入、噪声保留期缩短', () => {
+  it('跨项判定：compat_only 下强行开原生注入', () => {
     const entries = [
       entry('Runtime_Settings.runtime_mode', 'compat_only', 'full'),
       entry('Compatibility_Settings.compat_only_auto_inject_enabled', true, false),
-      entry('Eviction_Settings.noise_ttl_days', 3, 7),
     ]
     expect(statusOf(entries, 'Runtime_Settings.runtime_mode').status).toBe('warn')
     expect(statusOf(entries, 'Compatibility_Settings.compat_only_auto_inject_enabled').status).toBe('warn')
-    expect(statusOf(entries, 'Eviction_Settings.noise_ttl_days').message).toContain('3 天')
   })
 
   it('当前配置里没有的键标为 missing 并排在最后', () => {

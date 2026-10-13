@@ -80,7 +80,6 @@ _DERIVED_SERVICE_NAMES = {
 
 _OPTIONAL_SERVICE_NAMES = {
     "MetaThinking",
-    "做梦系统",
     "自主学习",
     "自省系统",
     "记忆淘汰",
@@ -335,17 +334,15 @@ def _system_db_stats_sync(c, *, need_tag_counts: bool) -> dict:
     return stats
 
 
-# 只给面板看的大数：带向量的记忆数要读 vector 列判空，线上约 3 秒，缓存 10 分钟。
-_VECTOR_COUNT_TTL = 600.0
-# 其余小表计数很便宜，但一并放进线程，并短缓存，免得面板轮询反复打库。
-_SYSTEM_STATS_TTL = 15.0
+# 缓存时长都是热参数：webui.stats_cache_seconds（小表计数，默认 15 秒）、
+# webui.vector_count_cache_seconds（带向量记忆数要读 vector 列判空，线上约 3 秒，默认 10 分钟）。
 
 
 @system_bp.route("/system", methods=["GET"])
 @require_auth
 async def system_status():
     """系统健康状态。"""
-    from ..stat_cache import cached_stat
+    from ..stat_cache import cached_stat, hot_seconds
 
     c = get_container()
 
@@ -373,12 +370,12 @@ async def system_status():
 
     stats = await cached_stat(
         f"system:{id(c)}:{tag_coverage is None}",
-        _SYSTEM_STATS_TTL,
+        hot_seconds("webui.stats_cache_seconds", 15),
         lambda: _system_db_stats_sync(c, need_tag_counts=tag_coverage is None),
     )
     with_vec = await cached_stat(
         f"system:{id(c)}:with_vector",
-        _VECTOR_COUNT_TTL,
+        hot_seconds("webui.vector_count_cache_seconds", 600),
         c.db.get_memory_count_with_vector,
     )
     total_mem = stats["total_mem"]

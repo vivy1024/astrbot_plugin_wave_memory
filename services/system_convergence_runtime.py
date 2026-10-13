@@ -250,12 +250,44 @@ def _backfill_memory_vector_handler(connection, command: DomainCommand, now: flo
     )
 
 
-def _catalog_neighbors_for_admission(connection, *, tag_type: str, limit: int = 64):
-    """Load a bounded Catalog neighborhood for exact/semantic admission decisions."""
+_CATALOG_NEIGHBOR_CACHE: dict[tuple[str, int], tuple[float, list]] = {}
+
+
+def _hot(key: str, default):
+    try:
+        from .hot_config import hot_value
+    except ImportError:  # pragma: no cover
+        from services.hot_config import hot_value
+    return hot_value(key, default)
+
+
+def clear_catalog_neighbor_cache() -> None:
+    _CATALOG_NEIGHBOR_CACHE.clear()
+
+
+def _catalog_neighbors_for_admission(connection, *, tag_type: str, limit: int | None = None):
+    """Load a bounded Catalog neighborhood for exact/semantic admission decisions.
+
+    这段在写入协调器的 ``BEGIN IMMEDIATE`` 事务里执行：线上按 tag_type 排序取邻居
+    每次 87–250ms，占写线程约四成。邻居只用于判重（精确同名与语义近义），
+    几十秒的陈旧不影响正确性——新建的目录项本来就靠 ON CONFLICT(normalized_name,
+    tag_type) 兜底去重。条数与缓存秒数都是热参数。
+    """
     try:
         from .tag_admission import CatalogNeighbor
     except ImportError:  # pragma: no cover
         from services.tag_admission import CatalogNeighbor
+
+    limit = int(limit if limit is not None else _hot("tags.admission_neighbor_limit", 64))
+    if limit <= 0:
+        return []
+    normalized_type = str(tag_type or "keyword")
+    ttl = float(_hot("tags.admission_cache_seconds", 60))
+    key = (normalized_type, limit)
+    now = time.monotonic()
+    hit = _CATALOG_NEIGHBOR_CACHE.get(key)
+    if ttl > 0 and hit is not None and now - hit[0] < ttl:
+        return list(hit[1])
 
     if connection.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tag_catalog'"
@@ -270,7 +302,7 @@ def _catalog_neighbors_for_admission(connection, *, tag_type: str, limit: int = 
              ORDER BY COALESCE(updated_at, created_at, 0) DESC, id ASC
              LIMIT ?
             """,
-            (str(tag_type or "keyword"), max(1, int(limit))),
+            (normalized_type, limit),
         ).fetchall()
     except Exception:
         return []
@@ -291,7 +323,9 @@ def _catalog_neighbors_for_admission(connection, *, tag_type: str, limit: int = 
                 embedding=embedding,
             )
         )
-    return neighbors
+    if ttl > 0:
+        _CATALOG_NEIGHBOR_CACHE[key] = (now, neighbors)
+    return list(neighbors)
 
 
 def _apply_tag_extraction_handler(connection, command: DomainCommand, now: float) -> MutationOutcome:

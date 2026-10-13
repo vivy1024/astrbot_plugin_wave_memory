@@ -64,7 +64,6 @@ from ..services.lifecycle import LifecycleService
 from ..tools.livingmemory_compat_tools import build_livingmemory_compat_tools
 from ..engine.book_lore_index import BookLoreIndex
 from ..services.meta_thinking import MetaThinking
-from ..services.dream import DreamService
 from ..services.self_reflect import SelfReflectService
 from ..services.llm_fallback import LLMFallbackClient, build_provider_chain
 from ..services.eviction import EvictionService
@@ -367,10 +366,6 @@ class StartupMixin:
         # 事后记账/日记/关系小传：MetaThinking 在运行时跟它一族，否则沿用旧逻辑改用标签模型链。
         self.llm_routing.set_meta_thinking_active(self.meta_thinking is not None)
 
-        # 启动做梦系统
-        if self._create_dream_service() is not None:
-            self.dream_service.start(self.task_supervisor)
-
         # 自主学习系统（对有经历通道的 bot 生效）
         # 找到没有 exclude_sources 的 bot（即经历所有者）
         _registry = getattr(self, '_bot_registry', {})
@@ -512,7 +507,6 @@ class StartupMixin:
         _reg("统一写协调器", "ok" if getattr(self, "write_gateway", None) else "degraded", "" if getattr(self, "write_gateway", None) else "WriteCoordinator 未接线", dependency="SQLite writer lease")
         _reg("EPA 基底", "ok" if (self.epa and self.epa.initialized) else "degraded", "" if (self.epa and self.epa.initialized) else f"需 ≥{self.epa.min_tags if self.epa else 20} 个 tag 向量", dependency="Tag 覆盖率 > 20%")
         _reg("MetaThinking", "ok" if getattr(self, 'meta_thinking', None) else "off", "" if getattr(self, 'meta_thinking', None) else "MetaThinking 配置缺失或初始化失败", dependency="MetaThinking_Settings.enabled + LLM Provider")
-        _reg("做梦系统", "ok" if getattr(self, 'dream_service', None) else "off", "" if getattr(self, 'dream_service', None) else "enable_dream=false 或初始化失败", dependency="enable_dream=true")
 
         missing_bot_profile_reason = "未配置 Bot Profile（在 9876「Bot 管理」页添加 Bot）"
         self_reflect_off_reason = (
@@ -600,12 +594,6 @@ class StartupMixin:
                 await self.task_supervisor.cancel(owner="learning", timeout=5.0)
         except Exception as e:
             logger.debug(f"[WaveMemory] learning services cancel error: {e}")
-
-        try:
-            if hasattr(self, 'dream_service') and self.dream_service:
-                self.dream_service.stop()
-        except Exception as e:
-            logger.debug(f"[WaveMemory] dream_service stop error: {e}")
 
         try:
             if hasattr(self, 'eviction_service') and self.eviction_service:
@@ -729,40 +717,13 @@ class StartupMixin:
     # 每次都从当前 self.config 读参数，只创建不启动。
     def _create_eviction_service(self):
         eviction_cfg = self.config.get("Eviction_Settings", {}) or {}
-        self.eviction_service = None
-        if _parse_bool_config_value(eviction_cfg.get("enabled"), True):
-            self.eviction_service = EvictionService(
-                db=self.db,
-                memory_index=self.memory_index,
-                noise_ttl_days=int(eviction_cfg.get("noise_ttl_days", 7)),
-                chat_stale_days=self.memory_index_policy.chat_hot_days,
-                eviction_interval_hours=float(eviction_cfg.get("interval_hours", 6.0)),
-                write_gateway=self.write_gateway,
-            )
-        return self.eviction_service
-
-    def _create_dream_service(self):
-        lifecycle_cfg = self.config.get("Lifecycle_Settings", {}) or {}
-        self.enable_dream = runtime_capability_enabled(
-            self.runtime_mode, "dream", _parse_bool_config_value(lifecycle_cfg.get("enable_dream"), True)
+        self.eviction_service = EvictionService(
+            db=self.db,
+            memory_index=self.memory_index,
+            eviction_interval_hours=float(eviction_cfg.get("interval_hours", 6.0)),
+            write_gateway=self.write_gateway,
         )
-        self.dream_interval_hours = float(lifecycle_cfg.get("dream_interval_hours", "6.0"))
-        self.dream_recent_seeds = int(lifecycle_cfg.get("dream_recent_seeds", 3))
-        self.dream_recent_k = int(lifecycle_cfg.get("dream_recent_k", 5))
-        self.dream_mid_seeds = int(lifecycle_cfg.get("dream_mid_seeds", 2))
-        self.dream_mid_k = int(lifecycle_cfg.get("dream_mid_k", 3))
-        self.dream_service = None
-        if self.enable_dream:
-            self.dream_service = DreamService(
-                db=self.db,
-                memory_index=self.memory_index,
-                dream_interval_hours=self.dream_interval_hours,
-                recent_seeds=self.dream_recent_seeds,
-                recent_k=self.dream_recent_k,
-                mid_seeds=self.dream_mid_seeds,
-                mid_k=self.dream_mid_k,
-            )
-        return self.dream_service
+        return self.eviction_service
 
     async def _init_epa(self):
         """EPA 初始化（在线程池中执行，避免阻塞事件循环）。"""

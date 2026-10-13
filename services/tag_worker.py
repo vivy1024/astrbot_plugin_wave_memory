@@ -117,7 +117,8 @@ class TagWorker:
         self._wake_event = asyncio.Event()
         while self._running:
             try:
-                batch = self._fetch_untagged_batch()
+                # 追上积压后这条查询会扫到表头（数秒），放工作线程
+                batch = await asyncio.to_thread(self._fetch_untagged_batch)
                 self._last_cycle_at = time.time()
                 self._last_cycle_count = len(batch)
                 self._cycles = getattr(self, "_cycles", 0) + 1

@@ -76,7 +76,6 @@ SELF_COMMIT_ALLOWLIST = WRITE_ENTRY_ALLOWLIST | {
 MUST_STAY_CLEAN = (
     "concern_tracker.py",
     "reflection_trigger.py",
-    "dream.py",
     "experience_episodes.py",
 )
 

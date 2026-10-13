@@ -44,8 +44,8 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
   {
     id: 'mind',
     title: '心智与社交',
-    description: 'Bot 的心情、好感变化幅度、被骚扰时的冷却，以及深夜做梦的频率。',
-    symptoms: ['情绪', '好感涨太快', '好感掉太快', '被骂', '冷却', '做梦'],
+    description: 'Bot 的心情、好感变化幅度、被骚扰时的冷却。',
+    symptoms: ['情绪', '好感涨太快', '好感掉太快', '被骂', '冷却'],
     defaultOpen: false,
   },
   {
@@ -180,8 +180,7 @@ export const KEY_SYMPTOMS: Record<string, string[]> = {
   'Lifecycle_Settings.relationship_daily_delta_cap': ['好感涨太快', '好感掉太快'],
   'Lifecycle_Settings.relationship_single_delta_cap': ['好感涨太快', '好感掉太快'],
   'Social_Settings.abuse_cooldown_base': ['被骂', '冷却'],
-  'Lifecycle_Settings.dream_interval_hours': ['做梦'],
-  'Eviction_Settings.noise_ttl_days': ['清理', '磁盘满'],
+  'Eviction_Settings.interval_hours': ['清理', '流水账'],
   'Trace_Settings.max_rows': ['观测记录', '磁盘满'],
   'Tag_Settings.tag_blacklist': ['标签太多', '标签不准'],
   'Tag_Settings.tag_extraction_enabled': ['没有标签', '标签太少'],

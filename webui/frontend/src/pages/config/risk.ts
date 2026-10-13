@@ -178,23 +178,6 @@ export const RISK_RULES: RiskRule[] = [
       : null,
   },
   {
-    key: 'Eviction_Settings.enabled',
-    reason: '定期清理低价值记忆的后台作业。',
-    impact: '开启时超期噪声记忆会被删除；关闭后数据库只增不减。',
-    restart: false,
-    affectsData: true,
-  },
-  {
-    key: 'Eviction_Settings.noise_ttl_days',
-    reason: '噪声记忆超过这个天数会被删除。',
-    impact: '调低会更早删除噪声记忆，删除后无法从控制台恢复，只能从备份找回。',
-    restart: false,
-    affectsData: true,
-    check: (value, lookup) => typeof value === 'number' && value < 7 && lookup('Eviction_Settings.enabled') !== false
-      ? { status: 'warn', message: `噪声记忆只保留 ${value} 天，比默认 7 天更早被删除。` }
-      : null,
-  },
-  {
     key: 'backup_max_count',
     reason: '自动整库备份保留份数。',
     impact: '份数越少回滚余地越小；份数越多占用磁盘越多（整库体积较大）。',

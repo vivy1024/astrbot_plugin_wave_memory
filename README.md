@@ -284,9 +284,8 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 
 ```
 新消息写入 (importance=1.0)
-  → 被做梦联想触发 +0.05 权重提升 (每轮最多强化 50 条)
   → 检索时动态加权：时间衰减系数 ×0.997^天
-  → 定期淘汰：noise 记忆超过保存期限 (默认 7 天) 自动彻底清理
+  → 永不删除（超忆症原则）：noise 只是不参与召回与注入，原文一直保留
 ```
 
 ---
@@ -491,11 +490,11 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 
 ### 记忆淘汰 (Eviction_Settings)
 
+记忆本身不删除（超忆症原则）。这里只清理写入流水账（outbox 事件、投递记录、操作日志、投影水位，保留 7 天）。
+
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| enabled | true | 启用记忆淘汰 |
-| noise_ttl_days | 7 | 噪声记忆保留天数 |
-| interval_hours | 6.0 | 淘汰作业检查间隔（小时） |
+| interval_hours | 6.0 | 流水账清理间隔（小时） |
 
 ### 消息过滤 (Message_Filter)
 
@@ -602,12 +601,6 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | relationship_single_delta_cap | 5.0 | 单次互动关系变化极大值 |
 | relationship_daily_delta_cap | 15.0 | 每日好感度变化累计上限 |
 | relationship_hostility_delta_cap | 8.0 | 单次辱骂敌意增加上限 |
-| enable_dream | true | 启用深夜做梦引擎 (Dreaming) |
-| dream_interval_hours | 6.0 | 做梦引擎触发自省间隔 |
-| dream_recent_seeds | 3 | 近期种子记忆数 |
-| dream_recent_k | 5 | 近期记忆联想召回深度 |
-| dream_mid_seeds | 2 | 中期经历种子数 |
-| dream_mid_k | 3 | 中期经历联想召回深度 |
 
 ### Bot 心情画像（9876「Bot 管理」→ 心情，Bot Profile 的 `mood` 段）
 
@@ -786,7 +779,7 @@ Runtime_Settings.runtime_mode = memory_only
 效果：
 
 - 保留：消息采集、writer、向量检索、基础 memory 注入、trace、搜索/记住工具、兼容 facade。
-- 默认关闭：persona、belief、jargon、few-shot、BookLore、affinity、mood、dream、Study、SelfReflect 等高级能力。
+- 默认关闭：persona、belief、jargon、few-shot、BookLore、affinity、mood、Study、SelfReflect 等高级能力。
 - 验证：注入观察台 trace 只应出现 memory/safety/facts/fts5 等基础通道，不应出现 persona/belief/jargon/fewshot/book_lore。
 
 ### Agent 反馈安全边界
@@ -851,7 +844,6 @@ Runtime_Settings.runtime_mode = memory_only
 | PersonaComposer | full 模式 | 自动 |
 | 信念引擎 | 现场提审 + 管理台二审 | 须 ≥2 条已审事实 |
 | 经历片段 | v2.2 schema 已迁移且 full 模式 | 自动 |
-| 做梦系统 | enable_dream=true 且 full 模式 | 6185: enable_dream |
 | 黑话系统 | LLM + 聊天积累且 full 模式 | 6185: Jargon_Settings |
 | Holyman 知识库 | 内置 assets + WebUI 且 full 模式 | 9876: 黑话页 |
 | 风格学习 | LLM + bot 回复积累且 full 模式 | 6185: FewShot_Settings |
@@ -907,7 +899,6 @@ Runtime_Settings.runtime_mode = memory_only
 │   ├── scope_recovery.py        # Scope 恢复
 │   ├── backup_lifecycle.py      # 备份生命周期
 │   ├── platform_context.py      # 平台上下文（群名解析）
-│   ├── dream.py                 # 做梦系统
 │   ├── self_reflect.py          # 自省系统
 │   ├── review/                  # 审查队列（review_candidates）
 │   ├── injection/               # 注入编排 + 12 通道

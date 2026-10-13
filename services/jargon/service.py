@@ -23,6 +23,15 @@ _TECHNICAL_NOISE_WORDS = {"id", "ids", "json", "api", "url", "uri", "http", "htt
 _ORDINARY_WORDS = {"吃饭", "睡觉", "上班", "下班", "回家", "出门", "上课", "工作", "学习", "考试", "好的", "可以", "谢谢", "没事", "不用", "不是", "没有", "手机", "电脑", "学校", "今天", "昨天", "明天", "现在", "刚才", "马上", "哈哈", "哈哈哈", "嗯嗯", "呵呵", "朋友", "同学", "老师", "家人", "爸爸", "妈妈", "真的", "确实", "其实", "当然", "知道", "不知道", "怎么", "什么", "为什么", "这个", "那个"}
 
 
+
+def _person_alias_ttl() -> float:
+    """群友名单缓存秒数（热参数 jargon.person_alias_cache_seconds，默认 300）。"""
+    try:
+        from ..hot_config import hot_value
+    except ImportError:  # pragma: no cover
+        from services.hot_config import hot_value
+    return float(hot_value("jargon.person_alias_cache_seconds", 300))
+
 class JargonService:
     """黑话挖掘与注入门面；任何非群 RuntimeScope 都 fail-closed。"""
 
@@ -639,13 +648,11 @@ class JargonService:
             }
         return base
 
-    _PERSON_ALIAS_TTL = 300.0
-
     def _known_person_aliases(self, group_id: str, bot_id: str) -> frozenset:
         key = (group_id, bot_id or "")
         now = time.monotonic()
         hit = self._person_alias_cache.get(key)
-        if hit and now - hit[0] < self._PERSON_ALIAS_TTL:
+        if hit and now - hit[0] < _person_alias_ttl():
             return hit[1]
         names: set[str] = set()
         conn = getattr(self._db, "conn", None)

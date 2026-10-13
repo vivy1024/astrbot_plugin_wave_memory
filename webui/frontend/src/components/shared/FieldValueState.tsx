@@ -34,7 +34,7 @@ const APPLY_LABELS: Record<ApplyMode, string> = {
   // next_run 表示「不需要重启，保存后由运行时下次读取路径生效」。
   // 原文案“下次生效”容易被读成“下次重启才生效”，与事实不符。
   'next-run': '保存即生效',
-  // 保存后只重建对应的后台服务（做梦、记忆淘汰等），不重启 AstrBot。
+  // 保存后只重建对应的后台服务（流水账清理等），不重启 AstrBot。
   service: '重建服务生效',
   unknown: '未知生效',
 }

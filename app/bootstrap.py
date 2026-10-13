@@ -64,7 +64,6 @@ from ..services.lifecycle import LifecycleService
 from ..tools.livingmemory_compat_tools import build_livingmemory_compat_tools
 from ..engine.book_lore_index import BookLoreIndex
 from ..services.meta_thinking import MetaThinking
-from ..services.dream import DreamService
 from ..services.self_reflect import SelfReflectService
 from ..services.llm_fallback import LLMFallbackClient, build_provider_chain
 from ..services.eviction import EvictionService
@@ -363,12 +362,6 @@ class BootstrapMixin:
         self.mood_msg_threshold = int(lifecycle_cfg.get("mood_msg_threshold", 30))
         self.positive_emotion_threshold = float(lifecycle_cfg.get("positive_emotion_threshold", "0.6"))
         self.negative_emotion_threshold = float(lifecycle_cfg.get("negative_emotion_threshold", "0.4"))
-        self.enable_dream = runtime_capability_enabled(self.runtime_mode, "dream", lifecycle_cfg.get("enable_dream", True))
-        self.dream_interval_hours = float(lifecycle_cfg.get("dream_interval_hours", "6.0"))
-        self.dream_recent_seeds = int(lifecycle_cfg.get("dream_recent_seeds", 3))
-        self.dream_recent_k = int(lifecycle_cfg.get("dream_recent_k", 5))
-        self.dream_mid_seeds = int(lifecycle_cfg.get("dream_mid_seeds", 2))
-        self.dream_mid_k = int(lifecycle_cfg.get("dream_mid_k", 3))
         # Consolidation（后台自动巩固 / 盲抽升格为事实与信念）已按架构决定永久停用：
         # 认知只能由模型现场基于证据提审，再经人工转正。configured 固定 False，使任何
         # 运行模式或遗留配置都无法重新打开它，同时保留能力 gate 以维持运行模式契约。
@@ -779,7 +772,6 @@ class BootstrapMixin:
         self.jargon_service = None
         self.few_shot_service = None
         self.meta_thinking = None
-        self.dream_service = None
         self.self_reflect = None
         self.consolidation = None
         self.eviction_service = None
@@ -1099,17 +1091,11 @@ class BootstrapMixin:
                         description="消息入库队列（核心服务，不能停）", stoppable=False),
             ServiceSpec("tag_worker", "标签提取", lambda: getattr(self, "tag_worker", None), owner="tag-worker",
                         description="后台匀速给新记忆打标签"),
-            ServiceSpec("dream", "做梦", lambda: getattr(self, "dream_service", None), owner="dream",
-                        description="定时回放近期与中期记忆，生成联想",
-                        factory=self._create_dream_service,
-                        config_keys=("Lifecycle_Settings.enable_dream", "Lifecycle_Settings.dream_interval_hours",
-                                     "Lifecycle_Settings.dream_recent_seeds", "Lifecycle_Settings.dream_recent_k",
-                                     "Lifecycle_Settings.dream_mid_seeds", "Lifecycle_Settings.dream_mid_k")),
-            ServiceSpec("eviction", "记忆淘汰", lambda: getattr(self, "eviction_service", None), owner="eviction",
-                        description="定时清理噪声与过期聊天记忆的向量",
+            ServiceSpec("eviction", "流水账清理", lambda: getattr(self, "eviction_service", None), owner="eviction",
+                        description="定时清理 7 天前的写入流水账（记忆本身不删除）",
                         factory=self._create_eviction_service, config_keys=("Eviction_Settings.",)),
             ServiceSpec("lifecycle", "好感生命周期", lambda: getattr(self, "lifecycle", None), owner="lifecycle",
-                        description="好感触达/衰减、表达模式聚合；停止前会先落盘缓冲"),
+                        description="好感触达/衰减与情绪更新；停止前会先落盘缓冲"),
             ServiceSpec("maintenance_jobs", "维护任务执行器", lambda: getattr(self, "maintenance_job_runner", None),
                         owner="durable-jobs", description="执行索引重建、回填等可恢复任务"),
             ServiceSpec("character_experience_jobs", "角色经历任务执行器", lambda: getattr(self, "character_experience_job_runner", None),

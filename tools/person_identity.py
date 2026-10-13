@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any
 
 try:
@@ -99,7 +100,57 @@ def _user_present_in_scope(conn: Any, scope: RuntimeScope, user_id: str, *, curr
     return True
 
 
+_RESOLVE_CACHE: dict[tuple, tuple[float, str]] = {}
+
+
+def _nickname_cache_ttl() -> float:
+    try:
+        from ..services.hot_config import HotConfig, hot_value
+    except ImportError:  # pragma: no cover - isolated tools tests
+        try:
+            from services.hot_config import HotConfig, hot_value
+        except ImportError:
+            return 0.0
+    if HotConfig._instance is None:  # 没有插件运行时（单测、脚本）就不缓存
+        return 0.0
+    return float(hot_value("people.nickname_cache_seconds", 300))
+
+
+def clear_resolve_cache() -> None:
+    _RESOLVE_CACHE.clear()
+
+
 def resolve_user_id(db: Any, target: str | None, scope: RuntimeScope, *, current_group_only: bool = False) -> str:
+    """按昵称/QQ 解析 user_id；昵称结果（含未命中）按热参数缓存。
+
+    按昵称兜底要按 sender_name 扫这个 Bot 的全部行（线上约 360ms，sender_name 没有索引），
+    而事后记账、好感/事实/关切工具会对同一个名字反复解析。QQ 号与当前发言人不走缓存。
+    """
+    text = str(target or "").strip()
+    if not text or db is None or is_qq_id(text):
+        return _resolve_user_id_uncached(db, target, scope, current_group_only=current_group_only)
+    current = _scope_subject_user_id(scope) if scope.session else ""
+    if text == current and current:
+        return current
+    ttl = _nickname_cache_ttl()
+    if ttl <= 0:
+        return _resolve_user_id_uncached(db, target, scope, current_group_only=current_group_only)
+    key = (
+        id(db), text, scope.bot_id, scope.visibility,
+        scope.session.id if scope.session else "", bool(current_group_only),
+    )
+    now = time.monotonic()
+    hit = _RESOLVE_CACHE.get(key)
+    if hit is not None and now - hit[0] < ttl:
+        return hit[1]
+    value = _resolve_user_id_uncached(db, target, scope, current_group_only=current_group_only)
+    if len(_RESOLVE_CACHE) > 4096:
+        _RESOLVE_CACHE.clear()
+    _RESOLVE_CACHE[key] = (now, value)
+    return value
+
+
+def _resolve_user_id_uncached(db: Any, target: str | None, scope: RuntimeScope, *, current_group_only: bool = False) -> str:
     """Resolve nickname/QQ to a user_id (QQ).
 
     Order:

@@ -1,5 +1,30 @@
 # Changelog
 
+## v5.1.2（开发中）：性能与精简
+
+### 删除（不留开关）
+
+1. **做梦引擎**（`services/dream.py`、`Lifecycle_Settings.enable_dream` 等 6 项）。它唯一的效果是给随机联想到的记忆加重要度，与 v5.1.1 修掉的「召回抬高重要度」相冲突；联想由共现图实时完成，做梦结果不落库也无读者。
+2. **噪声记忆删除**（`Eviction_Settings.enabled`、`noise_ttl_days`）。超忆症原则：记忆不删除，噪声只是不参与召回与注入。「记忆淘汰」服务改名「流水账清理」，只清 7 天前的 outbox/操作日志/投影水位。
+3. **表达模式聚合**（`PatternAggregator`，每 6 小时全表 GROUP BY 写 `expression_patterns`）。该表无读者，已被情景表达学习与风格样例取代；旧表数据保留。
+4. **注入死代码**：`realtime_ctx`（每次注入查「羽书最近一条提到对方的回复」，结果无人读取，约 200ms）、每小时 @ 计数（唯一读者是前者，且永不清理）、未被调用的影子注入链路。
+
+### 性能
+
+- 会话最近消息按 `timestamp, id` 排序以吻合 `idx_memories_v2_scope`（线上 230ms → 0ms）；群氛围查询补全索引前缀（31ms → 0.1ms）。
+- 好感生命周期 tick、TagWorker 取批次挪到工作线程，不再阻塞事件循环。
+- 打标签的目录邻居查询（写锁事务内，占写线程约四成）按 tag_type 缓存；按昵称找人结果缓存（约 360ms/次）；活跃记忆计数（每次约 10 秒、读约 1.5GB）缓存拉长到默认 30 分钟。
+- 管理台：`/api/system`、`/api/memories/stats`、`/api/tags/quality` 的重统计挪出 WebUI 事件循环并缓存，删掉被覆盖率报告覆盖的白算全表扫描；记忆列表条件改回 `group_id=?` 走索引，慢计数不再挡住列表（线上记忆页 33 秒 → 0.06 秒）。
+
+### 新增热参数（9876 热参数页，立即生效）
+
+`injection.recent_context_messages`、`tags.admission_neighbor_limit`、`tags.admission_cache_seconds`、`storage.active_count_cache_seconds`、`jargon.person_alias_cache_seconds`、`people.nickname_cache_seconds`、`webui.stats_cache_seconds`、`webui.vector_count_cache_seconds`、`webui.coverage_cache_seconds`、`webui.legacy_quality_cache_seconds`、`webui.list_count_cache_seconds`、`webui.list_count_wait_seconds`。均有上下限，原来写死在代码里的数值即默认值。
+
+### 升级注意
+
+- 旧配置里的 `enable_dream`、`dream_*`、`Eviction_Settings.enabled/noise_ttl_days` 会被 AstrBot 按新 schema 移除，无需处理。
+- 9876「服务与扩展」页不再有「做梦」服务。
+
 ## v5.1.1（2026-10-11）：心情、关系小传、信念反思、模型分工与梗百科
 
 ### 行为变化

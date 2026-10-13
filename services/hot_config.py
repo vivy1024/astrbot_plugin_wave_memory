@@ -36,6 +36,7 @@ class HotConfig:
 
         if initial_config:
             self._config.update(initial_config)
+        _register_specs(self)
 
     def get(self, key: str, default: Any = None) -> Any:
         """获取配置值。支持点号分隔的嵌套键。"""
@@ -114,6 +115,30 @@ class HotConfig:
              "description": "消息合并最长等待（秒）：从第一条算起，到点强制截断"},
             {"key": "injection.slow_warning_ms", "type": "int", "min": 200, "max": 20000, "default": 2000,
              "description": "注入总耗时超过这个值时记警告日志（毫秒）"},
+            {"key": "injection.recent_context_messages", "type": "int", "min": 0, "max": 40, "default": 8,
+             "description": "注入时取会话最近几条消息作为检索上下文（0 = 不取）"},
+            {"key": "tags.admission_neighbor_limit", "type": "int", "min": 0, "max": 512, "default": 64,
+             "description": "打标签判重时比对的目录邻居条数（0 = 不比对）"},
+            {"key": "tags.admission_cache_seconds", "type": "int", "min": 0, "max": 1800, "default": 60,
+             "description": "目录邻居缓存秒数（0 = 不缓存）"},
+            {"key": "storage.active_count_cache_seconds", "type": "int", "min": 60, "max": 86400, "default": 1800,
+             "description": "活跃记忆计数缓存秒数：数一次要读约 1.5GB，越长越省磁盘"},
+            {"key": "jargon.person_alias_cache_seconds", "type": "int", "min": 0, "max": 3600, "default": 300,
+             "description": "群友名单缓存秒数（黑话判重不再每次扫全群）"},
+            {"key": "people.nickname_cache_seconds", "type": "int", "min": 0, "max": 3600, "default": 300,
+             "description": "按昵称找人的结果缓存秒数（含未命中的名字）"},
+            {"key": "webui.stats_cache_seconds", "type": "int", "min": 0, "max": 3600, "default": 15,
+             "description": "管理台总览统计缓存秒数"},
+            {"key": "webui.vector_count_cache_seconds", "type": "int", "min": 0, "max": 86400, "default": 600,
+             "description": "管理台带向量记忆数缓存秒数（读取时约 3 秒）"},
+            {"key": "webui.coverage_cache_seconds", "type": "int", "min": 0, "max": 86400, "default": 300,
+             "description": "标签覆盖率报告缓存秒数（冷读约 12 秒）"},
+            {"key": "webui.legacy_quality_cache_seconds", "type": "int", "min": 0, "max": 86400, "default": 300,
+             "description": "旧口径标签质量统计缓存秒数（只在覆盖率报告失败时用到）"},
+            {"key": "webui.list_count_cache_seconds", "type": "int", "min": 0, "max": 86400, "default": 300,
+             "description": "记忆列表总数缓存秒数"},
+            {"key": "webui.list_count_wait_seconds", "type": "float", "min": 0.0, "max": 30.0, "default": 1.5,
+             "description": "记忆列表等待总数的上限（秒）：超过就先出列表，总数后台算完后补上"},
         ]
 
     def tunable_keys(self) -> set[str]:
@@ -141,3 +166,44 @@ class HotConfig:
     def reset(cls):
         """重置单例（仅用于测试）。"""
         cls._instance = None
+
+
+def hot_value(key: str, default: Any = None) -> Any:
+    """读热参数，按注册表的类型与上下限钳制；没有实例时返回默认值。
+
+    深层模块（注入通道、工具、管理台接口）用这个，不要自己去 new 一个实例。
+    """
+    inst = HotConfig._instance
+    if inst is None:
+        return default
+    spec = _SPEC_BY_KEY.get(key)
+    value = inst.get(key, default)
+    if spec is None or value is None:
+        return value
+    try:
+        if spec["type"] == "int":
+            value = int(value)
+        elif spec["type"] == "float":
+            value = float(value)
+        elif spec["type"] == "bool":
+            value = bool(value)
+        else:
+            value = str(value)
+    except (TypeError, ValueError):
+        return default
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        lo, hi = spec.get("min"), spec.get("max")
+        if lo is not None:
+            value = max(lo, value)
+        if hi is not None:
+            value = min(hi, value)
+    return value
+
+
+_SPEC_BY_KEY: dict[str, dict] = {}
+
+
+def _register_specs(instance: "HotConfig") -> None:
+    _SPEC_BY_KEY.clear()
+    for item in instance.get_tunable_params():
+        _SPEC_BY_KEY[item["key"]] = item

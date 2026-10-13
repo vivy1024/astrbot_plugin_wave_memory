@@ -10,7 +10,7 @@ describe('配置定位规则', () => {
     expect(locationHref(restart)).toBe('/settings?key=Memory_Index_Settings.hot_max_vectors&tab=restart')
 
     expect(locateConfig('Query_Settings.inject_top_k', { applyMode: 'next_run' }).params.tab).toBe('static')
-    expect(locateConfig('Lifecycle_Settings.enable_dream', { applyMode: 'service' }).params.tab).toBe('static')
+    expect(locateConfig('Eviction_Settings.interval_hours', { applyMode: 'service' }).params.tab).toBe('static')
     // schema 里 apply_mode=hot 的项只在「全部高级设置」出现
     expect(locateConfig('Query_Settings.min_similarity', { applyMode: 'hot' }).params.tab).toBe('advanced')
     expect(locateConfig('embedding_provider_id').params).toEqual({ key: 'embedding_provider_id', tab: 'advanced' })

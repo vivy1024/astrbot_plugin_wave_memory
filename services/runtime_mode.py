@@ -36,7 +36,6 @@ MEMORY_ONLY_DISABLED_CAPABILITIES = {
     "persona",
     "persona_tools",
     "mood",
-    "dream",
     "consolidation",
     "metathinking",
     "belief",

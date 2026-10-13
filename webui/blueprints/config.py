@@ -578,7 +578,7 @@ async def update_config_full():
         for key in hot_updates:
             effective_since[key] = now
 
-    # 做梦、记忆淘汰等服务：相关静态配置改了就只重建这个服务，不用重启 AstrBot
+    # 流水账清理等服务：相关静态配置改了就只重建这个服务，不用重启 AstrBot
     service_results = await _reconfigure_services(c, [path for path in changed_fields if path not in restart_fields])
     service_fields = {
         path for result in service_results.values() if result["action"] != "failed" for path in result["fields"]

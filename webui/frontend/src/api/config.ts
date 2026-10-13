@@ -7,7 +7,7 @@ export interface ProviderPayload {
   [key: string]: unknown
 }
 
-/** service：保存后只重建对应后台服务即生效（做梦、记忆淘汰等），不用重启 AstrBot */
+/** service：保存后只重建对应后台服务即生效（流水账清理等），不用重启 AstrBot */
 export type ConfigApplyMode = 'hot' | 'restart' | 'next_run' | 'service' | 'unknown'
 
 export interface ConfigValueState {

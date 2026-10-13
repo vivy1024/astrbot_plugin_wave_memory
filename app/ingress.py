@@ -66,7 +66,6 @@ from ..services.lifecycle import LifecycleService
 from ..tools.livingmemory_compat_tools import build_livingmemory_compat_tools
 from ..engine.book_lore_index import BookLoreIndex
 from ..services.meta_thinking import MetaThinking
-from ..services.dream import DreamService
 from ..services.self_reflect import SelfReflectService
 from ..services.llm_fallback import LLMFallbackClient, build_provider_chain
 from ..services.eviction import EvictionService

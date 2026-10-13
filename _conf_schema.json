@@ -587,40 +587,6 @@
         "hint": "单次检测到辱骂或恶意调戏时，敌意/敌对值正向拉升的最大限值（默认 8.0 分）。达到 3 次后自动进入保护性冷却。",
         "type": "float",
         "default": 8.0
-      },
-      "enable_dream": {
-        "description": "启用深夜做梦引擎 (Dreaming)",
-        "hint": "后台自动执行：对零散记忆进行三层“时间线涟漪浪潮”重组，并在历史经历中搭建“共振桥梁”发现潜在相关联，形成长期的逻辑事实和心智。推荐开启。",
-        "type": "bool",
-        "default": true
-      },
-      "dream_interval_hours": {
-        "description": "做梦引擎触发自省间隔",
-        "hint": "每隔多少小时执行一次深夜记忆合并（推荐在夜间执行，默认 6.0 小时）",
-        "type": "float",
-        "default": 6.0
-      },
-      "dream_recent_seeds": {
-        "description": "近期种子记忆数",
-        "hint": "做梦自省时近期涟漪抽取的基础种子记忆数量（默认 3 条）",
-        "type": "int",
-        "default": 3
-      },
-      "dream_recent_k": {
-        "description": "近期记忆联想召回深度",
-        "hint": "每个做梦种子在后台模糊关联出的最相关的历史经历条数（默认 5 条）",
-        "type": "int",
-        "default": 5
-      },
-      "dream_mid_seeds": {
-        "description": "中期经历种子数",
-        "type": "int",
-        "default": 2
-      },
-      "dream_mid_k": {
-        "description": "中期经历联想召回深度",
-        "type": "int",
-        "default": 3
       }
     }
   },
@@ -905,28 +871,6 @@
       }
     }
   },
-  "Eviction_Settings": {
-    "description": "记忆淘汰",
-    "hint": "记忆过多时按什么规则降级或清理",
-    "type": "object",
-    "items": {
-      "enabled": {
-        "description": "启用记忆淘汰",
-        "type": "bool",
-        "default": true
-      },
-      "noise_ttl_days": {
-        "description": "噪声记忆保留天数",
-        "type": "int",
-        "default": 7
-      },
-      "interval_hours": {
-        "description": "淘汰作业检查间隔（小时）",
-        "type": "float",
-        "default": 6.0
-      }
-    }
-  },
   "Jargon_Settings": {
     "description": "黑话与口癖",
     "hint": "群内黑话的发现与使用",
@@ -1017,7 +961,11 @@
         "description": "开口判断规则模式",
         "type": "string",
         "default": "off",
-        "options": ["off", "shadow", "enforce"],
+        "options": [
+          "off",
+          "shadow",
+          "enforce"
+        ],
         "restart_required": true,
         "hint": "三个选项依次为：关闭、只观察、实际启用。只观察会记录建议但不改变回复；实际启用会筛选已经获准的回复候选。不新增模型调用，不绕过宿主唤醒与权限。修改后重启插件生效。"
       },
@@ -1416,6 +1364,18 @@
         "hint": "是否开启后台常驻协程处理记忆标签提取与分类（默认开启）。",
         "type": "bool",
         "default": true
+      }
+    }
+  },
+  "Eviction_Settings": {
+    "description": "记忆淘汰（outbox 历史清理与冷记忆向量降级）",
+    "hint": "噪声记忆不删除（超忆症原则），这里只控制写入流水账的保留期与向量降级区间",
+    "type": "object",
+    "items": {
+      "interval_hours": {
+        "description": "淘汰作业检查间隔（小时）",
+        "type": "float",
+        "default": 6.0
       }
     }
   }

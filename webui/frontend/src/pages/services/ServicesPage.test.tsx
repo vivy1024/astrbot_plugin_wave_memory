@@ -13,7 +13,7 @@ beforeEach(() => {
   api.getServices.mockResolvedValue({
     services_available: true,
     services: [
-      { name: 'dream', title: '做梦', description: '回放记忆', created: true, running: true, stoppable: true, generation: 0, tasks: [], history: [] },
+      { name: 'lifecycle', title: '好感生命周期', description: '好感触达与衰减', created: true, running: true, stoppable: true, generation: 0, tasks: [], history: [] },
       { name: 'eviction', title: '记忆淘汰', description: '', created: false, running: null, stoppable: true, generation: 0, tasks: [], history: [] },
     ],
     tools: [{ name: 'wave_memory_search', description: '搜索', group: 'memory', writes: false, enabled: true, runtime_exposed: true, stats: { calls: 3, errors: 0, last_latency_ms: 1 } }],
@@ -33,7 +33,7 @@ describe('ServicesPage', () => {
     expect(screen.getByText('未创建')).toBeVisible()
     expect(screen.getByText(/bad\.py/)).toBeVisible()
     await user.click(screen.getByRole('button', { name: /停止/ }))
-    await waitFor(() => expect(api.controlService).toHaveBeenCalledWith('dream', 'stop'))
+    await waitFor(() => expect(api.controlService).toHaveBeenCalledWith('lifecycle', 'stop'))
     await user.click(screen.getByRole('switch', { name: '启用 wave_memory_search' }))
     await waitFor(() => expect(api.setToolEnabled).toHaveBeenCalledWith('wave_memory_search', false))
   })

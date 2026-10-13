@@ -164,13 +164,14 @@ describe('配置文案不暴露实现术语', () => {
     // 信念反思 5 项（belief_reflection_enabled / _every_n_days、belief_form_min_days、belief_decay_days、belief_max_active）；
     // 角色经历的模型分工 1 项（Model_Routing_Settings.character_experience）；
     // 游戏经验 5 项（Learning_Settings.game_lesson_enabled / _delay_seconds / _daily_limit / _max_active，Model_Routing_Settings.game_lesson）。
-    expect(total).toBe(184)
+    // v5.1.2 删除做梦（6 项）与噪声删除（enabled、noise_ttl_days）：184 → 176
+    expect(total).toBe(176)
     expect(noType).toEqual([])
   })
 
   it('废弃的 consolidation 系列字段已从 schema 删除，不靠前端隐藏', () => {
     const schema = JSON.parse(read('../../_conf_schema.json')) as Record<string, { items?: Record<string, unknown> }>
-    for (const key of ['enable_consolidation', 'consolidation_interval_hours', 'consolidation_topic_backfill']) {
+    for (const key of ['enable_consolidation', 'consolidation_interval_hours', 'consolidation_topic_backfill', 'enable_dream', 'dream_interval_hours']) {
       expect(key in (schema.Lifecycle_Settings?.items ?? {})).toBe(false)
     }
     expect('consolidation_skip_topics' in (schema.Tag_Settings?.items ?? {})).toBe(false)

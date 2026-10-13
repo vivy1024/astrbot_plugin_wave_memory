@@ -18,6 +18,7 @@ from ..engine.database import WaveMemoryDB
 from ..engine.vector_index import VectorIndex
 from ..engine.embedding import EmbeddingService
 from .identity_safety import is_identity_contamination
+from .hot_config import hot_value as _hot_value
 try:
     from ..domain.display_name import sanitize_display_name
     from ..domain.quality import QualityDecision, QualityProposal
@@ -506,12 +507,13 @@ class MessageWriter:
             return list(vectors or [])
         return None  # defensive: retry attempts are normalized to at least one
 
-    _ACTIVE_COUNT_TTL = 60.0
-
     async def _current_active_count(self) -> int:
+        # 计数要读 vector 之后的列（约 1.5GB），只用于软容量判定，近似值即可；
+        # 缓存秒数为热参数 storage.active_count_cache_seconds（默认 30 分钟）。
         now = time.monotonic()
         ts, value = self._active_count_cache
-        if now - ts < self._ACTIVE_COUNT_TTL:
+        ttl = float(_hot_value("storage.active_count_cache_seconds", 1800))
+        if ts and now - ts < ttl:
             return value
         try:
             # count_active_memories 经 ConnectionManager 走当前（工作）线程自己的读连接

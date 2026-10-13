@@ -34,5 +34,14 @@ async def cached_stat(key: str, ttl: float, compute: Callable[[], T], *, refresh
         return value
 
 
+def hot_seconds(key: str, default: float) -> float:
+    """管理台缓存时长从 9876 热参数读（webui.*）；没有运行时就用默认值。"""
+    try:
+        from ..services.hot_config import hot_value
+    except ImportError:  # pragma: no cover - 独立测试
+        from services.hot_config import hot_value
+    return float(hot_value(key, default))
+
+
 def clear_stat_cache() -> None:
     _cache.clear()

@@ -111,8 +111,8 @@ export const SECTION_GROUPS: Record<string, SettingsGroupMeta> = {
     bucket: 'always',
   },
   Eviction_Settings: {
-    title: '记忆淘汰',
-    description: '记忆过多时按什么规则降级或清理',
+    title: '流水账清理',
+    description: '记忆本身不删除；这里只清理写入流水账（保留 7 天）',
     defaultOpen: false,
     bucket: 'always',
   },

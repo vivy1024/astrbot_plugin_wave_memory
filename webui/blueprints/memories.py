@@ -443,7 +443,8 @@ async def list_memories():
 
     # 取一页走 group_id 索引按 id 倒序，毫秒级；但同条件的 COUNT(*) 要把整个群
     # （主群 25 万行）逐行读到 vector 之后的溢出页去过滤，线上约 11 秒。
-    # 两者都放工作线程；总数缓存 5 分钟，冷缓存时最多等 _COUNT_WAIT 秒，没算完就先
+    # 两者都放工作线程；总数缓存（webui.list_count_cache_seconds），冷缓存时最多等
+    # webui.list_count_wait_seconds 秒，没算完就先
     # 返回列表（总数标为未知、has_more 照常），计数在后台算完写进缓存。
     rows = await asyncio.to_thread(_page_rows)
     items = []
@@ -456,27 +457,28 @@ async def list_memories():
     ))
 
 
-_COUNT_WAIT = 1.5
-_COUNT_TTL = 300.0
+# 测试可覆盖；None 表示读热参数 webui.list_count_wait_seconds
+_COUNT_WAIT: float | None = None
 _pending_counts: dict[str, asyncio.Task] = {}
 
 
 async def _memory_list_total(c, where_sql: str, params: list) -> int | None:
-    from ..stat_cache import cached_stat
+    from ..stat_cache import cached_stat, hot_seconds
 
     conn = c.db.conn
     key = f"memories:{id(c)}:count:{where_sql}:{params!r}"
+    wait = _COUNT_WAIT if _COUNT_WAIT is not None else hot_seconds("webui.list_count_wait_seconds", 1.5)
     task = _pending_counts.get(key)
     if task is None or task.done():
         task = asyncio.ensure_future(cached_stat(
             key,
-            _COUNT_TTL,
+            hot_seconds("webui.list_count_cache_seconds", 300),
             lambda: int(conn.execute(f"SELECT COUNT(*) FROM memories WHERE {where_sql}", params).fetchone()[0]),
         ))
         _pending_counts[key] = task
         task.add_done_callback(lambda done, k=key: _pending_counts.pop(k, None) if _pending_counts.get(k) is done else None)
     try:
-        return await asyncio.wait_for(asyncio.shield(task), timeout=_COUNT_WAIT)
+        return await asyncio.wait_for(asyncio.shield(task), timeout=wait)
     except asyncio.TimeoutError:
         return None
 
@@ -773,13 +775,13 @@ async def batch_extract_tags_for_ids():
 @require_auth
 async def memory_stats():
     """各 source 记忆统计。"""
-    from ..stat_cache import cached_stat
+    from ..stat_cache import cached_stat, hot_seconds
 
     c = get_container()
-    # source 列在 4KB vector 之后，全表 GROUP BY 线上约 9 秒：放线程并缓存 5 分钟
+    # source 列在 4KB vector 之后，全表 GROUP BY 线上约 9 秒：放线程并缓存
     rows = await cached_stat(
         f"memories:{id(c)}:by_source",
-        300.0,
+        hot_seconds("webui.list_count_cache_seconds", 300),
         lambda: c.db.conn.execute(
             "SELECT source, COUNT(*) FROM memories GROUP BY source ORDER BY COUNT(*) DESC"
         ).fetchall(),

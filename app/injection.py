@@ -51,7 +51,7 @@ from ..services.data_governance_jobs import DataGovernancePreviewJobs
 from ..services.scope_recovery import build_scope_recovery_handlers
 from ..services.quality_gate import QualityGate
 from ..services.pair_similarity import PairSimilarityService
-from ..services.hot_config import HotConfig
+from ..services.hot_config import HotConfig, hot_value
 from ..services.memory_index_policy import memory_index_policy_from_settings, select_hot_memory_candidates
 from ..services.maintenance_tokens import maintenance_repair_token
 from ..services.platform_context import PlatformContextManager
@@ -64,7 +64,6 @@ from ..services.lifecycle import LifecycleService
 from ..tools.livingmemory_compat_tools import build_livingmemory_compat_tools
 from ..engine.book_lore_index import BookLoreIndex
 from ..services.meta_thinking import MetaThinking
-from ..services.dream import DreamService
 from ..services.self_reflect import SelfReflectService
 from ..services.llm_fallback import LLMFallbackClient, build_provider_chain
 from ..services.eviction import EvictionService
@@ -210,18 +209,6 @@ class InjectionMixin:
                 event.should_call_llm(False)
                 logger.info(f"[MetaThinking] 刷屏拦截: {sender_id}")
                 return
-
-        # ─── 每小时 @计数器（供 persona 注入实时状态，不做硬拦截）───
-        if is_at_bot:
-            if not hasattr(self, '_hourly_reply_count'):
-                self._hourly_reply_count = {}  # {sender_id: {"count": N, "hour": H}}
-            now = time.time()
-            current_hour = int(now // 3600)
-            tracker = self._hourly_reply_count.setdefault(sender_id, {"count": 0, "hour": current_hour})
-            if tracker["hour"] != current_hour:
-                tracker["count"] = 0
-                tracker["hour"] = current_hour
-            tracker["count"] += 1
 
     async def _handle_filter_bot_tools(self, event: AstrMessageEvent, req=None):
         registry = getattr(self, "tool_registry", None)
@@ -369,62 +356,7 @@ class InjectionMixin:
         """WebUI 热应用通道配置时更新运行时注入编排器配置。"""
         self.injection_channel_config = config
 
-    def _build_shadow_persona_realtime_ctx(
-        self,
-        *,
-        scope: RuntimeScope | None,
-        sender_id: str,
-        sender_name: str,
-    ) -> dict:
-        """复用当前已解析群 Scope 内的实时画像上下文。"""
-        realtime_ctx = {}
-        if hasattr(self, '_hourly_reply_count') and sender_id in self._hourly_reply_count:
-            realtime_ctx["hourly_at_count"] = self._hourly_reply_count[sender_id].get("count", 0)
-        if (
-            not isinstance(scope, RuntimeScope)
-            or scope.visibility != "group"
-            or scope.session is None
-        ):
-            return realtime_ctx
-        try:
-            params = (scope.bot_id, scope.session.id, scope.visibility)
-            last_reply_row = self.db.conn.execute(
-                """SELECT content FROM memories
-                   WHERE sender_id='bot' AND bot_id=? AND session_id=? AND visibility=?
-                     AND resolution_state='resolved' AND quarantine=0
-                     AND content LIKE ?
-                   ORDER BY timestamp DESC LIMIT 1""",
-                (*params, f"%{sender_name or sender_id}%"),
-            ).fetchone()
-            if not last_reply_row:
-                last_reply_row = self.db.conn.execute(
-                    """SELECT content FROM memories
-                       WHERE sender_id='bot' AND bot_id=? AND session_id=? AND visibility=?
-                         AND resolution_state='resolved' AND quarantine=0
-                       ORDER BY timestamp DESC LIMIT 1""",
-                    params,
-                ).fetchone()
-            if last_reply_row:
-                realtime_ctx["last_bot_reply"] = str(last_reply_row[0] or "")[:80]
-        except Exception:
-            pass
-        return realtime_ctx
-
-    def _effective_injection_config(self, scope: RuntimeScope | None):
-        """按 exact RuntimeScope 解析请求级配置；非法层级 fail closed。"""
-        if not isinstance(scope, RuntimeScope):
-            return None
-        from ..services.config.channel_config import build_channel_config_from_plugin_config
-        profile = self.bot_registry.get(scope.bot_id) if getattr(self, "bot_registry", None) else None
-        config = build_channel_config_from_plugin_config(
-            self.config,
-            scope=scope,
-            bot_channels=getattr(profile, "channels", None) or None,
-        )
-        registry = getattr(self, "channel_registry", None)
-        return registry.with_external_defaults(config) if registry is not None else config
-
-    def _build_shadow_context_config(self, *, channel_config, exclude_sources, recent_context: list[str], realtime_ctx: dict) -> dict:
+    def _build_shadow_context_config(self, *, channel_config, exclude_sources, recent_context: list[str]) -> dict:
         from ..services.impression_timeline import normalize_timeline_half_life
 
         config = channel_config.to_dict() if channel_config is not None else {}
@@ -442,86 +374,7 @@ class InjectionMixin:
         # QueryEngine and the FTS5 channel instance.
         config["cross_group_enabled"] = self.cross_group_enabled
         config["shared_memory_grants_enabled"] = self.shared_memory_grants_enabled
-        config["persona"] = {"realtime_ctx": realtime_ctx}
         return config
-
-    async def _run_injection_shadow_trace(
-        self,
-        *,
-        event: AstrMessageEvent,
-        req,
-        message: str,
-        group_id: str,
-        sender_id: str,
-        sender_name: str,
-        bot_id: str,
-        bot_profile: Optional[BotProfile],
-        runtime_scope: RuntimeScope | None,
-        exclude_sources,
-        old_text: str,
-    ) -> None:
-        """运行新 Orchestrator 影子链路并写入 trace；绝不修改真实 req。"""
-        if not getattr(self, "injection_shadow_enabled", True):
-            return
-        if not getattr(self, "injection_shadow_channels", None) or not getattr(self, "injection_trace_store", None):
-            return
-        try:
-            from ..services.injection.context import InjectionContext
-            from ..services.injection.shadow import run_injection_shadow
-
-            effective_config = self._effective_injection_config(runtime_scope)
-            if effective_config is None:
-                return
-            recent_context = self._get_recent_messages(event, scope=runtime_scope, max_messages=8)
-            realtime_ctx = self._build_shadow_persona_realtime_ctx(
-                scope=runtime_scope,
-                sender_id=sender_id,
-                sender_name=sender_name,
-            )
-            bot_profile_id = runtime_scope.bot_id
-            trace_id = f"shadow-{time.time_ns()}"
-            ctx = InjectionContext(
-                event=event,
-                req=req,
-                message=message,
-                group_id=group_id,
-                sender_id=sender_id,
-                sender_name=sender_name,
-                bot_id=bot_id,
-                bot_profile_id=bot_profile_id,
-                scope=runtime_scope,
-                recent_context=recent_context,
-                mode=getattr(self, "runtime_mode_name", "full"),
-                config=self._build_shadow_context_config(
-                    channel_config=effective_config,
-                    exclude_sources=exclude_sources,
-                    recent_context=recent_context,
-                    realtime_ctx=realtime_ctx,
-                ),
-                channel_options=effective_config.to_dict()["channels"],
-                query_options=QueryOptions(
-                    touch=True,
-                    stages=effective_config.query_stages,
-                    params=effective_config.query_params,
-                ),
-                now=time.time(),
-                trace_id=trace_id,
-            )
-            result = await run_injection_shadow(
-                ctx=ctx,
-                channels=self.injection_shadow_channels,
-                config=effective_config,
-                trace_store=self.injection_trace_store,
-                old_text=old_text,
-            )
-            matched = old_text == result.final_text
-            logger.debug(
-                f"[WaveMemory] injection shadow {'MATCH' if matched else 'DIFF'}: "
-                f"trace={trace_id} old_chars={len(old_text or '')} new_chars={len(result.final_text or '')}"
-            )
-        except Exception as e:
-            logger.debug(f"[WaveMemory] injection shadow skipped: {e}")
-            _record_err("InjectionShadow", e)
 
     async def _run_injection_active_trace(
         self,
@@ -550,11 +403,10 @@ class InjectionMixin:
             effective_config = self._effective_injection_config(runtime_scope)
             if effective_config is None:
                 return False
-            recent_context = self._get_recent_messages(event, scope=runtime_scope, max_messages=8)
-            realtime_ctx = self._build_shadow_persona_realtime_ctx(
+            recent_context = self._get_recent_messages(
+                event,
                 scope=runtime_scope,
-                sender_id=sender_id,
-                sender_name=sender_name,
+                max_messages=hot_value("injection.recent_context_messages", 8),
             )
             bot_profile_id = runtime_scope.bot_id
             trace_id = f"active-{time.time_ns()}"
@@ -574,7 +426,6 @@ class InjectionMixin:
                     channel_config=effective_config,
                     exclude_sources=exclude_sources,
                     recent_context=recent_context,
-                    realtime_ctx=realtime_ctx,
                 ),
                 channel_options=effective_config.to_dict()["channels"],
                 query_options=QueryOptions(
@@ -657,12 +508,14 @@ class InjectionMixin:
         ):
             return []
         try:
+            if max_messages <= 0:
+                return []
             rows = self.db.conn.execute(
                 """SELECT content FROM memories
                    WHERE bot_id=? AND session_id=? AND visibility=?
                      AND resolution_state='resolved' AND quarantine=0
                      AND content IS NOT NULL
-                   ORDER BY id DESC LIMIT ?""",
+                   ORDER BY timestamp DESC, id DESC LIMIT ?""",
                 (scope.bot_id, scope.session.id, scope.visibility, max_messages),
             ).fetchall()
             return [r[0] for r in reversed(rows)] if rows else []

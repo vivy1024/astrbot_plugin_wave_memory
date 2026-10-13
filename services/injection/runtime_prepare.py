@@ -126,7 +126,6 @@ class RuntimeContextPreparer:
                 channel_config=effective,
                 exclude_sources=exclude_sources,
                 recent_context=recent_context,
-                realtime_ctx={},
             ),
             channel_options=effective.to_dict()["channels"],
             query_options=self._query_options_factory(effective),

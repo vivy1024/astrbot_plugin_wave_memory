@@ -35,7 +35,7 @@ class RuntimeModeTest(unittest.TestCase):
         mode = resolve_runtime_mode({"Runtime_Settings": {"runtime_mode": "memory_only"}})
 
         disabled = [
-            "affinity", "persona", "mood", "dream", "consolidation",
+            "affinity", "persona", "mood", "consolidation",
             "metathinking", "belief", "belief_emergence", "concern",
             "mood_trajectory", "subjective_time", "desire", "jargon",
             "fewshot", "book_lore", "study", "self_reflect",
@@ -51,7 +51,7 @@ class RuntimeModeTest(unittest.TestCase):
     def test_main_uses_runtime_capability_gates_for_memory_only_services(self):
         source = plugin_source_text()
 
-        for capability in ["affinity", "mood", "dream", "consolidation", "book_lore", "jargon", "fewshot", "metathinking", "belief", "self_reflect"]:
+        for capability in ["affinity", "mood", "consolidation", "book_lore", "jargon", "fewshot", "metathinking", "belief", "self_reflect"]:
             self.assertIn(f'runtime_capability_enabled(self.runtime_mode, "{capability}"', source)
 
     def test_full_mode_preserves_existing_query_flags_and_repairs_advanced_defaults(self):

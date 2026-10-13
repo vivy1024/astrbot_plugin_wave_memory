@@ -199,22 +199,16 @@ async def _check_extension_reload(plugin, ctx, loop, scope):
 
 
 async def _check_service_reconfigure(plugin, loop):
-    old_dream = plugin.dream_service
-    saved = await loop.run_in_executor(None, _http, "/api/config/full", {"Lifecycle_Settings": {"dream_interval_hours": "3.0"}})
+    old_eviction = plugin.eviction_service
+    saved = await loop.run_in_executor(None, _http, "/api/config/full", {"Eviction_Settings": {"interval_hours": 3.0}})
     service = (saved.get("apply_modes") or {}).get("service", {})
     check(
-        "static config rebuilds dream only",
-        saved.get("ok") and service.get("dream", {}).get("action") == "rebuilt"
-        and plugin.dream_service is not old_dream and plugin.dream_interval_hours == 3.0
-        and list(service) == ["dream"],
+        "static config rebuilds eviction only",
+        saved.get("ok") and service.get("eviction", {}).get("action") == "rebuilt"
+        and plugin.eviction_service is not old_eviction and plugin.eviction_service.interval == 3.0 * 3600
+        and list(service) == ["eviction"],
         saved.get("message", ""),
     )
-    saved = await loop.run_in_executor(None, _http, "/api/config/full", {"Eviction_Settings": {"enabled": False}})
-    service = (saved.get("apply_modes") or {}).get("service", {})
-    check("static config disables eviction", service.get("eviction", {}).get("action") == "disabled" and plugin.eviction_service is None)
-    saved = await loop.run_in_executor(None, _http, "/api/config/full", {"Eviction_Settings": {"enabled": True}})
-    service = (saved.get("apply_modes") or {}).get("service", {})
-    check("static config re-creates eviction", service.get("eviction", {}).get("action") == "created" and plugin.eviction_service is not None)
 
 
 def _check_host_ports():

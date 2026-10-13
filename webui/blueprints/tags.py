@@ -513,14 +513,16 @@ async def tag_quality():
         report = None
         report_error = str(exc)
     if report is None:
-        from ..stat_cache import cached_stat
+        from ..stat_cache import cached_stat, hot_seconds
 
         payload = await cached_stat(
-            f"tags:{id(c)}:legacy_quality", 300.0, lambda: build_tag_quality_payload(c.db.conn)
+            f"tags:{id(c)}:legacy_quality",
+            hot_seconds("webui.legacy_quality_cache_seconds", 300),
+            lambda: build_tag_quality_payload(c.db.conn),
         )
         payload = {**payload, "coverage_report_error": report_error}
     else:
-        from ..stat_cache import cached_stat
+        from ..stat_cache import cached_stat, hot_seconds
 
         conn = c.db.conn
         counts = report["counts"]
@@ -528,7 +530,7 @@ async def tag_quality():
             "total_tags": conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0],
             "orphan_memory_tag_refs": await cached_stat(
                 f"tags:{id(c)}:orphan_refs",
-                300.0,
+                hot_seconds("webui.legacy_quality_cache_seconds", 300),
                 lambda: conn.execute(
                     """SELECT COUNT(DISTINCT mt.memory_id)
                        FROM memory_tags mt
@@ -552,7 +554,10 @@ async def tag_quality():
 
 # ---------------------------------------------------------------- 标签覆盖面板
 
-_COVERAGE_CACHE_SECONDS = 300.0
+def _coverage_ttl() -> float:
+    from ..stat_cache import hot_seconds
+
+    return hot_seconds("webui.coverage_cache_seconds", 300)
 _coverage_lock = asyncio.Lock()
 
 
@@ -575,14 +580,14 @@ def _coverage_report_sync(db_path: str, worker_status: dict | None) -> dict:
 
 
 async def cached_tag_coverage(c, *, refresh: bool = False) -> dict:
-    """统一的标签覆盖率报告（线上冷读约 12 秒，在工作线程里算，缓存 5 分钟）。首页、维护页、标签页共用。"""
+    """统一的标签覆盖率报告（线上冷读约 12 秒，在工作线程里算，缓存时长为热参数 webui.coverage_cache_seconds）。首页、维护页、标签页共用。"""
     cached = getattr(c, "_tag_coverage_cache", None)
     now = time.time()
-    if not refresh and cached and now - cached[0] < _COVERAGE_CACHE_SECONDS:
+    if not refresh and cached and now - cached[0] < _coverage_ttl():
         return cached[1]
     async with _coverage_lock:
         cached = getattr(c, "_tag_coverage_cache", None)
-        if not refresh and cached and time.time() - cached[0] < _COVERAGE_CACHE_SECONDS:
+        if not refresh and cached and time.time() - cached[0] < _coverage_ttl():
             return cached[1]
         worker = _tag_worker(c)
         status = worker.status() if worker is not None and hasattr(worker, "status") else {"running": False}
