@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { isDirtyDisplayName, pickDisplayName, sanitizeDisplayName } from '@/lib/display-name'
+import { isDirtyDisplayName, personDisplayName, pickDisplayName, sanitizeDisplayName } from '@/lib/display-name'
 
 const PROTOBUF_CARD = '\n\x11\x12\x0f猫猫副队长\n\t\n\x07$ÿĀ\x11\x10\x10\x00'
 
@@ -39,5 +39,18 @@ describe('pickDisplayName', () => {
     expect(pickDisplayName([PROTOBUF_CARD, ''], '10000002')).toBe('猫猫副队长')
     expect(pickDisplayName(['', null], '10000002')).toBe('10000002')
     expect(pickDisplayName(['阿伟', '伟哥'], 'x')).toBe('阿伟')
+  })
+})
+
+describe('personDisplayName', () => {
+  it('昵称只有符号时换用有字的别名', () => {
+    expect(personDisplayName({ display_name: '-', nickname: '-', aliases: ['-', '桃子夏'], user_id: '1530561616' })).toBe('桃子夏')
+  })
+  it('有字的昵称优先', () => {
+    expect(personDisplayName({ display_name: '- Noel', aliases: ['桃子夏'], user_id: '1' })).toBe('- Noel')
+  })
+  it('只有 QQ 号时显示群友尾号，只有符号时保留符号', () => {
+    expect(personDisplayName({ display_name: '2297148062', aliases: [], user_id: '2297148062' })).toBe('群友 8062')
+    expect(personDisplayName({ display_name: '.', aliases: [], user_id: '1218457873' })).toBe('.')
   })
 })

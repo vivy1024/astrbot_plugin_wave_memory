@@ -531,12 +531,6 @@ export function MemoriesPage() {
             <div className="text-muted-foreground scale-95 origin-center mb-0.5">记忆数</div>
             <div className="font-semibold">{payload ? formatCount(payload.page.total) : '...'}</div>
           </div>
-          <div className="rounded-lg border bg-muted/20 px-3 py-2 text-center min-w-[70px]">
-            <div className="text-muted-foreground scale-95 origin-center mb-0.5">有向量</div>
-            <div className="font-semibold text-emerald-500">
-              {payload ? formatCount(payload.items.filter(i => i.has_vector).length) : '...'}
-            </div>
-          </div>
         </div>
       </div>
 
@@ -618,7 +612,7 @@ export function MemoriesPage() {
                 { key: 'sender', header: '发送者', className: 'max-w-32 truncate text-muted-foreground', render: (row) => sanitizeDisplayName(row.sender_name) || row.sender_id || '未记录' },
                 { key: 'source', header: '来源', render: (row) => <Badge variant="secondary" className="font-mono text-xs">{row.source ?? '未记录'}</Badge> },
                 { key: 'tags', header: '标签', render: (row) => <div className="flex flex-wrap gap-1">{row.tags?.length ? row.tags.slice(0, 2).map((tag, index) => <Badge key={`${tag.name}-${index}`} className={tagBadgeClass(tag.type)}>{tag.name}</Badge>) : <span className="text-xs text-muted-foreground">—</span>}</div> },
-                { key: 'vector', header: '向量', className: 'text-center', render: (row) => <span className={row.has_vector ? 'font-bold text-emerald-500' : 'font-bold text-destructive'} title={row.has_vector ? '有向量' : '无向量'}>{row.has_vector ? '有向量' : '无向量'}</span> },
+                { key: 'vector', header: '向量', className: 'text-center', render: (row) => <span className={row.has_vector ? 'text-xs text-muted-foreground' : 'text-xs font-medium text-amber-600 dark:text-amber-400'} title={row.has_vector ? '已向量化，可被语义检索' : '还没有向量，后台回填后才能被语义检索'}>{row.has_vector ? '有向量' : '待补向量'}</span> },
                 { key: 'time', header: '时间', className: 'whitespace-nowrap font-mono text-xs text-muted-foreground', render: (row) => formatTime(row.timestamp) },
                 { key: 'actions', header: null, render: (row) => <Button variant="ghost" size="icon-sm" title="打开详情" onClick={(e) => { e.stopPropagation(); void open(row) }}><FileEditIcon /></Button> },
               ]}

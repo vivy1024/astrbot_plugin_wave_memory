@@ -123,3 +123,18 @@ export function pickDisplayName(candidates: readonly unknown[], fallback = ''): 
   }
   return sanitizeDisplayName(fallback) || fallback
 }
+
+const HAS_LETTER_OR_DIGIT = /[\p{L}\p{N}]/u
+
+/** 显示名：优先有字的名字；昵称只有符号（「-」「.」）时换用登记别名里有字的那个；都没有就用「群友 尾号」。 */
+export function personDisplayName(item: { display_name?: unknown; nickname?: unknown; aliases?: unknown; user_id?: unknown }): string {
+  const candidates = [item.display_name, item.nickname, ...(Array.isArray(item.aliases) ? item.aliases : [])]
+  const userId = String(item.user_id ?? '')
+  const named = candidates
+    .map((candidate) => pickDisplayName([candidate]))
+    .find((name) => name && HAS_LETTER_OR_DIGIT.test(name) && name !== userId)
+  if (named) return named
+  const symbolic = pickDisplayName([item.display_name, item.nickname])
+  if (symbolic && symbolic !== userId) return symbolic
+  return userId ? `群友 ${userId.slice(-4)}` : '未知群友'
+}

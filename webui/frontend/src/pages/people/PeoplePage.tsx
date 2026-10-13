@@ -34,7 +34,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import { pickDisplayName, sanitizeDisplayName } from '@/lib/display-name'
+import { personDisplayName, sanitizeDisplayName } from '@/lib/display-name'
 import { formatSignedDisplayNumber } from '@/lib/format-number'
 import { scopedHref } from '@/lib/navigation-search'
 
@@ -42,8 +42,11 @@ function aliasLabels(aliases: unknown[]): string[] {
   return [...new Set(aliases.map((alias) => sanitizeDisplayName(alias)).filter(Boolean))]
 }
 
-function personDisplayName(item: PersonItem): string {
-  return pickDisplayName([item.display_name, item.nickname], item.user_id)
+/** 好感只用颜色暗示方向，不用大块饱和色：正向绿、负向蓝、零灰。 */
+function affinityClass(value: number): string {
+  if (value > 0) return 'border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
+  if (value < 0) return 'border-sky-500/30 text-sky-700 dark:text-sky-400'
+  return 'text-muted-foreground'
 }
 
 function interactionCount(item: PersonItem): number | null {
@@ -51,6 +54,8 @@ function interactionCount(item: PersonItem): number | null {
   const registryCount = item.person_registry?.message_count
   return typeof registryCount === 'number' && Number.isFinite(registryCount) ? registryCount : null
 }
+
+const DEFAULT_SORT = 'interactions' as const
 
 function defaultSortOrder(sortBy: 'name' | 'interactions' | 'affinity'): 'asc' | 'desc' {
   return sortBy === 'name' ? 'asc' : 'desc'
@@ -408,12 +413,7 @@ function PersonDetail({ item, relationship, relationshipError, query, onChanged 
       <div><span className="mb-0.5 block text-xs text-muted-foreground">互动数</span><span className="font-mono font-medium">{interactionCount(item) ?? '未记录'}</span></div>
       <div><span className="mb-0.5 block text-xs text-muted-foreground">好感</span>
         {actualAffinity !== null ? (
-          <Badge className={`text-xs font-mono font-semibold ${
-            actualAffinity >= 15 ? 'bg-rose-500 text-white' :
-            actualAffinity >= 5 ? 'bg-pink-500 text-white' :
-            actualAffinity > 0 ? 'bg-pink-400/80 text-white' :
-            actualAffinity < 0 ? 'bg-blue-500 text-white' : 'bg-muted text-muted-foreground'
-          }`}>
+          <Badge variant="outline" className={`text-xs font-mono font-semibold tabular-nums ${affinityClass(actualAffinity)}`}>
             {formatSignedDisplayNumber(actualAffinity)}
           </Badge>
         ) : (
@@ -514,7 +514,8 @@ export function PeoplePage() {
   const maxAffinity = pagination.searchParams.get('max_affinity') ?? ''
   const minInteractions = pagination.searchParams.get('min_interactions') ?? ''
   const aliasFilter = (pagination.searchParams.get('alias_filter') as 'all' | 'has' | 'none' | null) ?? 'all'
-  const sortBy = (pagination.searchParams.get('sort_by') as 'name' | 'interactions' | 'affinity' | null) ?? 'name'
+  // 默认按互动数从高到低：按名字排时，只有符号的昵称（「-」「.」）会全挤在最前面
+  const sortBy = (pagination.searchParams.get('sort_by') as 'name' | 'interactions' | 'affinity' | null) ?? DEFAULT_SORT
   const sortOrder = (pagination.searchParams.get('sort_order') as 'asc' | 'desc' | null) ?? defaultSortOrder(sortBy)
   const objectRef = pagination.searchParams.get('ref') ?? ''
   const objectSubjectId = pagination.searchParams.get('subject_principal_id') ?? ''
@@ -530,13 +531,14 @@ export function PeoplePage() {
     max_affinity: maxAffinity || undefined,
     min_interactions: minInteractions || undefined,
     alias_filter: aliasFilter !== 'all' ? aliasFilter : undefined,
+    // 后端缺省按名字排，所以默认的互动数排序也要显式带上
     sort_by: sortBy !== 'name' ? sortBy : undefined,
     // 数字排序必须显式带方向：旧后端缺省是升序，省略 desc 会把「高→低」排成低到高。
     sort_order: sortBy === 'name'
       ? (sortOrder !== 'asc' ? sortOrder : undefined)
       : sortOrder,
   }), [aliasFilter, maxAffinity, minAffinity, minInteractions, relationshipState, search, sortBy, sortOrder])
-  const hasAdvancedFilters = Boolean(listFilters.relationship_state || listFilters.min_affinity || listFilters.max_affinity || listFilters.min_interactions || listFilters.alias_filter || listFilters.sort_by || listFilters.sort_order)
+  const hasAdvancedFilters = Boolean(listFilters.relationship_state || listFilters.min_affinity || listFilters.max_affinity || listFilters.min_interactions || listFilters.alias_filter || sortBy !== DEFAULT_SORT || pagination.searchParams.get('sort_order'))
 
   const [searchDraft, setSearchDraft] = useState(search)
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(hasAdvancedFilters)
@@ -826,7 +828,7 @@ export function PeoplePage() {
                         onChange={(e) => {
                           const next = e.target.value as 'name' | 'interactions' | 'affinity'
                           applyListFilters({
-                            sort_by: next === 'name' ? null : next,
+                            sort_by: next === DEFAULT_SORT ? null : next,
                             sort_order: null,
                           })
                         }}
@@ -875,14 +877,12 @@ export function PeoplePage() {
               keyExtractor={(row) => row.scope_key}
               onRowClick={(row) => openDetail(row)}
               columns={[
-                { key: 'user_id', header: '用户 ID', className: 'max-w-44 truncate py-1 font-mono text-xs', render: (row) => row.user_id },
-                { key: 'display_name', header: '显示名称', isTitle: true, className: 'max-w-44 truncate py-1 text-xs font-medium', render: (row) => personDisplayName(row) },
-                { key: 'aliases', header: '登记别名', className: 'max-w-48 truncate py-1 text-xs text-muted-foreground', render: (row) => { const aliases = aliasLabels(row.aliases); return aliases.length ? aliases.join('、') : '未登记' } },
-                { key: 'impression', header: 'Bot 印象', className: 'max-w-56 truncate py-1 text-xs text-muted-foreground', render: (row) => impressionOf(row) || '—' },
-                { key: 'group', header: '群', className: 'max-w-36 truncate py-1 font-mono text-xs', render: (row) => row.group_id },
-                { key: 'bot', header: 'Bot', className: 'max-w-32 truncate py-1', render: (row) => <Badge variant="secondary" className="max-w-full truncate px-1.5 font-mono text-xs font-normal">{row.bot_id}</Badge> },
-                { key: 'count', header: '互动数', className: 'py-1 text-center font-mono text-xs', render: (row) => interactionCount(row) ?? '—' },
-                { key: 'affinity', header: '好感', className: 'py-1', render: (row) => { if (relationshipError) return <Badge variant="outline" className="text-xs text-destructive">关系读取失败</Badge>; const has = row.affinity !== null; return has ? <Badge className={`text-xs font-mono font-semibold ${row.affinity! >= 15 ? 'bg-rose-500 text-white' : row.affinity! >= 5 ? 'bg-pink-500 text-white' : row.affinity! > 0 ? 'bg-pink-400/80 text-white' : row.affinity! < 0 ? 'bg-blue-500 text-white' : 'bg-muted text-muted-foreground'}`}>{formatSignedDisplayNumber(row.affinity)}</Badge> : <Badge variant="outline" className="text-xs text-muted-foreground">未记录</Badge> } },
+                { key: 'display_name', header: '群友', isTitle: true, className: 'max-w-44 truncate py-1 text-sm font-medium', render: (row) => personDisplayName(row) },
+                { key: 'user_id', header: '用户 ID', className: 'max-w-36 truncate py-1 font-mono text-xs text-muted-foreground', render: (row) => row.user_id },
+                { key: 'aliases', header: '登记别名', className: 'max-w-48 truncate py-1 text-xs text-muted-foreground', render: (row) => { const aliases = aliasLabels(row.aliases); return aliases.length ? aliases.join('、') : '—' } },
+                { key: 'impression', header: 'Bot 印象', className: 'max-w-64 truncate py-1 text-xs text-muted-foreground', render: (row) => impressionOf(row) || '—' },
+                { key: 'count', header: '互动数', className: 'py-1 text-right font-mono text-xs tabular-nums', render: (row) => interactionCount(row) ?? '—' },
+                { key: 'affinity', header: '好感', className: 'py-1', render: (row) => { if (relationshipError) return <Badge variant="outline" className="text-xs text-destructive">关系读取失败</Badge>; return row.affinity !== null ? <Badge variant="outline" className={`text-xs font-mono font-semibold tabular-nums ${affinityClass(row.affinity!)}`}>{formatSignedDisplayNumber(row.affinity)}</Badge> : <span className="text-xs text-muted-foreground">—</span> } },
                 { key: 'actions', header: null, hideOnMobile: false, render: (row) => <Button type="button" variant="ghost" size="icon-xs" aria-label={`查看 ${personDisplayName(row)} 详情`} onClick={(event) => { event.stopPropagation(); openDetail(row) }}><EyeIcon aria-hidden="true" /></Button> },
               ]}
             />

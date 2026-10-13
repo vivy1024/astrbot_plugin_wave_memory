@@ -42,9 +42,10 @@ export function AppShell() {
     <GlobalScopeProvider>
     <SidebarProvider>
       <WaveSidebar />
-      <SidebarInset>
+      <SidebarInset className="min-w-0">
         <PageHeader />
-        <ScrollArea className="h-[calc(100svh-3.5rem)]">
+        {/* Radix 给内容包了一层 display:table，宽表格会撑宽整页、表格自己的横向滚动失效；改回 block */}
+        <ScrollArea className="h-[calc(100svh-3.5rem)] [&_[data-slot=scroll-area-viewport]>div]:!block">
           <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 p-4 md:p-6">
             <Suspense fallback={<PageFallback />}>
               <Outlet />

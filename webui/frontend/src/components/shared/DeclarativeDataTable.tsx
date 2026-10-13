@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Badge } from '@/components/ui/badge'
 import { useIsMobile } from '@/hooks/use-mobile'
 
 /**
@@ -114,13 +113,6 @@ export function DeclarativeDataTable<T>({
                 <div className="font-medium">{titleColumn.render(row, i)}</div>
                 {renderCardSubtitle?.(row)}
               </div>
-              {!onToggleSelect && subtitleColumns
-                .filter((c) => c.header != null)
-                .map((col) => (
-                  <Badge key={col.key} variant="outline" className="shrink-0 text-xs">
-                    {col.render(row, i)}
-                  </Badge>
-                ))}
             </div>
             {subtitleColumns.length > 0 && (
               <dl className="grid gap-2 text-sm">
