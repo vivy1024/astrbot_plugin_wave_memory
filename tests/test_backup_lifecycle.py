@@ -61,3 +61,11 @@ def test_background_backup_does_not_block(tmp_path):
     manager._thread.join(timeout=10)
     assert manager.last_result["ok"] is True
     conn.close()
+
+
+def test_backup_max_count_zero_disables_auto_backup(tmp_path):
+    conn = _live_db(tmp_path)
+    manager = DatabaseBackupManager(str(tmp_path), config={"backup_max_count": 0})
+    assert manager.run_backup_safe(background=False) is False
+    assert manager.auto_backups() == []
+    conn.close()

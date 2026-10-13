@@ -17,6 +17,10 @@
 - 打标签的目录邻居查询（写锁事务内，占写线程约四成）按 tag_type 缓存；按昵称找人结果缓存（约 360ms/次）；活跃记忆计数（每次约 10 秒、读约 1.5GB）缓存拉长到默认 30 分钟。
 - 管理台：`/api/system`、`/api/memories/stats`、`/api/tags/quality` 的重统计挪出 WebUI 事件循环并缓存，删掉被覆盖率报告覆盖的白算全表扫描；记忆列表条件改回 `group_id=?` 走索引，慢计数不再挡住列表（线上记忆页 33 秒 → 0.06 秒）。
 
+### 配置
+
+- `backup_max_count` 可设为 0，关闭插件自己的整库备份（库与备份同盘、备份另有去处时用）。默认仍为 1。
+
 ### 新增热参数（9876 热参数页，立即生效）
 
 `injection.recent_context_messages`、`tags.admission_neighbor_limit`、`tags.admission_cache_seconds`、`storage.active_count_cache_seconds`、`jargon.person_alias_cache_seconds`、`people.nickname_cache_seconds`、`webui.stats_cache_seconds`、`webui.vector_count_cache_seconds`、`webui.coverage_cache_seconds`、`webui.legacy_quality_cache_seconds`、`webui.list_count_cache_seconds`、`webui.list_count_wait_seconds`。均有上下限，原来写死在代码里的数值即默认值。

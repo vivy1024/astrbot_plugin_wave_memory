@@ -179,8 +179,8 @@ export const RISK_RULES: RiskRule[] = [
   },
   {
     key: 'backup_max_count',
-    reason: '自动整库备份保留份数。',
-    impact: '份数越少回滚余地越小；份数越多占用磁盘越多（整库体积较大）。',
+    reason: '自动整库备份保留份数，0 表示关闭。',
+    impact: '份数越少回滚余地越小；份数越多占用磁盘越多（整库体积较大）。设为 0 时插件不再自己备份，必须另有备份去处。',
     restart: false,
     affectsData: true,
   },

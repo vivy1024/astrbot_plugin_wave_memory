@@ -398,7 +398,7 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | tag_llm_provider_id | （必填） | Tag/黑话/风格用 LLM |
 | embedding_dimension | 1024 | 向量维度 |
 | llm_fallback_provider_ids | （空） | LLM 降级 Provider 链 |
-| backup_max_count | 1 | 数据库备份保留份数 |
+| backup_max_count | 1 | 启动时在插件数据目录做的整库备份保留份数；0 = 关闭（备份另有去处时用） |
 | _system_status | （只读） | 仅供说明，无需修改 |
 
 ### 运行模式 (Runtime_Settings)

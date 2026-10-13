@@ -52,9 +52,16 @@ class DatabaseBackupManager:
             return True
         return (time.time() - backups[-1].stat().st_mtime) >= min_interval_seconds
 
+    def max_count(self) -> int:
+        """保留份数；0 表示关闭自动整库备份（库与备份在同一块盘上、备份另有去处时用）。"""
+        try:
+            return max(0, int(self.config.get("backup_max_count", 1)))
+        except (TypeError, ValueError):
+            return 1
+
     def run_backup_safe(self, *, min_interval_seconds: int = 3600, background: bool = True) -> bool:
         """到期时做一次备份；默认在后台线程执行。返回是否开始了备份。"""
-        if not self.db_file.exists():
+        if not self.db_file.exists() or self.max_count() == 0:
             return False
         try:
             self.backup_dir.mkdir(exist_ok=True)
@@ -106,11 +113,7 @@ class DatabaseBackupManager:
             return False
 
     def _prune_stale_backups(self) -> None:
-        try:
-            max_backups = max(1, int(self.config.get("backup_max_count", 1)))
-        except (TypeError, ValueError):
-            max_backups = 1
-
+        max_backups = max(1, self.max_count())
         for old_file in self.auto_backups()[:-max_backups]:
             try:
                 old_file.unlink()

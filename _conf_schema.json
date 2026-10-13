@@ -23,9 +23,9 @@
     "restart_required": true
   },
   "backup_max_count": {
-    "description": "自动整库备份保留数量",
+    "description": "自动整库备份保留数量（0 = 关闭）",
     "type": "int",
-    "hint": "WaveMemory 数据库体积较大，默认只保留最近 1 份自动整库备份；治理前备份应另行验证后再裁剪。",
+    "hint": "每次启动时若距上次超过 1 小时就在插件数据目录里做一份整库备份。WaveMemory 数据库体积较大，默认只保留 1 份；备份另有去处（如定时拉到别的盘）且本机磁盘紧张时设为 0 关闭。",
     "default": 1,
     "restart_required": false
   },
