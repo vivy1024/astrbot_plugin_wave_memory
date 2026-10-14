@@ -2,7 +2,7 @@
 
 在 astrbot 容器里运行（只读数据库；种子标签取自运行中的 9876 检索实验室 debug 输出）::
 
-    python compare_cooccurrence_kernels.py [--queries 40] [--session 羽书:group:398291136] [--dump out.json]
+    python compare_cooccurrence_kernels.py --bot-id <Bot db_id> --session <会话 id> [--queries 40] [--dump out.json]
 
 输出：种子在图里的比例、有涌现标签的查询占比、涌现数与能量场大小、传播耗时，以及逐条样例（标签名）。
 """
@@ -48,8 +48,8 @@ def _router(result: dict, kernel: str):
     return matrix, SpikeRouter(matrix, residual_map={})
 
 
-def _seeds(text: str, session: str) -> tuple[list[dict], float]:
-    qs = urllib.parse.urlencode({"bot_id": "yushu", "visibility": "group", "session_id": session})
+def _seeds(text: str, bot_id: str, session: str) -> tuple[list[dict], float]:
+    qs = urllib.parse.urlencode({"bot_id": bot_id, "visibility": "group", "session_id": session})
     request = urllib.request.Request(
         "http://127.0.0.1:9876/api/query?" + qs,
         json.dumps({"text": text, "top_k": 5, "debug": True}).encode(),
@@ -64,7 +64,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", default=DEFAULT_DB)
     parser.add_argument("--queries", type=int, default=40)
-    parser.add_argument("--session", default="羽书:group:398291136")
+    parser.add_argument("--bot-id", required=True, help="Bot 的 db_id")
+    parser.add_argument("--session", required=True, help="群会话 id，形如 <平台>:group:<群号>")
     parser.add_argument("--min-support", type=int, default=2)
     parser.add_argument("--dump")
     args = parser.parse_args()
@@ -96,7 +97,7 @@ def main() -> int:
     stats = {k: {"seeds": 0, "in_graph": 0, "fired": 0, "emergent": [], "field": [], "ms": []} for k in graphs}
     samples = []
     for text in texts:
-        seeds, logic_depth = _seeds(text, args.session)
+        seeds, logic_depth = _seeds(text, args.bot_id, args.session)
         if not seeds:
             continue
         sample = {"query": text, "seeds": [name(s["tag_id"]) for s in seeds[:6]]}

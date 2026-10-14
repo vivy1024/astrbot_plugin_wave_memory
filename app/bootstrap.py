@@ -809,6 +809,7 @@ class BootstrapMixin:
                 "qq_ids": [p.qq_id for p in self._bot_registry.values() if p.qq_id],
                 "db_ids": [p.db_id for p in self._bot_registry.values() if p.db_id],
                 "names": [p.name for p in self._bot_registry.values() if p.name],
+                "qq_to_db": {p.qq_id: p.db_id for p in self._bot_registry.values() if p.qq_id and p.db_id},
             }
             success = run_migration(self.db.db_path, bot_ids_for_migration)
             if success:

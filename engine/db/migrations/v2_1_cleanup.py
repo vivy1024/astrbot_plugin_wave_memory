@@ -12,36 +12,33 @@ def run_migration(db_path: str, bot_identifiers: dict = None):
     
     Args:
         db_path: wave_memory.db 路径
-        bot_identifiers: {
-            "qq_ids": ["626751255", "2500447291", "1336495069"],
-            "db_ids": ["yushu", "baizz"],
-            "names": ["羽书", "白泽"]
-        }
+        bot_identifiers: 由 Bot 注册表生成，{
+            "qq_ids": [...], "db_ids": [...], "names": [...],
+            "qq_to_db": {QQ 号: db_id}   # 旧数据里以 QQ 号记的 bot_id 统一成 db_id
+        }；不传则跳过与 Bot 身份有关的两步
     """
-    if bot_identifiers is None:
-        bot_identifiers = {
-            "qq_ids": ["626751255", "2500447291", "1336495069"],
-            "db_ids": ["yushu", "baizz"],
-            "names": ["羽书", "白泽"],
-        }
+    bot_identifiers = bot_identifiers or {}
 
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
     try:
         # --- 1. 删除 bot 自我 facts ---
-        all_bot_subjects = (
-            bot_identifiers["qq_ids"] 
-            + bot_identifiers["db_ids"] 
-            + bot_identifiers["names"]
-        )
+        all_bot_subjects = [
+            str(item)
+            for key in ("qq_ids", "db_ids", "names")
+            for item in bot_identifiers.get(key) or []
+            if item
+        ]
         placeholders = ",".join(["?"] * len(all_bot_subjects))
-        cursor.execute(
-            f"SELECT COUNT(*) FROM facts WHERE subject IN ({placeholders})",
-            all_bot_subjects
-        )
-        count = cursor.fetchone()[0]
-        
+        count = 0
+        if all_bot_subjects:
+            cursor.execute(
+                f"SELECT COUNT(*) FROM facts WHERE subject IN ({placeholders})",
+                all_bot_subjects
+            )
+            count = cursor.fetchone()[0]
+
         if count > 0:
             cursor.execute(
                 f"DELETE FROM facts WHERE subject IN ({placeholders})",
@@ -53,13 +50,13 @@ def run_migration(db_path: str, bot_identifiers: dict = None):
         # 检查 beliefs 表是否存在
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='beliefs'")
         if cursor.fetchone():
-            # yushu 的所有 QQ 号统一
-            cursor.execute(
-                "UPDATE beliefs SET bot_id = 'yushu' WHERE bot_id IN ('2500447291','1336495069','626751255')"
-            )
-            updated = cursor.rowcount
-            if updated:
-                logger.info(f"[Migration v2.1] Unified {updated} beliefs bot_id -> 'yushu'")
+            # 以 QQ 号记的 bot_id 统一成该 Bot 的 db_id
+            for qq_id, db_id in (bot_identifiers.get("qq_to_db") or {}).items():
+                if not qq_id or not db_id:
+                    continue
+                cursor.execute("UPDATE beliefs SET bot_id = ? WHERE bot_id = ?", (str(db_id), str(qq_id)))
+                if cursor.rowcount:
+                    logger.info(f"[Migration v2.1] Unified {cursor.rowcount} beliefs bot_id {qq_id} -> {db_id}")
         
         # --- 3. 互动计数清零 ---
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_profiles'")

@@ -123,8 +123,8 @@ class FakeContext:
 
 
 CONFIG = {
-    "MetaThinking_Bot1": {"qq_id": "2500447291", "name": "羽书", "db_id": "yushu", "aliases": "羽书bot,器灵"},
-    "MetaThinking_Bot2": {"qq_id": "1336495069", "name": "白真真", "db_id": "baizz"},
+    "MetaThinking_Bot1": {"qq_id": "1000000005", "name": "示例甲", "db_id": "bot-a", "aliases": "甲bot,小甲"},
+    "MetaThinking_Bot2": {"qq_id": "1000000002", "name": "示例乙", "db_id": "bot-b"},
     "WebUI_Settings": {"webui_enabled": True, "webui_port": PORT, "webui_host": "127.0.0.1", "webui_password": ""},
 }
 
@@ -252,7 +252,7 @@ async def _check_book_lore_workbench(loop):
     check("book lore workbench overview", overview["counts"]["notes"]["rows"] == 1 and overview["latest_chapter"] == 1,
           f"not_indexed={overview['notes_not_indexed']}")
     saved = await loop.run_in_executor(None, _http, "/api/book-lore/workbench/notes",
-                                       {"item": {"title": "安监局", "content": "修仙界的安全监管", "category": "世界观"}})
+                                       {"item": {"title": "灯塔", "content": "港口夜里给船引路的地方", "category": "世界观"}})
     # 启动检查的替身上下文没有 embedding provider：笔记照常入库，向量留到补齐
     check("book lore workbench save", saved["ok"] and saved["pending_vectors"] == 1, str(saved.get("saved")))
     preview = await loop.run_in_executor(None, _http, "/api/book-lore/workbench/chapters/preview",
@@ -273,7 +273,7 @@ async def run():
     await plugin.initialize()
     loop = asyncio.get_running_loop()
     try:
-        check("bots migrated", {p.db_id for p in plugin.bot_registry.all()} == {"yushu", "baizz"}, plugin.bot_registry.source)
+        check("bots migrated", {p.db_id for p in plugin.bot_registry.all()} == {"bot-a", "bot-b"}, plugin.bot_registry.source)
         check("tools registered", len(ctx.tools) >= 10, str(len(ctx.tools)))
         from astrbot_plugin_wave_memory.domain.host_ports import HostTool
         not_tools = [getattr(t, "name", t) for t in ctx.tools if not isinstance(t, HostTool)]
@@ -289,9 +289,9 @@ async def run():
             get_message_type=lambda: "GroupMessage", get_group_id=lambda: "42", get_session_id=lambda: "u1",
         )
         check("hot-added bot resolves", plugin.scope_resolver.resolve_event(event).scope.bot_id == "bot_c")
-        caps = await loop.run_in_executor(None, _http, "/api/runtime/v1/capabilities?bot_id=yushu")
-        check("capabilities", bool(caps["tools"]) and caps["bot"]["db_id"] == "yushu", f"{len(caps['tools'])} tools")
-        scope = {"bot_id": "yushu", "visibility": "group", "session": {"id": "羽书:group:42"}}
+        caps = await loop.run_in_executor(None, _http, "/api/runtime/v1/capabilities?bot_id=bot-a")
+        check("capabilities", bool(caps["tools"]) and caps["bot"]["db_id"] == "bot-a", f"{len(caps['tools'])} tools")
+        scope = {"bot_id": "bot-a", "visibility": "group", "session": {"id": "示例甲:group:42"}}
         obs = await loop.run_in_executor(None, _http, "/api/runtime/v1/observations/batch", {"events": [
             {"event_id": 9001, "content": "记住 周五一起打尖塔", "is_at_bot": True, "sender_id": "u1", "sender_name": "阿一", "scope": scope},
             {"event_id": 9002, "kind": "self", "content": "好呀周五见", "scope": scope},
@@ -316,9 +316,9 @@ async def run():
         # Only this temporary instance is enabled, and no provider is available.
         from astrbot_plugin_wave_memory.domain.scope import RuntimeScope, SessionRef
         from astrbot_plugin_wave_memory.services.reply_decision import ReplySignals
-        learning_scope = RuntimeScope("yushu", "group", SessionRef("羽书:group:42", "羽书", "group", "42"))
+        learning_scope = RuntimeScope("bot-a", "group", SessionRef("示例甲:group:42", "示例甲", "group", "42"))
         decision = plugin.reply_decision.decide(ReplySignals(
-            bot_id="yushu", session_id=learning_scope.session.id, visibility="group", message="谢谢",
+            bot_id="bot-a", session_id=learning_scope.session.id, visibility="group", message="谢谢",
         ))
         check("reply rules default off and never wake by themselves", decision["mode"] == "off" and not decision["allow"])
         check("learning default off", not plugin.reply_feedback_service.enabled and not plugin.expression_policy.enabled)
@@ -344,7 +344,7 @@ async def run():
         }, source_message_ids=[row[0] for row in records])
         check("learning records evidence without a model call", learned == {"feedback": 1, "expressions": 1}, str(learned))
         from urllib.parse import urlencode
-        query = urlencode({"bot_id": "yushu", "session_id": learning_scope.session.id, "visibility": "group"})
+        query = urlencode({"bot_id": "bot-a", "session_id": learning_scope.session.id, "visibility": "group"})
         listing = await loop.run_in_executor(None, _http, "/api/reply-learning/expressions?" + query)
         example = listing["items"][0]
         check("pending expression not injected", not plugin.expression_policy.recall(learning_scope, message="有点紧张"))

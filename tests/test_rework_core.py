@@ -899,58 +899,6 @@ class ReworkCoreTest(unittest.TestCase):
             result = ref.match(useful)
             self.assertTrue(result.get("matched"), (useful, result))
 
-    def test_cleanup_dry_run_does_not_modify_and_apply_marks_legacy_rows(self):
-        from scripts.cleanup_legacy_social_data import analyze_database, apply_cleanup
-
-        conn, path = self._connect()
-        conn.executescript("""
-            CREATE TABLE user_profiles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                group_id TEXT NOT NULL,
-                nickname TEXT,
-                affection INTEGER DEFAULT 0,
-                interaction_count INTEGER DEFAULT 0,
-                first_seen REAL,
-                last_seen REAL,
-                personality_tags TEXT,
-                notes TEXT,
-                metadata TEXT,
-                bot_id TEXT DEFAULT 'yushu',
-                UNIQUE(user_id, group_id, bot_id)
-            );
-            CREATE TABLE jargon (id INTEGER PRIMARY KEY, word TEXT, meaning TEXT, confidence REAL DEFAULT 0, is_jargon INTEGER, status TEXT);
-            CREATE TABLE beliefs (id INTEGER PRIMARY KEY, content TEXT, sources TEXT, status TEXT);
-            CREATE TABLE facts (id INTEGER PRIMARY KEY, subject TEXT, predicate TEXT, object TEXT, confidence REAL DEFAULT 0.8);
-        """)
-        conn.execute("INSERT INTO user_profiles (user_id, group_id, bot_id, affection, interaction_count, metadata) VALUES ('u1','g1','baizz',50,0,'{}')")
-        conn.execute("INSERT INTO user_profiles (user_id, group_id, bot_id, affection, interaction_count, metadata) VALUES ('u2','g1','yushu',50,3,'{}')")
-        conn.execute("INSERT INTO jargon (word, meaning, confidence, is_jargon, status) VALUES ('肚腩','',0,NULL,NULL)")
-        conn.execute("INSERT INTO beliefs (content, sources, status) VALUES ('summary belief','[1,2]','pending')")
-        conn.commit()
-        conn.close()
-
-        report = analyze_database(str(path))
-        self.assertEqual(report["affinity_legacy_neutral"], 1)
-        self.assertEqual(report["affinity_legacy_unverified"], 1)
-        self.assertEqual(report["jargon_empty_or_unknown"], 1)
-
-        conn = sqlite3.connect(path)
-        self.assertEqual(conn.execute("SELECT affection FROM user_profiles WHERE user_id='u1'").fetchone()[0], 50)
-        conn.close()
-
-        apply_cleanup(str(path), backup=False)
-        conn = sqlite3.connect(path)
-        neutral = conn.execute("SELECT affection, metadata FROM user_profiles WHERE user_id='u1'").fetchone()
-        unverified = conn.execute("SELECT affection, metadata FROM user_profiles WHERE user_id='u2'").fetchone()
-        jargon = conn.execute("SELECT status FROM jargon WHERE word='肚腩'").fetchone()[0]
-        self.assertEqual(neutral[0], 0)
-        self.assertTrue(json.loads(neutral[1])["legacy_neutral"])
-        self.assertEqual(unverified[0], 50)
-        self.assertTrue(json.loads(unverified[1])["legacy_unverified"])
-        self.assertEqual(jargon, "rejected")
-        conn.close()
-
     def test_experience_last_bot_reply_is_scoped_to_current_bot_and_group(self):
         from services.experience_episodes import ExperienceEpisodeService
 

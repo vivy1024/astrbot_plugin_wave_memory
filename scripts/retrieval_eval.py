@@ -74,8 +74,10 @@ def cmd_sample(args) -> None:
         # 太短、纯 @/表情/图片的消息没法评
         if len(key) < 4 or key in seen or re.fullmatch(r"(\[图片\]|\[表情\]|[\W_])+", key):
             continue
+        if not bot_id:  # 不知道是哪个 Bot 的注入，没法按它的作用域检索
+            continue
         seen.add(key)
-        by_group.setdefault(str(group_id), []).append((trace_id, ts, bot_id or "yushu", text[:300]))
+        by_group.setdefault(str(group_id), []).append((trace_id, ts, bot_id, text[:300]))
     rng = random.Random(args.seed)
     total = sum(len(v) for v in by_group.values())
     picked = []
@@ -162,8 +164,8 @@ def _judge_client():
     return call
 
 
-PROMPT = """你在评估一个群聊 AI（名叫羽书）的长期记忆检索质量。下面是群里有人发给羽书的一条消息，以及检索出的若干条历史记忆。
-请判断每条记忆对羽书「回答或理解这条消息」有多大帮助：
+PROMPT = """你在评估一个群聊 AI（名叫{bot_name}）的长期记忆检索质量。下面是群里有人发给{bot_name}的一条消息，以及检索出的若干条历史记忆。
+请判断每条记忆对{bot_name}「回答或理解这条消息」有多大帮助：
 2 = 直接有帮助（同一话题/人物/事件，含有能用上的信息或背景）
 1 = 话题相关，但帮助有限
 0 = 无关；或者只是这条消息本身（同一句话）的重复
@@ -206,7 +208,7 @@ def cmd_judge(args) -> None:
             grades = None
             for attempt in range(3):
                 try:
-                    text = call(PROMPT.format(query=queries[qid]["text"], items=lines))
+                    text = call(PROMPT.format(bot_name=args.bot_name, query=queries[qid]["text"], items=lines))
                     match = re.search(r"\{.*\}", text, re.S)
                     raw = json.loads(match.group(0)) if match else {}
                     grades = {numbered[int(k) - 1]: max(0, min(2, int(v))) for k, v in raw.items() if str(k).isdigit() and 0 < int(k) <= len(numbered)}
@@ -272,6 +274,7 @@ def main() -> int:
     s = sub.add_parser("sample"); s.add_argument("--n", type=int, default=100); s.add_argument("--seed", type=int, default=20260927); s.add_argument("--force", action="store_true")
     r = sub.add_parser("run"); r.add_argument("name"); r.add_argument("--stages"); r.add_argument("--params"); r.add_argument("--k", type=int, default=10); r.add_argument("--mode", choices=["query", "shotgun"], default="query")
     j = sub.add_parser("judge"); j.add_argument("runs", nargs="+"); j.add_argument("--depth", type=int, default=10)
+    j.add_argument("--bot-name", default="Bot", help="评审提示词里称呼这个 Bot 的名字")
     p = sub.add_parser("report"); p.add_argument("runs", nargs="+")
     args = parser.parse_args()
     {"sample": cmd_sample, "run": cmd_run, "judge": cmd_judge, "report": cmd_report}[args.cmd](args)
