@@ -160,3 +160,11 @@ def test_social_account_keywords_without_runtime_use_default():
 
     hc.HotConfig.reset()
     assert "名片赞" in social_account_keywords()
+
+
+def test_social_account_keywords_spec_default_matches_module_default(hot):
+    """9876 热参数页显示的默认值必须与记账模块实际使用的默认值一致。"""
+    from services.post_reply_bookkeeping import DEFAULT_SOCIAL_ACCOUNT_KEYWORDS
+
+    spec = {p["key"]: p for p in hot.get_tunable_params()}["bookkeeping.social_account_keywords"]
+    assert spec["default"] == DEFAULT_SOCIAL_ACCOUNT_KEYWORDS

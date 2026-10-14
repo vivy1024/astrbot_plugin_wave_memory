@@ -107,7 +107,7 @@ class HotConfig:
             {"key": "social.abuse_cooldown_max", "type": "int", "min": 600, "max": 7200, "default": 3600,
              "description": "辱骂冷却上限秒数"},
             {"key": "bookkeeping.social_account_keywords", "type": "str", "max_length": 500,
-             "default": "名片赞,回赞,平赞,互赞,点赞,补赞",
+             "default": "名片赞,回赞,平账,互赞,点赞,补赞",
              "description": "被归为人情账而不是「待跟进的事」的关键词，逗号分隔（留空 = 不归类）"},
             {"key": "social.aba_window_seconds", "type": "int", "min": 10, "max": 120, "default": 30,
              "description": "ABA连续对话窗口（秒）"},
