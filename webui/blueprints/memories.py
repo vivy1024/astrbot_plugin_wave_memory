@@ -442,7 +442,7 @@ async def list_memories():
         return [dict(zip(names, row)) for row in cursor.fetchall()]
 
     # 取一页走 group_id 索引按 id 倒序，毫秒级；但同条件的 COUNT(*) 要把整个群
-    # （主群 25 万行）逐行读到 vector 之后的溢出页去过滤，线上约 11 秒。
+    # （活跃群可达几十万行）逐行读到 vector 之后的溢出页去过滤，线上约 11 秒。
     # 两者都放工作线程；总数缓存（webui.list_count_cache_seconds），冷缓存时最多等
     # webui.list_count_wait_seconds 秒，没算完就先
     # 返回列表（总数标为未知、has_more 照常），计数在后台算完写进缓存。

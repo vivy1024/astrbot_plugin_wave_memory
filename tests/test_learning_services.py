@@ -339,13 +339,13 @@ def test_bookkeeper_dispatches_items_to_formal_tools():
 
 def test_bookkeeper_reroutes_social_account_topics_to_social_anchor_type():
     db = _memory_db([
-        ("u1", "小明", "记得给半桥补十个名片赞"),
+        ("u1", "小明", "记得给测试群友乙补十个名片赞"),
         ("bot", "羽书", "记下了"),
         ("u1", "小明", "我下周三面试"),
     ])
     llm = _LLM({
         "concerns": [
-            {"topic": "给半桥回赞平账", "target_user": "半桥"},
+            {"topic": "给测试群友乙回赞平账", "target_user": "测试群友乙"},
             {"topic": "小明下周三面试", "target_user": "小明", "due_date": "2026-10-21"},
         ],
     })

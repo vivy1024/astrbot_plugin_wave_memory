@@ -44,13 +44,13 @@ describe('pickDisplayName', () => {
 
 describe('personDisplayName', () => {
   it('昵称只有符号时换用有字的别名', () => {
-    expect(personDisplayName({ display_name: '-', nickname: '-', aliases: ['-', '桃子夏'], user_id: '1530561616' })).toBe('桃子夏')
+    expect(personDisplayName({ display_name: '-', nickname: '-', aliases: ['-', '测试群友甲'], user_id: '10000001' })).toBe('测试群友甲')
   })
   it('有字的昵称优先', () => {
-    expect(personDisplayName({ display_name: '- Noel', aliases: ['桃子夏'], user_id: '1' })).toBe('- Noel')
+    expect(personDisplayName({ display_name: '- Alice', aliases: ['测试群友甲'], user_id: '1' })).toBe('- Alice')
   })
   it('只有 QQ 号时显示群友尾号，只有符号时保留符号', () => {
-    expect(personDisplayName({ display_name: '2297148062', aliases: [], user_id: '2297148062' })).toBe('群友 8062')
-    expect(personDisplayName({ display_name: '.', aliases: [], user_id: '1218457873' })).toBe('.')
+    expect(personDisplayName({ display_name: '10000002', aliases: [], user_id: '10000002' })).toBe('群友 0002')
+    expect(personDisplayName({ display_name: '.', aliases: [], user_id: '10000003' })).toBe('.')
   })
 })
