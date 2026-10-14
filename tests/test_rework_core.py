@@ -526,14 +526,14 @@ class ReworkCoreTest(unittest.TestCase):
         self.addCleanup(conn.close)
         svc = RelationshipEventService(
             conn,
-            target_profiles={"2500447291": {"db_id": "yushu", "name": "羽书"}},
+            target_profiles={"1000000005": {"db_id": "yushu", "name": "羽书"}},
         )
 
         with self.assertRaises(ScopeValidationError) as missing_scope:
             svc.record_event(
                 bot_id="baizz",
                 group_id="g1",
-                user_id="2500447291",
+                user_id="1000000005",
                 event_type="direct_reply",
                 dimension="trust",
                 delta=2,
@@ -598,12 +598,12 @@ class ReworkCoreTest(unittest.TestCase):
         from domain import bot_identity
 
         # Bot 账号来自注册表快照（v6 不再在过滤器里写死 QQ 号）。
-        bot_identity.publish(sender_ids=["2500447291"])
+        bot_identity.publish(sender_ids=["1000000005"])
         self.addCleanup(bot_identity.publish)
         filt = JargonStatisticalFilter(context_keep=10, jieba_threshold=999999)
         now = time.time()
         for i in range(8):
-            filt.feed("邪修 邪修 嗷嗷嗷嗷嗷", scope, sender_id="2500447291", timestamp=now + i)
+            filt.feed("邪修 邪修 嗷嗷嗷嗷嗷", scope, sender_id="1000000005", timestamp=now + i)
         for i in range(5):
             filt.feed("邪修 今天又在修仙", scope, sender_id="user_a", timestamp=now + 100 + i)
 
@@ -612,7 +612,7 @@ class ReworkCoreTest(unittest.TestCase):
 
         self.assertIn("邪修", words)
         self.assertNotIn("嗷嗷", words)
-        self.assertTrue(all(ctx["sender_id"] != "2500447291" for c in candidates for ctx in c.get("source_contexts", [])))
+        self.assertTrue(all(ctx["sender_id"] != "1000000005" for c in candidates for ctx in c.get("source_contexts", [])))
 
     def test_jargon_injection_only_uses_scoped_confirmed_nonempty_entries(self):
         from domain.scope import RuntimeScope, SessionRef

@@ -25,6 +25,7 @@ def test_new_tunables_registered_with_ranges(hot):
         "jargon.person_alias_cache_seconds", "people.nickname_cache_seconds",
         "webui.stats_cache_seconds", "webui.vector_count_cache_seconds", "webui.coverage_cache_seconds",
         "webui.legacy_quality_cache_seconds", "webui.list_count_cache_seconds", "webui.list_count_wait_seconds",
+        "bookkeeping.social_account_keywords",
     ):
         assert key in keys
 
@@ -130,3 +131,32 @@ def test_jargon_blocklist_cache_invalidates_on_write(tmp_path):
         assert db.is_jargon_blocked("某词") is False
     finally:
         db.close()
+
+
+def test_social_account_keywords_are_configurable(hot):
+    """人情账词表：默认是原来的写死词，改了热参数立刻生效，留空则不做归类。"""
+    from services.post_reply_bookkeeping import (
+        DEFAULT_SOCIAL_ACCOUNT_KEYWORDS,
+        social_account_keywords,
+        social_account_re,
+    )
+
+    assert social_account_keywords() == [w for w in DEFAULT_SOCIAL_ACCOUNT_KEYWORDS.split(",")]
+    assert social_account_re().search("记得给小明补十个名片赞")
+    assert social_account_re().search("这条不是人情账") is None
+
+    hot.update({"bookkeeping.social_account_keywords": " 打赏 , 加好友 ,"})
+    assert social_account_keywords() == ["打赏", "加好友"]
+    assert social_account_re().search("给主播打赏了一艘飞机")
+    assert social_account_re().search("记得补名片赞") is None
+
+    hot.update({"bookkeeping.social_account_keywords": ""})
+    assert social_account_keywords() == []
+    assert social_account_re() is None
+
+
+def test_social_account_keywords_without_runtime_use_default():
+    from services.post_reply_bookkeeping import social_account_keywords
+
+    hc.HotConfig.reset()
+    assert "名片赞" in social_account_keywords()

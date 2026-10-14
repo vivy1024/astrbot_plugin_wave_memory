@@ -139,8 +139,8 @@ class PersonaBeliefReworkTest(unittest.TestCase):
             query_engine=_FakeQueryEngine(),
             few_shot_service=SimpleNamespace(get_injection=lambda bot_id="", max_items=None: "<style_examples>\n- 先看事实，再冷淡回应。\n</style_examples>"),
             bot_profiles={
-                "1336495069": SimpleNamespace(
-                    qq_id="1336495069",
+                "1000000002": SimpleNamespace(
+                    qq_id="1000000002",
                     name="白真真",
                     db_id="baizhenzhen",
                     aliases=["真真"],
@@ -163,7 +163,7 @@ class PersonaBeliefReworkTest(unittest.TestCase):
             subject_principal_id="qq:user:u1",
         )
         result = asyncio.run(composer.build_self_persona(
-            bot_id="1336495069",
+            bot_id="1000000002",
             group_id="g1",
             sender_id="u1",
             sender_name="芒果",
@@ -198,7 +198,7 @@ class PersonaBeliefReworkTest(unittest.TestCase):
             subject_principal_id="qq:user:u9",
         )
         elsewhere = asyncio.run(composer.build_self_persona(
-            bot_id="1336495069",
+            bot_id="1000000002",
             group_id="g9",
             sender_id="u9",
             sender_name="路人",
@@ -213,10 +213,10 @@ class PersonaBeliefReworkTest(unittest.TestCase):
         meta = MetaThinking(
             db=SimpleNamespace(conn=self._connect()),
             context=None,
-            bot_qq_id="1336495069",
-            bot_qq_ids=["1336495069"],
-            bot_names={"1336495069": "白真真"},
-            bot_db_ids={"1336495069": "baizhenzhen"},
+            bot_qq_id="1000000002",
+            bot_qq_ids=["1000000002"],
+            bot_names={"1000000002": "白真真"},
+            bot_db_ids={"1000000002": "baizhenzhen"},
             config={"enabled": True},
         )
         meta.llm = _FakeLLM()
@@ -228,7 +228,7 @@ class PersonaBeliefReworkTest(unittest.TestCase):
             message="@白真真 nmsl",
             is_at_bot=True,
             context_messages=[],
-            bot_id="1336495069",
+            bot_id="1000000002",
             system_prompt="你是白真真。保持克制。",
         ))
 
@@ -244,10 +244,10 @@ class PersonaBeliefReworkTest(unittest.TestCase):
         meta = MetaThinking(
             db=SimpleNamespace(conn=self._connect()),
             context=None,
-            bot_qq_id="1336495069",
-            bot_qq_ids=["1336495069"],
-            bot_names={"1336495069": "白真真"},
-            bot_db_ids={"1336495069": "baizhenzhen"},
+            bot_qq_id="1000000002",
+            bot_qq_ids=["1000000002"],
+            bot_names={"1000000002": "白真真"},
+            bot_db_ids={"1000000002": "baizhenzhen"},
             config={"enabled": True},
         )
         meta.llm = _FakeLLM()
@@ -259,7 +259,7 @@ class PersonaBeliefReworkTest(unittest.TestCase):
             message="你在吗",
             is_at_bot=True,
             context_messages=[],
-            bot_id="1336495069",
+            bot_id="1000000002",
             system_prompt=None,
         ))
 

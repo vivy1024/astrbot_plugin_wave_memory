@@ -41,7 +41,7 @@ def test_plan_proposes_summary_without_affinity_change(tmp_path: Path):
         "INSERT INTO scoped_soul_relationships VALUES (?,?,?,?,?,?,?,?,?,?)",
         (
             "yushu",
-            "羽书:group:398291136",
+            "羽书:group:100000001",
             "group",
             "羽书:user:1",
             12,
@@ -58,7 +58,7 @@ def test_plan_proposes_summary_without_affinity_change(tmp_path: Path):
             (
                 i + 1,
                 "yushu",
-                "羽书:group:398291136",
+                "羽书:group:100000001",
                 "group",
                 "羽书:user:1",
                 "direct_reply",
@@ -67,7 +67,7 @@ def test_plan_proposes_summary_without_affinity_change(tmp_path: Path):
             ),
         )
     conn.commit()
-    report = plan(conn, limit=10)
+    report = plan(conn, session_id="羽书:group:100000001", limit=10)
     conn.close()
     assert report["writes_affinity"] is False
     assert report["summary_candidates"] == 1
@@ -97,7 +97,7 @@ def test_apply_summaries_updates_evidence_keeps_affinity(tmp_path: Path):
         "INSERT INTO scoped_soul_relationships VALUES (?,?,?,?,?,?,?,?,?,?)",
         (
             "yushu",
-            "羽书:group:398291136",
+            "羽书:group:100000001",
             "group",
             "羽书:user:1",
             12,
@@ -112,7 +112,7 @@ def test_apply_summaries_updates_evidence_keeps_affinity(tmp_path: Path):
         "INSERT INTO scoped_soul_relationship_legacy_events VALUES (1,?,?,?,?,?,?,?)",
         (
             "yushu",
-            "羽书:group:398291136",
+            "羽书:group:100000001",
             "group",
             "羽书:user:1",
             "direct_reply",
@@ -121,13 +121,13 @@ def test_apply_summaries_updates_evidence_keeps_affinity(tmp_path: Path):
         ),
     )
     conn.commit()
-    report = plan(conn, limit=10)
+    report = plan(conn, session_id="羽书:group:100000001", limit=10)
     conn.close()
     result = apply_summaries(
         db,
         report["candidates"],
         bot_id="yushu",
-        session_id="羽书:group:398291136",
+        session_id="羽书:group:100000001",
         limit=10,
     )
     assert result["updated"] == 1
@@ -147,7 +147,7 @@ def test_apply_summaries_updates_evidence_keeps_affinity(tmp_path: Path):
         db,
         report["candidates"],
         bot_id="yushu",
-        session_id="羽书:group:398291136",
+        session_id="羽书:group:100000001",
     )
     assert result2["updated"] == 0
     assert result2["skipped"] >= 1

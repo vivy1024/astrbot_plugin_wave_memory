@@ -22,7 +22,7 @@ describe('舞台页隐私', () => {
     const live = describeEvent(event('a', 1, 'bilibili:group:1'), data, 'strict')
     expect(live).toMatchObject({ source: '直播弹幕', speaker: '小明', message: '今天吃什么', litNames: ['火锅'], memories: [] })
 
-    const group = describeEvent(event('b', 1, '羽书:group:398291136'), data, 'strict')
+    const group = describeEvent(event('b', 1, '羽书:group:100000001'), data, 'strict')
     expect(group).toMatchObject({ source: '群聊', speaker: null, message: null, litNames: ['火锅'], memories: [] })
 
     expect(describeEvent(event('c', 1, '羽书:group:1'), data, 'open').memories).toEqual(['上次说想吃火锅'])

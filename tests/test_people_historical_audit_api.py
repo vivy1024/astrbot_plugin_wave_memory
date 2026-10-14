@@ -28,7 +28,7 @@ def test_historical_audit_summary_helper_is_readonly_side_channel():
     scope = RuntimeScope(
         "yushu",
         "group",
-        SessionRef("羽书:group:398291136", "羽书", "group", "398291136"),
+        SessionRef("羽书:group:100000001", "羽书", "group", "100000001"),
     )
     summary = people_bp_module._historical_audit_summary_for_subject(
         _Repo(),
@@ -64,7 +64,7 @@ def test_historical_audit_summary_helper_falls_back_to_formal_relationship_histo
     scope = RuntimeScope(
         "yushu",
         "group",
-        SessionRef("羽书:group:398291136", "羽书", "group", "398291136"),
+        SessionRef("羽书:group:100000001", "羽书", "group", "100000001"),
     )
     summary = people_bp_module._historical_audit_summary_for_subject(
         _Repo(),
@@ -80,7 +80,7 @@ def test_historical_audit_summary_helper_fail_closed_without_repo_api():
     scope = RuntimeScope(
         "yushu",
         "group",
-        SessionRef("羽书:group:398291136", "羽书", "group", "398291136"),
+        SessionRef("羽书:group:100000001", "羽书", "group", "100000001"),
     )
     summary = people_bp_module._historical_audit_summary_for_subject(
         SimpleNamespace(),
@@ -141,18 +141,18 @@ def test_table_rows_can_filter_user_profiles_by_bot_and_group():
         def execute(self, sql, params=()):
             self.sql = sql
             self.params = params
-            return _Cursor([("u1", "yushu", "398291136")])
+            return _Cursor([("u1", "yushu", "100000001")])
 
     conn = _Conn()
     rows = people_bp_module._table_rows(
         conn,
         "user_profiles",
         "bot_id=? AND group_id=?",
-        ("yushu", "398291136"),
+        ("yushu", "100000001"),
     )
     assert "WHERE bot_id=? AND group_id=?" in conn.sql
-    assert conn.params == ("yushu", "398291136")
-    assert rows == [{"user_id": "u1", "bot_id": "yushu", "group_id": "398291136"}]
+    assert conn.params == ("yushu", "100000001")
+    assert rows == [{"user_id": "u1", "bot_id": "yushu", "group_id": "100000001"}]
 
 
 def test_formal_evidence_summaries_extracts_historical_audit_summary():

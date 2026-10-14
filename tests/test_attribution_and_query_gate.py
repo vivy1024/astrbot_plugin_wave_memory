@@ -46,7 +46,7 @@ def _memory(sender_id, content, *, sender_name="", score=1.0, source="chat"):
         "timestamp": 1785600000.0,
         "score": score,
         "source": source,
-        "group_id": "398291136",
+        "group_id": "100000001",
     }
 
 

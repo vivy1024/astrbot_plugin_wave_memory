@@ -121,13 +121,13 @@ def test_choose_owner_skips_unscoped_legacy_uses_preferred_keeper():
         21: {
             "id": 21,
             "bot_id": "yushu",
-            "session_id": "羽书:group:398291136",
+            "session_id": "羽书:group:100000001",
             "visibility": "group",
-            "group_id": "398291136",
+            "group_id": "100000001",
             "is_fanout_duplicate": True,
         },
     }
-    oid, reason = choose_owner(10, [20, 21], meta)
+    oid, reason = choose_owner(10, [20, 21], meta, preferred_group_id="100000001")
     assert oid == 21
     assert reason == "preferred_scope_fanout_keeper"
 

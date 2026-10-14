@@ -563,7 +563,7 @@ class MessageWriter:
         else:
             vectors = []
 
-        # 写入有向量的消息。记忆总量不设上限（超忆症原则）：算好的向量一律保留。
+        # 写入有向量的消息。记忆总量不设上限（记忆只增不删）：算好的向量一律保留。
         # 曾有「活跃记忆超过 max_memories（10 万）就把 chat 存成无向量」的软上限，线上 38 万条
         # 早已超额，于是两次重启之间的新聊天都搜不到、重启时再补算一遍，已删除。
         for item, vec in zip(need_embed, vectors):

@@ -186,7 +186,7 @@ describe('PeoplePage impression 可见化', () => {
   it('打开详情展示当前印象与内嵌印象时间线面板', async () => {
     const user = userEvent.setup()
     api.getPersonTimeline.mockResolvedValue(timelinePage([
-      timelineEvent({ id: 2, kind: 'person_fact', summary: '别名 时雨', event_type: 'person_fact' }),
+      timelineEvent({ id: 2, kind: 'person_fact', summary: '别名 雨沐', event_type: 'person_fact' }),
       timelineEvent({ id: 1, kind: 'affinity', summary: '好感从 0 升至 2', dimension: 'trust', delta: 2, event_type: 'deep_talk' }),
     ], 2))
     renderPage()
@@ -206,7 +206,7 @@ describe('PeoplePage impression 可见化', () => {
       expect.objectContaining({ bot_id: 'bot-a', session_id: 'qq:group:g1', user_id: 'u1' }),
       expect.anything(),
     ))
-    expect(await screen.findByText('别名 时雨')).toBeInTheDocument()
+    expect(await screen.findByText('别名 雨沐')).toBeInTheDocument()
     expect(screen.getByText('好感从 0 升至 2')).toBeInTheDocument()
     expect(screen.getAllByText('人物事实').length).toBeGreaterThan(0)
     expect(screen.getByText(/trust\+2/)).toBeInTheDocument()

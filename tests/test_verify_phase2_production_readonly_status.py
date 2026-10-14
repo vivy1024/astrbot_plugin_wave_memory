@@ -20,7 +20,7 @@ def test_verify_ok_without_grants_or_summary(tmp_path: Path):
         CREATE TABLE scoped_soul_relationship_legacy_events(id INTEGER);
         INSERT INTO memories VALUES (1, NULL);
         INSERT INTO scoped_soul_relationships VALUES
-          ('yushu','羽书:group:398291136','group','[]');
+          ('yushu','羽书:group:100000001','group','[]');
         INSERT INTO scoped_soul_relationship_legacy_events VALUES (1);
         """
     )

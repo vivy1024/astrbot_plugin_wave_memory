@@ -40,7 +40,7 @@ class PersonaChannelTest(unittest.TestCase):
             group_id="g1",
             sender_id="u1",
             sender_name="芒果",
-            bot_id="1336495069",
+            bot_id="1000000002",
             bot_profile_id="baizhenzhen",
             scope=self._scope() if scope == "default" else scope,
             mode=mode,

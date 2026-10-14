@@ -32,8 +32,8 @@ def test_key_is_bot_group_sender():
     namespace: dict = {}
     exec(ast.get_source_segment(SOURCE, _function("reply_tracker_key")), namespace)
     key = namespace["reply_tracker_key"]
-    assert key("yushu", "398291136", "10000002") == "yushu:398291136:10000002"
-    assert key("yushu", "398291136", "1") != key("baizz", "398291136", "1")
+    assert key("yushu", "100000001", "10000002") == "yushu:100000001:10000002"
+    assert key("yushu", "100000001", "1") != key("baizz", "100000001", "1")
 
 
 def test_bot_reply_uses_its_own_idempotency_key():

@@ -71,7 +71,7 @@ PROMPT = """你是{bot_name}。下面是你刚在群里参与的一段对话（�
   ],
   "concerns": [  // 待跟进的事：群友接下来要经历、之后值得问一句的事（考试、面试、看病、搬家、比赛、
                  // 出远门……），或你答应过别人还没做的事。已经发生完的事写进 facts，不写这里；
-                 // 名片赞、回赞、平账、互赞这类日常人情账也不写这里，放到上面的 social_anchors
+                 // {social_account_hint}这类日常人情账也不写这里，放到上面的 social_anchors
     {{"topic": "一句话（谁、什么事）", "target_user": "关于谁",
       "due_date": "能从原话推出哪天发生/出结果就写 YYYY-MM-DD（今天是 {today}），推不出留空"}}
   ],
@@ -99,7 +99,28 @@ def _json_object(text: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-_SOCIAL_ACCOUNT_RE = re.compile(r"名片赞|回赞|平账|互赞|点赞|补赞")
+DEFAULT_SOCIAL_ACCOUNT_KEYWORDS = "名片赞,回赞,平账,互赞,点赞,补赞"
+_social_re_cache: tuple[str, re.Pattern | None] = ("", None)
+
+
+def social_account_keywords() -> list[str]:
+    """人情账词表（热参数 `bookkeeping.social_account_keywords`，逗号分隔）。"""
+    from .hot_config import hot_value
+
+    raw = hot_value("bookkeeping.social_account_keywords", DEFAULT_SOCIAL_ACCOUNT_KEYWORDS)
+    return [word.strip() for word in str(raw or "").split(",") if word.strip()]
+
+
+def social_account_re() -> re.Pattern | None:
+    """词表编译成正则，按词表字符串缓存。空词表返回 None（不做归类）。"""
+    global _social_re_cache
+    words = social_account_keywords()
+    joined = "|".join(re.escape(word) for word in words)
+    if _social_re_cache[0] == joined:
+        return _social_re_cache[1]
+    pattern = re.compile(joined) if joined else None
+    _social_re_cache = (joined, pattern)
+    return pattern
 
 
 def _items(payload: dict[str, Any], key: str, limit: int) -> list[dict[str, Any]]:
@@ -305,6 +326,7 @@ class PostReplyBookkeeper:
             settle_block=self._settle_block(scope, rows),
             concern_block=self._concern_block(scope),
             today=time.strftime("%Y-%m-%d"),
+            social_account_hint="、".join(social_account_keywords()[:5]) or "日常人情账",
         )
         learning_enabled = self._learning_enabled()
         if learning_enabled:
@@ -380,8 +402,10 @@ class PostReplyBookkeeper:
         for item in _items(payload, "concerns", 3):
             if item.get("topic"):
                 topic = str(item["topic"])
-                # 名片赞/回赞这类日常人情账常被模型放进 concerns，它们属于人情账而不是「待跟进的事」
-                ctype = "social_anchor" if _SOCIAL_ACCOUNT_RE.search(topic) else "follow_up"
+                # 人情账（词表见热参数 bookkeeping.social_account_keywords）常被模型放进 concerns，
+                # 但它们属于人情账而不是「待跟进的事」
+                social_re = social_account_re()
+                ctype = "social_anchor" if social_re is not None and social_re.search(topic) else "follow_up"
                 done += await self._call_action(
                     "wave_memory_note_concern", scope,
                     action="note", topic=topic, target_user=str(item.get("target_user") or ""),

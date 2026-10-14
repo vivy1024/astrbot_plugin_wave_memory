@@ -53,7 +53,7 @@ def _scope() -> RuntimeScope:
     return RuntimeScope(
         "yushu",
         "group",
-        SessionRef("qq:group:398291136", "qq", "group", "398291136"),
+        SessionRef("qq:group:100000001", "qq", "group", "100000001"),
         subject_principal_id="qq:user:111",
     )
 
@@ -76,15 +76,15 @@ def _db() -> SimpleNamespace:
             quarantine INTEGER DEFAULT 0, source TEXT DEFAULT 'chat',
             importance REAL DEFAULT 1.0, memory_type TEXT DEFAULT 'message'
         );
-        INSERT INTO user_profiles VALUES ('2696534623', '398291136', 'yushu', '', 382, 1);
-        INSERT INTO user_profiles VALUES ('2769029004', '398291136', 'yushu', '', 253, 1);
+        INSERT INTO user_profiles VALUES ('2696534623', '100000001', 'yushu', '', 382, 1);
+        INSERT INTO user_profiles VALUES ('2769029004', '100000001', 'yushu', '', 253, 1);
         INSERT INTO user_profiles VALUES ('999', '150727649', 'yushu', '诸葛匹夫', 10, 1);
         INSERT INTO person_registry VALUES ('2696534623', '诸葛匹夫', '["匹夫"]', 100);
         INSERT INTO person_registry VALUES ('2769029004', '', '[]', 10);
         INSERT INTO memories VALUES
-            (1, '398291136', 'yushu', 'qq:group:398291136', 'group', '2696534623', '诸葛匹夫', '主篇战力太膨胀了', 100.0, 0, 'chat', 1.0, 'message'),
-            (2, '398291136', 'yushu', 'qq:group:398291136', 'group', '111', '提问者', '@诸葛匹夫 还有这种', 101.0, 0, 'chat', 1.0, 'message'),
-            (3, '398291136', 'yushu', 'qq:group:398291136', 'group', '2769029004', '飞花轻似梦', '这是胖猫主题曲', 102.0, 0, 'chat', 1.0, 'message'),
+            (1, '100000001', 'yushu', 'qq:group:100000001', 'group', '2696534623', '诸葛匹夫', '主篇战力太膨胀了', 100.0, 0, 'chat', 1.0, 'message'),
+            (2, '100000001', 'yushu', 'qq:group:100000001', 'group', '111', '提问者', '@诸葛匹夫 还有这种', 101.0, 0, 'chat', 1.0, 'message'),
+            (3, '100000001', 'yushu', 'qq:group:100000001', 'group', '2769029004', '飞花轻似梦', '这是胖猫主题曲', 102.0, 0, 'chat', 1.0, 'message'),
             (4, '150727649', 'yushu', 'qq:group:150727649', 'group', '2696534623', '诸葛匹夫', '别群发言', 103.0, 0, 'chat', 1.0, 'message');
         """
     )
@@ -229,10 +229,10 @@ def test_person_search_accepts_display_platform_session_ids():
             quarantine INTEGER DEFAULT 0, source TEXT DEFAULT 'chat', importance REAL DEFAULT 1.0,
             memory_type TEXT DEFAULT 'message'
         );
-        INSERT INTO user_profiles VALUES ('2696534623', '398291136', 'yushu', '诸葛匹夫', 10, 1);
+        INSERT INTO user_profiles VALUES ('2696534623', '100000001', 'yushu', '诸葛匹夫', 10, 1);
         INSERT INTO person_registry VALUES ('2696534623', '诸葛匹夫', '[]', 10);
         INSERT INTO memories VALUES
-            (1, '398291136', 'yushu', '羽书:group:398291136', 'group', '2696534623', '诸葛匹夫', '本群发言A', 100.0, 0, 'chat', 1.0, 'message');
+            (1, '100000001', 'yushu', '羽书:group:100000001', 'group', '2696534623', '诸葛匹夫', '本群发言A', 100.0, 0, 'chat', 1.0, 'message');
         """
     )
 
@@ -254,7 +254,7 @@ def test_person_search_accepts_display_platform_session_ids():
     scope = RuntimeScope(
         "yushu",
         "group",
-        SessionRef("羽书:group:398291136", "羽书", "group", "398291136"),
+        SessionRef("羽书:group:100000001", "羽书", "group", "100000001"),
         subject_principal_id="羽书:user:111",
     )
     tool = WaveMemoryPersonSearchTool(db=db)
@@ -274,18 +274,18 @@ def test_person_search_timeline_reads_full_detail_and_pages(tmp_path):
             """
             CREATE TABLE user_profiles(user_id TEXT, group_id TEXT, bot_id TEXT, nickname TEXT, interaction_count INTEGER, last_seen REAL);
             CREATE TABLE person_registry(qq_id TEXT, display_name TEXT, aliases TEXT, message_count INTEGER);
-            INSERT INTO user_profiles VALUES ('2696534623', '398291136', 'yushu', '诸葛匹夫', 10, 1);
+            INSERT INTO user_profiles VALUES ('2696534623', '100000001', 'yushu', '诸葛匹夫', 10, 1);
             INSERT INTO person_registry VALUES ('2696534623', '诸葛匹夫', '[]', 10);
             """
         )
         summary = "完整摘要；" * 20
         detail = "完整详情第一段。" * 40
         event_id = repo.add_event(
-            bot_id="yushu", user_id="2696534623", group_id="398291136",
+            bot_id="yushu", user_id="2696534623", group_id="100000001",
             kind="impression", summary=summary, detail=detail, occurred_at=100.0,
         )
         other_id = repo.add_event(
-            bot_id="yushu", user_id="2696534623", group_id="398291136",
+            bot_id="yushu", user_id="2696534623", group_id="100000001",
             kind="person_fact", summary="第二页旧事", detail="第二页详情", occurred_at=50.0,
         )
         repo.add_event(
@@ -293,12 +293,12 @@ def test_person_search_timeline_reads_full_detail_and_pages(tmp_path):
             kind="impression", summary="别群印象", detail="别群详情", occurred_at=80.0,
         )
         repo.add_event(
-            bot_id="other-bot", user_id="2696534623", group_id="398291136",
+            bot_id="other-bot", user_id="2696534623", group_id="100000001",
             kind="impression", summary="别的Bot", detail="别的详情", occurred_at=90.0,
         )
         db = SimpleNamespace(conn=cm, person_timeline=repo, closed=False)
         tool = WaveMemoryPersonSearchTool(db=db)
-        before = repo.count_events(bot_id="yushu", user_id="2696534623", group_id="398291136")
+        before = repo.count_events(bot_id="yushu", user_id="2696534623", group_id="100000001")
         page = asyncio.run(tool.call(
             _ctx(_scope()), person="诸葛匹夫", query_type="timeline", limit=1,
         ))
@@ -336,11 +336,11 @@ def test_person_search_timeline_hides_other_private_chats(tmp_path):
             """
             CREATE TABLE user_profiles(user_id TEXT, group_id TEXT, bot_id TEXT, nickname TEXT, interaction_count INTEGER, last_seen REAL);
             CREATE TABLE person_registry(qq_id TEXT, display_name TEXT, aliases TEXT, message_count INTEGER);
-            INSERT INTO user_profiles VALUES ('10000001', '398291136', 'yushu', '阿木', 10, 1);
+            INSERT INTO user_profiles VALUES ('10000001', '100000001', 'yushu', '阿木', 10, 1);
             INSERT INTO person_registry VALUES ('10000001', '阿木', '[]', 10);
             """
         )
-        repo.add_event(bot_id="yushu", user_id="10000001", group_id="398291136",
+        repo.add_event(bot_id="yushu", user_id="10000001", group_id="100000001",
                        kind="impression", summary="群里会接冷笑话", occurred_at=100.0)
         repo.add_event(bot_id="yushu", user_id="10000001", group_id="private:10000001",
                        kind="impression", summary="私聊里说了家里的事", occurred_at=110.0)

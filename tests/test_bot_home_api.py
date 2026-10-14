@@ -120,7 +120,7 @@ def seeded(tmp_path):
     )
     # ── trace：AstrBot 写 QQ 号到 bot_id，Cortico 写 db_id；另一个 Bot 的不算
     traces = [
-        ("t-astrbot", NOW - 100, "111", "2500447291", "yushu", 120.5, None),
+        ("t-astrbot", NOW - 100, "111", "1000000005", "yushu", 120.5, None),
         ("t-cortico", NOW - 50, "222", "yushu", "yushu", 88.0,
          '{"source": "cortico", "runtime_scope": {"payload": {"visibility": "group", "session": {"id": "羽书:group:222"}}}}'),
         ("t-other", NOW - 10, "111", "999", "baizz", 10.0, None),
@@ -152,7 +152,7 @@ def _build(db, **overrides):
         days=1,
         now=NOW,
         bot_name="羽书",
-        self_ids=["2500447291"],
+        self_ids=["1000000005"],
         platform_ids=["羽书"],
         soul_repository=db.soul_repository,
         group_name_resolver=lambda bot_id, group_id: GROUP_NAMES.get(group_id),
@@ -295,7 +295,7 @@ def test_section_failure_is_isolated(seeded):
     ("args", "code"),
     [
         ({}, "bot_id_required"),
-        ({"bot_id": "2500447291"}, "invalid_bot_id"),
+        ({"bot_id": "1000000005"}, "invalid_bot_id"),
         ({"bot_id": "default"}, "invalid_bot_id"),
         ({"bot_id": "yushu", "days": "0"}, "invalid_days"),
         ({"bot_id": "yushu", "days": "8"}, "invalid_days"),
@@ -329,7 +329,7 @@ def api(seeded):
     container.soul_repository = None
     container.password = ""
     container.bot_registry = _Registry({
-        "yushu": SimpleNamespace(name="羽书", self_ids=["2500447291"], platform_ids=["羽书"]),
+        "yushu": SimpleNamespace(name="羽书", self_ids=["1000000005"], platform_ids=["羽书"]),
     })
     app = Quart(__name__)
     app.register_blueprint(bot_home_bp)

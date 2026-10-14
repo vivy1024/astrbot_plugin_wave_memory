@@ -32,7 +32,7 @@ def _private(user_id: str = "u1", bot_id: str = "bot-a") -> RuntimeScope:
 def _ctx(scope: RuntimeScope, message: str) -> InjectionContext:
     return InjectionContext(
         event="event", req=object(), message=message,
-        group_id=scope.session.conversation_id, sender_id="u1", sender_name="时雨",
+        group_id=scope.session.conversation_id, sender_id="u1", sender_name="雨沐",
         bot_id=scope.bot_id, bot_profile_id=scope.bot_id, scope=scope,
         config={"channels": {"facts": {"max_items": 5, "token_budget": 400}}},
         now=time.time(), trace_id="trace-bot-as-person",
@@ -46,9 +46,9 @@ def _build(db: WaveMemoryDB, scope: RuntimeScope, message: str):
 def test_scoped_facts_follow_the_bot_across_groups_and_into_private(tmp_path):
     db = WaveMemoryDB(str(tmp_path / "facts.sqlite"), dimension=3)
     try:
-        db.upsert_scoped_fact(_group("g2"), subject="时雨", predicate="喜欢", object="手冲咖啡",
+        db.upsert_scoped_fact(_group("g2"), subject="雨沐", predicate="喜欢", object="手冲咖啡",
                               confidence=0.9, status="approved")
-        db.upsert_scoped_fact(_group("g2", bot_id="bot-b"), subject="时雨", predicate="讨厌", object="速溶咖啡",
+        db.upsert_scoped_fact(_group("g2", bot_id="bot-b"), subject="雨沐", predicate="讨厌", object="速溶咖啡",
                               confidence=0.9, status="approved")
 
         in_other_group = _build(db, _group("g1"), "咖啡")
@@ -56,7 +56,7 @@ def test_scoped_facts_follow_the_bot_across_groups_and_into_private(tmp_path):
 
         for result in (in_other_group, in_private):
             assert result.status == "hit"
-            assert "时雨 喜欢 手冲咖啡" in result.text
+            assert "雨沐 喜欢 手冲咖啡" in result.text
             assert "讨厌" not in result.text
     finally:
         db.close()
@@ -73,22 +73,22 @@ def test_legacy_fact_from_private_chat_never_reaches_a_group(tmp_path):
         vector = np.asarray([0.1, 0.2, 0.3], dtype=np.float32)
         private_mid = db.add_memory(
             group_id="u1", content="其实我最近在看心理医生", vector=vector,
-            sender_id="u1", sender_name="时雨", timestamp=1_800_000_000.0, importance=1.0,
+            sender_id="u1", sender_name="雨沐", timestamp=1_800_000_000.0, importance=1.0,
             source="chat", scope=_private(), provenance={}, origin_metadata={},
         )
         group_mid = db.add_memory(
             group_id="g1", content="我在学吉他", vector=vector,
-            sender_id="u1", sender_name="时雨", timestamp=1_800_000_000.0, importance=1.0,
+            sender_id="u1", sender_name="雨沐", timestamp=1_800_000_000.0, importance=1.0,
             source="chat", scope=_group("g1"), provenance={}, origin_metadata={},
         )
         conn.execute(
             "INSERT INTO facts(subject, predicate, object, source_memory_id, confidence, created_at, fact_type)"
-            " VALUES ('时雨', '正在', '看心理医生', ?, 0.9, 1800000000.0, 'FACTUAL')",
+            " VALUES ('雨沐', '正在', '看心理医生', ?, 0.9, 1800000000.0, 'FACTUAL')",
             (private_mid,),
         )
         conn.execute(
             "INSERT INTO facts(subject, predicate, object, source_memory_id, confidence, created_at, fact_type)"
-            " VALUES ('时雨', '在学', '吉他', ?, 0.9, 1800000000.0, 'FACTUAL')",
+            " VALUES ('雨沐', '在学', '吉他', ?, 0.9, 1800000000.0, 'FACTUAL')",
             (group_mid,),
         )
         conn.commit()
@@ -106,17 +106,17 @@ def test_legacy_fact_from_private_chat_never_reaches_a_group(tmp_path):
 
 
 def test_rare_person_name_is_recognized_even_when_jieba_splits_it(tmp_path):
-    """jieba 会把"时雨"切成单字；已知实体名要按原样在消息里认出来。"""
+    """jieba 会把"雨沐"切成单字；已知实体名要按原样在消息里认出来。"""
     from services.injection.channels.facts import _keywords
 
-    assert "时雨" not in _keywords("时雨 最近怎么样")
+    assert "雨沐" not in _keywords("雨沐 最近怎么样")
     db = WaveMemoryDB(str(tmp_path / "names.sqlite"), dimension=3)
     try:
-        db.upsert_scoped_fact(_group("g1"), subject="时雨", predicate="在准备", object="考研",
+        db.upsert_scoped_fact(_group("g1"), subject="雨沐", predicate="在准备", object="考研",
                               confidence=0.9, status="approved")
-        result = _build(db, _group("g1"), "时雨 最近怎么样")
+        result = _build(db, _group("g1"), "雨沐 最近怎么样")
         assert result.status == "hit"
-        assert "时雨 在准备 考研" in result.text
+        assert "雨沐 在准备 考研" in result.text
     finally:
         db.close()
 
@@ -124,10 +124,10 @@ def test_rare_person_name_is_recognized_even_when_jieba_splits_it(tmp_path):
 def test_approved_private_fact_is_injected_only_in_its_private_chat(tmp_path):
     db = WaveMemoryDB(str(tmp_path / "private-facts.sqlite"), dimension=3)
     try:
-        db.upsert_scoped_fact(_private("u1"), subject="时雨", predicate="在准备", object="出国留学",
+        db.upsert_scoped_fact(_private("u1"), subject="雨沐", predicate="在准备", object="出国留学",
                               confidence=0.9, status="active")
-        assert "出国留学" in _build(db, _private("u1"), "时雨 最近").text
-        assert "出国留学" not in (_build(db, _group("g1"), "时雨 最近").text or "")
-        assert "出国留学" not in (_build(db, _private("u2"), "时雨 最近").text or "")
+        assert "出国留学" in _build(db, _private("u1"), "雨沐 最近").text
+        assert "出国留学" not in (_build(db, _group("g1"), "雨沐 最近").text or "")
+        assert "出国留学" not in (_build(db, _private("u2"), "雨沐 最近").text or "")
     finally:
         db.close()

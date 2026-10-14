@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { SessionOptionDto } from '@/api/options'
 import { channelConfigHref, memoryHref, observatoryTraceHref, sessionForTrace, traceItemLink } from './trace-links'
 
-const ctx = { botId: 'yushu', sessionId: '羽书:group:398291136' }
+const ctx = { botId: 'yushu', sessionId: '羽书:group:100000001' }
 
 function query(to: string): URLSearchParams {
   return new URLSearchParams(to.split('?')[1] ?? '')

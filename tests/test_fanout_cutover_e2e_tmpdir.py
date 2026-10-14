@@ -53,14 +53,14 @@ def _write_db(path: Path, *, marked: bool, tag: str, formal: int = 2, audit: int
     vec = (b"\x00\x00\x00\x00") * 1024
     conn.execute(
         "INSERT INTO memories(id, content, provenance, group_id, vector, timestamp) VALUES (1,?,?,?,?,?)",
-        (tag, prov, "398291136", vec, 10.0),
+        (tag, prov, "100000001", vec, 10.0),
     )
     for i in range(formal):
         conn.execute(
             "INSERT INTO scoped_soul_relationships VALUES (?,?,?,?,?,?,?,?,?,?)",
             (
                 "yushu",
-                "羽书:group:398291136",
+                "羽书:group:100000001",
                 "group",
                 f"羽书:user:{i}",
                 3,
@@ -82,9 +82,9 @@ def _write_db(path: Path, *, marked: bool, tag: str, formal: int = 2, audit: int
                 str(i),
                 "k",
                 "yushu",
-                "羽书:group:398291136",
+                "羽书:group:100000001",
                 "group",
-                "398291136",
+                "100000001",
                 f"羽书:user:{i}",
                 "direct_reply",
                 "familiarity",

@@ -240,7 +240,7 @@ class OtherMutationGuardTest(unittest.TestCase):
                     (group_id, timestamp, sender_id, sender_name, content, memory_type, importance, summary)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    "398291136",
+                    "100000001",
                     since + 80,
                     "1771324595",
                     "羊羊得益",
@@ -255,7 +255,7 @@ class OtherMutationGuardTest(unittest.TestCase):
                     (group_id, timestamp, sender_id, sender_name, content, memory_type, importance, summary)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    "398291136",
+                    "100000001",
                     since + 90,
                     "bot_remember",
                     "主动记忆",
@@ -270,7 +270,7 @@ class OtherMutationGuardTest(unittest.TestCase):
                     (group_id, created_at, user_id, trigger_text, bot_reply, bot_inner_thought, outcome, emotional_weight)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    "398291136",
+                    "100000001",
                     since + 100,
                     "2696534623",
                     "总结三个小时聊天内容",
@@ -283,7 +283,7 @@ class OtherMutationGuardTest(unittest.TestCase):
             conn.commit()
             conn.close()
 
-            report = quarantine_roleplay_memory.quarantine(db_path, "398291136", "3573077415", dry_run=True)
+            report = quarantine_roleplay_memory.quarantine(db_path, "100000001", "3573077415", dry_run=True)
             self.assertEqual(report["memories_quarantined"], 2)
             self.assertEqual(report["episodes_neutralized"], 1)
 
@@ -297,7 +297,7 @@ class OtherMutationGuardTest(unittest.TestCase):
             self.assertEqual(active_memory_count, 2)
 
             with patch.object(quarantine_roleplay_memory, "assert_astrbot_stopped", return_value=None):
-                report = quarantine_roleplay_memory.quarantine(db_path, "398291136", "3573077415", dry_run=False)
+                report = quarantine_roleplay_memory.quarantine(db_path, "100000001", "3573077415", dry_run=False)
             self.assertEqual(report["memories_quarantined"], 2)
             self.assertEqual(report["episodes_neutralized"], 1)
 

@@ -62,7 +62,7 @@ class FewShotChannelTest(unittest.TestCase):
             group_id="g1",
             sender_id="u1",
             sender_name="用户",
-            bot_id="1336495069",
+            bot_id="1000000002",
             bot_profile_id="baizhenzhen",
             scope=runtime_scope,
             mode=mode,

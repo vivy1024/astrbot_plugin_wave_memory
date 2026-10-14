@@ -20,7 +20,7 @@ def _store() -> tuple[sqlite3.Connection, InjectionTraceStore]:
     return conn, store
 
 
-def _trace(trace_id: str, ts: float, *, bot_id: str = "2500447291", bot_profile_id: str | None = "yushu", group_id: str = "g1") -> dict:
+def _trace(trace_id: str, ts: float, *, bot_id: str = "1000000005", bot_profile_id: str | None = "yushu", group_id: str = "g1") -> dict:
     return {
         "trace_id": trace_id,
         "timestamp": ts,
@@ -76,7 +76,7 @@ def test_find_traces_for_memory_exact_id_items_only_and_newest_first():
 
 def test_find_traces_for_memory_is_bot_scoped_by_profile_or_bot_id():
     _, store = _store()
-    store.record(_trace("astrbot", 100, bot_id="2500447291", bot_profile_id="yushu"), [_memory_hit((9, 1.0))])
+    store.record(_trace("astrbot", 100, bot_id="1000000005", bot_profile_id="yushu"), [_memory_hit((9, 1.0))])
     store.record(_trace("cortico", 200, bot_id="yushu", bot_profile_id=None), [_memory_hit((9, 1.0))])
     store.record(_trace("other-bot", 300, bot_id="baizz", bot_profile_id="baizz"), [_memory_hit((9, 1.0))])
 

@@ -31,7 +31,7 @@ describe('MemoryTraceUsageSection', () => {
       items: [{
         trace_id: 'active-1790506362371167663',
         timestamp: 1790506362,
-        group_id: '398291136',
+        group_id: '100000001',
         bot_profile_id: 'yushu',
         sender_name: '群友',
         message_preview: '羽书还记得上次的事吗',
@@ -44,7 +44,7 @@ describe('MemoryTraceUsageSection', () => {
 
     const link = await screen.findByRole('link', { name: /羽书还记得上次的事吗/ })
     expect(link).toHaveAttribute('href', '/observatory?bot_id=yushu&trace_id=active-1790506362371167663')
-    expect(link).toHaveTextContent('群 398291136')
+    expect(link).toHaveTextContent('群 100000001')
     expect(link).toHaveTextContent('memory · 得分 0.992 · 第 1 条')
     expect(link).toHaveTextContent('fts5 · 得分 1.000 · 第 3 条')
     expect(api.traces).toHaveBeenCalledWith(397782, 'yushu', 10, expect.any(AbortSignal))

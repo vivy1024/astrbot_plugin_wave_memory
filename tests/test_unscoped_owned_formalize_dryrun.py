@@ -40,17 +40,17 @@ def _mk_db(path: Path) -> None:
         );
         """
     )
-    # formal peer for group 398291136
+    # formal peer for group 100000001
     conn.execute(
-        "INSERT INTO memories VALUES (1,'398291136','u1','A','hi','yushu','羽书:group:398291136','group','resolved')"
+        "INSERT INTO memories VALUES (1,'100000001','u1','A','hi','yushu','羽书:group:100000001','group','resolved')"
     )
     # unscoped human in same group
     conn.execute(
-        "INSERT INTO memories VALUES (2,'398291136','135','半桥','聊天内容',NULL,NULL,NULL,NULL)"
+        "INSERT INTO memories VALUES (2,'100000001','135','半桥','聊天内容',NULL,NULL,NULL,NULL)"
     )
     # unscoped bot noise
     conn.execute(
-        "INSERT INTO memories VALUES (3,'398291136','bot','羽书','系统句',NULL,NULL,NULL,NULL)"
+        "INSERT INTO memories VALUES (3,'100000001','bot','羽书','系统句',NULL,NULL,NULL,NULL)"
     )
     # unscoped no formal peer
     conn.execute(
@@ -97,7 +97,7 @@ def test_apply_updates_without_new_rows(tmp_path: Path) -> None:
     conn.close()
     assert row == (
         "yushu",
-        "羽书:group:398291136",
+        "羽书:group:100000001",
         "group",
         "owned_formalized_from_unscoped",
     )
@@ -199,10 +199,10 @@ def test_explicit_scope_map_json(tmp_path: Path) -> None:
     )
     # memory peer for another group should not be overridden
     conn.execute(
-        "INSERT INTO memories VALUES (2,'398291136','f','F','p','yushu','羽书:group:398291136','group',NULL)"
+        "INSERT INTO memories VALUES (2,'100000001','f','F','p','yushu','羽书:group:100000001','group',NULL)"
     )
     conn.execute(
-        "INSERT INTO memories VALUES (3,'398291136','u2','B','x',NULL,NULL,NULL,NULL)"
+        "INSERT INTO memories VALUES (3,'100000001','u2','B','x',NULL,NULL,NULL,NULL)"
     )
     conn.commit()
     conn.close()
@@ -215,9 +215,9 @@ def test_explicit_scope_map_json(tmp_path: Path) -> None:
                     "session_id": "羽书:group:581158875",
                 },
                 # would try to override memory peer — ignored for existing peer
-                "398291136": {
+                "100000001": {
                     "bot_id": "baizz",
-                    "session_id": "白真真:group:398291136",
+                    "session_id": "白真真:group:100000001",
                 },
             },
             ensure_ascii=False,
@@ -251,15 +251,15 @@ def test_soul_scope_map_fills_missing_peer(tmp_path: Path) -> None:
         );
         """
     )
-    # no formal memory peer for 1151238916
+    # no formal memory peer for 1000000004
     conn.execute(
-        "INSERT INTO memories VALUES (1,'1151238916','u1','A','hi',NULL,NULL,NULL,NULL)"
+        "INSERT INTO memories VALUES (1,'1000000004','u1','A','hi',NULL,NULL,NULL,NULL)"
     )
     conn.execute(
-        "INSERT INTO scoped_soul_relationships VALUES ('yushu','羽书:group:1151238916','group','羽书:user:1')"
+        "INSERT INTO scoped_soul_relationships VALUES ('yushu','羽书:group:1000000004','group','羽书:user:1')"
     )
     conn.execute(
-        "INSERT INTO scoped_soul_relationships VALUES ('yushu','羽书:group:1151238916','group','羽书:user:2')"
+        "INSERT INTO scoped_soul_relationships VALUES ('yushu','羽书:group:1000000004','group','羽书:user:2')"
     )
     conn.commit()
     conn.close()
@@ -270,9 +270,9 @@ def test_soul_scope_map_fills_missing_peer(tmp_path: Path) -> None:
     conn.close()
     assert without["candidate_count"] == 0
     assert with_soul["candidate_count"] == 1
-    assert with_soul["candidates"][0]["proposed"]["session_id"] == "羽书:group:1151238916"
-    assert soul_map["1151238916"]["bot_id"] == "yushu"
-    assert "1151238916" in with_soul["soul_only_groups"]
+    assert with_soul["candidates"][0]["proposed"]["session_id"] == "羽书:group:1000000004"
+    assert soul_map["1000000004"]["bot_id"] == "yushu"
+    assert "1000000004" in with_soul["soul_only_groups"]
 
 
 def test_scope_map_prefers_yushu(tmp_path: Path) -> None:

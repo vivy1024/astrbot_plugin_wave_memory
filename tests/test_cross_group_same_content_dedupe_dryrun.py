@@ -35,7 +35,7 @@ class CrossGroupDedupeDryrunTest(unittest.TestCase):
         rows = [
             (1, "u1", "hello world", "111111111", "yushu", "羽书:group:111111111", 1.0),
             (2, "u1", "hello world", "222222222", "yushu", "羽书:group:222222222", 2.0),
-            (3, "u1", "hello world", "398291136", "yushu", "羽书:group:398291136", 1.5),
+            (3, "u1", "hello world", "100000001", "yushu", "羽书:group:100000001", 1.5),
             (4, "u2", "unique", "111111111", "yushu", "羽书:group:111111111", 1.0),
         ]
         for r in rows:
@@ -47,7 +47,7 @@ class CrossGroupDedupeDryrunTest(unittest.TestCase):
         report = inventory(
             conn,
             content_prefix=200,
-            prefer_groups=["398291136"],
+            prefer_groups=["100000001"],
             top_families=10,
             min_groups=2,
             mode="naive",
@@ -55,7 +55,7 @@ class CrossGroupDedupeDryrunTest(unittest.TestCase):
         self.assertEqual(report["family_count"], 1)
         self.assertEqual(report["theoretical_extra_rows"], 2)
         fam = report["top_families"][0]
-        self.assertEqual(fam["keeper_group"], "398291136")
+        self.assertEqual(fam["keeper_group"], "100000001")
         self.assertEqual(fam["drop_count"], 2)
         conn.close()
 
@@ -68,7 +68,7 @@ class CrossGroupDedupeDryrunTest(unittest.TestCase):
             # fanout clone near same time
             (3, "u1", "clone me", "111111111", "yushu", "s1", 50.0),
             (4, "u1", "clone me", "222222222", "yushu", "s2", 51.0),
-            (5, "u1", "clone me", "398291136", "yushu", "s3", 52.0),
+            (5, "u1", "clone me", "100000001", "yushu", "s3", 52.0),
         ]
         for r in rows:
             conn.execute(
@@ -79,7 +79,7 @@ class CrossGroupDedupeDryrunTest(unittest.TestCase):
         report = inventory(
             conn,
             content_prefix=200,
-            prefer_groups=["398291136"],
+            prefer_groups=["100000001"],
             top_families=10,
             min_groups=2,
             mode="cluster",
@@ -87,7 +87,7 @@ class CrossGroupDedupeDryrunTest(unittest.TestCase):
         )
         # families: "hi again" (2 groups) + "clone me" (3 groups)
         self.assertEqual(report["family_count"], 2)
-        # only clone cluster drops 2 (keep prefer group 398291136)
+        # only clone cluster drops 2 (keep prefer group 100000001)
         self.assertEqual(report["cluster_drop_rows"], 2)
         self.assertEqual(len(report["drop_ids"]), 2)
         self.assertNotIn(1, report["drop_ids"])

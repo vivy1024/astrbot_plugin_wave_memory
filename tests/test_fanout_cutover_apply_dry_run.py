@@ -43,14 +43,14 @@ def _mini_db(path: Path, *, marked: int = 0, audit: int = 2, formal: int = 2) ->
     prov = None if marked == 0 else json.dumps({"projection_kind": "fanout_duplicate"})
     conn.execute(
         "INSERT INTO memories(id, content, provenance, group_id, vector, timestamp) VALUES (1,?,?,?,?,?)",
-        ("hello", prov, "398291136", vec, 1.0),
+        ("hello", prov, "100000001", vec, 1.0),
     )
     for i in range(formal):
         conn.execute(
             "INSERT INTO scoped_soul_relationships VALUES (?,?,?,?,?,?,?,?,?,?)",
             (
                 "yushu",
-                "羽书:group:398291136",
+                "羽书:group:100000001",
                 "group",
                 f"羽书:user:{i}",
                 1,
@@ -72,9 +72,9 @@ def _mini_db(path: Path, *, marked: int = 0, audit: int = 2, formal: int = 2) ->
                 str(i),
                 "k",
                 "yushu",
-                "羽书:group:398291136",
+                "羽书:group:100000001",
                 "group",
-                "398291136",
+                "100000001",
                 f"羽书:user:{i}",
                 "direct_reply",
                 "familiarity",

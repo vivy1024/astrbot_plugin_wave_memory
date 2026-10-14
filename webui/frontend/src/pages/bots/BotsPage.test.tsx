@@ -19,7 +19,7 @@ vi.mock('@/api/bots', async (importOriginal) => ({ ...(await importOriginal<type
 vi.mock('@/api/config', () => ({ listProviders: async () => ({ providers: [{ id: 'nug/meta', name: 'meta', model: 'gemini' }] }) }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
-const yushu = { ...emptyBot('yushu'), name: '羽书', qq_id: '2500447291', version: 3, origin: 'config', self_ids: ['2500447291'] }
+const yushu = { ...emptyBot('yushu'), name: '羽书', qq_id: '1000000005', version: 3, origin: 'config', self_ids: ['1000000005'] }
 
 beforeEach(() => {
   vi.clearAllMocks()

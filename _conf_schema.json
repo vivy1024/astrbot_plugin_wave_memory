@@ -1348,7 +1348,7 @@
   },
   "Eviction_Settings": {
     "description": "记忆淘汰（outbox 历史清理与冷记忆向量降级）",
-    "hint": "噪声记忆不删除（超忆症原则），这里只控制写入流水账的保留期与向量降级区间",
+    "hint": "噪声记忆不删除（记忆只增不删），这里只控制写入流水账的保留期与向量降级区间",
     "type": "object",
     "items": {
       "interval_hours": {

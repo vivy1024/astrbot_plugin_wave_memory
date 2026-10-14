@@ -1,16 +1,15 @@
 # Changelog
 
-## v5.1.2（开发中）：性能与精简
+## v5.1.2（2026-10-14）：性能与精简
 
 ### 删除（不留开关）
 
 1. **做梦引擎**（`services/dream.py`、`Lifecycle_Settings.enable_dream` 等 6 项）。它唯一的效果是给随机联想到的记忆加重要度，与 v5.1.1 修掉的「召回抬高重要度」相冲突；联想由共现图实时完成，做梦结果不落库也无读者。
-2. **噪声记忆删除**（`Eviction_Settings.enabled`、`noise_ttl_days`）。超忆症原则：记忆不删除，噪声只是不参与召回与注入。「记忆淘汰」服务改名「流水账清理」，只清 7 天前的 outbox/操作日志/投影水位。
+2. **噪声记忆删除**（`Eviction_Settings.enabled`、`noise_ttl_days`）。记忆只增不删，噪声只是不参与召回与注入。「记忆淘汰」服务改名「流水账清理」，只清 7 天前的 outbox/操作日志/投影水位。
 3. **表达模式聚合**（`PatternAggregator`，每 6 小时全表 GROUP BY 写 `expression_patterns`）。该表无读者，已被情景表达学习与风格样例取代；旧表数据保留。
 4. **会话最近消息作检索上下文**（`_get_recent_messages`、shotgun 的上下文分段检索、`ContextSegmenter`、SafetyChannel 的近期重复过滤、Runtime `/context/prepare` 的 `recent` 字段）。100 条真实查询评测：shotgun 带最近 8 条 nDCG@5 0.229、不带 0.390、普通检索 0.356（带上下文相对普通检索 −0.127，95% 区间 [−0.193, −0.061]）——上下文把召回带偏；AstrBot 本身已把群聊上下文给模型。shotgun 保留，只用当前这句。Runtime 调用方带 `recent` 会被忽略。
-5. **注入死代码**：`realtime_ctx`（每次注入查「羽书最近一条提到对方的回复」，结果无人读取，约 200ms）、每小时 @ 计数（唯一读者是前者，且永不清理）、未被调用的影子注入链路。
-
-3b. **记忆总量软上限**（`Storage_Settings.max_memories`、`canonical_capacity_enabled`、`cold_chat_when_over_capacity`，热参数 `storage.active_count_cache_seconds`）。活跃记忆超过上限（默认 10 万，线上 38 万早已超额）后，新聊天的向量算好了却被丢掉、以无向量入库，向量检索搜不到；每次重启时启动回填再重算一遍。结果是两次重启之间的新聊天羽书想不起来、向量白算两遍，与超忆症原则相反。现在一律带向量入库；每分钟一次、读约 1.5GB 的活跃记忆计数也随之删除。
+5. **注入死代码**：`realtime_ctx`（每次注入查「Bot 最近一条提到对方的回复」，结果无人读取，约 200ms）、每小时 @ 计数（唯一读者是前者，且永不清理）、未被调用的影子注入链路。
+6. **记忆总量软上限**（`Storage_Settings.max_memories`、`canonical_capacity_enabled`、`cold_chat_when_over_capacity`，热参数 `storage.active_count_cache_seconds`）。活跃记忆超过上限（默认 10 万，线上 38 万早已超额）后，新聊天的向量算好了却被丢掉、以无向量入库，向量检索搜不到；每次重启时启动回填再重算一遍。结果是两次重启之间的新聊天 Bot 想不起来、向量白算两遍，与「记忆只增不删」相反。现在一律带向量入库；每分钟一次、读约 1.5GB 的活跃记忆计数也随之删除。
 
 ### 性能
 
@@ -18,25 +17,34 @@
 - 好感生命周期 tick、TagWorker 取批次挪到工作线程，不再阻塞事件循环。
 - 打标签的目录邻居查询（写锁事务内，占写线程约四成）按 tag_type 缓存；按昵称找人结果缓存（约 360ms/次）；活跃记忆计数随软上限一起删除。
 - 管理台：`/api/system`、`/api/memories/stats`、`/api/tags/quality` 的重统计挪出 WebUI 事件循环并缓存，删掉被覆盖率报告覆盖的白算全表扫描；记忆列表条件改回 `group_id=?` 走索引，慢计数不再挡住列表（线上记忆页 33 秒 → 0.06 秒）。
-
 - 新增索引 `idx_memories_bot_sender_name(bot_id, sender_name)`：按昵称找人从读 690MB 降到 0（约 11MB）；把线上早年手工建的 `idx_memories_sender` 补进建表迁移。启动时自动创建。
 - 新增维护脚本 `scripts/d1_reorder_memories.py`：把 `memories.vector` 挪到最后一列（需停机），实测过滤类全表查询读盘量降到 1/3.5～1/4.6。
-
 - 修复：向量回填在向量服务未就绪（刚重启）时，把整批「全部返回空」当成「向量不合格」跳过并推进游标，这批永远补不上；现在按暂时失败原游标重试。跳过单条时日志写明原因。
-
 - 冷召回跳过万能标签：「吐槽」「调侃」「群友互动」等 58 个标签（占 0.03%）关联了 30% 的标签链接，冷召回展开时一次取回十几万行（线上约 3 秒）。关联数超过热参数 `query.cold_tag_max_links`（默认 2000，0 = 不跳过）的标签不再参与展开，关联数按标签缓存（`query.cold_tag_count_cache_seconds`）。
 
 ### 配置
 
+- 事后记账里「名片赞、回赞、平账」这类人情账的归类词表原先写死在代码里，改为热参数 `bookkeeping.social_account_keywords`（逗号分隔；留空 = 不归类），提示词里的示例词也随之取自词表。热参数页支持字符串类型参数。
 - `backup_max_count` 可设为 0，关闭插件自己的整库备份（库与备份同盘、备份另有去处时用）。默认仍为 1。
 
 ### 新增热参数（9876 热参数页，立即生效）
 
-`injection.recent_context_messages`、`tags.admission_neighbor_limit`、`tags.admission_cache_seconds`、`jargon.person_alias_cache_seconds`、`people.nickname_cache_seconds`、`webui.stats_cache_seconds`、`webui.vector_count_cache_seconds`、`webui.coverage_cache_seconds`、`webui.legacy_quality_cache_seconds`、`webui.list_count_cache_seconds`、`webui.list_count_wait_seconds`。均有上下限，原来写死在代码里的数值即默认值。
+`bookkeeping.social_account_keywords`（人情账词表，逗号分隔，空 = 不归类）、`tags.admission_neighbor_limit`、`tags.admission_cache_seconds`、`jargon.person_alias_cache_seconds`、`people.nickname_cache_seconds`、`webui.stats_cache_seconds`、`webui.vector_count_cache_seconds`、`webui.coverage_cache_seconds`、`webui.legacy_quality_cache_seconds`、`webui.list_count_cache_seconds`、`webui.list_count_wait_seconds`、`query.cold_tag_max_links`、`query.cold_tag_count_cache_seconds`。数值型均有上下限，原来写死在代码里的数值即默认值；9876 热参数页可改，重启仍生效（存数据库）。
+
+### 管理台
+
+- 人物页：显示名优先取有字的名字或登记别名（昵称只有符号时不再显示「-」），按互动数排序，好感改为描边徽章；删掉每行都一样的 Bot / 群两列。
+- 宽表不再把整页撑出横向滚动；手机卡片去掉重复的表头徽章；记忆页「待补向量」取代「有向量」。
+
+### 其他
+
+- 去掉部署专属内容：管理台标题改回「Wave Memory」；测试与前端测试里的真实群友昵称、QQ 号、群号换成虚构值；文档与注释里的「超忆症原则」统一改为「记忆只增不删」。
 
 ### 升级注意
 
-- 旧配置里的 `enable_dream`、`dream_*`、`Eviction_Settings.enabled/noise_ttl_days` 会被 AstrBot 按新 schema 移除，无需处理。
+- 旧配置里的 `enable_dream`、`dream_*`、`Eviction_Settings.enabled/noise_ttl_days`、`Storage_Settings.max_memories/canonical_capacity_enabled/cold_chat_when_over_capacity` 会被 AstrBot 按新 schema 移除，无需处理。
+- **以前靠 `max_memories` 软上限控制库大小的用户注意**：这个开关已删除，新消息一律带向量入库，库会随聊天持续增长；需要控制体积请定期归档或换更大的盘。
+- 新增索引在首次启动时创建，大库（几十万行）会多花几十秒启动。
 - 9876「服务与扩展」页不再有「做梦」服务。
 
 ## v5.1.1（2026-10-11）：心情、关系小传、信念反思、模型分工与梗百科

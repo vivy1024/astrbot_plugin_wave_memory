@@ -69,7 +69,7 @@ describe('ExperiencesPage 证据链展示', () => {
   })
 
   it('日记卡片可以打开全文', async () => {
-    const body = '第一段。' + '很长的正文'.repeat(40) + '\n\nTag: 时雨, vivy'
+    const body = '第一段。' + '很长的正文'.repeat(40) + '\n\nTag: 雨沐, vivy'
     api.listExperiences.mockResolvedValue({
       items: [{
         id: 1019,

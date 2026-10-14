@@ -10,7 +10,7 @@ vi.mock('@/api/options', async (importOriginal) => {
     ...actual,
     getScopeOptions: vi.fn().mockResolvedValue({
       bots: [],
-      sessions: [{ id: '羽书:group:398291136', bot_id: 'yushu', platform_id: '羽书', kind: 'group', conversation_id: '398291136', label: '3-5层群', is_primary_alias: true }],
+      sessions: [{ id: '羽书:group:100000001', bot_id: 'yushu', platform_id: '羽书', kind: 'group', conversation_id: '100000001', label: '3-5层群', is_primary_alias: true }],
       channels: [],
       generated_at: 1,
       source: { health: 'healthy', reason_code: null },
@@ -20,7 +20,7 @@ vi.mock('@/api/options', async (importOriginal) => {
 
 const detail = {
   trace_id: 'active-1',
-  request: { bot_id: '2500447291', bot_profile_id: 'yushu', group_id: '398291136', sender_id: 'u1' },
+  request: { bot_id: '1000000005', bot_profile_id: 'yushu', group_id: '100000001', sender_id: 'u1' },
   channels: [
     {
       channel: 'memory',
@@ -67,7 +67,7 @@ describe('TraceDetailSheet 回复溯源链接', () => {
     // jargon 需要 trace 群号换成 canonical session，等 scope 选项加载后才带上 session_id
     await waitFor(() => {
       const jargonLink = screen.getByRole('link', { name: /查找黑话「v我50」/ })
-      expect(hrefParams(jargonLink.getAttribute('href')).get('session_id')).toBe('羽书:group:398291136')
+      expect(hrefParams(jargonLink.getAttribute('href')).get('session_id')).toBe('羽书:group:100000001')
     })
 
     const channelLinks = document.querySelectorAll('[data-slot="trace-channel-link"]')

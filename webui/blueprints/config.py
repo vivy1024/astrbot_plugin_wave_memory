@@ -369,9 +369,15 @@ async def update_hot_config():
                 value = float(value)
             elif meta["type"] == "int":
                 value = int(value)
-            if value < meta["min"] or value > meta["max"]:
-                errors.append(f"{key}: out of range [{meta['min']}, {meta['max']}]")
-                continue
+            elif meta["type"] == "str":
+                value = str(value).strip()
+                if len(value) > meta.get("max_length", 500):
+                    errors.append(f"{key}: 超出 {meta['max_length']} 字符上限")
+                    continue
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                if value < meta["min"] or value > meta["max"]:
+                    errors.append(f"{key}: out of range [{meta['min']}, {meta['max']}]")
+                    continue
             validated[key] = value
         except (ValueError, TypeError) as exc:
             errors.append(f"{key}: invalid value - {exc}")

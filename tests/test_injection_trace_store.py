@@ -175,24 +175,24 @@ class InjectionTraceStoreTest(unittest.TestCase):
     def _record_legacy_and_scoped_traces(self, store):
         base = {"mode": "full", "message": "m", "final_text": "f", "status": "ok"}
         # AstrBot 路径旧 trace：bot_id 列是 QQ 号，bot_profile_id 才是 db_id，metadata 无 runtime_scope
-        store.record({**base, "trace_id": "legacy-g1", "timestamp": 10, "group_id": "398291136",
+        store.record({**base, "trace_id": "legacy-g1", "timestamp": 10, "group_id": "100000001",
                       "bot_id": "20000001", "bot_profile_id": "yushu"}, [])
-        store.record({**base, "trace_id": "legacy-g1-bot2", "timestamp": 11, "group_id": "398291136",
-                      "bot_id": "2500447291", "bot_profile_id": "yushu"}, [])
+        store.record({**base, "trace_id": "legacy-g1-bot2", "timestamp": 11, "group_id": "100000001",
+                      "bot_id": "1000000005", "bot_profile_id": "yushu"}, [])
         store.record({**base, "trace_id": "legacy-g2", "timestamp": 12, "group_id": "900000001",
                       "bot_id": "20000001", "bot_profile_id": "yushu"}, [])
         store.record({**base, "trace_id": "legacy-private", "timestamp": 13, "group_id": "",
                       "bot_id": "20000001", "bot_profile_id": "yushu"}, [])
-        store.record({**base, "trace_id": "other-bot", "timestamp": 14, "group_id": "398291136",
+        store.record({**base, "trace_id": "other-bot", "timestamp": 14, "group_id": "100000001",
                       "bot_id": "123456", "bot_profile_id": "other"}, [])
         # Cortico 路径：bot_id 列就是 db_id，metadata 带 canonical session
-        store.record({**base, "trace_id": "cortico-g1", "timestamp": 15, "group_id": "398291136",
+        store.record({**base, "trace_id": "cortico-g1", "timestamp": 15, "group_id": "100000001",
                       "bot_id": "yushu", "bot_profile_id": "yushu",
-                      "metadata": {"runtime_scope": {"bot_id": "yushu", "session": {"id": "羽书:group:398291136"}}}}, [])
+                      "metadata": {"runtime_scope": {"bot_id": "yushu", "session": {"id": "羽书:group:100000001"}}}}, [])
         # 同群号但 canonical session 属于别的平台前缀：以 metadata 为准，不回退群号
-        store.record({**base, "trace_id": "scoped-other-platform", "timestamp": 16, "group_id": "398291136",
+        store.record({**base, "trace_id": "scoped-other-platform", "timestamp": 16, "group_id": "100000001",
                       "bot_id": "yushu", "bot_profile_id": "yushu",
-                      "metadata": {"runtime_scope": {"bot_id": "yushu", "session": {"id": "cortico:group:398291136"}}}}, [])
+                      "metadata": {"runtime_scope": {"bot_id": "yushu", "session": {"id": "cortico:group:100000001"}}}}, [])
 
     def test_bot_filter_matches_profile_id_or_bot_id_column(self):
         store, _ = self._store()
@@ -210,7 +210,7 @@ class InjectionTraceStoreTest(unittest.TestCase):
         store, _ = self._store()
         self._record_legacy_and_scoped_traces(store)
 
-        filters = {"from_ts": 0, "to_ts": 100, "bot_id": "yushu", "session_id": "羽书:group:398291136"}
+        filters = {"from_ts": 0, "to_ts": 100, "bot_id": "yushu", "session_id": "羽书:group:100000001"}
         ids = {row["trace_id"] for row in store.query(**filters)}
         self.assertEqual(ids, {"legacy-g1", "legacy-g1-bot2", "cortico-g1"})
         self.assertEqual(store.count(**filters), 3)

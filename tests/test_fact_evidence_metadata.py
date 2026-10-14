@@ -44,10 +44,10 @@ class FactEvidenceMetadataTest(unittest.TestCase):
             )"""
         )
         conn.execute(
-            """INSERT INTO memories VALUES (323370, 'yushu', '羽书:group:398291136', 'group', 'resolved', 0, 'sha256:abc', 1700000000, 1699999999, '群友说了句谢谢')"""
+            """INSERT INTO memories VALUES (323370, 'yushu', '羽书:group:100000001', 'group', 'resolved', 0, 'sha256:abc', 1700000000, 1699999999, '群友说了句谢谢')"""
         )
         items = [{"source_memory_id": 323370}]
-        fact_evidence(conn, items, ("yushu", "羽书:group:398291136", "group"))
+        fact_evidence(conn, items, ("yushu", "羽书:group:100000001", "group"))
         evidence = items[0]["evidence"][0]
         self.assertEqual(evidence["id"], "323370")
         self.assertEqual(evidence["content_hash"], "sha256:abc")
@@ -55,6 +55,6 @@ class FactEvidenceMetadataTest(unittest.TestCase):
         self.assertEqual(evidence["summary"], "群友说了句谢谢")
         self.assertEqual(
             evidence["source_scope"],
-            {"bot_id": "yushu", "session_id": "羽书:group:398291136", "visibility": "group"},
+            {"bot_id": "yushu", "session_id": "羽书:group:100000001", "visibility": "group"},
         )
         conn.close()

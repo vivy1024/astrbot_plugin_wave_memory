@@ -58,7 +58,7 @@ class InjectionShadowTest(unittest.TestCase):
             group_id="g1",
             sender_id="u1",
             sender_name="用户",
-            bot_id="2500447291",
+            bot_id="1000000005",
             bot_profile_id="yushu",
             mode="full",
             trace_id="trace-shadow-1",

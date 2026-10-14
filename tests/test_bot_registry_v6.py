@@ -14,8 +14,8 @@ from services.bot_registry import BotConflictError, BotRegistry, legacy_profiles
 from services.scopes import BotIdentityBinding, ScopeResolutionError, ScopeResolver, bindings_from_profiles
 
 LEGACY_CONFIG = {
-    "MetaThinking_Bot1": {"qq_id": "2500447291", "name": "羽书", "db_id": "yushu", "aliases": "羽书bot,器灵"},
-    "MetaThinking_Bot2": {"qq_id": "1336495069", "name": "白真真", "db_id": "baizz", "aliases": "阿真"},
+    "MetaThinking_Bot1": {"qq_id": "1000000005", "name": "羽书", "db_id": "yushu", "aliases": "羽书bot,器灵"},
+    "MetaThinking_Bot2": {"qq_id": "1000000002", "name": "白真真", "db_id": "baizz", "aliases": "阿真"},
     "MetaThinking_Bot3": {"qq_id": "", "name": "空槽位", "db_id": "empty"},
 }
 
@@ -117,7 +117,7 @@ def test_registry_migrates_legacy_slots_once_with_detected_prefix(cm):
     assert again.get("yushu").name == "羽书"
 
     # 身份快照供无 Bot 上下文的模块使用。
-    assert "2500447291" in bot_identity.bot_sender_ids()
+    assert "1000000005" in bot_identity.bot_sender_ids()
     assert "器灵" in bot_identity.identity_terms()
     assert bot_identity.is_experience_source("bzz_experience")
 
@@ -149,7 +149,7 @@ def test_registry_rejects_shared_accounts_and_prefixes(cm):
     registry = BotRegistry(LEGACY_CONFIG)
     registry.attach(BotProfileRepo(cm), connection=cm)
     with pytest.raises(BotConflictError):
-        registry.save(_profile(qq_id="2500447291"), expected_version=0)
+        registry.save(_profile(qq_id="1000000005"), expected_version=0)
     with pytest.raises(BotConflictError):
         registry.save(_profile(session_prefix="羽书"), expected_version=0)
 
@@ -167,7 +167,7 @@ def test_registry_import_export(cm):
 def test_registry_without_database_uses_legacy_slots():
     registry = BotRegistry(LEGACY_CONFIG)
     assert not registry.attached
-    assert set(registry.profiles) == {"2500447291", "1336495069"}
+    assert set(registry.profiles) == {"1000000005", "1000000002"}
     with pytest.raises(BotProfileError):
         registry.save(_profile(), expected_version=0)
 
@@ -175,7 +175,7 @@ def test_registry_without_database_uses_legacy_slots():
 # ---------------------------------------------------------------- Scope
 
 
-def _event(self_id="2500447291", platform="羽书平台改名后", kind="GroupMessage", group="100", sender="u1"):
+def _event(self_id="1000000005", platform="羽书平台改名后", kind="GroupMessage", group="100", sender="u1"):
     return SimpleNamespace(
         get_self_id=lambda: self_id,
         get_sender_id=lambda: sender,
@@ -188,7 +188,7 @@ def _event(self_id="2500447291", platform="羽书平台改名后", kind="GroupMe
 
 def test_scope_resolver_uses_canonical_prefix_after_platform_rename():
     profile = BotProfile.from_dict({
-        "db_id": "yushu", "name": "羽书", "qq_id": "2500447291", "session_prefix": "羽书",
+        "db_id": "yushu", "name": "羽书", "qq_id": "1000000005", "session_prefix": "羽书",
         "bindings": [{"host": "astrbot", "self_id": "2500447292"}],
     })
     resolver = ScopeResolver(bindings_from_profiles([profile]))

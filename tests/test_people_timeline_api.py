@@ -34,7 +34,7 @@ def timeline_app(tmp_path):
     container = ServiceContainer()
     cm = ConnectionManager(str(tmp_path / "wave_memory.sqlite3"))
     repo = PersonTimelineRepo(cm)
-    repo.add_event(bot_id="bot-a", user_id="u1", group_id="g1", kind="person_fact", summary="别名 时雨", occurred_at=1.0)
+    repo.add_event(bot_id="bot-a", user_id="u1", group_id="g1", kind="person_fact", summary="别名 雨沐", occurred_at=1.0)
     repo.add_event(bot_id="bot-a", user_id="u1", group_id="g1", kind="impression", summary="愿意核对事实", occurred_at=2.0)
     repo.add_event(bot_id="bot-a", user_id="u2", group_id="g1", kind="impression", summary="爱接梗", occurred_at=3.0)
     repo.add_event(bot_id="bot-a", user_id="u1", group_id="g2", kind="impression", summary="别群印象", occurred_at=4.0)
@@ -70,7 +70,7 @@ async def test_person_timeline_filters_user_kind_and_search(timeline_app):
     assert person["page"]["total"] == 2
     facts = await (await client.get("/api/people/timeline?kind=person_fact")).get_json()
     assert facts["page"]["total"] == 1
-    assert facts["items"][0]["summary"] == "别名 时雨"
+    assert facts["items"][0]["summary"] == "别名 雨沐"
     searched = await (await client.get("/api/people/timeline?search=%E6%A0%B8%E5%AF%B9")).get_json()
     assert searched["page"]["total"] == 1
     assert searched["items"][0]["summary"] == "愿意核对事实"

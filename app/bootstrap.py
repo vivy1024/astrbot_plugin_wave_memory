@@ -314,7 +314,7 @@ class BootstrapMixin:
             f"[WaveMemory] 运行模式: {self.runtime_mode.mode} ({self.runtime_mode.label})；"
             f"禁用高级能力: {disabled_caps}"
         )
-        # 记忆总量不设上限（超忆症原则）；热 HNSW 容量由 Memory_Index_Settings.hot_max_vectors 决定。
+        # 记忆总量不设上限（记忆只增不删）；热 HNSW 容量由 Memory_Index_Settings.hot_max_vectors 决定。
         self.max_memories = self.memory_index_policy.max_vectors
 
         # WebUI 配置
