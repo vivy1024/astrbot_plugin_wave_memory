@@ -25,12 +25,13 @@ import {
 import { legacyBotIdsFrom, locateConfig, locationHref, type ConfigLocation } from '@/pages/config/config-location'
 import { groupByFeature, searchConfig, type FeatureBucket } from '@/pages/config/feature-groups'
 import { ModelRoutingPanel } from '@/pages/config/ModelRoutingPanel'
+import { RuntimeTokenPanel } from '@/pages/config/RuntimeTokenPanel'
 import { RISK_KEYS, assessRisks, type RiskAssessment, type RiskStatus } from '@/pages/config/risk'
 import { ConfigInventoryPage } from '@/pages/settings/ConfigInventoryPage'
 import { SettingsPage } from '@/pages/settings/SettingsPage'
 
-type View = 'feature' | 'risk' | 'settings' | 'channels' | 'inventory'
-const VIEWS: View[] = ['feature', 'risk', 'settings', 'channels', 'inventory']
+type View = 'feature' | 'risk' | 'settings' | 'channels' | 'inventory' | 'external'
+const VIEWS: View[] = ['feature', 'risk', 'settings', 'channels', 'inventory', 'external']
 
 function parseView(raw: string | null): View {
   return VIEWS.includes(raw as View) ? (raw as View) : 'feature'
@@ -447,7 +448,7 @@ export function ConfigCenterPage() {
       ) : null}
 
       <Tabs value={view} onValueChange={setView} className={cn(searching && 'hidden')}>
-        <TabsList className="grid h-auto! w-full grid-cols-3 gap-1 sm:grid-cols-5">
+        <TabsList className="grid h-auto! w-full grid-cols-3 gap-1 sm:grid-cols-6">
           <TabsTrigger value="feature">按功能</TabsTrigger>
           <TabsTrigger value="risk">
             高风险{dangerCount ? <Badge variant="destructive" className="ml-1">{dangerCount}</Badge> : null}
@@ -455,6 +456,7 @@ export function ConfigCenterPage() {
           <TabsTrigger value="settings">系统配置</TabsTrigger>
           <TabsTrigger value="channels">通道配置</TabsTrigger>
           <TabsTrigger value="inventory">配置来源</TabsTrigger>
+          <TabsTrigger value="external">外部接入</TabsTrigger>
         </TabsList>
 
         <TabsContent value="feature" className="mt-4">
@@ -472,6 +474,9 @@ export function ConfigCenterPage() {
         </TabsContent>
         <TabsContent value="inventory" forceMount className="mt-4 data-[state=inactive]:hidden">
           {visited.has('inventory') ? <ConfigInventoryPage onLocate={onLocate} /> : null}
+        </TabsContent>
+        <TabsContent value="external" className="mt-4">
+          <RuntimeTokenPanel />
         </TabsContent>
       </Tabs>
     </div>

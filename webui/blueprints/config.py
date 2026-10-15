@@ -730,3 +730,69 @@ def build_llm_routing_payload(container) -> dict:
 async def get_llm_routing():
     """只读：模型分工当前生效情况（修改走系统配置「模型分工」与 Bot 管理）。"""
     return jsonify(build_llm_routing_payload(get_container()))
+
+
+# ─── 外部接入：Runtime API 令牌 ───
+
+
+def _runtime_token_payload(container) -> dict:
+    from . import runtime as runtime_api
+
+    token, source = runtime_api.effective_token()
+    stored = None
+    repo = _override_repo(container)
+    if repo is not None:
+        try:
+            stored = repo.all().get(runtime_api.TOKEN_OVERRIDE_KEY)
+        except Exception:
+            stored = None
+    return {
+        "token": token,
+        "source": source,
+        "is_default": source == "default",
+        "env_var": runtime_api.TOKEN_ENV,
+        "env_set": source == "env",
+        "can_edit": source != "env" and repo is not None,
+        "min_length": runtime_api.TOKEN_MIN_LENGTH,
+        "updated_at": (stored or {}).get("updated_at") if source == "database" else None,
+        "usage": runtime_api.token_usage(),
+    }
+
+
+@config_bp.route("/config/runtime-token", methods=["GET"])
+@require_auth
+async def get_runtime_token():
+    """Runtime API（/api/runtime/v1，供 Cortico 等外部程序调用）当前生效的令牌、来源与调用情况。"""
+    return jsonify(_runtime_token_payload(get_container()))
+
+
+@config_bp.route("/config/runtime-token", methods=["POST"])
+@require_auth
+async def set_runtime_token():
+    """生成或设置 Runtime API 令牌，立即生效。body: {"action": "generate"} | {"token": "..."} | {"action": "reset"}。"""
+    import secrets
+
+    from . import runtime as runtime_api
+
+    container = get_container()
+    body = await request.get_json(silent=True) or {}
+    if runtime_api.effective_token()[1] == "env":
+        return jsonify({"ok": False, "error": f"令牌由环境变量 {runtime_api.TOKEN_ENV} 设置，管理台改不了；"
+                                              "要改请修改容器环境变量后重启"}), 409
+    repo = _override_repo(container)
+    if repo is None:
+        return jsonify({"ok": False, "error": "数据库未就绪，暂时无法保存"}), 503
+    action = str(body.get("action") or "").strip()
+    try:
+        if action == "reset":
+            repo.delete([runtime_api.TOKEN_OVERRIDE_KEY])
+        else:
+            token = secrets.token_urlsafe(32) if action == "generate" else str(body.get("token") or "").strip()
+            if len(token) < runtime_api.TOKEN_MIN_LENGTH or any(ch.isspace() for ch in token):
+                return jsonify({"ok": False, "error": f"令牌至少 {runtime_api.TOKEN_MIN_LENGTH} 个字符，且不能含空白"}), 400
+            if token == runtime_api.DEFAULT_DEV_TOKEN:
+                return jsonify({"ok": False, "error": "这是公开的默认令牌，请换一个"}), 400
+            repo.set_many({runtime_api.TOKEN_OVERRIDE_KEY: token}, updated_by="webui")
+    finally:
+        runtime_api.invalidate_token_cache()
+    return jsonify({"ok": True, **_runtime_token_payload(container)})

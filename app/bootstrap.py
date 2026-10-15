@@ -910,7 +910,11 @@ class BootstrapMixin:
             known = self.hot_config.tunable_keys()
             from ..services.config.channel_settings_store import STORE_KEY
 
-            stored = {key: value for key, value in overrides_repo.values().items() if key != STORE_KEY}
+            # 通道配置与 Runtime 令牌（webui/blueprints/runtime.py 的 TOKEN_OVERRIDE_KEY）也存在这张表里，但不是热参数
+            stored = {
+                key: value for key, value in overrides_repo.values().items()
+                if key not in (STORE_KEY, "runtime.api_token")
+            }
             applied = {key: value for key, value in stored.items() if key in known}
             unknown = sorted(set(stored) - known)
             if applied:

@@ -23,17 +23,69 @@ logger = logging.getLogger(__name__)
 runtime_bp = Blueprint("runtime_v1", __name__, url_prefix="/api/runtime/v1")
 
 TOKEN_ENV = "WAVEMEMORY_RUNTIME_TOKEN"
+TOKEN_OVERRIDE_KEY = "runtime.api_token"
+# 历史默认值：早期开发时写死、源码公开。没有另外设置令牌时仍接受它，免得已接入的调用方
+# （如 Cortico 部署）升级后立刻 401；管理台「配置中心 → 外部接入」会醒目提示并可一键换掉。
 DEFAULT_DEV_TOKEN = "yushu-dev-token"
+TOKEN_MIN_LENGTH = 16
+
+# 管理台设置的令牌缓存在进程里，避免每次请求读库；保存/清除时失效。
+_token_cache: dict[str, Any] = {"loaded": False, "value": ""}
+# 本次启动以来的调用情况，只存在内存里，供管理台显示「谁在用」。
+_usage: dict[str, Any] = {
+    "accepted": 0, "last_accepted_at": None, "last_accepted_from": "", "last_accepted_path": "",
+    "rejected": 0, "last_rejected_at": None, "last_rejected_from": "", "last_rejected_path": "",
+}
+
+
+def _stored_token() -> str:
+    if not _token_cache["loaded"]:
+        value = ""
+        repo = getattr(getattr(_get_container(), "db", None), "config_overrides", None)
+        if repo is not None:
+            try:
+                raw = repo.values().get(TOKEN_OVERRIDE_KEY)
+                value = raw.strip() if isinstance(raw, str) else ""
+            except Exception as exc:  # 读库失败时不缓存，下次再试
+                logger.warning(f"[WaveMemory] 读取 Runtime 令牌失败: {exc!r}")
+                return ""
+        _token_cache.update(loaded=True, value=value)
+    return str(_token_cache["value"])
+
+
+def invalidate_token_cache() -> None:
+    _token_cache.update(loaded=False, value="")
+
+
+def effective_token() -> tuple[str, str]:
+    """当前生效的令牌与来源：env（环境变量，最高）> database（管理台设置）> default（公开默认值）。"""
+    env = os.environ.get(TOKEN_ENV, "").strip()
+    if env:
+        return env, "env"
+    stored = _stored_token()
+    if stored:
+        return stored, "database"
+    return DEFAULT_DEV_TOKEN, "default"
+
+
+def token_usage() -> dict[str, Any]:
+    return dict(_usage)
 
 
 def _check_auth() -> bool:
-    expected = os.environ.get(TOKEN_ENV, DEFAULT_DEV_TOKEN)
+    expected, _source = effective_token()
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         token = auth[7:].strip()
     else:
         token = auth.strip()
-    return bool(expected and token == expected)
+    ok = bool(expected and token == expected)
+    kind = "accepted" if ok else "rejected"
+    _usage[kind] += 1
+    _usage[f"last_{kind}_at"] = time.time()
+    _usage[f"last_{kind}_from"] = str(request.headers.get("X-Forwarded-For") or request.remote_addr or "")[:80]
+    _usage[f"last_{kind}_path"] = str(request.path or "")[:120]
+    return ok
 
 
 def _normalize_uid(raw_uid: Any) -> str:
