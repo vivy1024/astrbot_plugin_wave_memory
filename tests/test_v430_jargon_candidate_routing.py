@@ -22,20 +22,11 @@ if "astrbot.api" not in sys.modules:
 class _DB:
     def __init__(self):
         self.conn = sqlite3.connect(":memory:")
-        self.inserted_facts = []
         self.conn.execute("CREATE TABLE memories (id INTEGER PRIMARY KEY, group_id TEXT, sender_id TEXT, sender_name TEXT, content TEXT, timestamp REAL, memory_type TEXT DEFAULT 'message')")
         self.conn.execute("CREATE TABLE user_profiles (user_id TEXT, group_id TEXT, bot_id TEXT, nickname TEXT)")
-        self.conn.execute("CREATE TABLE facts (subject TEXT, predicate TEXT, object TEXT, fact_type TEXT, group_id TEXT)")
 
     def close(self):
         self.conn.close()
-
-    def insert_fact(self, **kwargs):
-        self.inserted_facts.append(kwargs)
-        self.conn.execute(
-            "INSERT INTO facts (subject, predicate, object, fact_type, group_id) VALUES (?, ?, ?, ?, ?)",
-            (kwargs.get("subject"), kwargs.get("predicate"), kwargs.get("obj"), kwargs.get("fact_type"), kwargs.get("group_id")),
-        )
 
 
 class V430JargonCandidateRoutingTest(unittest.TestCase):

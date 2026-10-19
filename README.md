@@ -454,7 +454,7 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| facts_decay_rate | 0.005 | facts 时间衰减速率 |
+| facts_decay_rate | 0.005 | 事实召回权重随时间衰减的速率（0 为不衰减） |
 
 ### 记忆索引 (Memory_Index_Settings)
 

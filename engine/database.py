@@ -475,17 +475,6 @@ class WaveMemoryDB:
 
     def get_kv(self, key):
         return self._knowledge_repo.get_kv(key)
-
-    def insert_fact(self, subject, predicate, obj, group_id=None, source_memory_id=None, confidence=0.8, fact_type=None):
-        return self._knowledge_repo.insert_fact(subject, predicate, obj, group_id, source_memory_id, confidence, fact_type)
-
-    def get_facts_by_subject(self, subject, limit=20):
-        return self._knowledge_repo.get_facts_by_subject(subject, limit)
-
-    def set_facts_decay_rate(self, rate: float):
-        """设置 facts 时间衰减速率。"""
-        self._knowledge_repo.set_decay_rate(rate)
-
     def memory_exists_by_hash(self, content_hash):
         return self._knowledge_repo.memory_exists_by_hash(content_hash)
 

@@ -79,7 +79,7 @@ def _importance(provenance: Any) -> int:
 
 
 def _row_to_fact(row: Mapping[str, Any], *, now: float, decay_rate: float) -> dict[str, Any]:
-    """Normalize the scoped repository DTO without exposing a legacy table row."""
+    """Normalize a scoped repository DTO into the fact shape used by this channel."""
     confidence = float(row.get("confidence") if row.get("confidence") is not None else 1.0)
     anchor = row.get("updated_at") or row.get("created_at") or now
     try:
@@ -167,18 +167,6 @@ class FactsChannel:
                 names.extend(str(row[0]) for row in rows if row and row[0])
             except Exception:
                 pass
-        conn = getattr(self.db, "conn", None)
-        if conn is not None and hasattr(conn, "execute"):
-            try:
-                rows = conn.execute(
-                    """SELECT DISTINCT f.subject FROM facts f JOIN memories m ON f.source_memory_id = m.id
-                        WHERE m.bot_id = ? AND m.visibility='group'
-                          AND m.resolution_state='resolved' AND COALESCE(m.quarantine,0)=0 LIMIT 5000""",
-                    (bot_id,),
-                ).fetchall()
-                names.extend(str(row[0]) for row in rows if row and row[0])
-            except Exception:
-                pass
         unique = list(dict.fromkeys(name.strip() for name in names if len(name.strip()) >= 2))
         self._entity_cache[cache_key] = (now, unique)
         return unique
@@ -236,8 +224,6 @@ class FactsChannel:
                                 rows.append(row)
                     except Exception:
                         pass
-            if len(rows) < fetch_limit:
-                rows.extend(self._legacy_fact_rows(ctx, scope, limit=fetch_limit - len(rows), keywords=keywords))
             now = float(getattr(ctx, "now", 0.0) or time.time())
             # Repository DTOs may omit ownership after a scoped query. If they
             # include it, reject mismatches before either retrieval path.
@@ -411,86 +397,6 @@ class FactsChannel:
         payload["filter_channel"] = fact.get("filter_channel", "facts")
         return payload
 
-    def _legacy_fact_rows(
-        self, ctx: Any, scope: Any, *, limit: int, keywords: list[str] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Read-only fallback to the existing facts table. Does not copy rows.
-
-        事实不分群，但必须严格分 Bot：同一个人在同 Bot 哪个群被记录的事实都成立；
-        但跨 Bot 绝对隔离，不能把 Bot B 记录的私密事实注入给 Bot A。
-        通过 source_memory_id 联查 memories.bot_id 确立可信所有权，不限制 group_id。
-        私聊里得知的事实只在同一私聊中使用，绝不注入群聊。
-        """
-        if limit <= 0 or scope is None or not getattr(scope, "bot_id", None):
-            return []
-        conn = getattr(self.db, "conn", None)
-        if conn is None or not hasattr(conn, "execute"):
-            return []
-        bot_id = str(scope.bot_id).strip()
-        sender_id = str(getattr(ctx, "sender_id", "") or "").strip()
-        sender_name = str(getattr(ctx, "sender_name", "") or "").strip()
-        if keywords is None:
-            keywords = _keywords(str(getattr(ctx, "message", "") or ""), limit=6)
-        keywords = list(keywords)[:10]
-        now = float(getattr(ctx, "now", 0.0) or time.time())
-        public_source = "(m.visibility = 'group' AND COALESCE(m.group_id, '') NOT LIKE 'private:%')"
-        session = getattr(scope, "session", None)
-        if getattr(scope, "visibility", "") == "private" and session is not None:
-            source_clause = f"({public_source} OR (m.visibility = 'private' AND m.session_id = ?))"
-            source_params: list[Any] = [session.id]
-        else:
-            source_clause = public_source
-            source_params = []
-        clauses = [
-            "m.bot_id = ?",
-            source_clause,
-            "m.resolution_state = 'resolved'",
-            "COALESCE(m.quarantine, 0) = 0",
-            "COALESCE(f.fact_type, '') != 'QUARANTINED_ROLEPLAY'",
-            "(f.valid_from IS NULL OR f.valid_from <= ?)",
-            "(f.valid_until IS NULL OR f.valid_until > ?)",
-        ]
-        params: list[Any] = [bot_id, *source_params, now, now]
-        match_clauses: list[str] = []
-        if sender_id:
-            match_clauses.append("f.subject = ?")
-            params.append(sender_id)
-        if sender_name:
-            match_clauses.append("f.subject = ?")
-            params.append(sender_name)
-        for token in keywords:
-            like = f"%{token}%"
-            match_clauses.append("(f.subject LIKE ? OR f.object LIKE ?)")
-            params.extend((like, like))
-        if match_clauses:
-            clauses.append(f"({' OR '.join(match_clauses)})")
-        sql = f"""SELECT f.id, f.subject, f.predicate, f.object, f.confidence, f.created_at, f.last_reinforced, f.fact_type
-                    FROM facts f
-                    JOIN memories m ON f.source_memory_id = m.id
-                   WHERE {' AND '.join(clauses)}
-                   ORDER BY f.confidence DESC, f.id DESC
-                   LIMIT ?"""
-        params.append(limit)
-        try:
-            fetched = conn.execute(sql, tuple(params)).fetchall()
-        except Exception:
-            return []
-        rows: list[dict[str, Any]] = []
-        for row in fetched:
-            rows.append({
-                "id": row[0],
-                "subject": row[1],
-                "predicate": row[2],
-                "object": row[3],
-                "confidence": row[4],
-                "created_at": row[5],
-                "updated_at": row[6] or row[5],
-                "status": "active",
-                "review_status": "approved",
-                "relation": "compatible",
-                "provenance": {"source_table": "facts", "legacy": True, "bot_id": bot_id},
-            })
-        return rows
 
     @staticmethod
     def _latency_ms(started: float) -> float:

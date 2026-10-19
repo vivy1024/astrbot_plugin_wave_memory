@@ -62,48 +62,6 @@ def test_scoped_facts_follow_the_bot_across_groups_and_into_private(tmp_path):
         db.close()
 
 
-def test_legacy_fact_from_private_chat_never_reaches_a_group(tmp_path):
-    db = WaveMemoryDB(str(tmp_path / "legacy.sqlite"), dimension=3)
-    try:
-        conn = db.conn
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(facts)").fetchall()}
-        for name, ddl in (("fact_type", "TEXT"), ("last_reinforced", "REAL")):
-            if name not in columns:
-                conn.execute(f"ALTER TABLE facts ADD COLUMN {name} {ddl}")
-        vector = np.asarray([0.1, 0.2, 0.3], dtype=np.float32)
-        private_mid = db.add_memory(
-            group_id="u1", content="其实我最近在看心理医生", vector=vector,
-            sender_id="u1", sender_name="雨沐", timestamp=1_800_000_000.0, importance=1.0,
-            source="chat", scope=_private(), provenance={}, origin_metadata={},
-        )
-        group_mid = db.add_memory(
-            group_id="g1", content="我在学吉他", vector=vector,
-            sender_id="u1", sender_name="雨沐", timestamp=1_800_000_000.0, importance=1.0,
-            source="chat", scope=_group("g1"), provenance={}, origin_metadata={},
-        )
-        conn.execute(
-            "INSERT INTO facts(subject, predicate, object, source_memory_id, confidence, created_at, fact_type)"
-            " VALUES ('雨沐', '正在', '看心理医生', ?, 0.9, 1800000000.0, 'FACTUAL')",
-            (private_mid,),
-        )
-        conn.execute(
-            "INSERT INTO facts(subject, predicate, object, source_memory_id, confidence, created_at, fact_type)"
-            " VALUES ('雨沐', '在学', '吉他', ?, 0.9, 1800000000.0, 'FACTUAL')",
-            (group_mid,),
-        )
-        conn.commit()
-
-        in_group = _build(db, _group("g1"), "吉他 心理医生")
-        in_same_private = _build(db, _private(), "吉他 心理医生")
-        in_other_private = _build(db, _private("u2"), "吉他 心理医生")
-
-        assert "吉他" in in_group.text
-        assert "心理医生" not in in_group.text
-        assert "心理医生" in in_same_private.text
-        assert "心理医生" not in (in_other_private.text or "")
-    finally:
-        db.close()
-
 
 def test_rare_person_name_is_recognized_even_when_jieba_splits_it(tmp_path):
     """jieba 会把"雨沐"切成单字；已知实体名要按原样在消息里认出来。"""

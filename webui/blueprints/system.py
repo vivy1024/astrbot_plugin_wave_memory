@@ -307,7 +307,6 @@ def _system_db_stats_sync(c, *, need_tag_counts: bool) -> dict:
         "type_dist": conn.execute(
             "SELECT tag_type, COUNT(*) FROM tags GROUP BY tag_type ORDER BY COUNT(*) DESC"
         ).fetchall(),
-        "facts_count": conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0],
         "active_moods": conn.execute(
             "SELECT group_id, mood_type, intensity, description FROM bot_mood WHERE is_active = 1 AND typeof(start_time) IN ('real', 'integer')"
         ).fetchall(),
@@ -424,7 +423,6 @@ async def system_status():
         "services_health": services_health,
         "services_summary": services_summary,
         "lifecycle": {
-            "facts": stats["facts_count"],
             "persons": stats["person_count"],
             "user_profiles": stats["user_profiles_count"],
             "active_users": stats["active_users"],

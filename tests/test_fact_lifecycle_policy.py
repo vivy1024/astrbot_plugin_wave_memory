@@ -511,23 +511,6 @@ def test_entity_cache_never_uses_another_private_chats_subjects(env):
     assert "虚构保密实体" not in channel._known_entities(scope(kind="private", conversation="person-two"))
 
 
-def test_legacy_injection_requires_valid_time_and_verified_public_scope(env):
-    env.cm.executescript("""CREATE TABLE facts(id INTEGER PRIMARY KEY,subject TEXT,predicate TEXT,object TEXT,
-        confidence REAL,created_at REAL,last_reinforced REAL,fact_type TEXT,valid_from REAL,valid_until REAL,
-        source_memory_id INTEGER);""")
-    for index, (target, start, end, quarantine) in enumerate([
-        (scope(), NOW, NOW + 1, 0), (scope(), NOW + 1, None, 0), (scope(), None, NOW, 0),
-        (scope("bot-maple"), None, None, 0), (scope(kind="private", conversation="person-two"), None, None, 0),
-        (scope(), None, None, 1),
-    ], start=1):
-        mid = memory(env, target=target, quarantine=quarantine)
-        env.cm.execute_write("INSERT INTO facts VALUES (?,?,?, ?,1,?,?,'FACTUAL',?,?,?)",
-                             (index, "林舟", "住在", f"虚构城{index}", NOW, NOW, start, end, mid))
-        env.cm.commit()
-    channel = FactsChannel(db=env.db)
-    result = asyncio.run(channel.build(SimpleNamespace(scope=scope(), now=NOW, message="林舟", mode="full", config={})))
-    assert [item["object"] for item in result.items] == ["虚构城1"]
-
 
 def test_review_idempotency_key_cannot_change_actor_or_resolution(env):
     fid = fact(env)

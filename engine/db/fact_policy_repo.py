@@ -177,13 +177,11 @@ class FactPolicyRepo:
         source = source_memory(conn, scope, source_memory_id, quote)
         # 证据锚点缺口（线上实测，暂不改行为）：反查不到来源记忆时这里把
         # ``source_memory_id`` 清成 ``None``，于是事实永久失去回溯凭证 ——
-        # ``scoped_facts`` 1108 条中 274 条（24.7%）就是这样没有来源的，
-        # 旧表 ``facts`` 更差（7993 条中仅 4075 条有来源，51.0%）。
-        # 成因同样是提审方给了总结式短语而非群友原话。
+        # ``scoped_facts`` 1108 条中 274 条（24.7%）就是这样没有来源的。
+        # 成因是提审方给了总结式短语而非群友原话。
         # 后续方向（本次不实施）：``tools/fact_proposal.py`` 把 ``source_quote``
         # 提为硬性必填；并在 ``resolve_source_memory_id`` 之外补一层按
         # 「发言时间戳 + 说话人」的后向模糊匹配，把悬空事实回挂到最可能的 memories.id。
-        # 详见 engine/db/knowledge_repo.py::KnowledgeRepo.insert_fact 的说明。
         if source is None:
             source_memory_id = None
         validity = policy.validity(predicate=predicate, object=object, source_quote=quote,

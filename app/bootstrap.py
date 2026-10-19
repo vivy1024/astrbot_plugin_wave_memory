@@ -398,9 +398,8 @@ class BootstrapMixin:
             source_db_path=self.db.db_path,
             snapshot_dir=os.path.join(self.data_dir, "scope_recovery_snapshots"),
         )
-        # facts 时间衰减配置
+        # scoped_facts 时间衰减配置（注入通道用）
         self._facts_decay_rate = float(storage_cfg.get("facts_decay_rate", "0.005"))
-        self.db.set_facts_decay_rate(self._facts_decay_rate)
 
         self.memory_index = VectorIndex(
             dimension=self.dimension,

@@ -38,7 +38,6 @@ export interface SystemPayload {
   services_health?: ServiceHealth[]
   services_summary?: SystemHealthSummary
   lifecycle?: {
-    facts?: number
     persons?: number
     user_profiles?: number
     active_users?: number

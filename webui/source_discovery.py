@@ -40,19 +40,6 @@ KNOWN_ADAPTERS = {
             },
         ],
     },
-    "angel_memory_trash": {
-        "name": "Angel Memory",
-        "databases": [
-            {
-                "file": "memory_center/index/simple_memory.db",
-                "label": "记忆记录 → facts",
-                "table": "memory_records",
-                "fields": {"content": "judgment", "extra": "reasoning"},
-                "filter": "LENGTH(judgment) >= 10",
-                "target": "facts",  # 精细适配：写 facts 表而非 memories
-            },
-        ],
-    },
     "astrbot_plugin_self_learning": {
         "name": "Self Learning (内置)",
         "alt_paths": ["/AstrBot/data/self_learning_data/messages.db"],
@@ -448,10 +435,6 @@ class SourceDiscovery:
                     existing += wave_db.conn.execute(
                         f"SELECT COUNT(*) FROM jargon WHERE word IN ({placeholders})", chunk
                     ).fetchone()[0]
-                elif target_type == "facts":
-                    existing += wave_db.conn.execute(
-                        f"SELECT COUNT(*) FROM facts WHERE object IN ({placeholders})", chunk
-                    ).fetchone()[0]
                 else:
                     existing += wave_db.conn.execute(
                         f"SELECT COUNT(DISTINCT content) FROM memories WHERE content IN ({placeholders})", chunk
@@ -602,10 +585,6 @@ class UniversalImporter:
         # ─── 精细适配：特殊目标表走专用导入路径 ───
         if target == "jargon":
             async for event in self._import_to_jargon(db_path, adapter):
-                yield event
-            return
-        if target == "facts":
-            async for event in self._import_to_facts(db_path, adapter):
                 yield event
             return
 
@@ -936,46 +915,6 @@ class UniversalImporter:
         yield json.dumps({"progress": 1.0, "imported": imported, "skipped": skipped,
                           "message": f"✓ 黑话导入: {imported} 条写入 jargon 表, {skipped} 条已存在"})
 
-    # ─── 精细适配：知识判断导入（Angel Memory → facts 表）───
-    async def _import_to_facts(self, db_path: str, adapter: dict) -> AsyncGenerator[str, None]:
-        """从 Angel Memory judgment+reasoning 解析为 facts 三元组。"""
-        table = adapter["table"]
-        fields = adapter["fields"]
-        where = adapter.get("filter", "1=1")
-        content_field = fields.get("content", "judgment")
-        extra_field = fields.get("extra", "reasoning")
-
-        conn = sqlite3.connect(db_path)
-        rows = conn.execute(
-            f"SELECT {content_field}, {extra_field} FROM {table} WHERE {where}"
-        ).fetchall()
-        conn.close()
-
-        imported = skipped = 0
-        now = time.time()
-        for judgment, reasoning in rows:
-            if not judgment:
-                continue
-            judgment = str(judgment).strip()
-            # 简单解析：judgment 本身作为 object，主语从文本提取
-            # Angel Memory 的 judgment 格式通常是"在xxx群里，xxx认为/做了yyy"
-            # 简化处理：subject="Angel Memory", predicate="知识", object=judgment
-            # 去重
-            existing = self.db.conn.execute(
-                "SELECT id FROM facts WHERE object = ? LIMIT 1", (judgment[:100],)
-            ).fetchone()
-            if existing:
-                skipped += 1
-                continue
-            self.db.insert_fact(
-                subject="群知识",
-                predicate="记录",
-                obj=judgment[:200],
-                confidence=0.7,
-            )
-            imported += 1
-        yield json.dumps({"progress": 1.0, "imported": imported, "skipped": skipped,
-                          "message": f"✓ 知识导入: {imported} 条写入 facts 表, {skipped} 条已存在"})
 
     async def import_with_llm_mapping(self, source: dict, mapping: dict,
                                       limit: int = 500,

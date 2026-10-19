@@ -273,67 +273,6 @@ async def list_facts():
     return await _list_scoped_facts()
 
 
-@knowledge_bp.route("/knowledge/facts/legacy/audit", methods=["GET"])
-@require_auth
-async def list_legacy_facts_audit():
-    """只读 legacy facts；缺少稳定 Bot/Session 时不伪装为正式 scoped Fact。"""
-    try:
-        limit, offset = _page_args(max_limit=500)
-        conn = _connection()
-        if conn is None:
-            return jsonify(error_payload("service_unavailable", "Knowledge store is unavailable", retryable=True)), 503
-        columns = _columns(conn, "facts")
-        if not {"id", "subject", "predicate", "object"} <= columns:
-            payload = page_response([], total=0, limit=limit, offset=offset)
-            payload.update({"legacy": True, "readonly": True, "scope": None,
-                            "scope_status": "unresolved_legacy"})
-            return jsonify(payload)
-        where = ["1=1"]
-        params: list[Any] = []
-        search = str(request.args.get("search") or "").strip()
-        if search:
-            where.append("(subject LIKE ? OR predicate LIKE ? OR object LIKE ?)")
-            params.extend([f"%{search}%"] * 3)
-        group_id = str(request.args.get("group_id") or "").strip()
-        if group_id and "group_id" in columns:
-            where.append("group_id=?")
-            params.append(group_id)
-        where_sql = " AND ".join(where)
-        total = int(conn.execute(f"SELECT COUNT(*) FROM facts WHERE {where_sql}", params).fetchone()[0])
-        selected = [name for name in (
-            "id", "subject", "predicate", "object", "group_id", "source_memory_id",
-            "confidence", "valid_from", "valid_until", "created_at", "last_reinforced", "fact_type",
-        ) if name in columns]
-        rows = _row_dicts(conn.execute(
-            f"SELECT {', '.join(selected)} FROM facts WHERE {where_sql} ORDER BY id DESC LIMIT ? OFFSET ?",
-            (*params, limit, offset),
-        ))
-        for item in rows:
-            item.update({
-                "legacy": True,
-                "readonly": True,
-                "scope": None,
-                "scope_status": "unresolved_legacy",
-                "scope_reason": "bot_and_canonical_session_unavailable",
-                "evidence_status": "unavailable",
-                "object_ref": None,
-                "actions": {},
-            })
-        payload = page_response(rows, total=total, limit=limit, offset=offset)
-        payload.update({
-            "legacy": True,
-            "readonly": True,
-            "scope": None,
-            "scope_status": "unresolved_legacy",
-            "reason_code": "bot_and_canonical_session_unavailable",
-        })
-        return jsonify(payload)
-    except (TypeError, ValueError):
-        return jsonify(error_payload("invalid_pagination", "Invalid pagination parameters")), 400
-    except Exception:
-        return jsonify(error_payload("service_unavailable", "Legacy facts audit is unavailable", retryable=True)), 503
-
-
 def _healthy_few_shot(content: Any) -> bool:
     text = str(content or "").strip()
     if not text:

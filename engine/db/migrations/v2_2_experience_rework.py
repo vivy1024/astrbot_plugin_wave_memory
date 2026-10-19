@@ -95,13 +95,6 @@ def run_migration(db_path: str) -> bool:
             _add_column(cur, "jargon", "last_infer_freq", "INTEGER DEFAULT 0")
             _add_column(cur, "jargon", "reject_reason", "TEXT")
 
-        if _table_exists(cur, "facts"):
-            fact_columns = _columns(cur, "facts")
-            _add_column(cur, "facts", "last_reinforced", "REAL")
-            _add_column(cur, "facts", "fact_type", "TEXT DEFAULT 'FACTUAL'")
-            if "created_at" in fact_columns:
-                cur.execute("UPDATE facts SET last_reinforced = COALESCE(last_reinforced, created_at) WHERE last_reinforced IS NULL")
-
         if _table_exists(cur, "beliefs"):
             belief_columns = _columns(cur, "beliefs")
             _add_column(cur, "beliefs", "conflicts", "TEXT DEFAULT '[]'")

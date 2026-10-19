@@ -794,7 +794,7 @@ class ReworkCoreTest(unittest.TestCase):
         """)
         conn.commit()
 
-        svc = JargonService(type('DB', (), {'conn': conn, 'insert_fact': lambda *a, **k: None})(), llm_client=None, enabled=True, config={"holyman_enabled": True, "holyman_reference_only": True})
+        svc = JargonService(type('DB', (), {'conn': conn})(), llm_client=None, enabled=True, config={"holyman_enabled": True, "holyman_reference_only": True})
         svc._filter = FakeFilter()
         svc._holyman = FakeHolyman()
         svc._inference = None

@@ -154,12 +154,11 @@ class ScopedKnowledgeRepo:
 
             ``memory_id is None`` 直接放行，所以「没有来源」的事实能正常入库 ——
             这是事实无法回溯的直接入口：``scoped_facts`` 1108 条中 274 条（24.7%）
-            无 ``source_memory_id``，旧表 ``facts`` 更差（7993 条中仅 4075 条有来源）。
+            无 ``source_memory_id``。
             拒绝链路必须保持可用（不能因为补不上锚点就把正常提审也拒掉），
             所以后续方向是在**提审侧**收紧：让 ``tools/fact_proposal.py`` 把
             ``source_quote`` 提为硬性必填、并在 ``resolve_source_memory_id`` 之外
             补一层按「发言时间戳 + 说话人」的后向模糊匹配。本次不实施。
-            详见 engine/db/knowledge_repo.py::KnowledgeRepo.insert_fact 的说明。
         """
         if memory_id is None:
             return

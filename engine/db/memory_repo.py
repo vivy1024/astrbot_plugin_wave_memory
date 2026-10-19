@@ -763,15 +763,6 @@ class MemoryRepo:
             connection.execute(
                 f"DELETE FROM memory_tags WHERE memory_id IN ({placeholders})", ids
             )
-        if "facts" in table_names:
-            fact_columns = {
-                str(row[1])
-                for row in connection.execute("PRAGMA table_info(facts)").fetchall()
-            }
-            if "source_memory_id" in fact_columns:
-                connection.execute(
-                    f"DELETE FROM facts WHERE source_memory_id IN ({placeholders})", ids
-                )
         cursor = connection.execute(
             f"DELETE FROM memories WHERE id IN ({placeholders})", ids
         )

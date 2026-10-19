@@ -13,27 +13,27 @@ class ScopedFactsRepo:
 
 
 class _Conn:
-    def __init__(self, rows=None):
-        self.rows = list(rows or [])
+    """记录调用的假连接：用于断言 facts 通道不再直连旧表。"""
+
+    def __init__(self):
         self.calls = []
 
     def execute(self, sql, params=None):
         self.calls.append((sql, params))
 
         class _Result:
-            def __init__(self, rows):
-                self._rows = rows
-
             def fetchall(self):
-                return list(self._rows)
+                return []
 
-        return _Result(self.rows)
+        return _Result()
 
 
 class DBBox:
-    def __init__(self, rows, *, legacy_rows=None):
+    """facts 通道的最小依赖：scoped 仓库 + 一个记录调用的旧表连接（防后门复活的探针）。"""
+
+    def __init__(self, rows):
         self.scoped_knowledge = ScopedFactsRepo(rows)
-        self.conn = _Conn(legacy_rows or [])
+        self.conn = _Conn()
 
 
 class FactsChannelTest(unittest.TestCase):
@@ -164,17 +164,22 @@ class FactsChannelTest(unittest.TestCase):
         self.assertEqual(compat.status, "disabled")
         self.assertEqual(len(db.scoped_knowledge.calls), 1)
 
-    def test_reads_legacy_facts_table_when_scoped_empty(self):
+    def test_never_reads_legacy_facts_table(self):
+        """旧表 facts 已废除：scoped 取不到时必须返回 empty，不得回落到旧表。
+
+        历史上 facts.py 有一条硬编码 review_status="approved" 的回落路径，
+        会绕过证据门禁把未审核的旧表行注入进去（线上实测 89 个 trace 命中）。
+        """
         from services.injection.channels.facts import FactsChannel
 
-        legacy = [(7, "用户", "喜欢", "手冲咖啡", 0.9, 1_700_000_000.0, 1_700_000_000.0, "FACTUAL")]
-        db = DBBox([], legacy_rows=legacy)
+        db = self._db([])
         channel = FactsChannel(db=db)
+
         result = asyncio.run(channel.build(self._ctx(message="咖啡")))
-        self.assertEqual(result.status, "hit")
-        self.assertIn("用户 喜欢 手冲咖啡", result.text)
-        self.assertTrue(db.conn.calls)
-        self.assertIn("FROM facts", db.conn.calls[0][0])
+
+        self.assertEqual(result.status, "empty")
+        self.assertEqual(result.warnings, ["no safe facts"])
+        self.assertEqual(db.conn.calls, [], "facts 通道不应再直连旧表")
 
 
 if __name__ == "__main__":

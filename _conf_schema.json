@@ -238,8 +238,8 @@
     "type": "object",
     "items": {
       "facts_decay_rate": {
-        "description": "facts 时间衰减速率",
-        "hint": "旧 facts 召回权重随时间衰减的速率（兼容字段）。",
+        "description": "事实召回权重衰减速率",
+        "hint": "注入时事实的召回权重随时间衰减的速率。0 表示不衰减。",
         "type": "string",
         "default": "0.005",
         "restart_required": true
