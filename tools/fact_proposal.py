@@ -142,11 +142,15 @@ class WaveMemoryProposeFactTool(FunctionTool[AstrAgentContext]):
             },
             "object": {
                 "type": "string",
-                "description": "事实客体或属性值（例如 '上海'、'计算机'、'考研'、'Python'）",
+                "description": (
+                    "事实客体或属性值（例如 '上海'、'计算机'、'考研'、'Python'）。"
+                    "必须是 source_quote 里**逐字连续出现**的一段：不许概括、改写、补全或换语序。"
+                    "摘不出逐字片段就不要提这条事实"
+                ),
             },
             "source_quote": {
                 "type": "string",
-                "description": "支撑该事实的原话摘录，不能只写模型意译",
+                "description": "支撑该事实的原话摘录，必须逐字照抄，不能只写模型意译",
             },
             "context_evidence": {
                 "type": "string",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from types import SimpleNamespace
 
@@ -200,3 +201,45 @@ async def test_gateway_rejects_fields_outside_explore_mutation_contract(mutation
             target=ScopedKnowledgeMutationTarget("tag_relation", relation_id, 1),
             fields={"metadata": {"forbidden": True}},
         )
+
+
+@pytest.mark.asyncio
+async def test_fact_source_quote_is_editable_in_provenance_and_leaves_history(mutation_env):
+    """人工可修正证据原话：改的是 provenance 里的 source_quote，旧值留痕。
+
+    线上 317 条待审事实卡在 ``object in quote``，其中一部分是原话本身记错了，
+    需要人工对着聊天上下文改 ``source_quote``；这一改必须留在审计里可回溯。
+    """
+    _, connection, _, gateway, repo = mutation_env
+    fact_id = repo.upsert_scoped_fact(
+        _scope(), subject="甲", predicate="住在", object="北港",
+        status="pending", provenance={"source_quote": "我住的地方在北边"},
+    )
+
+    result = await gateway.update_fact(
+        scope=_scope(),
+        target=ScopedKnowledgeMutationTarget("fact", fact_id, 1),
+        fields={"source_quote": "我住在北港"},
+    )
+    assert (result.locator, result.revision) == (fact_id, 2), "只改原话：原地更新，不重开一行"
+    stored = json.loads(
+        connection.execute("SELECT provenance FROM scoped_facts WHERE id=?", (fact_id,)).fetchone()[0]
+    )
+    assert stored["source_quote"] == "我住在北港"
+    assert [item["previous"] for item in stored["quote_history"]] == ["我住的地方在北边"]
+    assert connection.execute("SELECT object, status FROM scoped_facts WHERE id=?", (fact_id,)).fetchone() == ("北港", "pending")
+
+    # 身份字段（object）改动仍然按「取代旧行、新行回到待审」处理，不能用编辑绕过证据门禁
+    replaced = await gateway.update_fact(
+        scope=_scope(),
+        target=ScopedKnowledgeMutationTarget("fact", fact_id, 2),
+        fields={"object": "南湾", "source_quote": "我住在南湾"},
+    )
+    assert replaced.locator != fact_id and replaced.status == "pending"
+    assert connection.execute(
+        "SELECT status FROM scoped_facts WHERE id=?", (fact_id,)
+    ).fetchone() == ("superseded",)
+    fresh = json.loads(
+        connection.execute("SELECT provenance FROM scoped_facts WHERE id=?", (replaced.locator,)).fetchone()[0]
+    )
+    assert fresh["source_quote"] == "我住在南湾"

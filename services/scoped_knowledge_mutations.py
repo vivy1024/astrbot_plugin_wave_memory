@@ -390,7 +390,10 @@ class ScopedKnowledgeMutationGateway:
         revision = _positive_int(target.revision, "revision")
         if not isinstance(fields, Mapping):
             raise ValueError("fields must be an object")
-        allowed = {"subject", "predicate", "object", "confidence"}
+        # ``source_quote`` 是 provenance 里的字段而不是列：审核事实时它决定
+        # ``object in quote`` 与 ``quote in 来源记忆`` 两条证据门禁能否通过，
+        # 所以允许人工改（写进 provenance["source_quote"]，并留痕）。
+        allowed = {"subject", "predicate", "object", "confidence", "source_quote"}
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError("unsupported fact fields")
@@ -401,6 +404,10 @@ class ScopedKnowledgeMutationGateway:
                 normalized[name] = _exact_string(
                     fields[name], name, maximum_length=maximum_length
                 )
+        if "source_quote" in fields:
+            normalized["source_quote"] = _exact_string(
+                fields["source_quote"], "source_quote", maximum_length=4000
+            )
         if "confidence" in fields:
             normalized["confidence"] = _number(
                 fields["confidence"], "confidence", minimum=0.0, maximum=1.0
@@ -421,7 +428,25 @@ class ScopedKnowledgeMutationGateway:
                 "confidence": row[4], "status": row[5], "source_memory_id": row[6],
                 "provenance": row[7], "valid_from": row[8], "valid_until": row[9],
             }
-            updated = {**current, **normalized}
+            # source_quote 不是列：改它等于改 provenance，因此单独走一条分支。
+            # 原值记进 quote_history，事后能看出是哪一次人工修正把证据对齐的。
+            quote = normalized.get("source_quote")
+            columns = {name: value for name, value in normalized.items() if name != "source_quote"}
+            updated = {**current, **columns}
+            if quote is not None:
+                provenance = dict(_json_or_empty(current["provenance"]))
+                history = list(provenance.get("quote_history") or [])
+                history.append({
+                    "at": now, "actor": "webui.kg.fact.update",
+                    "previous": str(provenance.get("source_quote") or ""),
+                })
+                provenance["source_quote"] = quote
+                provenance["quote_history"] = history
+                updated["provenance"] = _canonical_json(provenance)
+            # provenance 只在这一轮真的改了才写回，避免把原有 JSON 重新序列化。
+            write_columns = dict(columns)
+            if quote is not None:
+                write_columns["provenance"] = updated["provenance"]
             identity_changed = any(updated[name] != current[name] for name in ("subject", "predicate", "object"))
             if identity_changed:
                 cursor = connection.execute(
@@ -453,8 +478,10 @@ class ScopedKnowledgeMutationGateway:
                     "kind": "fact", "locator": int(inserted.lastrowid), "revision": 1,
                     "status": updated["status"], "previous_locator": locator,
                 }
-            assignments = [f"{name}=?" for name in normalized]
-            values = [normalized[name] for name in normalized]
+            if not write_columns:
+                raise ValueError("at least one mutable fact field is required")
+            assignments = [f"{name}=?" for name in write_columns]
+            values = [write_columns[name] for name in write_columns]
             cursor = connection.execute(
                 f"""UPDATE scoped_facts SET {', '.join(assignments)}, revision=revision+1, updated_at=?
                        WHERE id=? AND bot_id=? AND session_id=? AND visibility=? AND revision=?

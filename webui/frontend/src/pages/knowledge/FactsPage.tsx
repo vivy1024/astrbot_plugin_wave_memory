@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { CheckIcon, LockIcon, MessageSquareQuoteIcon, NetworkIcon, ShieldCheckIcon, XIcon } from 'lucide-react'
+import { CheckIcon, Loader2Icon, LockIcon, MessageSquareQuoteIcon, NetworkIcon, PencilIcon, ShieldCheckIcon, XIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { useGlobalScope } from '@/app/global-scope'
 
 import {
   batchReviewFacts,
+  editFact,
   getFactEvidence,
   listFacts,
   reviewFact,
@@ -33,9 +34,12 @@ import { useCanonicalScopeDefault } from '@/hooks/use-pagination-search-params'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Field, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Textarea } from '@/components/ui/textarea'
 import { humanizeApiError } from '@/lib/reason-label'
 
 const REVIEWABLE = new Set(['pending', 'quarantined', 'conflict'])
@@ -172,12 +176,14 @@ function FactDetail({
   now,
   onReview,
   onOpenEvidence,
+  onEdit,
   busy,
 }: {
   fact: ScopedFactItem
   now: number
   onReview: (fact: ScopedFactItem, action: FactReviewAction, target?: FactConflictCandidate) => void
   onOpenEvidence: (fact: ScopedFactItem) => void
+  onEdit: (fact: ScopedFactItem) => void
   busy: boolean
 }) {
   const reviewable = fact.review_actions?.some((action) => canReview(fact, action))
@@ -214,16 +220,30 @@ function FactDetail({
     <div>
       <div className="mb-2 flex items-center justify-between">
         <h3 className="font-medium">本群证据</h3>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-7 gap-1 text-xs"
-          onClick={() => onOpenEvidence(fact)}
-        >
-          <MessageSquareQuoteIcon className="size-3.5" />
-          查看聊天上下文
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1 text-xs"
+            disabled={busy || !fact.editable}
+            title={fact.editable ? '对照证据原话修正客体或原话' : '该事实当前不可修改'}
+            onClick={() => onEdit(fact)}
+          >
+            <PencilIcon className="size-3.5" />
+            修正
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1 text-xs"
+            onClick={() => onOpenEvidence(fact)}
+          >
+            <MessageSquareQuoteIcon className="size-3.5" />
+            查看聊天上下文
+          </Button>
+        </div>
       </div>
       <EvidenceList evidence={fact.evidence} objectPath="/memories" emptyDescription="没有可验证的本群记忆证据；这不代表事实为假，但无法从此页面完成溯源。" />
     </div>
@@ -245,6 +265,103 @@ function FactDetail({
       <p className="mt-2 leading-relaxed">事实编号只用于本页查看。证据入口只打开服务端给出的本群记忆，不会跨 Bot、跨群或把已隔离内容补进来。</p>
     </details>
   </div>
+}
+
+function FactEditDialog({
+  fact,
+  scope,
+  onClose,
+  onSaved,
+  busy,
+}: {
+  fact: ScopedFactItem | null
+  scope: { bot_id: string; session_id: string; visibility: FactVisibility }
+  onClose: () => void
+  onSaved: () => void
+  busy: boolean
+}) {
+  const [draft, setDraft] = useState({ subject: '', predicate: '', object: '', source_quote: '' })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!fact) return
+    const quote = fact.provenance && typeof fact.provenance === 'object'
+      ? String((fact.provenance as Record<string, unknown>).source_quote ?? '')
+      : ''
+    setDraft({ subject: fact.subject, predicate: fact.predicate, object: fact.object, source_quote: quote })
+    setError('')
+    setSaving(false)
+  }, [fact])
+
+  if (!fact) return null
+
+  const quote = fact.provenance && typeof fact.provenance === 'object'
+    ? String((fact.provenance as Record<string, unknown>).source_quote ?? '')
+    : ''
+  const changed = draft.object !== fact.object || draft.subject !== fact.subject
+    || draft.predicate !== fact.predicate || draft.source_quote !== quote
+  const objectIsVerbatim = Boolean(draft.object) && Boolean(draft.source_quote) && draft.source_quote.includes(draft.object)
+
+  const save = async () => {
+    if (!changed || saving || busy) return
+    setSaving(true)
+    setError('')
+    try {
+      await editFact(fact, {
+        object: draft.object !== fact.object ? draft.object : undefined,
+        subject: draft.subject !== fact.subject ? draft.subject : undefined,
+        predicate: draft.predicate !== fact.predicate ? draft.predicate : undefined,
+        source_quote: draft.source_quote !== quote ? draft.source_quote : undefined,
+      }, scope)
+      toast.success('已保存，该事实回到待审核，请重新批准')
+      onSaved()
+      onClose()
+    } catch (reason) {
+      setError(humanizeApiError(reason, '修改事实失败'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return <Dialog open onOpenChange={(open) => { if (!open && !saving) onClose() }}>
+    <DialogContent className="sm:max-w-lg">
+      <DialogHeader>
+        <DialogTitle>修正事实 #{fact.id}</DialogTitle>
+        <DialogDescription>对照证据原话把客体改成原话里逐字出现的片段；保存后该事实回到待审核，需要重新批准。</DialogDescription>
+      </DialogHeader>
+      <div className="flex flex-col gap-3 text-sm">
+        <Field>
+          <FieldLabel htmlFor="fact-edit-subject">主体</FieldLabel>
+          <Input id="fact-edit-subject" value={draft.subject} onChange={(event) => setDraft((current) => ({ ...current, subject: event.target.value }))} />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="fact-edit-predicate">关系</FieldLabel>
+          <Input id="fact-edit-predicate" value={draft.predicate} onChange={(event) => setDraft((current) => ({ ...current, predicate: event.target.value }))} />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="fact-edit-object">客体</FieldLabel>
+          <Input id="fact-edit-object" value={draft.object} onChange={(event) => setDraft((current) => ({ ...current, object: event.target.value }))} />
+          <p className={objectIsVerbatim ? 'text-xs text-emerald-600' : 'text-xs text-amber-600'} role="status">
+            {objectIsVerbatim ? '客体已逐字出现在证据原话里，可以通过审核门禁' : '客体未逐字出现在证据原话里，批准时仍会被拦下'}
+          </p>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="fact-edit-quote">证据原话</FieldLabel>
+          <Textarea id="fact-edit-quote" className="min-h-24" value={draft.source_quote} onChange={(event) => setDraft((current) => ({ ...current, source_quote: event.target.value }))} />
+          <p className="text-xs text-muted-foreground">原话必须能在本群健康记忆里逐字找到；改错话会让证据失去溯源。</p>
+        </Field>
+        {error ? <p className="text-xs text-destructive" role="alert">{error}</p> : null}
+      </div>
+      <DialogFooter>
+        <Button type="button" variant="outline" disabled={saving} onClick={onClose}>取消</Button>
+        <Button type="button" disabled={!changed || saving || busy} onClick={() => void save()}>
+          {saving ? <Loader2Icon data-icon="inline-start" className="animate-spin" /> : <PencilIcon data-icon="inline-start" />}
+          保存并回到待审核
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 }
 
 export function FactsPage() {
@@ -269,6 +386,7 @@ function FactsScopePage({ useDefaults }: { useDefaults: boolean }) {
   const [selectedFact, setSelectedFact] = useState<ScopedFactItem | null>(null)
   const [evidenceFact, setEvidenceFact] = useState<ScopedFactItem | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
+  const [editTarget, setEditTarget] = useState<ScopedFactItem | null>(null)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const [busyIds, setBusyIds] = useState<number[]>([])
   const [batchBusy, setBatchBusy] = useState(false)
@@ -598,9 +716,17 @@ function FactsScopePage({ useDefaults }: { useDefaults: boolean }) {
     <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
       <SheetContent className="w-[min(94vw,34rem)] sm:max-w-xl">
         <SheetHeader className="border-b pr-12"><SheetTitle>事实关系详情</SheetTitle><SheetDescription>查看主体、关系、客体、本群证据，并完成审核。</SheetDescription></SheetHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">{selectedFact ? <FactDetail key={`${selectedFact.id}:${selectedFact.revision}`} fact={selectedFact} now={now} busy={loading || batchBusy || busyIds.length > 0} onReview={reviewOne} onOpenEvidence={(f) => setEvidenceFact(f)} /> : null}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">{selectedFact ? <FactDetail key={`${selectedFact.id}:${selectedFact.revision}`} fact={selectedFact} now={now} busy={loading || batchBusy || busyIds.length > 0} onReview={reviewOne} onOpenEvidence={(f) => setEvidenceFact(f)} onEdit={(f) => setEditTarget(f)} /> : null}</div>
       </SheetContent>
     </Sheet>
+
+    <FactEditDialog
+      fact={editTarget}
+      scope={scope}
+      busy={loading || batchBusy || busyIds.length > 0}
+      onClose={() => setEditTarget(null)}
+      onSaved={() => { setDetailOpen(false); setSelectedFact(null); setReload((value) => value + 1) }}
+    />
 
     <FactEvidenceDialog
       fact={evidenceFact}

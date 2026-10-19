@@ -1,5 +1,5 @@
 import { MemoryRouter } from 'react-router-dom'
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ScopedFactItem, ScopedFactsResponse } from '@/api/facts'
@@ -12,6 +12,7 @@ const api = vi.hoisted(() => ({
   approveFact: vi.fn(),
   rejectFact: vi.fn(),
   reviewFact: vi.fn(),
+  editFact: vi.fn(),
   batchReviewFacts: vi.fn(),
   getFactEvidence: vi.fn(),
 }))
@@ -143,5 +144,55 @@ describe('事实有效期', () => {
     expect(api.rejectFact).not.toHaveBeenCalled()
     view.unmount()
     expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+describe('修正事实客体与原话', () => {
+  const editable = (changes: Partial<ScopedFactItem> = {}) => fact(8, {
+    status: 'pending', editable: true,
+    object: '千铃以前给的k3',
+    provenance: { source_quote: '千铃以前下血本给我的k3' },
+    review_actions: ['approve', 'reject'],
+    ...changes,
+  })
+
+  it('提示客体是否逐字出现在原话里，保存后回到待审核', async () => {
+    api.editFact.mockResolvedValue({ ok: true, operation: { kind: 'fact.edit', status: 'succeeded' }, revision: 4, item: editable({ revision: 4 }) })
+    showFacts([editable()])
+    fireEvent.click(await screen.findByRole('button', { name: '查看事实 8 详情' }))
+    const detail = within(await screen.findByRole('dialog'))
+    fireEvent.click(detail.getByRole('button', { name: '修正' }))
+
+    const form = within(await screen.findByRole('dialog'))
+    expect(form.getByLabelText('客体')).toHaveValue('千铃以前给的k3')
+    expect(form.getByLabelText('证据原话')).toHaveValue('千铃以前下血本给我的k3')
+    expect(form.getByText(/客体未逐字出现在证据原话里/)).toBeVisible()
+    fireEvent.change(form.getByLabelText('客体'), { target: { value: '下血本给我的k3' } })
+    expect(form.getByText(/客体已逐字出现在证据原话里/)).toBeVisible()
+    fireEvent.click(form.getByRole('button', { name: /保存并回到待审核/ }))
+
+    await waitFor(() => expect(api.editFact).toHaveBeenCalledTimes(1))
+    expect(api.editFact.mock.calls[0][1]).toEqual({ object: '下血本给我的k3' })
+    expect(api.editFact.mock.calls[0][2]).toMatchObject({ bot_id: 'bot-a', session_id: 'qq:group:42', visibility: 'group' })
+    expect(api.reviewFact).not.toHaveBeenCalled()
+  })
+
+  it('没有改动时保存按钮不可用，也不发请求', async () => {
+    showFacts([editable()])
+    fireEvent.click(await screen.findByRole('button', { name: '查看事实 8 详情' }))
+    const detail = within(await screen.findByRole('dialog'))
+    fireEvent.click(detail.getByRole('button', { name: '修正' }))
+
+    const form = within(await screen.findByRole('dialog'))
+    expect(form.getByRole('button', { name: /保存并回到待审核/ })).toBeDisabled()
+    fireEvent.click(form.getByRole('button', { name: /保存并回到待审核/ }))
+    expect(api.editFact).not.toHaveBeenCalled()
+  })
+
+  it('不可修改的事实不显示修正入口', async () => {
+    showFacts([fact(9, { status: 'active', editable: false })])
+    fireEvent.click(await screen.findByRole('button', { name: '查看事实 9 详情' }))
+    const detail = within(await screen.findByRole('dialog'))
+    expect(detail.getByRole('button', { name: '修正' })).toBeDisabled()
   })
 })

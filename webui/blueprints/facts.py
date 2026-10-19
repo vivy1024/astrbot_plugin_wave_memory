@@ -502,6 +502,74 @@ def _scoped_fact_evidence(cm: Any, scope: RuntimeScope, fact: dict, *, before: i
         return base_payload
 
 
+@facts_bp.route("/<int:fact_id>/edit", methods=["POST"])
+@require_auth
+async def edit_fact(fact_id: int):
+    """修正事实的客体或证据原话。
+
+    线上 317 条待审事实卡在 ``unsupported_object``：模型把口语原话改写成书面语，
+    ``object`` 因此不在 ``source_quote`` 里（226 条干脆是它自己新写的）。人工对照
+    证据原话把 ``object`` 改成逐字片段即可通过门禁，不必先批准一条错的、再另提一条。
+
+    走与审核同一个 ScopedKnowledgeMutationGateway（``update_fact``）：改动 subject /
+    predicate / object 会让旧行 superseded、按新内容重开一行，回到待审状态；
+    只改 ``source_quote`` 则表示「原话记录错了」，原地更新。两种都不绕过证据门禁 ——
+    改完仍要重新审核，避免用编辑把无证据的事实洗成有效。
+    """
+    try:
+        body = await request.get_json(silent=True) or {}
+        if not isinstance(body, dict):
+            return _scope_error("invalid_request", 400)
+        scope = _scope_from_envelope(body)
+        container = get_container()
+        gateway = _mutation_gateway(container)
+        if gateway is None:
+            return _scope_error("scoped_knowledge_mutation_gateway_unavailable", 503)
+        cm = _connection()
+        if cm is None:
+            return _scope_error("scoped_repository_unavailable", 503)
+        item = _find_scoped_fact(cm, scope, fact_id)
+        _require_object_ref(body, locator=fact_id, scope=scope, item=item)
+        if str(item.get("status") or "") not in _REVIEWABLE_STATUSES:
+            return _scope_error("fact_not_editable", 409)
+        fields = {}
+        for name in ("object", "subject", "predicate", "source_quote"):
+            if name in body:
+                value = body.get(name)
+                if not isinstance(value, str) or not value.strip() or value != value.strip():
+                    return _scope_error(f"invalid_fact_{name}", 400)
+                fields[name] = value
+        if not fields:
+            return _scope_error("invalid_request", 400)
+        result = await gateway.update_fact(
+            scope=scope,
+            target=ScopedKnowledgeMutationTarget("fact", fact_id, int(body.get("revision"))),
+            fields=fields,
+            idempotency_key=body.get("idempotency_key"),
+        )
+        updated = _find_scoped_fact(cm, scope, result.locator)
+        _lifecycle_fields(cm, scope, updated)
+        fact_evidence(cm, [updated], _fact_scope_params(scope))
+        updated["object_ref"] = fact_object_ref(updated, scope, _object_ref_registry())
+        return jsonify(mutation_response(
+            operation_kind="fact.edit",
+            status="succeeded",
+            revision=result.revision,
+            item=updated,
+            include_item=True,
+        ))
+    except ScopedKnowledgeNotFound:
+        return _scope_error("scoped_object_not_found", 404)
+    except (ScopedKnowledgeScopeError, ScopeValidationError) as exc:
+        return _scope_failure(exc)
+    except (ScopedKnowledgeRevisionConflict, ScopedKnowledgeIdempotencyConflict) as exc:
+        return _scope_failure(exc)
+    except (TypeError, ValueError):
+        return _scope_error("invalid_request", 400)
+    except Exception:
+        return _scope_error("scoped_knowledge_mutation_gateway_unavailable", 503)
+
+
 @facts_bp.route("/<int:fact_id>/evidence", methods=["GET"])
 @require_auth
 async def get_scoped_fact_evidence(fact_id: int):

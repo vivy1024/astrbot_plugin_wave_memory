@@ -481,7 +481,7 @@ async def _execute_scoped_command(*, kind: str, action: str):
         assert target is not None
         if kind == "fact" and action == "update":
             fields = _command_fields(body, (
-                "subject", "predicate", "object", "confidence",
+                "subject", "predicate", "object", "confidence", "source_quote",
             ))
             result = await gateway.update_fact(
                 scope=scope, target=target, fields=fields,

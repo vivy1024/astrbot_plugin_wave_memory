@@ -114,8 +114,40 @@ function validateReview(item: ScopedFactItem, action: FactReviewAction, scope: F
   }
 }
 
-export function reviewFact(item: ScopedFactItem, action: FactReviewAction, scope: FactSelection, reason?: string, target?: FactConflictCandidate) {
-  validateReview(item, action, scope)
+/** 修正事实的客体 / 主体 / 关系 / 证据原话，改完仍回到待审，需要重新批准。 */
+export interface FactEditFields {
+  object?: string
+  subject?: string
+  predicate?: string
+  source_quote?: string
+}
+
+export function editFact(item: ScopedFactItem, fields: FactEditFields, scope: FactSelection) {
+  if (item.bot_id !== scope.bot_id || item.session_id !== scope.session_id || item.visibility !== scope.visibility) {
+    throw new Error('该事实不属于当前 Bot 和会话，请刷新后重试')
+  }
+  if (!item.object_ref?.ref) throw new Error('该事实没有服务端签发的 ObjectRef，不能安全修改')
+  if (!Number.isSafeInteger(item.revision) || item.revision < 1) throw new Error('缺少有效版本，请刷新后重试')
+  if (!item.editable) throw new Error('服务端未允许修改此事实，请刷新后重试')
+  const cleaned = Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => typeof value === 'string' && value.trim().length > 0).map(([key, value]) => [key, (value as string).trim()]),
+  )
+  if (!Object.keys(cleaned).length) throw new Error('请至少修改一个字段')
+  return fetchJson<{ ok: boolean; operation: { kind: string; status: string }; revision: number | null; item: ScopedFactItem }>(
+    `/api/facts/${item.id}/edit`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        scope: scopeEnvelope(scope),
+        object_ref: item.object_ref,
+        revision: item.revision,
+        ...cleaned,
+      }),
+    },
+  )
+}
+
+export function reviewFact(item: ScopedFactItem, action: FactReviewAction, scope: FactSelection, reason?: string, target?: FactConflictCandidate) {  validateReview(item, action, scope)
   if (action === 'replace' && (!target || !Number.isSafeInteger(target.revision) || target.revision < 1
     || !item.conflict_candidates?.some((candidate) => candidate.id === target.id && candidate.revision === target.revision))) {
     throw new Error('请选择当前冲突列表中的替换目标及版本')

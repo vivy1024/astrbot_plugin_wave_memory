@@ -165,7 +165,8 @@ describe('配置文案不暴露实现术语', () => {
     // 角色经历的模型分工 1 项（Model_Routing_Settings.character_experience）；
     // 游戏经验 5 项（Learning_Settings.game_lesson_enabled / _delay_seconds / _daily_limit / _max_active，Model_Routing_Settings.game_lesson）。
     // v5.1.2 删除做梦（6 项）、噪声删除（2 项）、记忆总量软上限（3 项）：184 → 173
-    expect(total).toBe(173)
+    // 3f8b0889 新增 Learning_Settings.daily_diary_backfill_days（日记补写漏记天数）：173 → 174
+    expect(total).toBe(174)
     expect(noType).toEqual([])
   })
 
