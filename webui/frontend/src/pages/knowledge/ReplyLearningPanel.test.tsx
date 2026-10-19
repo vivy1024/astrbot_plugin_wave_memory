@@ -21,6 +21,7 @@ function candidate(changes: Partial<ExpressionCandidate> = {}): ExpressionCandid
     ...scope, id: 7, content: '慢慢来，一步一步走', situation: 'encourage', status: 'pending', revision: 3,
     speaker_id: 'visitor-a', source_memory_id: 11, source_hash: 'hash', reviewer: '', review_note: '',
     reviewed_at: null, created_at: 100, evidence_available: true,
+    occurrence_count: 1, speaker_count: 1, qualified: false,
     scope: { bot_id: scope.bot_id, visibility: 'group', session: { id: scope.session_id, platform_id: 'qq', kind: 'group', conversation_id: '42:topic' }, subject_principal_id: null },
     artifact: {}, evidence_refs: [], evidence_bindings: [], ...changes,
   }
@@ -67,7 +68,13 @@ function serve(path: string, init?: RequestInit): unknown {
     return Promise.resolve({ ok: true, item: updated })
   }
   const owned = (row: ReplyLearningScope) => row.bot_id === url.searchParams.get('bot_id') && row.session_id === url.searchParams.get('session_id') && row.visibility === url.searchParams.get('visibility')
-  if (url.pathname.endsWith('/expressions')) return Promise.resolve(page(rows.filter((row) => owned(row) && row.status === url.searchParams.get('status')), expressionEnabled))
+  if (url.pathname.endsWith('/expressions')) {
+    // 服务端按出现次数倒序，并在 qualified=1 时只返回达标候选。
+    const qualified = url.searchParams.get('qualified') === '1'
+    const matched = rows.filter((row) => owned(row) && row.status === url.searchParams.get('status') && (!qualified || row.qualified))
+      .sort((left, right) => right.occurrence_count - left.occurrence_count || right.speaker_count - left.speaker_count || right.id - left.id)
+    return Promise.resolve(page(matched, expressionEnabled))
+  }
   if (url.pathname.endsWith('/feedback')) return Promise.resolve(page(feedbackRows.filter(owned), feedbackEnabled))
   throw new Error(`Unexpected HTTP call: ${path}`)
 }
@@ -280,5 +287,41 @@ describe('表达审核交互与真实请求契约', () => {
     fireEvent.click(within(screen.getByRole('alert')).getByRole('button', { name: '重试' }))
     expect(await screen.findByText(candidate().content)).toBeVisible()
     expect(writes()).toHaveLength(0)
+  })
+})
+
+describe('表达频次门槛', () => {
+  it('默认展示全部待审，按出现次数倒序，并显示频次', async () => {
+    rows = [
+      candidate({ id: 1, content: '一次性口头禅', occurrence_count: 1, speaker_count: 1 }),
+      candidate({ id: 2, content: '有一说一', occurrence_count: 2, speaker_count: 2, qualified: true }),
+    ]
+    show()
+    expect(await screen.findByText('有一说一')).toBeVisible()
+    expect(screen.getByText('一次性口头禅')).toBeVisible()
+    expect(screen.getByText('2 次 · 2 位群友说过')).toBeVisible()
+    expect(screen.getByRole('checkbox', { name: '只看达标的表达' })).not.toBeChecked()
+  })
+
+  it('勾选后只请求达标候选，并说明门槛含义', async () => {
+    rows = [
+      candidate({ id: 1, content: '一次性口头禅', occurrence_count: 1, speaker_count: 1 }),
+      candidate({ id: 2, content: '有一说一', occurrence_count: 2, speaker_count: 2, qualified: true }),
+    ]
+    show()
+    await screen.findByText('一次性口头禅')
+    fireEvent.click(screen.getByRole('checkbox', { name: '只看达标的表达' }))
+    await waitFor(() => expect(screen.queryByText('一次性口头禅')).not.toBeInTheDocument())
+    expect(screen.getByText('有一说一')).toBeVisible()
+    expect(reads('/expressions').at(-1)![0]).toContain('qualified=1')
+  })
+
+  it('没有达标候选时提示门槛而非笼统的空列表', async () => {
+    rows = [candidate({ id: 1, content: '一次性口头禅', occurrence_count: 1, speaker_count: 1 })]
+    show()
+    await screen.findByText('一次性口头禅')
+    fireEvent.click(screen.getByRole('checkbox', { name: '只看达标的表达' }))
+    expect(await screen.findByText('暂无达标的待审表达')).toBeVisible()
+    expect(screen.getByText(/出现两次以上或跨两位群友说过/)).toBeVisible()
   })
 })

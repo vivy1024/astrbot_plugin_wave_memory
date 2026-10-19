@@ -90,7 +90,10 @@ async def list_expressions():
         scope = _query_scope()
         limit, offset = _page()
         policy = _service("expression_policy")
-        items, total = policy.list_candidates(scope, status=request.args.get("status", "pending"), limit=limit, offset=offset)
+        qualified = request.args.get("qualified", "").lower() in {"1", "true", "yes"}
+        items, total = policy.list_candidates(
+            scope, status=request.args.get("status", "pending"), limit=limit, offset=offset, qualified=qualified,
+        )
         payload = page_response(items, total=total, limit=limit, offset=offset)
         payload.update(scope=scope.to_dict(), enabled=policy.enabled)
         return jsonify(payload)

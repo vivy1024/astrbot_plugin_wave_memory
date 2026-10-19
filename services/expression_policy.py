@@ -18,6 +18,11 @@ try:
 except ImportError:
     from domain.evidence import EvidenceBinding, RawArtifactRef
 
+try:
+    from ..engine.db.migrations.expression_candidate_dedup import merge_source
+except ImportError:
+    from engine.db.migrations.expression_candidate_dedup import merge_source
+
 from .identity_safety import is_identity_contamination
 from .reply_feedback import (
     SITUATIONS, _write_transaction, artifact_for, content_hash, group_owner,
@@ -61,6 +66,11 @@ def situations_for(message: str) -> tuple[str, ...]:
     return tuple(scene for scene, pattern in _SCENE_PATTERNS if re.search(pattern, text, re.I))[:2]
 
 
+# 频次门槛：一句话被至少两个人说过，或者同一个人说了至少三次，才算「本群的表达方式」
+# 而不是某个人的一次性口头禅。门槛只在待审列表上做「先看哪些」，不影响证据与审核规则。
+_QUALIFIED_SQL = "occurrence_count >= 3 OR speaker_count >= 2"
+
+
 class ExpressionReviewError(ValueError):
     def __init__(self, code: str, status: int = 400):
         self.code, self.status = code, status
@@ -81,6 +91,7 @@ class ExpressionPolicy:
             with _write_transaction(self.connection) as tx:
                 return self.observe(scope, payload, source_message_ids=source_message_ids, connection=tx)
         messages = resolve_messages(connection, scope, source_message_ids)
+        owner = group_owner(scope)
         inserted = 0
         for item in payload_items(payload, "expressions", 4):
             source = messages.get(positive_id(item.get("source_memory_id")))
@@ -94,16 +105,55 @@ class ExpressionPolicy:
             ):
                 continue
             artifact = artifact_for(scope, source)
-            cursor = connection.execute(
-                """INSERT INTO reply_expression_candidates
-                   (bot_id,session_id,visibility,speaker_id,source_memory_id,content,situation,
-                    source_hash,artifact_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)
-                   ON CONFLICT DO NOTHING""",
-                (*group_owner(scope), source["speaker_id"], source["id"], content, scene,
-                 artifact.content_hash, json_value(artifact.to_dict()), float(self.now())),
-            )
-            inserted += max(0, cursor.rowcount)
+            created = False
+            example_id = self._existing_example(connection, owner, content)
+            if example_id is None:
+                cursor = connection.execute(
+                    """INSERT INTO reply_expression_candidates
+                       (bot_id,session_id,visibility,speaker_id,source_memory_id,content,situation,
+                        source_hash,artifact_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT DO NOTHING""",
+                    (*owner, source["speaker_id"], source["id"], content, scene,
+                     artifact.content_hash, json_value(artifact.to_dict()), float(self.now())),
+                )
+                created = max(0, cursor.rowcount) > 0
+                if created:
+                    example_id = int(cursor.lastrowid)
+                else:
+                    # 撞上 UNIQUE(bot_id,session_id,visibility,source_memory_id)：同一条消息
+                    # 之前已建过候选，读回来把来源记全，避免来源表漏行。
+                    example_id = self._example_of_message(connection, owner, source["id"])
+            # 同群同内容只保留一条待审项：第二次被说中时不再新建候选行，只把来源并进去。
+            # 一条待审项背后可能已经有三个人说过同一句话，这正是频次门槛要看的信号。
+            # 返回值仍只数**新建候选**，来源归并不计入 —— 调用方与日志按「新增了几条待审」
+            # 理解这个数字，把合并也算进去会让重放看起来像在重复写入。
+            if example_id is not None:
+                merge_source(
+                    connection, example_id=example_id, bot_id=owner[0], session_id=owner[1],
+                    visibility=owner[2], source_memory_id=source["id"],
+                    speaker_id=source["speaker_id"], situation=scene,
+                    artifact_json=json_value(artifact.to_dict()), created_at=float(self.now()),
+                )
+            inserted += int(created)
         return inserted
+
+    def _existing_example(self, connection, owner, content: str) -> int | None:
+        """本群同内容是否已有可用候选：待审的合并进去，已批准的也认（免得又造一条待审）。"""
+        row = connection.execute(
+            """SELECT id FROM reply_expression_candidates
+                WHERE bot_id=? AND session_id=? AND visibility=? AND content=?
+                  AND status IN ('pending','approved') ORDER BY id DESC LIMIT 1""",
+            (*owner, content),
+        ).fetchone()
+        return int(row[0]) if row else None
+
+    def _example_of_message(self, connection, owner, source_memory_id: int) -> int | None:
+        row = connection.execute(
+            """SELECT id FROM reply_expression_candidates
+                WHERE bot_id=? AND session_id=? AND visibility=? AND source_memory_id=?""",
+            (*owner, source_memory_id),
+        ).fetchone()
+        return int(row[0]) if row else None
 
     @staticmethod
     def _rows(cursor) -> list[dict]:
@@ -138,14 +188,22 @@ class ExpressionPolicy:
     def _public(self, scope, row) -> dict:
         result = {key: value for key, value in row.items() if not key.endswith("_json")}
         result["evidence_available"] = self._source_available(scope, row)
+        result["qualified"] = bool(
+            int(row.get("occurrence_count") or 1) >= 3 or int(row.get("speaker_count") or 1) >= 2
+        )
         result["scope"] = scope.to_dict()
         result["artifact"] = json.loads(row["artifact_json"])
         result["evidence_refs"] = json.loads(row["evidence_refs_json"])
         result["evidence_bindings"] = json.loads(row["evidence_bindings_json"])
         return result
 
-    def list_candidates(self, scope, *, status="pending", limit=25, offset=0) -> tuple[list[dict], int]:
-        """Administrative read stays available while learning/injection is disabled."""
+    def list_candidates(self, scope, *, status="pending", limit=25, offset=0, qualified=False) -> tuple[list[dict], int]:
+        """Administrative read stays available while learning/injection is disabled.
+
+        ``qualified=True`` 只列出达到频次门槛的候选（出现 ≥2 次或跨 ≥2 人）。
+        线上 1190 条待审里只有个位数达标，不过滤的话人根本审不完；门槛只是
+        「先看哪些」，其余候选仍在库里，切回全部随时可看。
+        """
         if group_owner(scope) is None:
             return [], 0
         if status not in {"pending", "approved", "rejected", "all"}:
@@ -155,9 +213,12 @@ class ExpressionPolicy:
         if status != "all":
             where += " AND status=?"
             params.append(status)
+        if qualified:
+            where += f" AND ({_QUALIFIED_SQL})"
         total = self.connection.execute(f"SELECT COUNT(*) FROM reply_expression_candidates WHERE {where}", params).fetchone()[0]
         rows = self._rows(self.connection.execute(
-            f"SELECT * FROM reply_expression_candidates WHERE {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+            f"""SELECT * FROM reply_expression_candidates WHERE {where}
+                ORDER BY occurrence_count DESC, speaker_count DESC, id DESC LIMIT ? OFFSET ?""",
             (*params, max(1, min(int(limit), 100)), max(0, int(offset))),
         ))
         return [self._public(scope, row) for row in rows], int(total)

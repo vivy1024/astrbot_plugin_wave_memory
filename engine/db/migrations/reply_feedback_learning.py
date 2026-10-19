@@ -89,6 +89,12 @@ def ensure_reply_feedback_learning_schema(connection) -> None:
     else:
         with _transaction(connection) as tx:
             apply(tx)
+    # 内容级去重的来源表是这套 schema 的一部分：`observe` 会往里写来源，
+    # 只建候选表会让每次采集在建来源行时报 no such table。放这里一起建，
+    # 调用方只调这一支也不会漏表。
+    from .expression_candidate_dedup import ensure_expression_candidate_dedup_schema
+
+    ensure_expression_candidate_dedup_schema(connection)
 
 
 __all__ = ["ensure_reply_feedback_learning_schema"]

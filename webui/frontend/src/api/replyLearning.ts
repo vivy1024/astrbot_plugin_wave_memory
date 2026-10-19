@@ -34,6 +34,12 @@ export interface ExpressionCandidate extends ReplyLearningScope {
   reviewed_at: number | null
   created_at: number
   evidence_available: boolean
+  /** 这句话在本群被说过的次数（同一内容合并后的来源条数）。 */
+  occurrence_count: number
+  /** 说过这句话的不同群友数。 */
+  speaker_count: number
+  /** 是否达到审核门槛：出现 ≥2 次或跨 ≥2 人。 */
+  qualified: boolean
   scope: RuntimeGroupScope
   artifact: unknown
   evidence_refs: unknown[]
@@ -92,9 +98,10 @@ function queryParams(query: LearningListQuery): URLSearchParams {
   })
 }
 
-export function listExpressionCandidates(query: LearningListQuery & { status?: ExpressionStatus }, signal?: AbortSignal): Promise<ExpressionCandidatesResponse> {
+export function listExpressionCandidates(query: LearningListQuery & { status?: ExpressionStatus; qualified?: boolean }, signal?: AbortSignal): Promise<ExpressionCandidatesResponse> {
   const params = queryParams(query)
   params.set('status', query.status ?? 'pending')
+  if (query.qualified) params.set('qualified', '1')
   return fetchJson(`/api/reply-learning/expressions?${params}`, { signal })
 }
 

@@ -92,6 +92,7 @@ function ExpressionCard({ item, scope, onChanged }: { item: ExpressionCandidate;
     <p className="whitespace-pre-wrap break-words text-base font-medium">{item.content}</p>
     <dl className="grid gap-1 text-xs text-muted-foreground">
       <div><dt className="inline">来源：</dt><dd className="inline break-all">群友 {item.speaker_id} · 记忆 #{item.source_memory_id}</dd></div>
+      <div><dt className="inline">出现：</dt><dd className="inline">{item.occurrence_count} 次 · {item.speaker_count} 位群友说过</dd></div>
       <div><dt className="inline">收录时间：</dt><dd className="inline">{formatTime(item.created_at)}</dd></div>
     </dl>
     {!item.evidence_available ? <p className="text-xs text-amber-600">来源证据不可用，不能批准或召回；仍可拒绝或撤销批准。</p> : null}
@@ -111,12 +112,15 @@ function ExpressionCard({ item, scope, onChanged }: { item: ExpressionCandidate;
 
 function Expressions({ scope }: { scope: ReplyLearningScope }) {
   const [status, setStatus] = useState<ExpressionStatus>('pending')
+  // 默认列出全部待审：门槛只是「先看哪些」，勾选后才隐藏未达标的候选。
+  // 服务端已按出现次数倒序，达标的那几条本来就在第一页最前面。
+  const [qualifiedOnly, setQualifiedOnly] = useState(false)
   const [limit, setLimit] = useState<PageSize>(25)
   const [offset, setOffset] = useState(0)
   const [reload, setReload] = useState(0)
   const [notice, setNotice] = useState<Notice | null>(null)
   const { bot_id, session_id, visibility } = scope
-  const load = useCallback((signal: AbortSignal) => listExpressionCandidates({ bot_id, session_id, visibility, status, limit, offset }, signal), [bot_id, session_id, visibility, status, limit, offset])
+  const load = useCallback((signal: AbortSignal) => listExpressionCandidates({ bot_id, session_id, visibility, status, qualified: qualifiedOnly, limit, offset }, signal), [bot_id, session_id, visibility, status, qualifiedOnly, limit, offset])
   const { data, error, loading } = useLearningPage(load, reload)
   const refresh = () => setReload((value) => value + 1)
 
@@ -126,16 +130,23 @@ function Expressions({ scope }: { scope: ReplyLearningScope }) {
       <Button size="sm" variant="outline" disabled={loading} onClick={refresh}><RefreshCwIcon aria-hidden="true" />刷新表达</Button>
     </CardHeader>
     <CardContent className="flex flex-col gap-4">
-      <label className="flex items-center gap-2 text-sm">表达状态<select aria-label="表达状态" className="rounded-md border bg-background p-2" value={status} onChange={(event) => { setStatus(event.target.value as ExpressionStatus); setOffset(0); setNotice(null) }}><option value="pending">待审核</option><option value="approved">已批准</option><option value="rejected">已拒绝</option></select></label>
+      <div className="flex flex-wrap items-center gap-4">
+        <label className="flex items-center gap-2 text-sm">表达状态<select aria-label="表达状态" className="rounded-md border bg-background p-2" value={status} onChange={(event) => { setStatus(event.target.value as ExpressionStatus); setOffset(0); setNotice(null) }}><option value="pending">待审核</option><option value="approved">已批准</option><option value="rejected">已拒绝</option></select></label>
+        <label className="flex items-center gap-2 text-sm">
+          <input aria-label="只看达标的表达" type="checkbox" checked={qualifiedOnly} onChange={(event) => { setQualifiedOnly(event.target.checked); setOffset(0); setNotice(null) }} />
+          只看出现 ≥2 次或跨 ≥2 人的表达
+        </label>
+      </div>
       {data ? <p className="text-sm text-muted-foreground">{data.enabled ? '表达学习已开启。已批准且来源证据有效的表达可按适用情景召回；批准不保证每次使用。' : '表达学习已关闭。已有候选仍可审核，启用后才会学习使用。'}</p> : null}
       {notice ? <p role={notice.error ? 'alert' : 'status'} className={notice.error ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'}>{notice.text}</p> : null}
-      <QueryState status={loading ? 'loading' : error ? 'error' : data?.items.length ? 'success' : 'empty'} error={error} title="表达读取失败" emptyTitle={`当前群暂无${status === 'pending' ? '待审' : status === 'approved' ? '已批准' : '已拒绝'}表达`} emptyDescription={status === 'pending' ? '有符合要求的群友表达被收录后，会在这里等待人工审核。' : '可切换表达状态查看其他记录。'} onRetry={refresh}>
+      <QueryState status={loading ? 'loading' : error ? 'error' : data?.items.length ? 'success' : 'empty'} error={error} title="表达读取失败" emptyTitle={qualifiedOnly && status === 'pending' ? '暂无达标的待审表达' : `当前群暂无${status === 'pending' ? '待审' : status === 'approved' ? '已批准' : '已拒绝'}表达`} emptyDescription={qualifiedOnly && status === 'pending' ? '出现两次以上或跨两位群友说过的表达，才会进入这里。取消勾选可查看全部待审候选。' : status === 'pending' ? '有符合要求的群友表达被收录后，会在这里等待人工审核。' : '可切换表达状态查看其他记录。'} onRetry={refresh}>
         <div className="grid gap-3 lg:grid-cols-2">{data?.items.map((item) => <ExpressionCard key={`${item.id}:${item.revision}`} item={item} scope={scope} onChanged={(next) => { setNotice(next); setOffset(0); refresh() }} />)}</div>
       </QueryState>
       {data ? <PaginationControls page={data.page} label="待审表达分页" onOffsetChange={setOffset} onLimitChange={(value) => { setLimit(value); setOffset(0) }} /> : null}
     </CardContent>
   </Card>
 }
+
 
 function Feedback({ scope }: { scope: ReplyLearningScope }) {
   const [limit, setLimit] = useState<PageSize>(25)
