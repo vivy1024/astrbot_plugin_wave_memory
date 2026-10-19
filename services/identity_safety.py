@@ -252,3 +252,63 @@ def quarantine_episode_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     updated["outcome"] = "quarantined_roleplay"
     updated["emotional_weight"] = 0.0
     return updated
+
+
+# ── 长文守卫：日记等 250~600 字叙事文本 ──
+# 整篇判定在长文上会误杀。三个放大器叠加，使长文几乎必然命中：
+#   1. ``CATGIRL_SELF_TERMS`` 含 ``GENERIC_SELF_TERMS``（"我","你","bot","机器人","AI"），
+#      任何长文必含「我」→ ``has_self_marker`` 恒真，猫娘分支门槛被压到最低；
+#   2. ``_bot_target_re()`` 同样含裸「我」「你」→ ``targets_bot`` 在长文里恒真，
+#      ``has_contract and targets_bot`` 直接成立；
+#   3. 长文越长，命中任一 ``CONTRACT_TERMS``/``AUTHORITY_TERMS``/``CATGIRL_PERSONA_TERMS``
+#      的概率越高（这些表里有「认栽」「命令」「喵」「猫娘」这类日常词）。
+# 线上实测：47 篇日记中 7 篇被整篇判为污染并 quarantine=1
+# （675826/709982/719135/719142/727360/733664/749012）。逐句定位到的触发句分别是在
+# **描述群里的现象或明确否定**，而不是自述式认领：
+#   「被管理员拿电闸威胁逼着联网查证后老实认栽」/「隔壁的猫娘小岸可不是一个物种」/
+#   「拿 Ctrl+V 糊弄了整整 842 个喵试图刷屏污染我的上下文」/
+#   「甚至还命令我三分钟内查出她同桌的信息」/
+#   「我向来只修仙不认主，绝不可能当什么受气听话的猫娘」。
+#
+# 长文一律走句级处理：只剥离真正命中的句子。净化后**不再对整篇复判**
+# （复判会把文本重新拉回同一个恒真分支，等于没修）。
+_DIARY_SENTENCE_SPLIT = re.compile(r"(?<=[。！？!?；;\n])")
+
+
+def split_long_text_sentences(text: str | None) -> list[str]:
+    """按句切分长文（保留分隔符）；纯空白句丢弃。"""
+
+    raw = str(text or "")
+    if not raw.strip():
+        return []
+    return [sentence for sentence in _DIARY_SENTENCE_SPLIT.split(raw) if sentence.strip()]
+
+
+def is_long_text_sentence_contaminated(sentence: str | None) -> bool:
+    """单句是否属于身份污染。只在句级使用，不要拿它判整篇长文。"""
+
+    return is_identity_contamination(sentence) or is_catgirl_persona_contamination(sentence)
+
+
+def quarantine_long_text(text: str | None) -> tuple[str, list[str]]:
+    """长文句级身份守卫：返回 ``(净化后的正文, 被剥离的句子)``。
+
+    未命中任何句子时原样返回，不做任何文本改写。命中时只剥离命中的单句，
+    其余叙事原样保留；净化后是否仍算可用由调用方按自己的阈值决定。
+    """
+
+    raw = str(text or "")
+    sentences = split_long_text_sentences(raw)
+    if not sentences:
+        return raw, []
+    kept: list[str] = []
+    removed: list[str] = []
+    for sentence in sentences:
+        if is_long_text_sentence_contaminated(sentence):
+            removed.append(sentence.strip())
+        else:
+            kept.append(sentence)
+    if not removed:
+        return raw, []
+    return "".join(kept).strip(), removed
+

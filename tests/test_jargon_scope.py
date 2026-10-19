@@ -290,5 +290,100 @@ class JargonScopeTest(unittest.TestCase):
         self.assertEqual(archived["status"], "archived")
 
 
+class JargonHumanReviewGateTest(unittest.TestCase):
+    """人工审批的证据门禁（2026-10-18 重写）。
+
+    线上 `scoped_jargon` 152 条 pending 全部卡在旧门禁上（WebUI 一次 approve 都没成功）：
+    前端从不发送 `query_trace_id`（拦 152/152），标签抽取异步落后导致 `source_tags` 为空
+    （拦 111/152），而 `source_memory_id` 其实一条都不缺（拦 0/152）。
+    人工审核是最终权威，溯源字段降为可选信息。
+    """
+
+    @staticmethod
+    def _scope(bot="yushu", conversation="g1"):
+        from domain.scope import RuntimeScope, SessionRef
+        return RuntimeScope(bot, "group", SessionRef(f"qq:group:{conversation}", "qq", "group", conversation))
+
+    @staticmethod
+    def _pending(db, scope, **overrides):
+        record = {
+            "word": "猫猫税", "meaning": "本群梗", "status": "pending", "is_jargon": None,
+            "frequency": 3, "confidence": 0.7, "contexts": ["上下文"],
+            "source_memory_id": 42,
+            "provenance": {"source": "wave_memory", "evidence": {"memory_ids": [42]}},
+        }
+        record.update(overrides)
+        db.scoped_knowledge.upsert_scoped_jargon(scope, **record)
+        return db.scoped_knowledge.list_scoped_jargon(scope, limit=10)[0]
+
+    def test_approve_without_query_trace_or_source_tags_succeeds(self):
+        """这正是线上 152 条 pending 的形态：有锚点、无 trace、无 source_tags。"""
+        from services.jargon.service import JargonService
+
+        db, scope = _Db(), self._scope()
+        item = self._pending(db, scope, source_memory_id=42, provenance={"evidence": {"memory_ids": [42]}})
+        result = JargonService(db).review(scope, item["id"], "approve")
+        self.assertEqual(result["status"], "confirmed")
+        stored = db.scoped_knowledge.list_scoped_jargon(scope, limit=10)[0]
+        self.assertEqual(stored["status"], "confirmed")
+        self.assertEqual(stored["provenance"]["reviewed_by"], "webui")
+        self.assertEqual(stored["provenance"]["review_action"], "approve")
+
+    def test_approve_accepts_source_tags_alone_as_anchor(self):
+        """标签链完整但没锚点也必须能批：标签是派生证据，不能反过来当批准前提。"""
+        from services.jargon.service import JargonService
+
+        db, scope = _Db(), self._scope()
+        item = self._pending(db, scope, source_memory_id=None, provenance={"source_tags": [{"name": "梗"}]})
+        self.assertEqual(JargonService(db).review(scope, item["id"], "approve")["status"], "confirmed")
+
+    def test_approve_without_any_evidence_is_rejected(self):
+        """完全凭空（无锚点、无标签、无 evidence）才拒绝，避免放进无从考证的候选。"""
+        from services.jargon.service import JargonService
+
+        db, scope = _Db(), self._scope()
+        item = self._pending(db, scope, source_memory_id=None, provenance={"source": "wave_memory"})
+        with self.assertRaises(ValueError) as ctx:
+            JargonService(db).review(scope, item["id"], "approve")
+        self.assertEqual(str(ctx.exception), "jargon_evidence_required")
+
+    def test_provided_but_invalid_query_trace_is_still_rejected(self):
+        """提供了 trace 就必须有效 —— 防止伪造检索记录。"""
+        from services.jargon.service import JargonService
+
+        class _Store:
+            @staticmethod
+            def get_for_scope(_trace_id, _scope):
+                return None
+
+        db, scope = _Db(), self._scope()
+        item = self._pending(db, scope)
+        with self.assertRaises(ValueError) as ctx:
+            JargonService(db, trace_store=_Store()).review(scope, item["id"], "approve", query_trace_id="forged")
+        self.assertEqual(str(ctx.exception), "jargon_query_trace_invalid")
+
+    def test_valid_query_trace_accepted_when_provided(self):
+        from services.jargon.service import JargonService
+
+        class _Store:
+            @staticmethod
+            def get_for_scope(_trace_id, _scope):
+                return {"trace_id": "ok"}
+
+        db, scope = _Db(), self._scope()
+        item = self._pending(db, scope)
+        result = JargonService(db, trace_store=_Store()).review(scope, item["id"], "approve", query_trace_id="ok")
+        self.assertEqual(result["status"], "confirmed")
+
+    def test_reject_still_blocks_globally_without_any_evidence(self):
+        """拒绝不需要证据，且必须写全局拉黑（这条路径不能被我改动波及）。"""
+        from services.jargon.service import JargonService
+
+        db, scope = _Db(), self._scope()
+        item = self._pending(db, scope, source_memory_id=None, provenance={"source": "wave_memory"})
+        self.assertEqual(JargonService(db).review(scope, item["id"], "reject")["status"], "rejected")
+        self.assertIn("猫猫税", db.blocked)
+
+
 if __name__ == "__main__":
     unittest.main()

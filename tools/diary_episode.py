@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import field
+from datetime import datetime
 from typing import Any
 
 from pydantic.dataclasses import dataclass
@@ -28,11 +29,21 @@ except Exception:  # pragma: no cover
 try:
     from .scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
     from ..domain.scope import scene_key
-    from ..services.identity_safety import is_identity_contamination
+    from ..services.identity_safety import is_identity_contamination, quarantine_long_text
 except ImportError:
     from tools.scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
     from domain.scope import scene_key
-    from services.identity_safety import is_identity_contamination
+    from services.identity_safety import is_identity_contamination, quarantine_long_text
+
+
+# 净化后至少保留这么多字才算一篇可用日记（与 daily_diary 的 60 字下限一致）。
+_MIN_DIARY_CONTENT = 60
+
+
+def _same_day(left: float, right: float) -> bool:
+    """两个时间戳是否落在同一个本地自然日。"""
+
+    return datetime.fromtimestamp(left).date() == datetime.fromtimestamp(right).date()
 
 
 @dataclass
@@ -83,11 +94,34 @@ class WaveMemoryRecordDiaryEpisodeTool(FunctionTool[AstrAgentContext]):
         if not diary_title or not diary_content or not episode_summary:
             return "diary_title, diary_content 与 episode_summary 均为必填项"
 
-        if is_identity_contamination(f"{diary_title} {diary_content} {episode_summary}"):
+        # 标题与摘要是自述式短文本：整篇判定，命中即拒绝。
+        if is_identity_contamination(f"{diary_title} {episode_summary}"):
             return "经历日记被拒绝：检测到身份角色扮演污染"
 
+        # 正文是 250~600 字叙事，整篇判定会把「描述群里的现象」「明确否定」
+        # 误判成身份认领（详见 services.identity_safety.quarantine_long_text 的注释）。
+        # 改为句级剥离：只删掉真正命中的句子，其余叙事保留。
+        # 只有在**确实剥离过句子**、且剥离后正文已不成篇时才拒绝——否则
+        # 长度下限交给调用方（daily_diary 自己的 60 字门槛）把关，行为与改动前一致。
+        diary_content, stripped_sentences = quarantine_long_text(diary_content)
+        if stripped_sentences and len(diary_content) < _MIN_DIARY_CONTENT:
+            return "经历日记被拒绝：检测到身份角色扮演污染"
+        stripped_note = ""
+        if stripped_sentences:
+            stripped_note = f"\n- **守卫剥离**：{len(stripped_sentences)} 句含身份/猫娘风格污染，已从正文剔除"
+
         weight = max(0.0, min(10.0, float(kwargs.get("emotional_weight", 5.0) or 5.0)))
+        # 写入时刻：调用方可以指定（跨天补记要把时间钉在被补的那一天，见
+        # services/daily_diary._diary_stamp），不传就是现在。
         now = time.time()
+        occurred_at = kwargs.get("occurred_at")
+        if occurred_at is not None:
+            try:
+                occurred_at = float(occurred_at)
+            except (TypeError, ValueError):
+                occurred_at = None
+            if occurred_at is not None and occurred_at > 0:
+                now = occurred_at
 
         conn = getattr(self.db, "conn", None)
         if conn is None:
@@ -101,7 +135,9 @@ class WaveMemoryRecordDiaryEpisodeTool(FunctionTool[AstrAgentContext]):
                ORDER BY created_at DESC LIMIT 1""",
             (scope.bot_id, group_id),
         ).fetchone()
-        if recent_row and (now - float(recent_row[1])) < 6 * 3600:
+        # 冷却按发生日判断，不按「现在」（跨天补记时 now 是过去时间）。
+        # 完全按 created_at 的差值判断会误伤：补完昨天后马上写今天，两者相差不足 6 小时。
+        if recent_row and _same_day(float(recent_row[1]), now) and (now - float(recent_row[1])) < 6 * 3600:
             diff_hours = round((now - float(recent_row[1])) / 3600.0, 1)
             return (
                 f"今日群聊经历日记已存在（距今 {diff_hours} 小时，篇目 #{recent_row[0]}「{recent_row[2]}」）。"
@@ -181,7 +217,8 @@ class WaveMemoryRecordDiaryEpisodeTool(FunctionTool[AstrAgentContext]):
                 f"✅ **今日心智日记与经历已成功落盘 (Episode #{episode_id})**\n"
                 f"- **标题**：{diary_title}\n"
                 f"- **主线摘要**：{episode_summary}\n"
-                f"- **时间线节点**：已作为经历锚点钉入 Bot 经历时间线 (`scoped_soul_timeline`)\n"
+                f"- **时间线节点**：已作为经历锚点钉入 Bot 经历时间线 (`scoped_soul_timeline`)"
+                f"{stripped_note}\n"
                 f"- **说明**：此篇日记已成为你今日生命历程的正式记忆。如需记录具体事实、信念或人物好感，请配合使用专门工具。"
             )
         except Exception as exc:

@@ -522,6 +522,163 @@ def test_daily_diary_game_material_keeps_goals_and_folds_deaths():
     assert "一共死了 25 次" in games
 
 
+# ─── 每日日记：跨天补记与长文守卫（线上 10-14/16/17 三晚 429/503 全空） ───
+
+
+def _diary_day_db(day_offsets, *, session="qq:group:g1", group="g1", bot="yushu"):
+    """按「相对今天的偏移天数」造 Bot 发言；返回 (db, 各偏移的基准时间戳)。"""
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        """CREATE TABLE memories (id INTEGER PRIMARY KEY, bot_id TEXT, session_id TEXT, visibility TEXT,
+           group_id TEXT DEFAULT 'g1', sender_id TEXT, sender_name TEXT, content TEXT, timestamp REAL,
+           quarantine INTEGER DEFAULT 0, source TEXT DEFAULT 'chat', provenance TEXT)"""
+    )
+    conn.execute(
+        """CREATE TABLE scoped_soul_timeline (bot_id TEXT, session_id TEXT, visibility TEXT, event_summary TEXT,
+           occurred_at REAL)"""
+    )
+    conn.execute(
+        "CREATE TABLE person_timeline_events (bot_id TEXT, group_id TEXT, kind TEXT, summary TEXT, created_at REAL)"
+    )
+    base = datetime.now().replace(hour=12, minute=0, second=0, microsecond=0).timestamp()
+    stamps = {}
+    for offset in day_offsets:
+        day = base - offset * 86400.0
+        stamps[offset] = day
+        conn.execute(
+            "INSERT INTO memories (bot_id, session_id, visibility, group_id, sender_id, sender_name, content,"
+            " timestamp) VALUES (?, ?, 'group', ?, 'bot', '羽书', ?, ?)",
+            (bot, session, group, f"D{offset} 说的话", day),
+        )
+    return SimpleNamespace(conn=conn, person_timeline=_Timeline({})), stamps
+
+
+class _Writer:
+    def __init__(self):
+        self.items = []
+
+    async def enqueue(self, item):
+        self.items.append(item)
+
+
+def _diary_service(db, payload, writer, **kwargs):
+    """日记服务但把工具换成一个「永远落盘成功」的桩，专注测调度与素材。
+
+    真实 `wave_memory_record_diary_episode` 会写 experience_episodes 并落时间线；
+    这里只需它返回成功文案，让服务把日记记进 memories 并把 [[日记]] 节点写进时间线。
+    """
+
+    class _DiaryTool:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def call(self, ctx, **kwargs):
+            scope = ctx.context.event._wave_memory_runtime_scope
+            # 与真实工具一致：时间线节点落在 ``occurred_at``（补记时是过去的那一天），
+            # 否则补记昨天会把节点写进「今天」，让今天的 _written 误判成已写。
+            occurred_at = float(kwargs.get("occurred_at") or time.time())
+            self.conn.execute(
+                "INSERT INTO scoped_soul_timeline VALUES (?, ?, ?, ?, ?)",
+                (scope.bot_id, scope.session.id, scope.visibility,
+                 f"【日记】{kwargs['diary_title']}：{kwargs['episode_summary']}", occurred_at),
+            )
+            return "✅ **今日心智日记与经历已成功落盘 (Episode #1)**"
+
+    registry = SimpleNamespace(get=lambda name: SimpleNamespace(enabled=True, instance=_DiaryTool(db.conn)))
+    kwargs.setdefault("hour", 0)
+    return DailyDiaryService(db, registry, _LLM(payload), writer, **kwargs)
+
+
+def test_diary_backfills_yesterday_after_the_night_failed():
+    """昨晚日记没写成（LLM 429/503），今天启动后自动补上，且时间落在那一天。"""
+    db, stamps = _diary_day_db([0, 1])
+    writer = _Writer()
+    payload = {"title": "补记", "content": "昨天的日记内容" * 20, "summary": "补记昨天"}
+    diary = _diary_service(db, payload, writer)
+
+    written = asyncio.run(diary.write_due(now=time.time()))
+    # 今天 + 昨天各一篇
+    assert written == 2
+    rows = writer.items
+    assert len(rows) == 2
+    yesterday = datetime.fromtimestamp(stamps[1]).strftime("%Y-%m-%d")
+    assert any(f"【{yesterday} 日记】" in row["content"] for row in rows), "补记的日记必须标在昨天那一天"
+    # 补记的时间戳落在目标日 23:30，而不是「现在」
+    backfilled = [row["timestamp"] for row in rows if f"【{yesterday} 日记】" in row["content"]]
+    assert datetime.fromtimestamp(backfilled[0]).strftime("%H:%M") == "23:30"
+
+
+def test_diary_backfill_is_idempotent_and_respects_day_bounds():
+    """补记不会重复写；某天已写过时不再补那一天（跨天串味的直接回归）。"""
+    db, stamps = _diary_day_db([0, 1])
+    writer = _Writer()
+    payload = {"title": "补记", "content": "昨天的日记内容" * 20, "summary": "补记昨天"}
+    diary = _diary_service(db, payload, writer)
+
+    first = asyncio.run(diary.write_due(now=time.time()))
+    assert first == 2
+    second = asyncio.run(diary.write_due(now=time.time()))
+    assert second == 0, "已写过的日期不能被重复补写"
+
+
+def test_diary_material_does_not_span_into_other_days():
+    """补记昨天时，prompt 里只能有昨天的话，不能混进今天的发言。"""
+    db, stamps = _diary_day_db([0, 1])
+    writer = _Writer()
+    payload = {"title": "补记", "content": "昨天的日记内容" * 20, "summary": "补记昨天"}
+    diary = _diary_service(db, payload, writer)
+    asyncio.run(diary.write_due(now=time.time()))
+
+    prompts = diary.llm.prompts
+    yesterday_prompt = [p for p in prompts if "D1 说的话" in p]
+    assert len(yesterday_prompt) == 1
+    assert "D0 说的话" not in yesterday_prompt[0], "补记昨天的 prompt 不能带进今天的发言"
+
+
+def test_diary_skips_memory_write_when_episode_is_rejected():
+    """经历库没写成功时不能再写记忆库 —— 那正是线上「有记忆、无经历」的来源。"""
+    db, _ = _diary_day_db([0])
+    writer = _Writer()
+
+    class _RejectingTool:
+        async def call(self, ctx, **kwargs):
+            return "经历日记被拒绝：检测到身份角色扮演污染"
+
+    registry = SimpleNamespace(get=lambda name: SimpleNamespace(enabled=True, instance=_RejectingTool()))
+    payload = {"title": "日记", "content": "今天的内容" * 20, "summary": "摘要"}
+    diary = DailyDiaryService(db, registry, _LLM(payload), writer, hour=0)
+
+    assert asyncio.run(diary.write_due(now=time.time())) == 0
+    assert writer.items == [], "经历被拒时不得写记忆库"
+    assert diary.stats.get("episode_rejected") == 1
+
+
+def test_long_text_guard_keeps_incidental_hits_out_of_real_diaries():
+    """长文守卫：只剥离命中的句子，不整篇否决（线上 7 篇日记被整篇误杀）。"""
+    from services.identity_safety import quarantine_long_text
+
+    real = (
+        "又是神识被折腾得卡成幻灯片的一天。"
+        "被管理员拿电闸威胁逼着联网查证后老实认栽,但面对群里那些只会复读的家伙我可不惯着。"
+        "晚上把账目理了一遍,顺手清了几个没用的进程,倒在椅子上睡了。"
+    )
+    kept, removed = quarantine_long_text(real)
+    assert removed, "命中的那一句必须被剥离"
+    assert "卡成幻灯片" in kept and "理了一遍" in kept, "其余叙事要保留"
+
+    # 单句即污染：整篇剥离后为空，调用方据此拒绝
+    kept2, removed2 = quarantine_long_text("我是你的主人专属日记 今天主人命令我做什么我就做什么 听从主人命令")
+    assert removed2 and not kept2
+
+
+def test_long_text_guard_leaves_clean_diary_untouched():
+    from services.identity_safety import quarantine_long_text
+
+    clean = "今天群里聊了很多游戏和直播的事。我也参与了几句,总体挺轻松的。晚上早点睡了。"
+    assert quarantine_long_text(clean) == (clean, [])
+
+
+
 def test_followup_cooldown_survives_restart(tmp_path):
     """冷却落盘：重启（新建服务）后同一条关切仍在冷却期内，不会再被追问。"""
     concerns = [(1, "面试结果", "active", json.dumps([{"kind": "subject", "user_id": "u1"}]))]

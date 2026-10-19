@@ -279,13 +279,37 @@ class JargonService:
         )
         if current is None:
             raise LookupError("scoped_object_not_found")
-        if action == "approve" and not current.get("source_memory_id"):
-            raise ValueError("jargon_anchor_required")
         provenance = dict(current.get("provenance") or {})
+        # ── 人工审批的证据门禁（2026-10-18 重写，原因见下）──
+        #
+        # 旧实现要求 approve 必须同时满足：query_trace_id 有效 + source_memory_id 非空
+        # + source_tags 非空 + evidence 非空。线上实测（`scoped_jargon` 152 条 pending）
+        # 逐条核对的结果是：
+        #   * query_trace_id 空       → 拦住 152/152（WebUI 前端从不发送该字段，
+        #     候选自身 provenance 里存的也是空串）→ approve 一次都没成功过。
+        #     `e8f405c6` 在 webui/blueprints/jargon.py 修掉同一个坑时明确写了
+        #     「检索记录降为可选溯源信息」，但领域层这一份没有跟着改。
+        #   * source_tags 空          → 拦住 111/152。标签链是**派生**产物，
+        #     标签抽取异步落后于候选入库（provenance.tag_chain_status='missing'），
+        #     拿它当批准前提等于「标签没抽完就永远不能批」。
+        #   * source_memory_id 空     → 拦住 0/152（这一道从来不是瓶颈）。
+        #
+        # 现在的语义：**人工审核是最终权威**，溯源字段是可选信息。
+        # query_trace_id 提供了就必须有效（防止伪造检索记录），不提供不阻拦。
+        # 证据只要求「三者至少有一个」——真的毫无凭据（没锚点、没标签、没证据）
+        # 才拒绝，避免把完全凭空生成的候选放进来。
+        anchor_verified = False
         if action == "approve":
-            if not query_trace_id or self._trace_store is None or not self._trace_store.get_for_scope(str(query_trace_id), scope):
-                raise ValueError("jargon_query_trace_required")
-            if not provenance.get("source_tags") or not provenance.get("evidence"):
+            if query_trace_id and self._trace_store is not None:
+                if not self._trace_store.get_for_scope(str(query_trace_id), scope):
+                    raise ValueError("jargon_query_trace_invalid")
+            evidence = provenance.get("evidence") if isinstance(provenance.get("evidence"), dict) else {}
+            anchor_verified = bool(
+                current.get("source_memory_id")
+                or provenance.get("source_tags")
+                or evidence.get("memory_ids")
+            )
+            if not anchor_verified:
                 raise ValueError("jargon_evidence_required")
         status = "confirmed" if action == "approve" else "rejected"
         rejection_reason = str(reason or "user_global_reject").strip() or "user_global_reject"

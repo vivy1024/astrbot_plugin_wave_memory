@@ -1035,6 +1035,12 @@
         "type": "int",
         "default": 23
       },
+      "daily_diary_backfill_days": {
+        "description": "补写漏记天数",
+        "type": "int",
+        "default": 3,
+        "hint": "每轮检查时无条件回看最近 N 天，把「当天有发言、当天没日记」的日期补上。线上曾因夜间模型 429/503 连续三晚（10-14/16/17）日记全空，且原实现只写当天、跨天即永久丢失；有了补记后失败会在下一轮自动补回。0 表示关闭补记、只写今天。"
+      },
       "relationship_portrait_enabled": {
         "description": "关系小传",
         "type": "bool",

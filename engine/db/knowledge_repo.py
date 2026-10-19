@@ -89,6 +89,25 @@ class KnowledgeRepo:
         confidence: float = 0.8,
         fact_type: str = None,
     ) -> int:
+        """旧表 ``facts`` 的唯一写入点（历史路径，新逻辑一律走 ``scoped_facts``）。
+
+        .. warning:: 证据锚点缺口（线上实测，暂时保留现状、不改数据）
+
+            ``source_memory_id`` 可以为 ``None``，这一条就是「事实无法回溯」的来源：
+            线上 ``facts`` 7993 条中只有 4075 条（51.0%）带来源记忆 id，其余近半数
+            既无 ``source_memory_id`` 也无原话引用，溯源链在此处就断了。
+            ``scoped_facts`` 情况好一些但仍缺 1/4（1108 条中 834 条，75.3%）。
+
+            成因：提审时模型给的是**总结过的短语**而非群友原话，按原话反查不到
+            ``memories.id``，于是直接落 ``None``，没有任何软降级或后向匹配兜底。
+
+            后续方向（**本次不实施**，用户已确认旧表先不动）：
+              1. ``tools/fact_proposal.py`` 把 ``source_quote`` 提为硬性必填，
+                 摘要式短语一律拒收，逼迫调用方给原文；
+              2. 在 ``resolve_source_memory_id`` 之外补一层「按发言时间戳 + 说话人
+                 后向模糊匹配」，把已经悬空的事实回挂到最可能的 ``memories.id``；
+              3. 旧表 ``facts`` 不迁移、不改写，新数据只进 ``scoped_facts``。
+        """
         now = time.time()
         combined = f"{subject} {predicate} {obj}"
         if is_identity_contamination(combined):

@@ -565,6 +565,7 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | bookkeeping_daily_limit | 150 | 每天最多记账次数 |
 | daily_diary_enabled | true | 每日日记：每晚为当天说过话的每个群写一篇，写入经历时间线与记忆库 |
 | daily_diary_hour | 23 | 几点之后写日记（0-23） |
+| daily_diary_backfill_days | 3 | 每轮回看最近 N 天，把「当天有发言、当天没日记」的日期补上；0 表示关闭补记（线上曾因夜间 429/503 连续三晚日记全空） |
 | relationship_portrait_enabled | false | 关系小传：Bot 读一个人公开场合的印象时间线，以自己的视角写小传；关系注入以小传为主。关闭时沿用时间线规则摘要；私聊记录不进小传 |
 | portrait_min_new_events | 3 | 自上次小传后新增多少条印象/好感记录就重写 |
 | portrait_refresh_days | 7 | 距上次小传满多少天且期间有新记录时重写 |

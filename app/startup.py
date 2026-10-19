@@ -859,6 +859,7 @@ class StartupMixin:
                 self.daily_diary = DailyDiaryService(
                     self.db, self.tool_registry, diary_llm, self.writer,
                     hour=int(_num("daily_diary_hour", 23)),
+                    backfill_days=int(_num("daily_diary_backfill_days", 3)),
                     bot_name_for=self._bot_display_name,
                     group_name_for=self._get_group_name,
                 )

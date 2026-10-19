@@ -340,6 +340,8 @@ def _query_trace_valid(container, scope: RuntimeScope, body: dict) -> bool:
 
 
 def _memory_evidence_available(container, scope: RuntimeScope, source_memory_id) -> bool:
+    """锚点记忆是否可在本 Scope 内取用。只作展示信息，不再作为审批硬门禁。"""
+
     if source_memory_id is None or scope.session is None:
         return False
     conn = getattr(getattr(container, "db", None), "conn", None)
@@ -968,8 +970,10 @@ async def review_scoped_jargon(jargon_id: int, action: str):
         repo = _scoped_repo(container)
         current = _find_scoped_jargon(repo, scope, jargon_id)
         _require_object_ref(body, kind="jargon", locator=jargon_id, scope=scope, item=current)
-        if action == "approve" and not _memory_evidence_available(container, scope, current.get("source_memory_id")):
-            raise ScopedKnowledgeScopeError("jargon_anchor_unavailable")
+        # 证据门禁的唯一权威在领域层 ``JargonService.review``（那里按「锚点 / 标签 / evidence
+        # 至少有一个」判定）。这里曾经重复实现一遍、且规则更严（锚点记忆必须在本 Scope 内可解析），
+        # 于是出现「蓝图层放行、领域层拒绝」的双份门禁各自演化 —— `e8f405c6` 只修了蓝图层的
+        # query_trace 门禁，领域层那一份原封不动，导致审批一直是 422。层级只保留一处判定。
         # 检索记录只是可选的溯源信息：管理台审批时拿不到也无需提供。提供了就必须有效。
         trace_id = str(body.get("query_trace_id") or "").strip()
         if action == "approve" and trace_id and not _query_trace_valid(container, scope, body):
@@ -1023,8 +1027,7 @@ async def batch_review_scoped_jargon():
             seen.add(jargon_id)
             current = _find_scoped_jargon(repo, scope, jargon_id)
             _require_object_ref(entry, kind="jargon", locator=jargon_id, scope=scope, item=current)
-            if action == "approve" and not _memory_evidence_available(container, scope, current.get("source_memory_id")):
-                raise ScopedKnowledgeScopeError("jargon_anchor_unavailable")
+            # 证据门禁统一由 ``JargonService.review`` 判定，蓝图不再重复一遍（见单条审核处的说明）。
             trace_id = str(body.get("query_trace_id") or "").strip()
             if action == "approve" and trace_id and not _query_trace_valid(container, scope, body):
                 raise ScopedKnowledgeScopeError("query_trace_invalid")

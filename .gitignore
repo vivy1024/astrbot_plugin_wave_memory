@@ -28,3 +28,8 @@ served_index.js
 .sync_runtime_*.tar
 *.tar
 *.tar.gz
+# 本地性能剖析产物与一次性基准脚本
+.prof/
+scripts/_embed_bench.py
+scripts/_embed_bench2.py
+scripts/_profile_parts.py
