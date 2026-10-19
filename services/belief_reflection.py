@@ -5,8 +5,9 @@
 
 - 触发：``DailyDiaryService`` 每写完一轮日记就通知这里（``on_diary_pass``）；每个 Bot 距上次成功反思
   满 ``every_n_days`` 天、且有新的群聊日记时才反思一次。进度落在 ``bot_belief_reflection_runs``
-  （每 Bot 每天一行 + 已读到的日记游标），重启后不会重复，失败或中途退出的会在下一轮重试，日记不会漏。
-- 输入：该 Bot 自上次反思以来的全部群聊日记（不读私聊）、她自己回复的效果统计（开了回复反馈时）、
+  （每 Bot 每天一行 + 已读日记的 ``created_at`` 水位），重启后不会重复，失败或中途退出的会在下一轮重试，
+  日记不会漏；上游抖动的当场重试几次，不把这一天的机会一次用光。
+- 输入：该 Bot 自上次反思以来**新落库**的全部群聊日记（不读私聊）、她自己回复的效果统计（开了回复反馈时）、
   现有的萌芽/已形成/动摇中的看法。
 - 输出：新萌芽的看法、被印证 / 被反例削弱 / 建议淡出的旧看法，每条依据都链接到具体日记。
 - 边界：点名具体群友、触发身份污染、与管理员否决过的看法相似的，一律不保存（只计数）。
@@ -51,6 +52,7 @@ try:
     )
     from .concern_followup import _scope_from_row
     from .identity_safety import is_identity_contamination, prepend_identity_safety_system_prompt
+    from .llm_fallback import is_retryable_error
     from ..domain.display_name import sanitize_display_name
 except ImportError:  # pragma: no cover
     from services.belief_lifecycle import (
@@ -71,6 +73,7 @@ except ImportError:  # pragma: no cover
     )
     from services.concern_followup import _scope_from_row
     from services.identity_safety import is_identity_contamination, prepend_identity_safety_system_prompt
+    from services.llm_fallback import is_retryable_error
     from domain.display_name import sanitize_display_name
 
 # 每次反思最多新增的看法条数
@@ -83,6 +86,9 @@ FIRST_RUN_LOOKBACK_DAYS = 7
 # 进行中的反思超过这么久没结束，视为进程中途退出，可以重来
 STALE_RUN_SECONDS = 1800.0
 MAX_ATTEMPTS_PER_DAY = 3
+# 上游抖动（503 / 429 / 超时）时当场重试的次数与退避间隔；重试不算「当天机会用尽」
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 5.0
 # 新看法与已有看法这么像就算同一条（改为印证那条）；与否决过的看法这么像就不再生成
 MERGE_SIMILARITY = 0.6
 VETO_SIMILARITY = 0.5
@@ -345,8 +351,8 @@ class BeliefReflectionService:
         if existing is not None and existing.get("status") == "succeeded":
             self._count("skipped_not_due")
             return {"status": "not_due"}
-        cursor = self.repo.diary_cursor(bot_id)
-        diaries = await asyncio.to_thread(self._diaries, bot_id, cursor, stamp)
+        watermark = self.repo.diary_watermark(bot_id)
+        diaries, position = await asyncio.to_thread(self._diaries, bot_id, watermark, stamp)
         if not diaries:
             self._count("skipped_no_diaries")
             return {"status": "no_diaries"}
@@ -361,7 +367,8 @@ class BeliefReflectionService:
             self._count("skipped_claimed")
             return {"status": "claimed_elsewhere"}
         try:
-            return await self._reflect(bot_id, run_id, client, diaries, stamp, since=self._since(last, stamp))
+            return await self._reflect(bot_id, run_id, client, diaries, stamp,
+                                       since=self._since(last, stamp), position=position)
         except asyncio.CancelledError:
             self.repo.fail_run(run_id, error="cancelled", now=stamp)
             raise
@@ -400,19 +407,36 @@ class BeliefReflectionService:
 
     # ─── 输入 ───
 
-    def _diaries(self, bot_id: str, cursor: int, now: float) -> list[dict[str, Any]]:
-        """该 Bot 游标之后的群聊日记（只读 visibility='group'，私聊日记一律不读）。"""
-        lower = 0.0 if cursor else now - max(FIRST_RUN_LOOKBACK_DAYS, self.every_n_days) * 86400.0
+    def _diaries(self, bot_id: str, watermark: tuple[float, int], now: float) -> tuple[list[dict[str, Any]], tuple[float, int]]:
+        """水位之后写下的群聊日记，以及读完之后应记下的新水位。
+
+        判重按 ``created_at`` 而不是 ``id > cursor``（线上实测的原因，不是推测）：
+
+        1. 旧写法一次按 ``id DESC LIMIT 40`` 取最近的 40 篇，游标再跳到**这批里最大的 id**。
+           平日每天两三篇、每次反思只隔一两天，这个上限没被碰到，所以线上目前没丢日记；
+           但只要连续几天反思失败（线上 10-14/10-16/10-17 就是连续 503）或补记多天，
+           待读篇数一旦超过 40，更早的那些既没进这次输入、id 又落在新游标之下，就再也不会被读到。
+           改成 ``created_at ASC`` 从最旧的一篇读起，水位只推到本轮扫过的**最后一行**，就不会越过去。
+        2. 同一轮里多个群的日记共用同一个写入时刻（都钉在当天 23:30），
+           所以水位是 ``(created_at, id)`` 二元组，同刻内用 id 定位边界。
+        """
+        # 线上实测：yushu 的 3569/3571/3572 三篇从未被任何一次反思读过——它们都写于
+        # 第一次反思之前，首轮又用「occurred_at 回看 7 天 + id DESC」取窗口，两者都够不着，
+        # 之后 id > cursor 的更不会回头。时间水位同样追不回这三篇（水位重建也只回看 7 天），
+        # 这是有意的：超出回看窗口的旧日记不该在重建时突然涌进反思。
+        floor, floor_id = watermark if watermark else (0.0, 0)
+        lower = float(floor) if floor else now - max(FIRST_RUN_LOOKBACK_DAYS, self.every_n_days) * 86400.0
         rows = self.db.conn.execute(
-            """SELECT id, session_id, event_summary, occurred_at, evidence FROM scoped_soul_timeline
+            """SELECT id, session_id, event_summary, occurred_at, evidence, created_at
+                FROM scoped_soul_timeline
                 WHERE bot_id=? AND visibility='group' AND event_summary LIKE '【日记】%'
-                  AND id > ? AND occurred_at >= ? AND occurred_at <= ?
-                ORDER BY id DESC LIMIT ?""",
-            (bot_id, int(cursor), lower, now, MAX_DIARIES),
+                  AND (created_at > ? OR (created_at = ? AND id > ?)) AND created_at <= ?
+                ORDER BY created_at ASC, id ASC LIMIT ?""",
+            (bot_id, lower, lower, int(floor_id), now, MAX_DIARIES),
         ).fetchall()
         diaries: list[dict[str, Any]] = []
         episode_ids: dict[int, int] = {}
-        for row_id, session_id, summary, occurred_at, raw_evidence in rows:
+        for row_id, session_id, summary, occurred_at, raw_evidence, created_at in rows:
             try:
                 evidence = json.loads(raw_evidence or "{}")
             except (TypeError, ValueError):
@@ -429,12 +453,16 @@ class BeliefReflectionService:
             diaries.append({
                 "id": int(row_id), "session_id": str(session_id or ""), "group_id": group_id,
                 "group_name": group_name, "title": title[:60], "summary": text[:DIARY_CHARS],
-                "date": _local_date(float(occurred_at)), "occurred_at": float(occurred_at), "content": "",
+                "date": _local_date(float(occurred_at)), "occurred_at": float(occurred_at),
+                "created_at": float(created_at), "content": "",
             })
             try:
                 episode_ids[int(row_id)] = int(evidence.get("episode_id") or 0)
             except (TypeError, ValueError):
                 pass
+        # 新水位取**扫到过的最后一行**（含被身份守卫丢掉的），否则被丢掉的那篇会永远
+        # 卡在窗口最前面，一轮轮把 40 篇的读入额度耗光。
+        position = (float(rows[-1][5]), int(rows[-1][0])) if rows else (float(floor), int(floor_id))
         wanted = sorted({eid for eid in episode_ids.values() if eid > 0})
         if wanted:
             try:
@@ -453,7 +481,7 @@ class BeliefReflectionService:
                 diary["content"] = bodies.get(episode_ids.get(diary["id"], 0), "")[:DIARY_CHARS]
         safe = [d for d in diaries if not is_identity_contamination(f"{d['title']} {d['summary']} {d['content']}")]
         self._count("diaries_contaminated_skipped", len(diaries) - len(safe))
-        return sorted(safe, key=lambda d: (d["occurred_at"], d["id"]))
+        return sorted(safe, key=lambda d: (d["occurred_at"], d["id"])), position
 
     def _feedback_block(self, bot_id: str, since: float) -> str:
         """她自己回复的效果：被接住 / 没人接 / 被纠正（只统计群聊；回复反馈没开就跳过）。"""
@@ -527,22 +555,19 @@ class BeliefReflectionService:
         )
 
     async def _reflect(
-        self, bot_id: str, run_id: int, client: Any, diaries: list[dict[str, Any]], now: float, *, since: float,
+        self, bot_id: str, run_id: int, client: Any, diaries: list[dict[str, Any]], now: float, *,
+        since: float, position: tuple[float, int] = (0.0, 0),
     ) -> dict[str, Any]:
         live = self.repo.list_beliefs(bot_id, statuses=sorted(LIVE_STATUSES))
         vetoed = self.repo.list_beliefs(bot_id, statuses=[VETOED])
         feedback = await asyncio.to_thread(self._feedback_block, bot_id, since)
         prompt = self._prompt(bot_id, diaries, live, vetoed, feedback, today=_local_date(now))
         self._count("calls")
-        response = await client.text_chat(
-            prompt=prompt,
-            system_prompt=prepend_identity_safety_system_prompt(None, always=True),
-            contexts=[],
-        )
+        response = await self._chat_with_retry(bot_id, client, prompt)
         payload = _json_object(getattr(response, "completion_text", "") or "")
         if not payload:
             raise ValueError("reflection_response_not_json")
-        counts = self._apply(bot_id, run_id, payload, diaries, now)
+        counts = self._apply(bot_id, run_id, payload, diaries, now, position=position)
         self._count("succeeded")
         for key in ("new", "confirmed", "challenged", "fade_suggested", "faded", "merged",
                     "blocked_person", "blocked_identity", "blocked_vetoed", "invalid"):
@@ -554,8 +579,36 @@ class BeliefReflectionService:
         )
         return {"status": "succeeded", "run_id": run_id, "counts": counts}
 
+    async def _chat_with_retry(self, bot_id: str, client: Any, prompt: str) -> Any:
+        """反思调用撞上上游抖动（503 / 429 / 超时）时在**同一天内**重试，不把这一天让给「次数用尽」。
+
+        线上 10-14 / 10-16 / 10-17 都是当天两次机会全撞 503 而整天空掉；
+        每次都立刻放弃时，``MAX_ATTEMPTS_PER_DAY`` 很快耗尽，这一天就永久丢了。
+        只重试可自愈的错误：余额/鉴权/模型不存在这类重试也没用，直接抛给外层记 failed。
+        """
+        last: Exception | None = None
+        for attempt in range(RETRY_ATTEMPTS):
+            try:
+                return await client.text_chat(
+                    prompt=prompt,
+                    system_prompt=prepend_identity_safety_system_prompt(None, always=True),
+                    contexts=[],
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                last = exc
+                if not is_retryable_error(exc) or attempt + 1 >= RETRY_ATTEMPTS:
+                    raise
+                self._count("retried")
+                logger.warning(
+                    f"[WaveMemory] 信念反思 {bot_id} 第 {attempt + 1} 次调用失败，稍后重试：{exc!r}"
+                )
+                await asyncio.sleep(RETRY_BACKOFF_SECONDS * (attempt + 1))
+        raise last if last is not None else RuntimeError("reflection_call_failed")
+
     def _apply(self, bot_id: str, run_id: int, payload: Mapping[str, Any], diaries: Sequence[Mapping[str, Any]],
-               now: float) -> dict[str, int]:
+               now: float, *, position: tuple[float, int] = (0.0, 0)) -> dict[str, int]:
         counts: Counter = Counter({"diaries": len(diaries)})
         by_id = {int(d["id"]): d for d in diaries}
         # 读最新状态（模型调用期间管理员可能否决过），只处理仍然有效的看法
@@ -674,7 +727,11 @@ class BeliefReflectionService:
             bot_id, writes, now=now,
             finish_run={
                 "run_id": run_id,
+                # 旧 id 游标只作展示；判重靠 created_at 水位。水位取本轮**扫到过的最后一行**
+                # （含被身份守卫丢掉的），下一轮不会重复读、也不会被丢掉的那篇挡住窗口。
                 "diary_cursor": max(by_id) if by_id else 0,
+                "diary_watermark": float(position[0]),
+                "diary_watermark_id": int(position[1]),
                 "diary_ids": sorted(by_id),
                 "counts": dict(counts),
             },

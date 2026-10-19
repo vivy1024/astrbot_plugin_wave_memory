@@ -74,6 +74,8 @@ CREATE TABLE IF NOT EXISTS bot_belief_reflection_runs (
     status TEXT NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 1,
     diary_cursor INTEGER NOT NULL DEFAULT 0,
+    diary_watermark REAL NOT NULL DEFAULT 0,
+    diary_watermark_id INTEGER NOT NULL DEFAULT 0,
     diary_ids TEXT NOT NULL DEFAULT '[]',
     counts TEXT NOT NULL DEFAULT '{}',
     error TEXT NOT NULL DEFAULT '',
@@ -83,6 +85,21 @@ CREATE TABLE IF NOT EXISTS bot_belief_reflection_runs (
 )
 """
 
+# 之后新增的列在这里登记：旧库缺列时补上（ALTER TABLE ... ADD COLUMN），不改已有数据。
+_COLUMNS: dict[str, dict[str, str]] = {
+    "bot_belief_reflection_runs": {
+        # 已读日记的 ``created_at`` 水位。旧库补列后为 0，下一轮反思按
+        # ``FIRST_RUN_LOOKBACK_DAYS`` 重建水位，代价是最近 7 天里已读过的日记会被再读一次
+        # （线上实测：yushu 8 篇、baizz 5 篇）。重复读不会重复建看法 —— 提示词要求
+        # 「意思一样的放进 confirmed」，``_apply`` 里与已有看法相似的也走 merge/resprout 分支；
+        # 最坏是出现一条近义新芽，仍比「漏读」可接受。反之若把补列后的 0 当成
+        # 「什么都读过了」，这一周的日记就永久丢了。
+        "diary_watermark": "REAL NOT NULL DEFAULT 0",
+        # 同一天多群日记共用同一个写入时刻（23:30），需要用 id 在同刻内定位边界。
+        "diary_watermark_id": "INTEGER NOT NULL DEFAULT 0",
+    },
+}
+
 
 def ensure_bot_beliefs_schema(cm: ConnectionManager) -> None:
     if not isinstance(cm, ConnectionManager):
@@ -91,6 +108,11 @@ def ensure_bot_beliefs_schema(cm: ConnectionManager) -> None:
     with cm.migration_transaction() as tx:
         for statement in statements:
             tx.execute(statement)
+        for table, columns in _COLUMNS.items():
+            existing = {str(row[1]) for row in tx.execute(f"PRAGMA table_info({table})").fetchall()}
+            for name, ddl in columns.items():
+                if name not in existing:
+                    tx.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
 
 def archive_legacy_scoped_beliefs(cm: ConnectionManager, *, now: float | None = None) -> int:

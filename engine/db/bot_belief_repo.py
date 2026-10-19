@@ -31,7 +31,8 @@ _EVENT_COLUMNS = (
     "reason, evidence, run_id, actor, occurred_at"
 )
 _RUN_COLUMNS = (
-    "id, bot_id, run_date, status, attempts, diary_cursor, diary_ids, counts, error, started_at, finished_at"
+    "id, bot_id, run_date, status, attempts, diary_cursor, diary_watermark, diary_watermark_id, diary_ids, " \
+    "counts, error, started_at, finished_at"
 )
 
 
@@ -196,11 +197,29 @@ class BotBeliefRepository:
         return _run_row(row) if row else None
 
     def diary_cursor(self, bot_id: str) -> int:
+        """已读日记的最大 id（旧口径，仅供管理台展示；判重不再用它）。"""
         row = self.cm.execute_read(
             "SELECT COALESCE(MAX(diary_cursor), 0) FROM bot_belief_reflection_runs WHERE bot_id=? AND status='succeeded'",
             (str(bot_id or ""),),
         ).fetchone()
         return int(row[0] or 0) if row else 0
+
+    def diary_watermark(self, bot_id: str) -> tuple[float, int]:
+        """已纳入反思的日记位置 ``(created_at, id)``；该位置及之前的日记都已读过。
+
+        用 ``created_at`` 而不是 ``id`` 判重，是为了不受「补记历史日记」影响：
+        补记出来的时间线行 ``occurred_at`` 在过去、``id`` 却是最新的，
+        按 id 推进的游标会把这类行当成「已经读过的更老的行」永久跳过。
+        同一天多个群的日记共用同一个写入时刻（23:30），所以还要用 ``id`` 定位同刻内的边界。
+        """
+        row = self.cm.execute_read(
+            "SELECT COALESCE(MAX(diary_watermark), 0), COALESCE(MAX(diary_watermark_id), 0) "
+            "FROM bot_belief_reflection_runs WHERE bot_id=? AND status='succeeded'",
+            (str(bot_id or ""),),
+        ).fetchone()
+        if not row:
+            return 0.0, 0
+        return float(row[0] or 0.0), int(row[1] or 0)
 
     def get_run(self, bot_id: str, run_date: str) -> dict[str, Any] | None:
         row = self.cm.execute_read(
@@ -335,10 +354,14 @@ class BotBeliefRepository:
             if finish_run is not None:
                 tx.execute(
                     """UPDATE bot_belief_reflection_runs
-                          SET status='succeeded', diary_cursor=?, diary_ids=?, counts=?, error='', finished_at=?
+                          SET status='succeeded', diary_cursor=?, diary_watermark=?, diary_watermark_id=?,
+                              diary_ids=?, counts=?, error='', finished_at=?
                         WHERE id=? AND bot_id=?""",
                     (
-                        int(finish_run.get("diary_cursor") or 0), _dumps(list(finish_run.get("diary_ids") or [])),
+                        int(finish_run.get("diary_cursor") or 0),
+                        float(finish_run.get("diary_watermark") or 0.0),
+                        int(finish_run.get("diary_watermark_id") or 0),
+                        _dumps(list(finish_run.get("diary_ids") or [])),
                         _dumps(dict(finish_run.get("counts") or {})), stamp, int(finish_run["run_id"]), bot,
                     ),
                 )

@@ -23,7 +23,7 @@ import pytest
 from domain.scope import RuntimeScope, SessionRef
 from engine.database import WaveMemoryDB
 from services.belief_lifecycle import BeliefLifecycleService, BeliefPolicy
-from services.belief_reflection import MAX_NEW_PER_RUN, PROMPT, BeliefReflectionService
+from services.belief_reflection import MAX_DIARIES, MAX_NEW_PER_RUN, PROMPT, BeliefReflectionService
 from services.daily_diary import DailyDiaryService
 
 DAY = 86400.0
@@ -63,19 +63,25 @@ def db(tmp_path):
     database.close()
 
 
-def add_diary(db, *, title: str, content: str, ts: float, group: str = "g1", visibility: str = "group", bot: str = BOT) -> int:
-    """与 wave_memory_record_diary_episode 写入的形态一致：经历片段 + 经历时间线【日记】节点。"""
+def add_diary(db, *, title: str, content: str, ts: float, group: str = "g1", visibility: str = "group", bot: str = BOT,
+              created_at: float | None = None) -> int:
+    """与 wave_memory_record_diary_episode 写入的形态一致：经历片段 + 经历时间线【日记】节点。
+
+    ``ts`` 是日记写的是哪天（``occurred_at``），``created_at`` 是这行**落库**的时刻；
+    补记历史日记时前者在过去、后者是现在，两者要能分开设置。
+    """
     episode = db.conn.execute(
         """INSERT INTO experience_episodes (bot_id, group_id, episode_type, trigger_text, bot_inner_thought, bot_reply, created_at)
            VALUES (?, ?, 'daily_diary', ?, ?, ?, ?)""",
-        (bot, group, title, title, content, ts),
+        (bot, group, title, title, content, created_at if created_at is not None else ts),
     ).lastrowid
     timeline = db.conn.execute(
         """INSERT INTO scoped_soul_timeline (bot_id, session_id, visibility, subject_principal_id, event_summary,
                event_type, emotional_weight, occurred_at, revision, evidence, created_at)
            VALUES (?, ?, ?, NULL, ?, 'episode', 6, ?, 1, ?, ?)""",
         (bot, f"qq:{visibility}:{group}", visibility, f"【日记】{title}：{title}", ts,
-         json.dumps({"episode_id": episode, "title": title}, ensure_ascii=False), ts),
+         json.dumps({"episode_id": episode, "title": title}, ensure_ascii=False),
+         created_at if created_at is not None else ts),
     ).lastrowid
     db.conn.commit()
     return int(timeline)
@@ -287,7 +293,54 @@ def test_retries_stop_after_three_attempts_per_day(db):
     assert "一直失败" in tomorrow.prompts[0], "第二天仍能读到没反思成的日记"
 
 
-def test_disabled_by_default_and_without_llm():
+def test_backfilled_historical_diary_is_still_read(db):
+    """补记历史日记：occurred_at 在过去、created_at 是现在，按 id 推进的游标会永久跳过它。"""
+    add_diary(db, title="今天", content="今天的经历", ts=BASE)
+    run(make_service(db, _LLM()).on_diary_pass(BASE))
+
+    # 补记：日记写的是三天前，但这一行是**现在**才落库的
+    add_diary(db, title="三天前补记", content="补写的历史经历", ts=BASE - 3 * DAY, created_at=BASE + DAY + 60)
+    later = _LLM()
+    assert run(make_service(db, later).on_diary_pass(BASE + DAY + 120))[BOT]["status"] == "succeeded"
+    assert "补写的历史经历" in later.prompts[0], "补记的历史日记必须被读到"
+    assert "今天的经历" not in later.prompts[0], "已读过的日记不重复读"
+
+
+def test_more_diaries_than_the_window_does_not_lose_the_oldest(db):
+    """待读日记超过一次读入上限时，从最旧的一篇读起，不会把最早的那些永久漏掉。"""
+    total = MAX_DIARIES + 5
+    ids = [add_diary(db, title=f"D{i}", content=f"第{i}篇经历", ts=BASE + i) for i in range(total)]
+    llm = _LLM()
+    assert run(make_service(db, llm).on_diary_pass(BASE + total + 10))[BOT]["status"] == "succeeded"
+    assert "第0篇经历" in llm.prompts[0], "最旧的一篇优先读到，而不是被 id DESC 截断丢掉"
+    assert f"第{total - 1}篇经历" not in llm.prompts[0], "一次读不完，后面的下一轮再读"
+
+    rest = _LLM()
+    assert run(make_service(db, rest).on_diary_pass(BASE + total + 10 + DAY))[BOT]["status"] == "succeeded"
+    assert f"第{total - 1}篇经历" in rest.prompts[0] and "第0篇经历" not in rest.prompts[0]
+    assert db.bot_beliefs.diary_watermark(BOT) == (BASE + total - 1, ids[-1])
+
+
+def test_retryable_upstream_error_is_retried_same_day(db):
+    """503 之类的上游抖动当场重试，不消耗「当天机会」，也不丢掉这一天的日记。"""
+    add_diary(db, title="撞 503 的那天", content="今天上游抖动", ts=BASE)
+    flaky = _LLM(RuntimeError("Error code: 503 - upstream unavailable"),
+                 {"new": [new_item("我讲冷笑话群里大多不接，他们更吃玩梗", [1])]})
+    service = make_service(db, flaky)
+    assert run(service.on_diary_pass(BASE))[BOT]["status"] == "succeeded"
+    assert len(flaky.prompts) == 2 and service.stats["retried"] == 1
+    assert db.bot_beliefs.get_run(BOT, "2026-09-20")["attempts"] == 1, "重试不算当天机会用尽"
+
+
+def test_unrecoverable_error_is_not_retried(db):
+    """余额不足 / 鉴权失败重试也没用，不浪费时间。"""
+    add_diary(db, title="余额不足", content="402", ts=BASE)
+    broken = _LLM(RuntimeError("Error code: 402 - insufficient balance"))
+    assert run(make_service(db, broken).on_diary_pass(BASE))[BOT]["status"] == "failed"
+    assert len(broken.prompts) == 1
+
+
+
     fake_db = SimpleNamespace(bot_beliefs=object(), conn=None)
     assert BeliefReflectionService(fake_db, _LLM()).enabled is False
     assert BeliefReflectionService(fake_db, None, enabled=True).enabled is False

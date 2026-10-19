@@ -51,6 +51,7 @@ except ImportError:  # pragma: no cover
 
 try:
     from ..domain.scope import RuntimeScope
+    from .belief_lifecycle import INJECTABLE_STATUSES
     from .concern_followup import _scope_from_row
     from .daily_diary_bridge import find_daily_analysis_db
     from .game_events import GAME_EVENT_SOURCE
@@ -58,6 +59,7 @@ try:
     from .tool_registry import runtime_tool_context
 except ImportError:  # pragma: no cover
     from domain.scope import RuntimeScope
+    from services.belief_lifecycle import INJECTABLE_STATUSES
     from services.concern_followup import _scope_from_row
     from services.daily_diary_bridge import find_daily_analysis_db
     from services.game_events import GAME_EVENT_SOURCE
@@ -69,17 +71,31 @@ PROMPT = """你是{bot_name}。今天是 {date}，一天快结束了，请以第
 【群里今天聊了什么】
 {topics}
 
-【你今天自己说过的一些话】
+【今天自己说过的一些话】
 {own_lines}
 {games}
 【今天记下的人和事】
 {notes}
-
+{concerns}
+{beliefs}
 要求：
 - 写你自己的经历、感受和看法，不是群聊流水账；提到群友用他们的名字。
 - 正文 250 到 600 字。最后另起一行写「Tag: 」加 3 到 8 个标签（话题名、人名），用逗号分隔。
 - 不要编造素材里没有的事；素材很少就写短一点。
+- **对照你已有的看法**：今天有没有哪件事、哪个人的反应跟往常不一样？和往常一样就不必硬写，
+  一旦发现了不同，就把它写出来，写清是哪件事让你这么觉得。
+- 还惦记着的事可以顺笔提一句，但日记不是待办清单：没进展就不用逐条点名。
 只输出一个 JSON 对象：{{"title": "日记标题", "content": "正文（含最后的 Tag 行）", "summary": "一句话概括今天"}}"""
+
+# 关切与已有看法两段的段落外壳；两者都为空时整个不出现，不留空标题。
+_CONCERNS_BLOCK = """
+【你还惦记着、没结果的事】
+{concerns}
+"""
+_BELIEFS_BLOCK = """
+【你已经形成的看法】
+{beliefs}
+"""
 
 
 def _day_start(now: float) -> float:
@@ -365,6 +381,46 @@ class DailyDiaryService:
             logger.debug(f"[WaveMemory] 日记素材读取失败: {exc!r}")
         return "\n".join(lines) or "（没有）"
 
+    def _concerns(self, scope: RuntimeScope) -> str:
+        """这个群里还没了结的关切——她惦记着、值得在日记里提一句的事。
+
+        ``social_anchor``（人情账）不算：它占了线上 125/171，是「谁帮过我」的台账，
+        不是需要惦记的事，而且 ``concern_followup`` 本来就把它排除在跟进之外。
+        """
+        try:
+            rows = self.db.conn.execute(
+                """SELECT topic, expected_resolution_at FROM scoped_soul_concerns
+                    WHERE bot_id=? AND session_id=? AND visibility=?
+                      AND status IN ('active', 'progressing')
+                      AND COALESCE(concern_type, '') != 'social_anchor'
+                    ORDER BY intensity DESC, id DESC LIMIT 6""",
+                (scope.bot_id, scope.session.id, scope.visibility),
+            ).fetchall()
+        except Exception as exc:
+            logger.debug(f"[WaveMemory] 日记关切素材读取失败: {exc!r}")
+            return ""
+        lines = []
+        for topic, due in rows:
+            text = str(topic or "").strip()[:100]
+            if not text:
+                continue
+            lines.append(f"- {text}" + (f"（说好 {due} 有结果）" if due else ""))
+        return "\n".join(lines)
+
+    def _beliefs(self, bot_id: str) -> str:
+        """她自己已经形成的看法——用来对照「今天和往常有什么不同」。"""
+        repo = getattr(self.db, "bot_beliefs", None)
+        if repo is None:
+            return ""
+        try:
+            rows = repo.list_beliefs(bot_id, statuses=sorted(INJECTABLE_STATUSES), limit=12)
+        except Exception as exc:
+            logger.debug(f"[WaveMemory] 日记看法素材读取失败: {exc!r}")
+            return ""
+        return "\n".join(
+            f"- {str(row.get('content') or '').strip()[:80]}" for row in rows if str(row.get("content") or "").strip()
+        )
+
     async def write_one(self, scope: RuntimeScope, *, start: float, end: float, now: float) -> bool:
         own, anchor_id = self._own_lines(scope, start, end)
         games = self._game_lines(scope, start, end)
@@ -373,11 +429,16 @@ class DailyDiaryService:
         bot_name = self.bot_name_for(scope.bot_id) or scope.bot_id
         date = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
         group_id = scope.session.conversation_id
+        topics_text = self._topics(group_id, date)
+        concerns = self._concerns(scope)
+        beliefs = self._beliefs(scope.bot_id)
         prompt = PROMPT.format(
             bot_name=bot_name, date=date, group_name=self.group_name_for(scope.bot_id, group_id) or group_id,
-            topics=self._topics(group_id, date), own_lines=own or "（今天没怎么说话）",
+            topics=topics_text, own_lines=own or "（今天没怎么说话）",
             games=f"\n【你今天在游戏里的经历】\n{games}\n" if games else "",
             notes=self._notes(scope, start, end),
+            concerns=_CONCERNS_BLOCK.format(concerns=concerns) if concerns else "",
+            beliefs=_BELIEFS_BLOCK.format(beliefs=beliefs) if beliefs else "",
         )
         # 模型分工：路由客户端按这个 Bot 的模型覆盖选链（Bot Profile 的 model / models.diary）
         for_bot = getattr(self.llm, "for_bot", None)
