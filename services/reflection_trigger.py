@@ -51,6 +51,75 @@ SKIP_REASONS = frozenset({
 _MIN_MESSAGE_CHARS = 4
 _DEFAULT_CANDIDATE_LIMIT = 25
 
+# 每源保底名额：采集顺序靠前的源一旦候选够多，就会用 candidates[:max_candidates]
+# 把后面所有源截掉。线上实测关切有 13 条候选而 max_candidates=6，于是群经历
+# (episode) 候选连一条都进不了提示词——note_episode 二十天只产出 2 条正是这里。
+# 保底名额保证高价值但排序靠后的源不被人情账类关切饿死。
+_DEFAULT_SOURCE_QUOTA: dict[str, int] = {
+    "unsettled": 1,
+    "episode": 1,
+    "concern": 2,
+    "fact": 1,
+    "jargon": 1,
+}
+
+# 群公共经历没有单一持有者（线上 45/47 条 user_id 为 NULL），因此 episode 只按
+# 群过滤、不按说话人过滤；排序时同一时间戳优先带 user_id 的个人相关事件。
+_EPISODE_FETCH_LIMIT = 8
+
+# 人情账不算「需要惦记的事」：线上 social_anchor 占了活跃关切的绝大多数，
+# 与 concern_followup / daily_diary 的口径保持一致。
+_SOCIAL_ANCHOR_TYPE = "social_anchor"
+
+
+def _order_episodes(episodes: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """群经历排序：新的优先；同一时间戳优先带 user_id 的个人相关事件。"""
+    ordered = sorted(
+        episodes,
+        key=lambda item: (
+            -float(item.get("created_at") or 0.0),
+            0 if item.get("user_id") else 1,
+        ),
+    )
+    return ordered[: max(0, int(limit))]
+
+
+def _quota_select(
+    candidates: list[tuple[str, str]],
+    *,
+    limit: int,
+    quotas: dict[str, int],
+) -> list[tuple[str, str]]:
+    """按每源保底名额挑选候选，再按原顺序补足剩余名额。
+
+    第一轮保证每个有保底名额的源都拿到 ``min(保底, 该源候选数)`` 条；第二轮才
+    允许前面的源把剩余名额吃完。既保留原有优先级顺序，又不会让靠后的源饿死。
+    """
+    limit = max(0, int(limit))
+    if limit == 0 or not candidates:
+        return []
+    by_source: dict[str, list[int]] = {}
+    for index, item in enumerate(candidates):
+        by_source.setdefault(item[0], []).append(index)
+
+    selected: set[int] = set()
+    for source, quota in quotas.items():
+        if len(selected) >= limit:
+            break
+        for index in by_source.get(source, [])[: max(0, int(quota))]:
+            if len(selected) >= limit:
+                break
+            selected.add(index)
+
+    if len(selected) < limit:
+        for index in range(len(candidates)):
+            if len(selected) >= limit:
+                break
+            selected.add(index)
+
+    # 最终顺序仍按原候选顺序输出，避免保底名额打乱既有优先级。
+    return [candidates[index] for index in sorted(selected)]
+
 
 @dataclass
 class ReflectionOutcome:
@@ -87,11 +156,20 @@ class ReflectionOutcome:
 class ReflectionTriggerService:
     """为当前群聊请求生成有证据的认知资产提审提示。"""
 
-    def __init__(self, db: Any, *, cooldown_seconds: float = 180.0, max_candidates: int = 6, max_chars: int = 1500):
+    def __init__(
+        self,
+        db: Any,
+        *,
+        cooldown_seconds: float = 180.0,
+        max_candidates: int = 6,
+        max_chars: int = 1500,
+        source_quotas: dict[str, int] | None = None,
+    ):
         self.db = db
         self.cooldown_seconds = float(cooldown_seconds)
         self.max_candidates = max(1, int(max_candidates))
         self.max_chars = max(240, int(max_chars))
+        self.source_quotas = dict(source_quotas or _DEFAULT_SOURCE_QUOTA)
         self._last: dict[str, float] = {}
         # 触发 / 各跳过原因的累计次数，供 /api/health 与排查（是否提醒了、为什么没提醒）
         self.stats: dict[str, int] = {}
@@ -126,6 +204,11 @@ class ReflectionTriggerService:
         return outcome
 
     # ---- internals -------------------------------------------------------
+
+    def _select(self, candidates: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        """按每源保底名额选出进入提示词的候选。"""
+        quotas = getattr(self, "source_quotas", None) or _DEFAULT_SOURCE_QUOTA
+        return _quota_select(candidates, limit=self.max_candidates, quotas=dict(quotas))
 
     def _evaluate(self, *, scope: Any, message: str, sender_id: str, outcome: ReflectionOutcome) -> None:
         if not isinstance(scope, RuntimeScope) or scope.visibility != "group" or scope.session is None:
@@ -176,7 +259,7 @@ class ReflectionTriggerService:
         # 模型只看到候选却不知道该调哪个工具。
         used = len(header) + len(footer) + 1
         emitted = 0
-        for source, item in candidates[: self.max_candidates]:
+        for source, item in self._select(candidates):
             line = f"- {item}"
             if used + len(line) + 1 > self.max_chars:
                 outcome.budget_truncated = True
@@ -269,6 +352,10 @@ class ReflectionTriggerService:
                 for item in items:
                     if str(item.get("status") or "active") not in {"active", "progressing", "dormant"}:
                         continue
+                    # 人情账不进候选：它数量压制性地大（线上 131/171），会挤掉真正
+                    # 需要惦记的事；concern_followup 与 daily_diary 同样排除它。
+                    if str(item.get("concern_type") or "") == _SOCIAL_ANCHOR_TYPE:
+                        continue
                     topic = str(item.get("topic") or "").strip()
                     if topic:
                         accept("concern", f"关切 concern:{item.get('id')} [{item.get('status') or 'active'}]: {topic[:80]}")
@@ -276,15 +363,17 @@ class ReflectionTriggerService:
             outcome.record_failure("concern", exc)
 
         try:
+            # 只按群过滤，不按 sender_id：群共同经历本就属于群体，线上 45/47 条
+            # 的 user_id 是 NULL，带上说话人过滤会几乎全部落空。查窗口内的一批
+            # 再本地排序，避免同秒写入把个人相关事件挤在窗口外。
             episodes = fetch_recent_episodes(
                 conn,
                 bot_id=scope.bot_id,
                 group_id=scene_key(scope),
-                user_id=str(sender_id or "") or None,
-                limit=2,
+                limit=_EPISODE_FETCH_LIMIT,
                 since=now - 14 * 86400,
             )
-            for item in episodes:
+            for item in _order_episodes(episodes, 2):
                 summary = "；".join(
                     str(item.get(key) or "").strip()
                     for key in ("trigger_text", "outcome")

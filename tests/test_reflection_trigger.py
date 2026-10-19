@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from types import SimpleNamespace
 
 from domain.scope import RuntimeScope, SessionRef
@@ -13,6 +14,8 @@ from services.reflection_trigger import (
     SKIP_TOO_SHORT,
     STRATEGY_VERSION,
     ReflectionTriggerService,
+    _order_episodes,
+    _quota_select,
 )
 
 
@@ -28,13 +31,21 @@ class _FakeConn:
     以便 SQL 写错列名时测试能直接失败。
     """
 
-    def __init__(self, fail_person_unsettled: bool = False, traces: str | None = None) -> None:
+    def __init__(
+        self,
+        fail_person_unsettled: bool = False,
+        traces: str | None = None,
+        episodes: list[tuple] | None = None,
+    ) -> None:
         self.fail_person_unsettled = fail_person_unsettled
         self.traces = traces if traces is not None else json.dumps(
             [{"text": "他看起来很累", "summary": "他看起来很累", "impact": 1.0, "ts": 1.0}]
         )
+        self.episodes = episodes if episodes is not None else []
+        self.sql: list[str] = []
 
     def execute(self, sql, params=()):
+        self.sql.append(sql)
         if "person_unsettled_state" in sql:
             if self.fail_person_unsettled:
                 raise RuntimeError("db down")
@@ -43,8 +54,20 @@ class _FakeConn:
                 raise RuntimeError("no such column: text")
             return SimpleNamespace(fetchall=lambda: [(self.traces,)])
         if "experience_episodes" in sql:
-            return SimpleNamespace(fetchall=lambda: [])
+            # 真实列序见 services/experience_episodes._row_to_dict。
+            return SimpleNamespace(fetchall=lambda: list(self.episodes))
         return SimpleNamespace(fetchall=lambda: [])
+
+
+def _episode_row(
+    *, ep_id: int, created_at: float, user_id: str | None, trigger_text: str,
+    episode_type: str = "shared_event", outcome: str = "",
+) -> tuple:
+    """按 experience_episodes 的真实列序构造一行。"""
+    return (
+        ep_id, "bot-a", "1", user_id, episode_type, trigger_text,
+        "", "", "", "", outcome, "[]", 0.0, created_at,
+    )
 
 
 class _FakeKnowledge:
@@ -308,3 +331,81 @@ def test_persona_prompt_only_references_real_tools():
     assert referenced, "提示词应引用工具名"
     missing = sorted(name for name in referenced if name not in declared)
     assert missing == [], f"提示词引用了不存在的工具: {missing}"
+
+
+# ---- 回归：候选名额不得被单一源吃光（note_episode 低产根因）----------------
+
+
+def test_quota_select_reserves_slots_for_later_sources():
+    """关切够多时，episode 仍必须拿到保底名额。
+
+    线上主群关切有 13 条候选、max_candidates=6，原先 candidates[:6] 把
+    群经历候选整段截掉，note_episode 因此二十天只产出 2 条。
+    """
+    candidates = [("concern", f"关切 concern:{i}") for i in range(13)] + [("episode", "群经历 episode:9")]
+    picked = _quota_select(candidates, limit=6, quotas={"unsettled": 1, "episode": 1, "concern": 2, "fact": 1, "jargon": 1})
+    assert len(picked) == 6
+    sources = [source for source, _ in picked]
+    assert sources.count("episode") == 1, sources
+    assert sources.count("concern") == 5, sources  # 剩余名额仍按原顺序补给关切
+
+
+def test_quota_select_fills_remaining_slots_in_original_order():
+    """保底名额用不完时，剩余额度按原顺序补；输出顺序仍是原候选顺序。"""
+    candidates = [("fact", "事实 fact:1"), ("jargon", "黑话 jargon:2"), ("concern", "关切 concern:3")]
+    picked = _quota_select(candidates, limit=3, quotas={"concern": 2, "fact": 1})
+    assert picked == [("fact", "事实 fact:1"), ("jargon", "黑话 jargon:2"), ("concern", "关切 concern:3")]
+
+
+def test_quota_select_handles_empty_and_zero_limit():
+    assert _quota_select([], limit=6, quotas={}) == []
+    assert _quota_select([("fact", "x")], limit=0, quotas={}) == []
+
+
+def test_order_episodes_prefers_newest_then_personal():
+    """群经历按时间倒序；同一时间戳优先带 user_id 的个人相关事件。"""
+    episodes = [
+        {"id": 1, "created_at": 100.0, "user_id": None},
+        {"id": 2, "created_at": 200.0, "user_id": None},
+        {"id": 3, "created_at": 200.0, "user_id": "u1"},
+    ]
+    ordered = _order_episodes(episodes, 2)
+    assert [item["id"] for item in ordered] == [3, 2]
+
+
+def test_episode_candidate_reaches_prompt_despite_many_concerns():
+    """端到端：13 条关切挤名额时，群经历仍出现在提示词里。"""
+    conn = _FakeConn(episodes=[_episode_row(ep_id=9, created_at=time.time() - 60, user_id=None, trigger_text="群里一起给老吴过生日")])
+    concerns = [{"id": i, "topic": f"待办{i}", "status": "active", "concern_type": "follow_up"} for i in range(13)]
+    db = _db(conn=conn, soul_repository=SimpleNamespace(get_state=lambda scope, limit=25, offset=0: {"concerns": {"items": concerns}}))
+    service = ReflectionTriggerService(db, cooldown_seconds=0)
+    outcome = service.collect(scope=group_scope(), message="小明还在考研吗", sender_id="u1")
+    assert outcome.candidate_counts["concern"] == 13
+    assert outcome.candidate_counts["episode"] == 1
+    assert "群经历 episode:9" in outcome.prompt
+
+
+def test_episode_query_does_not_filter_by_sender():
+    """群公共经历没有单一持有者：WHERE 不得带 user_id 条件，否则 45/47 条全落空。"""
+    conn = _FakeConn(episodes=[_episode_row(ep_id=9, created_at=time.time() - 60, user_id=None, trigger_text="群里的公共事件")])
+    service = ReflectionTriggerService(_db(conn=conn), cooldown_seconds=0)
+    outcome = service.collect(scope=group_scope(), message="小明还在考研吗", sender_id="u1")
+    episode_sql = [sql for sql in conn.sql if "experience_episodes" in sql]
+    assert episode_sql
+    where = episode_sql[0].split("WHERE", 1)[1]
+    assert "user_id" not in where, where
+    assert outcome.candidate_counts["episode"] == 1
+
+
+def test_social_anchor_concerns_are_excluded_from_candidates():
+    """人情账占线上多数关切，不该挤进反思候选（与 concern_followup/日记同口径）。"""
+    concerns = [
+        {"id": 1, "topic": "老吴名片赞回赠平账", "status": "active", "concern_type": "social_anchor"},
+        {"id": 2, "topic": "给无漏拉赞回赠平账", "status": "progressing", "concern_type": "social_anchor"},
+        {"id": 3, "topic": "答应他下周讲浓度梯度", "status": "active", "concern_type": "follow_up"},
+    ]
+    db = _db(soul_repository=SimpleNamespace(get_state=lambda scope, limit=25, offset=0: {"concerns": {"items": concerns}}))
+    outcome = ReflectionTriggerService(db, cooldown_seconds=0).collect(scope=group_scope(), message="小明还在考研吗", sender_id="u1")
+    assert outcome.candidate_counts["concern"] == 1
+    assert "浓度梯度" in outcome.prompt
+    assert "名片赞" not in outcome.prompt
