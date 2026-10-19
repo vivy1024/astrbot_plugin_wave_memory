@@ -500,6 +500,77 @@ def test_daily_diary_uses_game_events_as_separate_material():
     assert "立下目标：挖到钻石" in games and "今天第 1 次死亡" in games
 
 
+def test_daily_diary_prompt_carries_concerns_and_beliefs():
+    """关切与已有看法要进日记素材：日记才有可能写出「今天和往常的不同」。"""
+    db = _memory_db([("u1", "小明", "今天好热"), ("bot", "羽书", "我也觉得，想吃冰淇淋")])
+    db.conn.execute(
+        """CREATE TABLE scoped_soul_timeline (bot_id TEXT, session_id TEXT, visibility TEXT, event_summary TEXT,
+           occurred_at REAL)"""
+    )
+    db.conn.execute(
+        "CREATE TABLE person_timeline_events (bot_id TEXT, group_id TEXT, kind TEXT, summary TEXT, created_at REAL)"
+    )
+    db.conn.execute("ALTER TABLE scoped_soul_concerns ADD COLUMN concern_type TEXT DEFAULT ''")
+    db.conn.execute("ALTER TABLE scoped_soul_concerns ADD COLUMN expected_resolution_at REAL")
+    for topic, ctype, due in (
+        ("老吴答应画的图还没交", "follow_up", None),
+        ("帮小明带过一次饭（人情账，不该当日记素材）", "social_anchor", None),
+    ):
+        db.conn.execute(
+            "INSERT INTO scoped_soul_concerns (bot_id, session_id, visibility, topic, intensity, status,"
+            " concern_type, expected_resolution_at) VALUES ('yushu','qq:group:g1','group',?,0.6,'active',?,?)",
+            (topic, ctype, due),
+        )
+
+    class _Beliefs:
+        def list_beliefs(self, bot_id, *, statuses=None, limit=500):
+            assert bot_id == "yushu"
+            rows = [
+                {"content": "群里聊技术时更愿意接话", "status": "stable"},
+                {"content": "深夜的玩笑大多没人接", "status": "formed"},
+                {"content": "已经淡出的看法不该出现", "status": "faded"},
+                {"content": "已回答过的敏感话题要收着说", "status": "vetoed"},
+                {"content": "还在萌芽的看法不该出现", "status": "sprout"},
+            ]
+            # 与真实仓储同语义：不传 statuses 就是全部，传了就按状态过滤
+            if statuses is None:
+                return rows
+            wanted = {str(s) for s in statuses}
+            return [row for row in rows if row["status"] in wanted]
+
+    db.bot_beliefs = _Beliefs()
+    content = "今天群里好热闹，" * 10 + "\nTag: 天气, 小明"
+    llm = _LLM({"title": "热天", "content": content, "summary": "和小明聊天气"})
+    diary = DailyDiaryService(db, _Registry(), llm, None, hour=0)
+    assert asyncio.run(diary.write_due(now=time.time())) == 1
+    prompt = llm.prompts[0]
+    assert "【你还惦记着、没结果的事】" in prompt and "老吴答应画的图还没交" in prompt
+    assert "人情账，不该当日记素材" not in prompt, "social_anchor 是台账，不是要惦记的事"
+    assert "【你已经形成的看法】" in prompt
+    assert "群里聊技术时更愿意接话" in prompt and "深夜的玩笑大多没人接" in prompt
+    assert "已经淡出的看法不该出现" not in prompt and "还在萌芽的看法不该出现" not in prompt
+    assert "已回答过的敏感话题要收着说" not in prompt
+    assert "今天和往常" not in prompt  # 提示词本身用「跟往常不一样」的措辞，别写成待办式追问
+
+
+def test_daily_diary_prompt_omits_empty_concern_and_belief_blocks():
+    """既没有关切也没有看法时，两段整块不出现，不留空标题。"""
+    db = _memory_db([("u1", "小明", "今天好热"), ("bot", "羽书", "我也觉得")])
+    db.conn.execute(
+        """CREATE TABLE scoped_soul_timeline (bot_id TEXT, session_id TEXT, visibility TEXT, event_summary TEXT,
+           occurred_at REAL)"""
+    )
+    db.conn.execute(
+        "CREATE TABLE person_timeline_events (bot_id TEXT, group_id TEXT, kind TEXT, summary TEXT, created_at REAL)"
+    )
+    content = "今天群里好热闹，" * 10 + "\nTag: 天气"
+    llm = _LLM({"title": "热天", "content": content, "summary": "聊天气"})
+    diary = DailyDiaryService(db, _Registry(), llm, None, hour=0)
+    assert asyncio.run(diary.write_due(now=time.time())) == 1
+    prompt = llm.prompts[0]
+    assert "【你还惦记着、没结果的事】" not in prompt and "【你已经形成的看法】" not in prompt
+
+
 def test_daily_diary_written_from_game_events_alone():
     """这一天只打了游戏、没说话：直播间会话照样被挑中，日记只用游戏经历。"""
     db = _diary_db_with_live_rows([("bot", "羽书", "[我的世界] 从主世界进入了下界", "game_event", "discovery", 0)])
