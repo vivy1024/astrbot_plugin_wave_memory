@@ -130,6 +130,106 @@ class BotBinding:
         return binding
 
 
+PREFERENCE_CONTEXTS = ("all", "group", "private")
+
+
+def _preference_strength(value: Any) -> int:
+    parsed = _int(value, 3, minimum=1)
+    return max(1, min(5, parsed))
+
+
+def _preference_context(value: Any) -> str:
+    text = _text(value).lower()
+    return text if text in PREFERENCE_CONTEXTS else "all"
+
+
+@dataclass
+class PreferenceItem:
+    """一条稳定的喜恶：她喜欢或不喜欢什么，以及什么场合适用。"""
+
+    text: str = ""
+    tags: list[str] = field(default_factory=list)
+    strength: int = 3
+    context: str = "all"
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "PreferenceItem":
+        if isinstance(data, str):
+            data = {"text": data}
+        data = data if isinstance(data, dict) else {}
+        return cls(
+            text=_text(data.get("text") or data.get("topic") or data.get("name")),
+            tags=_text_list(data.get("tags")),
+            strength=_preference_strength(data.get("strength")),
+            context=_preference_context(data.get("context")),
+        )
+
+
+@dataclass
+class ReactionExample:
+    """一个情景里她通常会怎么反应；用于让模型抓住「她的脾气」，不是台词模板。"""
+
+    situation: str = ""
+    reaction: str = ""
+    tags: list[str] = field(default_factory=list)
+    strength: int = 3
+    context: str = "all"
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "ReactionExample":
+        data = data if isinstance(data, dict) else {}
+        return cls(
+            situation=_text(data.get("situation")),
+            reaction=_text(data.get("reaction")),
+            tags=_text_list(data.get("tags")),
+            strength=_preference_strength(data.get("strength")),
+            context=_preference_context(data.get("context")),
+        )
+
+
+def _preference_items(value: Any) -> list[PreferenceItem]:
+    items = value if isinstance(value, (list, tuple)) else [value] if value else []
+    out: list[PreferenceItem] = []
+    seen: set[str] = set()
+    for raw in items:
+        item = PreferenceItem.from_dict(raw)
+        if not item.text or item.text in seen:
+            continue
+        seen.add(item.text)
+        out.append(item)
+    return out
+
+
+@dataclass
+class PreferenceSettings:
+    """Bot 自己的喜恶预设；跨群、跨平台稳定。群里的说话风格另走风格样例。"""
+
+    likes: list[PreferenceItem] = field(default_factory=list)
+    dislikes: list[PreferenceItem] = field(default_factory=list)
+    reaction_examples: list[ReactionExample] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "PreferenceSettings":
+        data = data if isinstance(data, dict) else {}
+        examples: list[ReactionExample] = []
+        seen: set[tuple[str, str]] = set()
+        for raw in data.get("reaction_examples") or ():
+            item = ReactionExample.from_dict(raw)
+            key = (item.situation, item.reaction)
+            if not item.situation or not item.reaction or key in seen:
+                continue
+            seen.add(key)
+            examples.append(item)
+        return cls(
+            likes=_preference_items(data.get("likes")),
+            dislikes=_preference_items(data.get("dislikes")),
+            reaction_examples=examples,
+        )
+
+    def is_empty(self) -> bool:
+        return not (self.likes or self.dislikes or self.reaction_examples)
+
+
 @dataclass
 class PersonaSettings:
     """人设里原本写死在代码中的部分。"""
@@ -153,10 +253,14 @@ class PersonaSettings:
     reflection_prefixes: list[str] = field(default_factory=list)
     # 书设语料：空=用部署默认语料；none=这个 Bot 不用书设；其他=语料 id（须与部署加载的一致）。
     lore_corpus: str = ""
+    # 喜恶预设：跨群稳定的喜欢/不喜欢/典型反应。None=还没有配置过（迁移可补默认值）；
+    # 空对象=用户明确清空，迁移不再回填。
+    preferences: PreferenceSettings | None = None
 
     @classmethod
     def from_dict(cls, data: Any) -> "PersonaSettings":
         data = data if isinstance(data, dict) else {}
+        raw_preferences = data.get("preferences")
         return cls(
             self_terms=_text_list(data.get("self_terms")),
             identity_guard_enabled=_bool(data.get("identity_guard_enabled"), True),
@@ -167,6 +271,7 @@ class PersonaSettings:
             experience_source=_text(data.get("experience_source")),
             reflection_prefixes=_text_list(data.get("reflection_prefixes")),
             lore_corpus=_text(data.get("lore_corpus")),
+            preferences=None if raw_preferences is None else PreferenceSettings.from_dict(raw_preferences),
         )
 
 
@@ -348,7 +453,11 @@ __all__ = [
     "BotProfile",
     "BotProfileError",
     "LORE_CORPUS_DISABLED",
+    "PREFERENCE_CONTEXTS",
     "PersonaSettings",
+    "PreferenceItem",
+    "PreferenceSettings",
+    "ReactionExample",
     "bot_catalog_scope",
     "profile_from_legacy_config",
     "validate_db_id",

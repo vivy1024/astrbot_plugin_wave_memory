@@ -111,8 +111,10 @@ describe('知识、人物与诊断页面关键约束', () => {
   })
 
   it('FewShot 未选择真实 Bot 时不请求跨 Bot 列表', async () => {
+    const user = userEvent.setup()
     render(<MemoryRouter><FewShotPage /></MemoryRouter>)
 
+    await user.click(screen.getByRole('tab', { name: '风格样例' }))
     expect(await screen.findByText(/请先选择 Bot 和群聊/)).toBeVisible()
     expect(mocks.getApprovedFewShot).not.toHaveBeenCalled()
   })
@@ -232,8 +234,10 @@ describe('知识、人物与诊断页面关键约束', () => {
       items: [{ id: 9, bot_id: 'bot-real', content: '移动端必须完整可读的范例正文，不依赖横向滚动或截断。', score: 0.9, traits: ['自然', '克制'], created_at: 1, approved_at: 1 }],
       page,
     })
+    const user = userEvent.setup()
 
     const view = render(<MemoryRouter initialEntries={['/few-shot?bot_id=bot-real&session_id=qq%3Agroup%3A42']}><FewShotPage /></MemoryRouter>)
+    await user.click(screen.getByRole('tab', { name: '风格样例' }))
     expect(await screen.findByText('移动端必须完整可读的范例正文，不依赖横向滚动或截断。')).toBeVisible()
     await waitFor(() => expect(view.container.querySelector('[data-responsive-table="cards"]')).toBeInTheDocument())
     expect(view.container.querySelector('[data-responsive-table="cards"] table')).not.toBeInTheDocument()

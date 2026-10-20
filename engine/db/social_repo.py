@@ -64,20 +64,7 @@ class SocialRepo:
                 FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
             );
 
-            CREATE TABLE IF NOT EXISTS expression_patterns (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                group_id TEXT,
-                situation TEXT NOT NULL,
-                expression TEXT NOT NULL,
-                tag_ids TEXT,
-                weight REAL DEFAULT 1.0,
-                use_count INTEGER DEFAULT 0,
-                last_used REAL,
-                created_at REAL
-            );
-
             CREATE INDEX IF NOT EXISTS idx_user_profiles_user ON user_profiles(user_id);
-            CREATE INDEX IF NOT EXISTS idx_expression_patterns_group ON expression_patterns(group_id);
         """)
         self.cm.commit()
         # 迁移：旧表可能没有 bot_id 列

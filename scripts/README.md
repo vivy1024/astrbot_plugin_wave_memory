@@ -23,6 +23,8 @@
 | `rebuild_hot_memory_hnsw.py` | 只用活跃候选重建有界的热记忆向量索引 |
 | `repair_sqlite_runtime.py` | 离线修复 / 重新打包 SQLite 数据库 |
 | `backfill_person_timeline_evidence.py` | 回填印象时间线缺失的原话证据（支持 `--dry-run`，写库前自动备份） |
+| `backfill_fact_evidence.py` | 给缺来源记忆的事实回挂可核原话；默认只读预演，`--apply --yes` 才写，事务内复核并生成逐行撤销 SQL |
+| `backfill_jargon_tag_chain.py` | 给已确认但缺标签链的黑话补 `source_tags`；默认只读，`--apply --yes` 才写，同样带复核与撤销 SQL |
 | `sqlite_runtime_guard.py` | 写库脚本的运行前检查（被其他脚本引用，不要删） |
 
 ## 诊断与评测（只读）
@@ -34,6 +36,7 @@
 | `export_runtime_data.py` | 导出运行时数据副本，供备份与恢复检查 |
 | `retrieval_eval.py` | 检索质量评测：抽真实查询、模型评审相关度、算 nDCG / P@k / MRR；`run --mode shotgun` 评测线上注入用的检索 |
 | `compare_cooccurrence_kernels.py` | 离线对比共现传播核（同一批查询、两种核的种子命中与涌现） |
+| `expr_corpus_audit.py` | 只读审计表达候选在群语料里的真实出现次数与说话人数（`mode=ro` + `query_only=ON`） |
 
 ## 约定
 

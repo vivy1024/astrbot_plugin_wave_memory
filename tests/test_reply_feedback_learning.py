@@ -261,6 +261,69 @@ def test_review_revision_idempotency_evidence_and_revocation(conn):
     assert conn.execute("SELECT COUNT(*) FROM reply_expression_reviews").fetchone()[0] == 2
 
 
+def test_auto_review_approves_only_qualified_expressions(conn):
+    fb, policy = services(conn)
+    observe(fb)
+    # 第二个人说同一句：speaker_count 达到 2，候选达标。
+    add_message(conn, 4, "还是慢慢来，一步一步走吧", speaker="visitor-b")
+    observe(
+        fb,
+        {"expressions": [{
+            "source_memory_id": 4, "speaker_id": "visitor-b",
+            "content": "慢慢来，一步一步走", "situation": "encourage", "approved": True,
+        }]},
+        ids=(4,),
+    )
+    # 只被一个人说过一次的表达保持待审。
+    add_message(conn, 5, "再试一次看看", speaker="visitor-b")
+    observe(
+        fb,
+        {"expressions": [{
+            "source_memory_id": 5, "speaker_id": "visitor-b",
+            "content": "再试一次看看", "situation": "encourage", "approved": True,
+        }]},
+        ids=(5,),
+    )
+
+    stats = policy.auto_review_qualified_all()
+
+    assert stats["scopes"] == 1
+    assert stats["approved"] == 1
+    assert stats["skipped"] == 0
+    rows = conn.execute(
+        "SELECT content, status, reviewer FROM reply_expression_candidates ORDER BY id"
+    ).fetchall()
+    assert rows == [
+        ("慢慢来，一步一步走", "approved", "auto_review"),
+        ("再试一次看看", "pending", ""),
+    ]
+    assert conn.execute("SELECT COUNT(*) FROM reply_expression_reviews").fetchone()[0] == 1
+
+
+def test_auto_review_skips_candidates_whose_source_is_gone(conn):
+    fb, policy = services(conn)
+    observe(fb)
+    add_message(conn, 4, "还是慢慢来，一步一步走吧", speaker="visitor-b")
+    observe(
+        fb,
+        {"expressions": [{
+            "source_memory_id": 4, "speaker_id": "visitor-b",
+            "content": "慢慢来，一步一步走", "situation": "encourage", "approved": True,
+        }]},
+        ids=(4,),
+    )
+    conn.execute("UPDATE memories SET quarantine=1 WHERE id=1")
+    conn.commit()
+
+    stats = policy.auto_review_qualified_all()
+
+    assert stats["approved"] == 0
+    assert stats["skipped"] == 1
+    assert conn.execute(
+        "SELECT status FROM reply_expression_candidates ORDER BY id"
+    ).fetchone()[0] == "pending"
+
+
 @pytest.mark.parametrize("sql", [
     "UPDATE memories SET content='内容已更正' WHERE id=1",
     "UPDATE memories SET quarantine=1 WHERE id=1",

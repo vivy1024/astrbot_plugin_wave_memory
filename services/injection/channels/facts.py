@@ -371,23 +371,47 @@ class FactsChannel:
                 item["filter_channel"] = "facts"
                 filtered.append(item)
             return selected, filtered
-        used_tokens = 0
+
+        # 按主语轮转取事实：同一群的高置信事实常常全指向同一个人，纯按分数截断
+        # 会让 <known_facts> 变成一个人的档案。先每个主语各取一条，再取第二条……
+        # 没有多个主语时顺序与原来完全一致；多出来的事实仍按原分数次序填充。
+        buckets: dict[str, list[dict[str, Any]]] = {}
+        subject_order: list[str] = []
         for fact in facts:
-            if len(selected) >= max_items:
-                item = dict(fact)
-                item["filter_reason"] = "max_items"
-                item["filter_channel"] = "facts"
-                filtered.append(item)
-                continue
-            line_tokens = estimate_injection_tokens(_fact_line(fact))
-            if selected and token_budget >= 0 and used_tokens + line_tokens > token_budget:
-                item = dict(fact)
-                item["filter_reason"] = "token_budget"
-                item["filter_channel"] = "facts"
-                filtered.append(item)
-                continue
-            selected.append(fact)
-            used_tokens += line_tokens
+            subject = str(fact.get("subject") or "").strip()
+            if subject not in buckets:
+                buckets[subject] = []
+                subject_order.append(subject)
+            buckets[subject].append(fact)
+
+        used_tokens = 0
+        cursor = 0
+        while True:
+            progressed = False
+            for subject in subject_order:
+                bucket = buckets[subject]
+                if cursor >= len(bucket):
+                    continue
+                progressed = True
+                fact = bucket[cursor]
+                if len(selected) >= max_items:
+                    item = dict(fact)
+                    item["filter_reason"] = "max_items"
+                    item["filter_channel"] = "facts"
+                    filtered.append(item)
+                    continue
+                line_tokens = estimate_injection_tokens(_fact_line(fact))
+                if selected and token_budget >= 0 and used_tokens + line_tokens > token_budget:
+                    item = dict(fact)
+                    item["filter_reason"] = "token_budget"
+                    item["filter_channel"] = "facts"
+                    filtered.append(item)
+                    continue
+                selected.append(fact)
+                used_tokens += line_tokens
+            if not progressed:
+                break
+            cursor += 1
         return selected, filtered
 
     @staticmethod

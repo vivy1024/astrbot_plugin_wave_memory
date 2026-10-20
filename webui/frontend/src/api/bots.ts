@@ -11,6 +11,31 @@ export interface BotBindingDto {
   room?: string
 }
 
+export type PreferenceContext = 'all' | 'group' | 'private'
+
+export interface PreferenceItemDto {
+  text: string
+  tags: string[]
+  /** 1–5，越大越容易在相关话题里被想起 */
+  strength: number
+  context: PreferenceContext
+}
+
+export interface ReactionExampleDto {
+  situation: string
+  reaction: string
+  tags: string[]
+  strength: number
+  context: PreferenceContext
+}
+
+/** Bot 自己的喜恶预设（跨群稳定）；缺字段=还没配置过，空对象=明确清空 */
+export interface PreferenceSettingsDto {
+  likes: PreferenceItemDto[]
+  dislikes: PreferenceItemDto[]
+  reaction_examples: ReactionExampleDto[]
+}
+
 export interface PersonaDto {
   self_terms: string[]
   identity_guard_enabled: boolean
@@ -22,6 +47,12 @@ export interface PersonaDto {
   reflection_prefixes: string[]
   /** 空=部署默认书设；none=不用书设；其他=语料 id */
   lore_corpus?: string
+  /** 旧后端没有这一段；编辑器按 emptyPreferences() 补齐 */
+  preferences?: PreferenceSettingsDto | null
+}
+
+export function emptyPreferences(): PreferenceSettingsDto {
+  return { likes: [], dislikes: [], reaction_examples: [] }
 }
 
 /** 心情画像（Bot Profile 的 mood 段；见 domain/mood_policy.py） */
@@ -221,6 +252,7 @@ export function emptyBot(dbId = ''): BotProfileDto {
       experience_source: '',
       reflection_prefixes: [],
       lore_corpus: '',
+      preferences: emptyPreferences(),
     },
     mood: emptyMood(),
     character_experience: emptyCharacterExperience(),

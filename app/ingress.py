@@ -517,6 +517,9 @@ class IngressMixin:
         """在发送消息前提取 <<impression:...>> 标记并更新画像，彻底从消息链中剥离标记。"""
         result = event.get_result()
         if not result or not result.chain:
+            settle = getattr(self, "_settle_concern_claim", None)
+            if callable(settle):
+                settle(event, spoke=False)
             return
 
         import re as _re
@@ -534,6 +537,9 @@ class IngressMixin:
                 chosen_silence_text = True
         if hold_peace or chosen_silence_text:
             result.chain.clear()
+            settle = getattr(self, "_settle_concern_claim", None)
+            if callable(settle):
+                settle(event, spoke=False)
             followup = getattr(self, "concern_followup", None)
             if followup is not None:
                 followup._count("chose_silence_tool" if hold_peace else "chose_silence_text")
@@ -600,6 +606,14 @@ class IngressMixin:
                             self.db.conn.commit()
             except Exception as _e:
                 logger.debug(f"[WaveMemory] impression update in on_decorating_result failed: {_e}")
+
+        visible = any(
+            (isinstance(comp, Plain) and (comp.text or "").strip()) or not isinstance(comp, Plain)
+            for comp in result.chain
+        )
+        settle = getattr(self, "_settle_concern_claim", None)
+        if callable(settle):
+            settle(event, spoke=visible)
 
     async def _handle_bot_sent(self, event: AstrMessageEvent):
         """捕获 bot 回复，写入记忆 + 异步更新好感度。"""

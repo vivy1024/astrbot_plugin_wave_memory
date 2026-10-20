@@ -15,8 +15,10 @@ from collections.abc import Mapping, Sequence
 
 try:
     from ..domain.evidence import EvidenceBinding, RawArtifactRef
+    from ..domain.scope import RuntimeScope, SessionRef
 except ImportError:
     from domain.evidence import EvidenceBinding, RawArtifactRef
+    from domain.scope import RuntimeScope, SessionRef
 
 try:
     from ..engine.db.migrations.expression_candidate_dedup import merge_source
@@ -28,6 +30,13 @@ from .reply_feedback import (
     SITUATIONS, _write_transaction, artifact_for, content_hash, group_owner,
     json_value, payload_items, positive_id, resolve_messages,
 )
+
+try:
+    from astrbot.api import logger
+except ImportError:  # pragma: no cover - domain tests run without AstrBot
+    import logging
+
+    logger = logging.getLogger(__name__)
 
 
 _UNSAFE = re.compile(
@@ -281,6 +290,100 @@ class ExpressionPolicy:
                     (status, reviewer, note, now, json_value(refs), json_value(bindings), example_id, expected_revision),
                 )
         return self._public(scope, self._get(scope, example_id))
+
+    def _qualified_columns_ready(self) -> bool:
+        tables = {
+            str(row[0]) for row in self.connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "reply_expression_candidates" not in tables:
+            return False
+        columns = {
+            str(row[1]) for row in self.connection.execute(
+                "PRAGMA table_info(reply_expression_candidates)"
+            ).fetchall()
+        }
+        return {"occurrence_count", "speaker_count"} <= columns
+
+    def qualified_scopes(self, *, limit: int = 200):
+        """返回有达标待审候选的群，供自动审核逐群推进。"""
+        if not self._qualified_columns_ready():
+            return []
+        rows = self.connection.execute(
+            f"""SELECT DISTINCT bot_id, session_id, visibility
+                  FROM reply_expression_candidates
+                 WHERE status='pending' AND ({_QUALIFIED_SQL})
+                 LIMIT ?""",
+            (max(1, min(int(limit), 1000)),),
+        ).fetchall()
+        scopes = []
+        for bot_id, session_id, visibility in rows:
+            parts = str(session_id or "").split(":", 2)
+            if len(parts) != 3 or visibility != "group":
+                continue
+            platform_id, kind, conversation_id = parts
+            if kind != "group":
+                continue
+            try:
+                scopes.append(RuntimeScope(
+                    bot_id=str(bot_id), visibility="group",
+                    session=SessionRef(
+                        id=str(session_id), platform_id=platform_id,
+                        kind=kind, conversation_id=conversation_id,
+                    ),
+                ))
+            except Exception:
+                continue
+        return scopes
+
+    def auto_review_qualified(self, scope, *, limit: int = 50, reviewer: str = "auto_review") -> dict[str, int]:
+        """把「本群多人多次说过、来源仍可核」的待审表达直接转正。
+
+        门槛沿用频次列：同句在本群出现 ≥3 次，或至少 2 个不同人说过。来源已删、
+        被隔离、内容越界或修订冲突的候选会跳过并保留待审，不静默放行。
+        """
+        stats = {"qualified": 0, "approved": 0, "skipped": 0}
+        if group_owner(scope) is None or not self._qualified_columns_ready():
+            return stats
+        rows = self._rows(self.connection.execute(
+            f"""SELECT id, revision, content FROM reply_expression_candidates
+                 WHERE bot_id=? AND session_id=? AND visibility=?
+                   AND status='pending' AND ({_QUALIFIED_SQL})
+                 ORDER BY occurrence_count DESC, speaker_count DESC, id DESC
+                 LIMIT ?""",
+            (*group_owner(scope), max(1, min(int(limit), 200))),
+        ))
+        seen_content: set[str] = set()
+        for row in rows:
+            content = str(row.get("content") or "")
+            if content in seen_content:
+                continue
+            seen_content.add(content)
+            stats["qualified"] += 1
+            try:
+                self.review(
+                    scope, int(row["id"]), approved=True,
+                    expected_revision=int(row["revision"]), reviewer=reviewer,
+                    idempotency_key=f"{reviewer}:expression:{row['id']}:{row['revision']}",
+                    style_only=True, note="auto: 本群多人多次使用且来源可核",
+                )
+                stats["approved"] += 1
+            except Exception as exc:
+                stats["skipped"] += 1
+                logger.debug(f"[Expression] 自动审核跳过 {row['id']}: {type(exc).__name__}")
+        return stats
+
+    def auto_review_qualified_all(self, *, limit_per_scope: int = 50) -> dict[str, int]:
+        stats = {"scopes": 0, "qualified": 0, "approved": 0, "skipped": 0}
+        if not self.enabled:
+            return stats
+        for scope in self.qualified_scopes():
+            result = self.auto_review_qualified(scope, limit=limit_per_scope)
+            stats["scopes"] += 1
+            for key in ("qualified", "approved", "skipped"):
+                stats[key] += int(result.get(key, 0))
+        return stats
 
     def recall(self, scope, *, message: str, max_items: int = 2) -> list[dict]:
         if not self.enabled or group_owner(scope) is None or max_items <= 0:

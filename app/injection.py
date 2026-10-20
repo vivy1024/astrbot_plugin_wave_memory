@@ -68,6 +68,7 @@ from ..services.self_reflect import SelfReflectService
 from ..services.llm_fallback import LLMFallbackClient, build_provider_chain
 from ..services.eviction import EvictionService
 from ..services.concern_tracker import ConcernTracker
+from ..services.preoccupation import build_heart_prompt, hesitation_line, select_preoccupations
 from ..services.subjective_time import SubjectiveTime
 from ..services.desire_engine import DesireEngine
 from ..services.belief_engine import BeliefEngine
@@ -117,11 +118,14 @@ class InjectionMixin:
         reply_guard = getattr(self, "_reply_request_suppressed", None)
         if callable(reply_guard) and reply_guard(event):
             return
+        release_claim = getattr(self, "_release_concern_claim", None)
 
         # ─── 规则链前置过滤 ───
         engage = self._should_engage(event)
         if engage == "skip":
             # 不相关消息，不做任何处理（AstrBot 不会调 LLM 因为没 @）
+            if callable(release_claim):
+                release_claim(event)
             return
         cue = getattr(event, "_wave_memory_timeline_cue", None)
         if isinstance(cue, dict):
@@ -151,6 +155,17 @@ class InjectionMixin:
                     req.extra_user_content_parts = extra = []
                 extra.append({"type": "text", "text": concern_prompt})
 
+        heart_prompt = self._preoccupation_prompt(event, sender_id)
+        if heart_prompt:
+            try:
+                from astrbot.core.agent.message import TextPart
+                req.extra_user_content_parts.append(TextPart(text=heart_prompt))
+            except Exception:
+                extra = getattr(req, "extra_user_content_parts", None)
+                if extra is None:
+                    req.extra_user_content_parts = extra = []
+                extra.append({"type": "text", "text": heart_prompt})
+
         # ─── 硬规则：极端攻击 + 辱骂冷却 ───
         from ..services.meta_thinking import EXTREME_ATTACK
 
@@ -161,6 +176,8 @@ class InjectionMixin:
             tracker = self._abuse_tracker[sender_id]
             if time.time() < tracker.get("cooldown_until", 0):
                 event.should_call_llm(False)
+                if callable(release_claim):
+                    release_claim(event)
                 return  # 冷却期间完全不回复
             # 冷却已过期：count 衰减（每过一次冷却期 -1，最低归 0）
             elif tracker.get("cooldown_until", 0) > 0:
@@ -185,6 +202,8 @@ class InjectionMixin:
                     cooldown = min(cap, base * (2 ** (tracker["count"] - abuse_trigger)))
                     tracker["cooldown_until"] = time.time() + cooldown
                     event.should_call_llm(False)
+                    if callable(release_claim):
+                        release_claim(event)
                     logger.info(f"[MetaThinking] 辱骂冷却: {sender_id} 冷却 {cooldown}s")
                     return
                 # 前 2 次还是怼回去
@@ -207,6 +226,8 @@ class InjectionMixin:
             if (self.meta_thinking.spam_threshold > 0
                     and len(self.meta_thinking._at_timestamps[sender_id]) >= self.meta_thinking.spam_threshold):
                 event.should_call_llm(False)
+                if callable(release_claim):
+                    release_claim(event)
                 logger.info(f"[MetaThinking] 刷屏拦截: {sender_id}")
                 return
 
@@ -287,6 +308,34 @@ class InjectionMixin:
         except Exception as exc:
             logger.debug("[WaveMemory] reflection trigger skipped: %s", exc)
 
+    def _release_concern_claim(self, event) -> None:
+        """这次请求不会走到模型或不会发送：放掉临时占用，下一轮还可以重新考虑。"""
+        claim = getattr(event, "_wave_memory_concern_followup", None)
+        if not isinstance(claim, dict):
+            return
+        concern = claim.get("concern")
+        followup = getattr(self, "concern_followup", None)
+        if followup is None or not isinstance(concern, dict):
+            return
+        try:
+            followup.release_followup(int(concern.get("id") or 0))
+        except Exception as exc:
+            logger.debug("[WaveMemory] release concern claim failed: %s", exc)
+
+    def _settle_concern_claim(self, event, *, spoke: bool) -> None:
+        """发送阶段结算：说出口才记完整冷却，沉默只记一小段「考虑过」。"""
+        claim = getattr(event, "_wave_memory_concern_followup", None)
+        if not isinstance(claim, dict):
+            return
+        concern = claim.get("concern")
+        followup = getattr(self, "concern_followup", None)
+        if followup is None or not isinstance(concern, dict):
+            return
+        try:
+            followup.confirm_followup(int(concern.get("id") or 0), spoke=spoke)
+        except Exception as exc:
+            logger.debug("[WaveMemory] settle concern claim failed: %s", exc)
+
     def _reply_request_suppressed(self, event) -> bool:
         """Recheck the ingress veto before retrieval or concern prompt side effects.
 
@@ -294,10 +343,15 @@ class InjectionMixin:
         does not cancel a ProviderRequest already being processed.
         """
         decision = getattr(event, "_wave_memory_reply_decision", None)
+        release_claim = getattr(self, "_release_concern_claim", None)
         stopped = getattr(event, "is_stopped", None)
         if callable(stopped) and stopped():
+            if callable(release_claim):
+                release_claim(event)
             return True
         if isinstance(decision, dict) and decision.get("enforced"):
+            if callable(release_claim):
+                release_claim(event)
             event.stop_event()
             return True
         # A concern-generated wake remains subject to platform proactive vetoes.
@@ -314,6 +368,8 @@ class InjectionMixin:
                     service = getattr(self, "reply_decision", None)
                     if service is not None:
                         service.diagnostics.append({**updated, "timestamp": service.clock()})
+                if callable(release_claim):
+                    release_claim(event)
                 event.stop_event()
                 return True
         return False
@@ -328,29 +384,85 @@ class InjectionMixin:
             sender_name = event.message_obj.sender.nickname or ""
         claimed = getattr(event, "_wave_memory_concern_followup", None)
         if isinstance(claimed, dict) and claimed.get("concern"):
+            proactive = bool(claimed.get("proactive"))
             scope = getattr(event, "_wave_memory_runtime_scope", None)
             reactions = ""
-            if isinstance(scope, RuntimeScope) and sender_id:
+            if proactive and isinstance(scope, RuntimeScope) and sender_id:
                 try:
                     reactions = followup.reaction_summary(scope, sender_id)
                 except Exception as exc:
                     logger.debug("[WaveMemory] concern followup reactions failed: %s", exc)
-            return followup.hint(claimed["concern"], sender_name, proactive=True, reactions=reactions)
+            return followup.hint(claimed["concern"], sender_name, proactive=proactive, reactions=reactions)
         scope = getattr(event, "_wave_memory_runtime_scope", None)
         if not isinstance(scope, RuntimeScope) or not sender_id:
             return ""
         try:
             pending = [
                 item for item in followup.open_concerns_for(scope, sender_id, sender_name)
-                if not followup.recently_followed(item["id"])
+                if not followup.recently_followed(item["id"]) and not followup.is_pending(item["id"])
             ]
         except Exception as exc:
             logger.debug("[WaveMemory] concern followup lookup failed: %s", exc)
             return ""
         if not pending:
             return ""
-        followup.mark_followed(pending[0]["id"])
-        return followup.hint(pending[0], sender_name, proactive=False)
+        chosen = pending[0]
+        # 只占位；真的说出口后由发送阶段 confirm，沉默/被否决时不会凭空消耗一次跟进。
+        if not followup.reserve_followup(scope, chosen):
+            return ""
+        event._wave_memory_concern_followup = {"concern": chosen, "proactive": False}
+        return followup.hint(chosen, sender_name, proactive=False)
+
+    def _preoccupation_prompt(self, event, sender_id: str) -> str:
+        """心事 v1：在她考虑要不要对这个人开口时，补上一层「心里还搁着什么」。"""
+        claimed = getattr(event, "_wave_memory_concern_followup", None)
+        if not isinstance(claimed, dict) or not isinstance(claimed.get("concern"), dict):
+            return ""
+        scope = getattr(event, "_wave_memory_runtime_scope", None)
+        followup = getattr(self, "concern_followup", None)
+        if followup is None or not isinstance(scope, RuntimeScope) or not sender_id:
+            return ""
+        sender_name = ""
+        if event.message_obj and event.message_obj.sender:
+            sender_name = event.message_obj.sender.nickname or ""
+        try:
+            concerns = followup.open_concerns_for(scope, sender_id, sender_name)
+        except Exception as exc:
+            logger.debug("[WaveMemory] preoccupation concerns failed: %s", exc)
+            concerns = []
+        try:
+            claimed_id = int(claimed["concern"].get("id") or 0)
+        except (TypeError, ValueError):
+            claimed_id = 0
+        try:
+            counts = followup.reaction_counts(scope, sender_id)
+        except Exception:
+            counts = {}
+        fatigue = 0.0
+        mood_service = getattr(self, "mood_service", None)
+        if mood_service is not None:
+            try:
+                mood = mood_service.current(scope.bot_id, viewer_scope=scope)
+                fatigue = float((mood or {}).get("fatigue") or 0.0)
+            except Exception:
+                fatigue = 0.0
+        preoccupations = select_preoccupations(
+            concerns, exclude_ids={claimed_id} if claimed_id else (), sender_name=sender_name,
+        )
+        hesitation = hesitation_line(counts=counts, fatigue=fatigue)
+        prompt = build_heart_prompt(
+            preoccupations, sender_name=sender_name, hesitation=hesitation,
+        )
+        if prompt:
+            try:
+                event._wave_memory_preoccupation = {
+                    "concern_ids": [item.concern_id for item in preoccupations],
+                    "hesitation": hesitation,
+                    "fatigue": fatigue,
+                }
+            except Exception:
+                pass
+        return prompt
 
     def _set_injection_channel_config(self, config) -> None:
         """WebUI 热应用通道配置时更新运行时注入编排器配置。"""

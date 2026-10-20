@@ -81,9 +81,9 @@ class BotRegistry:
     def attach(self, repo: Any, *, connection: Any = None) -> dict[str, Any]:
         """接上数据库：旧槽位里有、表里没有的 Bot 写入一次，然后从表加载。"""
         try:
-            from ..engine.db.migrations.bot_profiles_v6 import legacy_profile_payload
+            from ..engine.db.migrations.bot_profiles_v6 import legacy_profile_payload, seed_known_preferences
         except ImportError:
-            from engine.db.migrations.bot_profiles_v6 import legacy_profile_payload
+            from engine.db.migrations.bot_profiles_v6 import legacy_profile_payload, seed_known_preferences
 
         migrated: list[str] = []
         with self._lock:
@@ -99,9 +99,34 @@ class BotRegistry:
                     logger.error("[WaveMemory] Bot %s 迁移失败: %s", profile.db_id, exc)
             self._migration_report = {"migrated": migrated}
             self.reload()
+            seeded = self._seed_known_preferences(seed_known_preferences)
+            if seeded:
+                self._migration_report = {**self._migration_report, "preferences_seeded": seeded}
+                self.reload()
         if migrated:
             logger.info("[WaveMemory] Bot Profile 已从静态配置迁移: %s", ", ".join(migrated))
         return dict(self._migration_report)
+
+    def _seed_known_preferences(self, seed_fn: Any) -> list[str]:
+        """只给还没有 preferences 字段的已知角色补一次预设（不覆盖用户清空后的空对象）。"""
+        seeded: list[str] = []
+        for profile in self.all(include_disabled=True):
+            payload = profile.to_dict()
+            if not seed_fn(payload, profile.db_id):
+                continue
+            try:
+                self._repo.save(
+                    BotProfile.from_dict(payload),
+                    expected_version=profile.version,
+                    changed_by="migration",
+                    reason="补喜恶预设",
+                )
+                seeded.append(profile.db_id)
+            except BotProfileError as exc:
+                logger.warning("[WaveMemory] Bot %s 喜恶预设补写失败: %s", profile.db_id, exc)
+        if seeded:
+            logger.info("[WaveMemory] 已补喜恶预设: %s", ", ".join(seeded))
+        return seeded
 
     def reload(self) -> int:
         """从数据库重新加载并通知订阅者，返回身份快照版本号。"""

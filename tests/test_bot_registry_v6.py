@@ -108,6 +108,11 @@ def test_registry_migrates_legacy_slots_once_with_detected_prefix(cm):
     # v5 写死在代码里的人设片段按 db_id 迁进 Profile。
     assert "器灵" in yushu.persona.self_terms and yushu.persona.lore_lines
     assert baizz.experience_source == "bzz_experience"
+    # 羽书带上喜恶预设；没有素材的白真真不凭空生成。
+    assert yushu.persona.preferences is not None
+    assert yushu.persona.preferences.likes and yushu.persona.preferences.dislikes
+    assert len(yushu.persona.preferences.reaction_examples) >= 4
+    assert baizz.persona.preferences is None
 
     # 第二次启动：数据库为准，静态配置改名不覆盖。
     changed = dict(LEGACY_CONFIG)
@@ -120,6 +125,32 @@ def test_registry_migrates_legacy_slots_once_with_detected_prefix(cm):
     assert "1000000005" in bot_identity.bot_sender_ids()
     assert "器灵" in bot_identity.identity_terms()
     assert bot_identity.is_experience_source("bzz_experience")
+
+
+def test_existing_known_profile_gets_preferences_once_and_clear_is_respected(cm):
+    repo = BotProfileRepo(cm)
+    repo.save(BotProfile.from_dict({
+        "db_id": "yushu", "name": "羽书", "qq_id": "1000000005",
+        "persona": {"self_terms": ["器灵"]},
+    }), expected_version=0)
+
+    registry = BotRegistry(None)
+    registry.attach(repo, connection=cm)
+    seeded = registry.get("yushu")
+    assert seeded is not None and seeded.persona.preferences is not None
+    first_version = seeded.version
+
+    # 用户明确清空：preferences 变成空对象，不再回填。
+    payload = seeded.to_dict()
+    payload["persona"]["preferences"] = {"likes": [], "dislikes": [], "reaction_examples": []}
+    repo.save(BotProfile.from_dict(payload), expected_version=seeded.version)
+
+    again = BotRegistry(None)
+    again.attach(repo, connection=cm)
+    cleared = again.get("yushu")
+    assert cleared is not None and cleared.persona.preferences is not None
+    assert cleared.persona.preferences.is_empty()
+    assert cleared.version == first_version + 1
 
 
 def test_registry_hot_reload_updates_shared_dict_and_notifies(cm):

@@ -166,7 +166,8 @@ describe('配置文案不暴露实现术语', () => {
     // 游戏经验 5 项（Learning_Settings.game_lesson_enabled / _delay_seconds / _daily_limit / _max_active，Model_Routing_Settings.game_lesson）。
     // v5.1.2 删除做梦（6 项）、噪声删除（2 项）、记忆总量软上限（3 项）：184 → 173
     // 3f8b0889 新增 Learning_Settings.daily_diary_backfill_days（日记补写漏记天数）：173 → 174
-    expect(total).toBe(174)
+    // 自动审核与自动风格学习 3 项（expression_auto_approve_enabled、FewShot_Settings.auto_learn / auto_approve）：174 → 177
+    expect(total).toBe(177)
     expect(noType).toEqual([])
   })
 

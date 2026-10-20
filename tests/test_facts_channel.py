@@ -146,6 +146,27 @@ class FactsChannelTest(unittest.TestCase):
         self.assertIn("用户 喜欢 咖啡", result.text)
         self.assertNotIn("黑巧", result.text)
 
+    def test_selects_across_subjects_before_repeating_one(self):
+        from services.injection.channels.facts import FactsChannel
+
+        db = self._db([
+            self._fact(1, "用户", "喜欢", "咖啡", 0.99),
+            self._fact(2, "用户", "常买", "咖啡", 0.98),
+            self._fact(3, "用户", "讨厌", "咖啡", 0.97),
+            self._fact(4, "小明", "喜欢", "咖啡", 0.80),
+            self._fact(5, "小红", "喜欢", "咖啡", 0.70),
+        ])
+        channel = FactsChannel(db=db)
+        ctx = self._ctx(
+            message="咖啡",
+            config={"channels": {"facts": {"max_items": 3, "token_budget": 200}}},
+        )
+
+        result = asyncio.run(channel.build(ctx))
+
+        self.assertEqual(result.status, "hit")
+        self.assertEqual([item["subject"] for item in result.items], ["用户", "小明", "小红"])
+
     def test_missing_scope_skips_repository_and_compatibility_modes_remain_explicit(self):
         from services.injection.channels.facts import FactsChannel
 

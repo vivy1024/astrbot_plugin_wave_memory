@@ -255,13 +255,15 @@ def apply(p, event):
 
 
 @pytest.mark.parametrize("mode,wake,stopped,claimed", [("off", True, False, True), ("shadow", True, False, True), ("enforce", False, True, False)])
-def test_real_ingress_filters_before_claiming_cooldown(followup, mode, wake, stopped, claimed):
+def test_real_ingress_filters_before_claiming_concern(followup, mode, wake, stopped, claimed):
     p = plugin(followup, mode)
     event = Event("哈哈哈")
     apply(p, event)
     assert event.is_at_or_wake_command is wake and event.stopped is stopped
-    assert followup.recently_followed(1) is claimed
-    assert Path(followup.state_path).exists() is claimed
+    # 先占用、发送阶段才结算；开口判断本身不写跟进冷却
+    assert followup.is_pending(1, now=followup.clock()) is claimed
+    assert followup.recently_followed(1, now=followup.clock()) is False
+    assert Path(followup.state_path).exists() is False
     assert event.get_extra("wave_memory_reply_decision") == event._wave_memory_reply_decision
     assert p.reply_decision.diagnostics[-1]["decision"] == event._wave_memory_reply_decision["decision"]
 
@@ -302,6 +304,7 @@ def test_followup_cooldown_survives_restart_with_injected_clock_and_is_diagnosed
     event = Event()
     apply(p, event)
     assert event.is_at_or_wake_command
+    assert followup.confirm_followup(1, spoke=True)
     restarted = ConcernFollowupService(followup.db, enabled=True, quiet_hours=(0, 0),
                                        state_path=followup.state_path, clock=followup.clock)
     p.concern_followup = restarted
@@ -347,17 +350,23 @@ def test_injection_rechecks_late_platform_veto(followup):
     event = Event()
     apply(p, event)
     event.set_extra("wave_memory_proactive_allowed", False)
+    release = mixin_method("injection.py", "_release_concern_claim")
+    p._release_concern_claim = lambda ev: release(p, ev)
     guard = mixin_method("injection.py", "_reply_request_suppressed")
     assert guard(p, event) and event.stopped
     assert event._wave_memory_reply_decision["decision"] == "suppress"
     assert "platform_denied_before_request" in p.reply_decision.diagnostics[-1]["reasons"]
+    # 平台在请求阶段才否决：临时占用要放掉，不能算一次已经发生的跟进
+    assert not followup.is_pending(1, now=followup.clock())
 
 
 def test_zero_clock_does_not_make_unseen_concern_recent(followup):
     followup.clock.now = 0
     assert not followup.recently_followed(1)
     assert followup.claim_followup(scope(), "visitor", "访客甲", "纸桥进展顺利")
-    assert followup.recently_followed(1)
+    assert followup.is_pending(1, now=0)
+    assert followup.confirm_followup(1, spoke=True, now=0)
+    assert followup.recently_followed(1, now=0)
 
 
 @pytest.mark.parametrize("direct", [False, True])
@@ -411,7 +420,7 @@ def test_missing_service_keeps_legacy_followup_but_platform_veto_still_applies(f
     assert not event.is_at_or_wake_command
     event.call_llm = False
     apply(p, event)
-    assert event.is_at_or_wake_command and followup.recently_followed(1)
+    assert event.is_at_or_wake_command and followup.is_pending(1, now=followup.clock())
 
 
 @pytest.mark.parametrize("counts,expected", [

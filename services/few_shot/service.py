@@ -14,6 +14,7 @@ except ImportError:  # top-level import in isolated tests
     from domain import bot_identity
 
 import asyncio
+import hashlib
 import json
 import random
 import re
@@ -30,13 +31,19 @@ except ImportError:  # pragma: no cover - 领域单测不依赖 AstrBot runtime
     logger = logging.getLogger(__name__)
 
 try:
-    from ...domain.evidence import EvidenceBinding, EvidenceRef
-    from ...domain.scope import RuntimeScope
-    from ...engine.db.scoped_learning_projection_repo import ScopedFewShotRepository
+    from ...domain.evidence import EvidenceBinding, EvidenceRef, RawArtifactRef
+    from ...domain.scope import RuntimeScope, SessionRef
+    from ...engine.db.scoped_learning_projection_repo import (
+        ScopedBotReplyRepository,
+        ScopedFewShotRepository,
+    )
 except ImportError:  # pragma: no cover - 独立测试兼容
-    from domain.evidence import EvidenceBinding, EvidenceRef
-    from domain.scope import RuntimeScope
-    from engine.db.scoped_learning_projection_repo import ScopedFewShotRepository
+    from domain.evidence import EvidenceBinding, EvidenceRef, RawArtifactRef
+    from domain.scope import RuntimeScope, SessionRef
+    from engine.db.scoped_learning_projection_repo import (
+        ScopedBotReplyRepository,
+        ScopedFewShotRepository,
+    )
 
 from ..identity_safety import is_identity_contamination
 
@@ -70,6 +77,36 @@ _AGGRESSIVE_STYLE_RE = re.compile(
 )
 
 
+def _content_hash(text: str) -> str:
+    return "sha256:" + hashlib.sha256(str(text).encode("utf-8")).hexdigest()
+
+
+def _scope_for_candidate(candidate: Mapping[str, Any]) -> RuntimeScope | None:
+    if str(candidate.get("visibility") or "") != "group":
+        return None
+    bot_id = str(candidate.get("bot_id") or "").strip()
+    session_id = str(candidate.get("session_id") or "").strip()
+    parts = session_id.split(":", 2)
+    if not bot_id or len(parts) != 3:
+        return None
+    platform_id, kind, conversation_id = parts
+    if kind != "group" or not platform_id or not conversation_id:
+        return None
+    try:
+        return RuntimeScope(
+            bot_id=bot_id,
+            visibility="group",
+            session=SessionRef(
+                id=session_id,
+                platform_id=platform_id,
+                kind=kind,
+                conversation_id=conversation_id,
+            ),
+        )
+    except Exception:
+        return None
+
+
 class FewShotService:
     """Few-Shot 风格学习主服务。"""
 
@@ -83,6 +120,8 @@ class FewShotService:
         repository: Any = None,
         writer: Any = None,
         expression_policy: Any = None,
+        bot_reply_repository: Any = None,
+        auto_approve: bool = True,
     ):
         self._db = db
         self._llm = llm_client
@@ -94,7 +133,8 @@ class FewShotService:
         self._repository = repository or ScopedFewShotRepository(connection, ensure_schema=False)
         self._writer = writer
         self.expression_policy = expression_policy
-        self._last_extract: float = 0  # 上次提取时间
+        self._bot_replies = bot_reply_repository or ScopedBotReplyRepository(connection)
+        self._last_extract_by_bot: dict[str, float] = {}  # 每个 Bot 上次提取时间
         self._last_injected_ids: List[int] = []  # 避免连续注入同一条
         self._last_injected_by_scope: dict[tuple, list[int]] = {}
 
@@ -102,30 +142,54 @@ class FewShotService:
         self._min_score = float(self._config.get("min_score", 0.7))
         self._max_inject = int(self._config.get("max_inject", 3))
         self._drift_threshold = float(self._config.get("drift_threshold", 0.5))
+        self._auto_approve = bool(self._config.get("auto_approve", auto_approve))
 
     # ─── US-5.1: 提取风格范例 ───
 
     async def extract_candidates(self, bot_id: str = "") -> List[Dict]:
-        """从最近 7 天 bot 回复中提取 top 10 候选。每天最多执行一次。"""
+        """从最近 7 天 bot 回复中提取 top 10 候选。每个 Bot 每天最多执行一次。"""
         if not self._enabled or not self._llm:
             return []
 
         now = time.time()
-        if now - self._last_extract < 86400:  # 24h 冷却
+        cooldown_key = str(bot_id or "")
+        if now - self._last_extract_by_bot.get(cooldown_key, 0.0) < 86400:  # 24h 冷却
             return []
-        self._last_extract = now
+        self._last_extract_by_bot[cooldown_key] = now
 
-        # 获取最近 7 天的 bot 回复
+        # 获取最近 7 天的 bot 回复。正式库把 Bot 自己的话记在 sender_id='bot'、
+        # source='core'；旧库/旧经历仍可能只有 bot_reply 或 persona 登记的经历来源。
         seven_days_ago = int(now) - 7 * 86400
-        # 已由角色经历接管的旧经历来源（Bot 配置 character_experience.legacy_sources）不再当风格候选
         sources = ["bot_reply", *sorted(bot_identity.experience_sources() - bot_identity.taken_over_sources())]
         placeholders = ",".join("?" for _ in sources)
+        columns = {
+            str(row[1]) for row in self._db.conn.execute("PRAGMA table_info(memories)").fetchall()
+        }
+        if not columns:
+            return []
+        canonical = {"sender_id", "bot_id", "session_id", "visibility"} <= columns
+        source_clause = (
+            f"((COALESCE(sender_id,'')='bot' AND source='core') OR source IN ({placeholders}))"
+            if canonical else f"source IN ({placeholders})"
+        )
+        clauses = [source_clause, "timestamp > ?", "LENGTH(content) >= 20"]
+        params: list[Any] = [*sources, seven_days_ago]
+        if "resolution_state" in columns:
+            clauses.append("COALESCE(resolution_state,'') IN ('','resolved')")
+        if "quarantine" in columns:
+            clauses.append("COALESCE(quarantine,0)=0")
+        if bot_id and "bot_id" in columns:
+            clauses.append("COALESCE(bot_id,'')=?")
+            params.append(str(bot_id))
+        metadata_columns = [
+            name for name in ("bot_id", "session_id", "visibility") if name in columns
+        ]
+        select_columns = ["id", "content", *metadata_columns]
         rows = self._db.conn.execute(
-            f"""SELECT id, content FROM memories
-               WHERE source IN ({placeholders})
-               AND timestamp > ? AND LENGTH(content) >= 20
+            f"""SELECT {','.join(select_columns)} FROM memories
+               WHERE {' AND '.join(clauses)}
                ORDER BY RANDOM() LIMIT 50""",
-            (*sources, seven_days_ago),
+            params,
         ).fetchall()
 
         if not rows:
@@ -133,18 +197,28 @@ class FewShotService:
 
         # LLM 评估风格代表性
         candidates = []
-        for mem_id, content in rows:
+        seen_content: set[str] = set()
+        for row in rows:
+            values = dict(zip(select_columns, row))
+            content = str(values.get("content") or "").strip()
+            if content in seen_content:
+                continue
+            seen_content.add(content)
             try:
                 if not self._is_healthy_example(content):
                     continue
                 result = await self._evaluate_style(content)
                 score = result.get("score", 0)
                 if score >= self._min_score:
-                    candidates.append({
+                    candidate = {
+                        "memory_id": int(values["id"]),
                         "content": content,
                         "score": score,
                         "traits": result.get("traits", []),
-                    })
+                    }
+                    for name in metadata_columns:
+                        candidate[name] = str(values.get(name) or "")
+                    candidates.append(candidate)
             except Exception:
                 continue
 
@@ -154,6 +228,88 @@ class FewShotService:
         # 候选仅返回给学习/审核链；正式表唯一写入口是 add_approved_example。
         logger.info(f"[FewShot] 提取了 {len(candidates)} 条待审核风格候选")
         return candidates
+
+    async def learn_from_history(self, bot_id: str = "") -> dict[str, int]:
+        """提取并自动转正：只写有正式证据锚点与本群有效标签的 Bot 回复。"""
+        stats: dict[str, int] = {"candidates": 0, "approved": 0, "skipped": 0}
+        candidates = await self.extract_candidates(bot_id)
+        stats["candidates"] = len(candidates)
+        if not candidates or not self._auto_approve:
+            return stats
+        for candidate in candidates:
+            try:
+                outcome = await asyncio.to_thread(self._approve_candidate, candidate)
+            except Exception as exc:
+                outcome = "skipped_error"
+                logger.debug(f"[FewShot] 自动转正失败: {type(exc).__name__}")
+            if outcome == "approved":
+                stats["approved"] += 1
+            else:
+                stats["skipped"] += 1
+                stats[outcome] = stats.get(outcome, 0) + 1
+        logger.info(
+            f"[FewShot] 风格学习 bot={bot_id or '*'}: 候选 {stats['candidates']}，"
+            f"转正 {stats['approved']}，跳过 {stats['skipped']}"
+        )
+        return stats
+
+    def _approve_candidate(self, candidate: Mapping[str, Any]) -> str:
+        memory_id = int(candidate.get("memory_id") or 0)
+        scope = _scope_for_candidate(candidate)
+        if memory_id <= 0 or scope is None:
+            return "skipped_scope"
+        try:
+            resolved = self._bot_replies.resolve(scope=scope, memory_id=memory_id)
+        except Exception:
+            return "skipped_evidence"
+        content = str(resolved.get("content") or "").strip()
+        if not content or content != str(candidate.get("content") or "").strip():
+            return "skipped_evidence"
+        if not self._is_healthy_example(content):
+            return "skipped_unsafe"
+        if self._has_approved_content(scope, content):
+            return "skipped_duplicate"
+        artifact = RawArtifactRef(
+            kind="raw_message",
+            id=f"memory:{memory_id}",
+            content_hash=_content_hash(content),
+            captured_at=float(resolved.get("captured_at") or 0.0),
+            source_scope=scope,
+            available=True,
+        )
+        binding = EvidenceBinding(
+            evidence_id=artifact.id,
+            target_scope=scope,
+            derivation_chain=("raw_chat", "reviewed_fewshot"),
+            policy_version="fewshot-learning/v1",
+        )
+        traits = tuple(str(item) for item in (candidate.get("traits") or ()))
+        self.add_approved_example(
+            scope=scope,
+            candidate={
+                "memory_id": memory_id,
+                "score": candidate.get("score", 0.0),
+                "traits": list(traits),
+                "source": "auto_history",
+            },
+            evidence_refs=(artifact.as_evidence_ref(),),
+            evidence_bindings=(binding,),
+            source_tags=tuple(resolved.get("source_tags") or ()),
+            query_trace_id=f"auto-fewshot:{scope.bot_id}:{memory_id}",
+            content=content,
+            score=float(candidate.get("score") or 0.0),
+            traits=traits,
+            source_candidate_id=memory_id,
+            idempotency_key=f"fewshot:auto:{memory_id}:v1",
+        )
+        return "approved"
+
+    def _has_approved_content(self, scope: RuntimeScope, content: str) -> bool:
+        try:
+            rows = self._repository.list_approved(scope=scope, limit=500)
+        except Exception:
+            return False
+        return any(str(row.get("content") or "").strip() == content for row in rows)
 
     def add_approved_example(
         self,

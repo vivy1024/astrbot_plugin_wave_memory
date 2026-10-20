@@ -238,10 +238,6 @@ class StartupMixin:
         else:
             self.webui = None
 
-        # legacy TagBackfillJob 写入 tags/memory_tags，已退出正式数据面。
-        # scoped TagWorker 会持续扫描所有未完成的 resolved v2 memory，并通过统一写入口提交。
-        self.tag_job = None
-
         # v2.0: Tag 质量检测——垃圾率 > 50% 时降级关闭脉冲传播
         try:
             catalog_exists = self.db.conn.execute(
@@ -608,12 +604,6 @@ class StartupMixin:
             logger.debug(f"[WaveMemory] lifecycle stop error: {e}")
 
         try:
-            if hasattr(self, 'tag_job') and self.tag_job:
-                self.tag_job.stop()
-        except Exception as e:
-            logger.debug(f"[WaveMemory] tag_job stop error: {e}")
-
-        try:
             if hasattr(self, 'webui') and self.webui:
                 await self.webui.stop()
         except Exception as e:
@@ -931,6 +921,19 @@ class StartupMixin:
             }
 
         get_container().learning_stats_getter = _learning_stats
+        self._expression_auto_approve = _flag("expression_auto_approve_enabled", True)
+        fewshot_cfg = self.config.get("FewShot_Settings", {}) or {}
+        configured = fewshot_cfg.get("auto_learn")
+        self._fewshot_auto_learn = True if configured is None else bool(configured)
+        if (
+            (getattr(self, "few_shot_service", None) is not None and self._fewshot_auto_learn)
+            or (self.expression_policy.enabled and self._expression_auto_approve)
+        ):
+            self._spawn(
+                self._learning_tick_loop(),
+                name="wave-memory:learning:style-maintenance",
+                owner="learning",
+            )
         logger.info(
             "[WaveMemory] 记账与学习: auto_approve=%s proactive_reply=%s bookkeeping=%s daily_diary=%s "
             "relationship_portrait=%s belief_reflection=%s game_lesson=%s",
@@ -1129,6 +1132,39 @@ class StartupMixin:
             except Exception as e:
                 logger.debug(f"[WaveMemory] concern tidy failed: {e}")
             await asyncio.sleep(6 * 3600)
+
+    async def _learning_tick_loop(self) -> None:
+        """风格与表达的自动沉淀：FewShot 每日每 Bot 一次，表达审核每轮补一次。"""
+        await asyncio.sleep(900)
+        while True:
+            try:
+                await self._run_learning_tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.debug(f"[WaveMemory] style maintenance failed: {e}")
+            await asyncio.sleep(6 * 3600)
+
+    async def _run_learning_tick(self) -> None:
+        service = getattr(self, "few_shot_service", None)
+        if service is not None and getattr(self, "_fewshot_auto_learn", False):
+            bot_ids = [profile.db_id for profile in self.bot_registry.all() if profile.db_id]
+            for bot_id in bot_ids:
+                stats = await service.learn_from_history(bot_id)
+                if stats.get("approved"):
+                    logger.info(f"[WaveMemory] FewShot 自动转正 {stats['approved']} 条（bot={bot_id}）")
+        policy = getattr(self, "expression_policy", None)
+        if (
+            policy is not None
+            and getattr(policy, "enabled", False)
+            and getattr(self, "_expression_auto_approve", False)
+        ):
+            stats = await asyncio.to_thread(policy.auto_review_qualified_all)
+            if stats.get("approved"):
+                logger.info(
+                    f"[WaveMemory] 表达自动审核转正 {stats['approved']} 条，"
+                    f"跳过 {stats['skipped']} 条（{stats['scopes']} 个群）"
+                )
 
     def _spawn(self, coro, *, name: str | None = None, owner: str = "plugin") -> asyncio.Task:
         """通过统一 supervisor 创建可观察、可等待的命名后台任务。"""

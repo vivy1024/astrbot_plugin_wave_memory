@@ -182,7 +182,13 @@ def builtin_channel_specs() -> list[ChannelSpec]:
             "meme_hint",
             lambda d, b: MemeHintChannel(scene_switches=meme_hint_scene_switches(getattr(d, "config", None) or {})),
         ),
-        ChannelSpec("fewshot", lambda d, b: FewShotChannel(few_shot_service=getattr(d, "few_shot_service", None))),
+        ChannelSpec(
+            "fewshot",
+            lambda d, b: FewShotChannel(
+                few_shot_service=getattr(d, "few_shot_service", None),
+                profile_lookup=lambda bot_id: d.bot_registry.get(bot_id),
+            ),
+        ),
         ChannelSpec("affinity", lambda d, b: RelationshipChannel(repository=d.db.soul_repository, db=d.db)),
         ChannelSpec("soul_state", lambda d, b: SoulStateChannel(repository=d.db.soul_repository, mood_service=getattr(d, "mood_service", None))),
         # 游戏攻略参考：按请求里的 game.id 选游戏库（所有 Bot 共用）；不带 game 时不工作。

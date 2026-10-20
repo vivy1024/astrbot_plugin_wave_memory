@@ -10,7 +10,9 @@ import { useCanonicalScopeDefault } from '@/hooks/use-pagination-search-params'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { InputWithIcon } from '@/components/shared/InputWithIcon'
+import { FewShotPreferencesPanel } from './FewShotPreferencesPanel'
 import { ReplyLearningPanel } from './ReplyLearningPanel'
 
 function score(value: number | undefined): string {
@@ -44,7 +46,18 @@ function SummaryTile({ label, value, tone }: { label: string; value: string | nu
 
 export function FewShotPage() {
   const scope = useGlobalScope()
-  return <FewShotScopePage key={JSON.stringify([scope.botId, scope.sessionId, scope.visibility, scope.status])} scopeReady={scope.status === 'ready'} useDefaults={!scope.inProvider} />
+  return <Tabs defaultValue="preferences" className="flex flex-col gap-4">
+    <TabsList className="self-start">
+      <TabsTrigger value="preferences">喜恶预设</TabsTrigger>
+      <TabsTrigger value="style">风格样例</TabsTrigger>
+    </TabsList>
+    <TabsContent value="preferences" className="mt-0">
+      <FewShotPreferencesPanel defaultBotId={scope.botId} />
+    </TabsContent>
+    <TabsContent value="style" className="mt-0">
+      <FewShotScopePage key={JSON.stringify([scope.botId, scope.sessionId, scope.visibility, scope.status])} scopeReady={scope.status === 'ready'} useDefaults={!scope.inProvider} />
+    </TabsContent>
+  </Tabs>
 }
 
 function FewShotScopePage({ scopeReady, useDefaults }: { scopeReady: boolean; useDefaults: boolean }) {

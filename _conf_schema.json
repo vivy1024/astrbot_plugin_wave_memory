@@ -936,6 +936,13 @@
         "restart_required": true,
         "hint": "复用事后记账提取有出处的简短表达，先进入风格样例待审，批准后才可注入；保留原有工具记录样例的方式。修改后重启插件生效。"
       },
+      "expression_auto_approve_enabled": {
+        "description": "表达候选自动审核",
+        "type": "bool",
+        "default": true,
+        "restart_required": true,
+        "hint": "只自动转正本群至少 3 次出现、或被至少 2 个人说过的表达；来源消息已失效、内容越界或修订冲突的候选保持待审。"
+      },
       "reply_rules_mode": {
         "description": "开口判断规则模式",
         "type": "string",
@@ -1169,6 +1176,20 @@
         "description": "单次回复最大注入样例数",
         "type": "int",
         "default": 3
+      },
+      "auto_learn": {
+        "description": "自动沉淀风格样例",
+        "type": "bool",
+        "default": true,
+        "restart_required": true,
+        "hint": "每天从最近的 Bot 回复里挑有风格的句子，来源和标签都完整时自动转正。关闭后只在管理台手动提取。"
+      },
+      "auto_approve": {
+        "description": "风格候选自动转正",
+        "type": "bool",
+        "default": true,
+        "restart_required": true,
+        "hint": "与自动沉淀配合：只转正来源消息仍可核、且本群有有效标签的候选；不满足条件的保持不写入。"
       }
     }
   },

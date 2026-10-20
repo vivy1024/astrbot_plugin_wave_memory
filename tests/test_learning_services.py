@@ -197,6 +197,9 @@ def test_followup_matches_subject_and_respects_cooldown_and_gap():
     assert service.claim_followup(_scope(), "u9", "路人", "大家好", now=NOON) is None
     chosen = service.claim_followup(_scope(), "u1", "小明", "我回来了", now=NOON)
     assert chosen["id"] == 1
+    # 还没说出口：只是临时占用，不写跟进冷却
+    assert service.is_pending(1, now=NOON) and not service.recently_followed(1, now=NOON)
+    assert service.confirm_followup(1, spoke=True, now=NOON)
     # 同一条关切冷却中
     assert service.claim_followup(_scope(), "u1", "小明", "在吗", now=NOON + 700) is None
     # 旧关切按「昵称：」前缀匹配；但距上次主动不足 10 分钟
@@ -756,6 +759,7 @@ def test_followup_cooldown_survives_restart(tmp_path):
     state = str(tmp_path / "concern_followups.json")
     first = ConcernFollowupService(_concern_db(concerns), enabled=True, quiet_hours=(0, 0), state_path=state)
     assert first.claim_followup(_scope(), "u1", "小明", "我回来了", now=time.time())["id"] == 1
+    assert first.confirm_followup(1, spoke=True)
     restarted = ConcernFollowupService(_concern_db(concerns), enabled=True, quiet_hours=(0, 0), state_path=state)
     assert restarted.recently_followed(1)
     assert restarted.claim_followup(_scope(), "u1", "小明", "在吗", now=time.time() + 3600) is None
