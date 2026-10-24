@@ -298,6 +298,15 @@ class DurableJobService:
             lambda connection: JobRepository.get_request(connection, request_id)
         )
 
+    async def get_request_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> JobRequest | None:
+        return await self._coordinator.read(
+            lambda connection: JobRepository.get_request_by_idempotency_key(
+                connection, idempotency_key
+            )
+        )
+
     async def get_run(self, run_id: str) -> JobRun | None:
         return await self._coordinator.read(
             lambda connection: JobRepository.get_run(connection, run_id)

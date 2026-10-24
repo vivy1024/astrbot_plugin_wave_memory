@@ -19,6 +19,7 @@ from ..domain.scope import RuntimeScope
 from ..engine.database import WaveMemoryDB
 from ..engine.vector_index import VectorIndex
 from ..engine.db.outbox_repo import OutboxRepository
+from ..services.vector_backfill_queue import queue_vector_backfill_run
 from ..engine.db.scoped_learning_projection_repo import CoordinatorScopedProjectionWriter
 from ..engine.embedding import EmbeddingService
 from ..engine.query_engine import QueryEngine, QueryOptions
@@ -848,23 +849,9 @@ class MaintenanceMixin:
 
     async def _queue_vector_backfill(self, *, reason: str) -> str:
         """Queue one bounded, resumable recovery chain for missing embeddings."""
-        token = "memory-vector-backfill"
-        request = await self.write_gateway.jobs.create_request(
-            idempotency_key="maintenance:memory-vector-backfill:v1",
-            kind="maintenance.vector_backfill.run",
-            scope={"kind": "system_maintenance"},
-            payload={"kind": "memory_vector_backfill", "reason": str(reason)},
+        return await queue_vector_backfill_run(
+            self.write_gateway.jobs, reason=str(reason)
         )
-        run = await self.write_gateway.jobs.schedule_run(
-            request_id=request.request_id,
-            schedule_slot=token,
-            cursor_generation=0,
-            cursor={"phase": "queued", "after_id": 0, "reason": str(reason)},
-            # An already-completed pass may be safely restarted after a later
-            # timeout creates a new vectorless memory; an active pass is reused.
-            reschedule_terminal=True,
-        )
-        return run.run_id
 
     async def _has_pending_vector_backfill(self) -> bool:
         """Check for eligible vectorless canonical memories without touching writes."""

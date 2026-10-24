@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 try:
@@ -140,7 +141,29 @@ def _book_lore_tools() -> list[ToolSpec]:
             catalog_scope=d.book_lore_catalog_scope,
         )
 
-    return [ToolSpec("wave_memory_book_lore_search", book_lore, group="book_lore", capability="book_lore_tools")]
+    def novel_source(d: Any) -> Any:
+        from .novel_source import WaveMemoryNovelSourceTool
+
+        # 原文只从插件数据目录与 novel_docs 读，工作台用同一套路径限制。
+        data_dir = getattr(d, "data_dir", "") or ""
+        data_root = os.path.dirname(os.path.dirname(data_dir)) if data_dir else ""
+        roots = [root for root in (data_dir, os.path.join(os.path.dirname(data_root), "novel_docs")) if root]
+        return WaveMemoryNovelSourceTool(
+            source_roots=roots,
+            book_name=getattr(d, "book_lore_default_book", "") or "",
+            catalog_scope=d.book_lore_catalog_scope,
+        )
+
+    return [
+        ToolSpec("wave_memory_book_lore_search", book_lore, group="book_lore", capability="book_lore_tools"),
+        ToolSpec(
+            "wave_memory_novel_source",
+            novel_source,
+            group="book_lore",
+            capability="book_lore_tools",
+            description="查原著原文：忘记桥段、原话或章节位置时直接回原文",
+        ),
+    ]
 
 
 def _jargon_tools() -> list[ToolSpec]:

@@ -517,6 +517,13 @@ class BootstrapMixin:
         # 书设是独立 Catalog 知识库（直读 book_lore.db），不是 Learning reviewed projection。
         self.enable_book_lore = runtime_capability_enabled(self.runtime_mode, "book_lore", True)
         self.lore_db_path = os.path.join(self.data_dir, "book_lore.db")
+        # 原著原文检索工具按书名挑 .txt；书名与书设工作台的默认书保持一致。
+        try:
+            from ..services.book_lore_workbench import DEFAULT_BOOK
+
+            self.book_lore_default_book = DEFAULT_BOOK
+        except Exception:  # pragma: no cover - 导入失败时退回空串，工具按体积挑最大的 .txt
+            self.book_lore_default_book = ""
         self.book_lore_catalog_scope = self._build_book_lore_catalog_scope()
         if self.enable_book_lore:
             try:

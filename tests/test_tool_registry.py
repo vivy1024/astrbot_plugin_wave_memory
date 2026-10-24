@@ -136,8 +136,9 @@ def test_builtin_specs_build_all_tools_with_unique_names():
     names = [record.name for record in registry.records()]
     assert registry.status()["build_errors"] == {}
     # wave_memory_propose_belief 已退役（信念只来自反思）；新增查梗工具 wave_memory_meme_lookup、
-    # 游戏攻略查询 wave_memory_game_knowledge、保有沉默 wave_memory_hold_peace：内置工具 20 个
-    assert len(built) == len(names) == len(set(names)) == 20
+    # 游戏攻略查询 wave_memory_game_knowledge、保有沉默 wave_memory_hold_peace、
+    # 原著原文检索 wave_memory_novel_source：内置工具 21 个
+    assert len(built) == len(names) == len(set(names)) == 21
     assert "wave_memory_propose_belief" not in names
     assert "wave_memory_record_social_impression" in names
     assert "wave_memory_search" in names

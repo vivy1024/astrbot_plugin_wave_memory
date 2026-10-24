@@ -9,6 +9,13 @@ from typing import Optional, List, Tuple
 import numpy as np
 
 try:
+    from astrbot.api import logger
+except ImportError:  # pragma: no cover - 仓库测试无 AstrBot
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+try:
     import hnswlib
 except ImportError:
     hnswlib = None
@@ -362,13 +369,15 @@ class BookLoreIndex:
             current = self.notes_index.get_current_count()
             self._ensure_notes_capacity(current + n)
             int_ids = list(range(self._notes_int_counter, self._notes_int_counter + n))
-            self._notes_int_counter += n
-            for int_id, nid in zip(int_ids, note_ids):
-                self._notes_id_map[int_id] = nid
+            # 先写 hnsw 再登记映射：写入抛错时不能让映射留下 hnsw 里并不存在的 int id，
+            # 否则下次启动会把这些条目当成「已在索引里」，笔记永远补不进检索。
             self.notes_index.add_items(
                 vectors.astype(np.float32),
                 np.array(int_ids, dtype=np.int64),
             )
+            self._notes_int_counter += n
+            for int_id, nid in zip(int_ids, note_ids):
+                self._notes_id_map[int_id] = nid
 
     def search_notes(self, query_vector: np.ndarray, k: int = 5) -> List[Tuple[str, float]]:
         """搜索最相关的笔记。"""
@@ -478,6 +487,28 @@ class BookLoreIndex:
                 "notes_counter": self._notes_int_counter,
             }, f)
 
+    def _drop_phantom_note_mappings(self) -> None:
+        """丢掉 hnsw 里其实不存在的笔记映射。
+
+        映射文件与 hnsw 文件是两次写入，历史上有过「映射里登记了 int id、hnsw 没写进去」
+        的窗口（962–1023 章导入时向量算失败，正是这样留下 52 条幽灵映射：笔记被算成
+        「已在索引里」，检索永远看不到，补齐索引也不会重试）。启动时以 hnsw 的实际内容
+        为准清掉这类条目，让补齐索引把它们重新写入。
+        """
+        if not self._notes_id_map:
+            return
+        try:
+            present = set(self.notes_index.get_ids_list())
+        except Exception:
+            return  # 老版本 hnswlib 没有这个接口时保持原样，不猜
+        phantom = [int_id for int_id in self._notes_id_map if int_id not in present]
+        for int_id in phantom:
+            del self._notes_id_map[int_id]
+        if phantom:
+            logger.warning(
+                f"[BookLore] 清理 {len(phantom)} 条不存在的笔记映射（hnsw 里没有对应条目）"
+            )
+
     def load_id_maps(self):
         """从磁盘加载 ID 映射。如果有 npz 向量文件但没有 hnsw 索引，自动构建。"""
         import json
@@ -491,6 +522,7 @@ class BookLoreIndex:
             self._community_int_counter = data.get("community_counter", 0)
             self._notes_id_map = {int(k): v for k, v in data.get("notes_map", {}).items()}
             self._notes_int_counter = data.get("notes_counter", 0)
+            self._drop_phantom_note_mappings()
             return
 
         # 如果没有 id_maps 但有 npz 文件，从 npz 构建索引。
