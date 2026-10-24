@@ -1,5 +1,27 @@
 # Changelog
 
+## v5.1.4（2026-10-25）
+
+### 新增
+
+- **原著原文检索工具 `wave_memory_novel_source`**。记忆、书设笔记和注入内容都是摘要，会漏、会记混；书设的逐章笔记又只从第 901 章起，早段只有社区摘要。这个工具按关键词或章节号直读小说 `.txt`：给 `keyword` 返回含该词的原文上下文（同一章只出一条，命中后跳到该章末尾再找，主角名这类高频词才不会把前几条全挤在开头几章），给 `chapter` 返回该章正文（`950` 或 `950-952`，超出返回上限时注明截断）。**不依赖 embedding provider，也不依赖笔记索引**——向量服务故障、章节笔记还没生成时照样能查。章节表按文件指纹缓存，十几 MB 的原文只切一次；路径限制与书设工作台同一套（只读插件数据目录与 `novel_docs` 下的 `.txt`），作用域与书设搜索一致走 `catalog.read`。输出去掉原文的缩进与多余换行，控制在一次回复能读完的量。
+
+### 修复
+
+- **向量补算链排不上队（缺向量只能等重启才补）**。补算请求的幂等键固定为 `maintenance:memory-vector-backfill:v1`，但 `create_request` 除了比对 kind / scope，还会比对 payload：首次创建时 payload 是 `reason=startup_missing_vectors`，之后每次终端超时请求补算都换成 `reason=embedding_terminal_timeout`，于是每次都抛 `JobRequestConflictError`，被 `message_writer` 吞成一行「vector backfill queue request failed」。结果是写入端算不出向量的消息永不补算——线上 10-22 起每日无向量占比从 89% 涨到 100%，一直等到重启由启动检测重新排队才恢复。现在先按幂等键回读已有请求直接复用，只有确实不存在时才创建，并发首建撞上冲突再回读一次。**兼容**：已有请求的 payload、kind、slot 都没变，升级后不需要迁移。
+- **书设索引的幽灵映射（笔记永远补不进检索）**。`add_notes_batch` 原先先把 int id 写进 `_notes_id_map` 再调 `notes_index.add_items`；写入抛错时映射留了下来，这些笔记就被当成「已在索引里」，检索看不到、补齐索引也不会重试（线上第 962–1023 章 52 条笔记正是这样漏掉的）。改为先写 hnsw 成功再登记映射，并在载入映射时以 hnsw 实际内容为准清掉幽灵条目（`get_ids_list` 不可用的旧版 hnswlib 下保持原样不乱删）。线上这一次自动清掉了 52 条并按补齐索引重新写入。
+- **定时任务里的记忆工具全部 `memory_scope_required`，模型转而用 shell / python 直连线上数据库**。AstrBot 定时任务回调构造的 `CronMessageEvent` 没有真实 self_id、没有群对象，事件入口解析不出作用域；模型拿不到记忆就改跑 `sqlite3.connect(.../wave_memory.db)`，普通连接关闭时触发 WAL 检查点删除 `-wal`，而 AstrBot 仍持有已删除句柄继续写，导致 FTS 与索引损坏。
+  - `ScopeResolver` 现在认 `CronMessageEvent`：只按 AstrBot 平台实例匹配 Bot（`session_prefix` 或绑定里显式写的 `platform`），必须恰好命中一个，不按显示名、不回退默认 Bot；私聊会话 id 即对方账号，主体就是对方；群聊没有对话对象，主体留空（需要主体信息的写工具 fail closed）；`用户_群` 形式的 unique_session 群会话无法确定群号，直接拒绝。
+  - 工具在事件没附着作用域时，用与消息入口同一个 resolver 回退解析（成功后缓存到事件上），插件卸载时清空。
+  - 新增 `on_using_llm_tool` 拦截：该钩子不能否决调用，所以就地改写参数——命中的 shell / python / 文件工具调用被换成必然失败的无害版本，模型在工具结果里看到明确理由。这是字面匹配的兜底（`wave_memory.db`、`data_v4.db`、`.db-wal`、`.db-shm`、`sqlite3`），编码或拼接可以绕过，**不能替代收紧这些工具本身**。
+- **情景词表误判**：`过`、`爽`、`草`、`行`、`牛` 这类多义字以前会把普通聊天判成 celebrate / humor；`@昵称(QQ号)` 前缀里的昵称也参与匹配。现在多义字都带边界或固定搭配（「草」只认单独成句，「行」只认「行吧 / 那行」，「爽」排除「不爽」），@ 提及前缀先剔除；问号不再单独判 `clarify`，只有整句就是一个疑问反应（「?」「啊？」「蛤??」）时才兜底判。同情景的句式按「种子 + id」哈希轮换，同一种子结果固定、换种子就换人。
+
+### 升级须知
+
+- 新增工具 `wave_memory_novel_source`，与 `wave_memory_book_lore_search` 同属 `book_lore` 组、受 `book_lore` 能力开关控制；关掉 book_lore 就没有它。
+- 原文检索只认插件数据目录与 `<AstrBot>/novel_docs` 下的 `.txt`；放在别处的原著不会被读到，工具会如实返回「没有找到可读的原著文本文件」。
+- 定时任务的记忆工具现在能用了，但**前提是这些任务的会话能匹配到一个 Bot**：任务投递会话的平台实例要在某个 Bot 的 `session_prefix` 或 `astrbot` 绑定的 `platform` 里。匹配不上时仍是 fail closed（`unknown_bot_platform`），不会瞎猜成默认 Bot。
+
 ## v5.1.3（2026-10-20）
 
 ### 新增
