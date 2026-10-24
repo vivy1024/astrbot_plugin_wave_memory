@@ -830,6 +830,13 @@ class BootstrapMixin:
             self.scope_resolver = None
             logger.warning(f"[WaveMemory] ScopeResolver unavailable; message ingress fail closed: {exc}")
             _record_err("ScopeResolution", "scope_resolver_unavailable")
+        # 工具在事件未附着 Scope（定时任务 / 后台回调）时用同一个 resolver 回退解析。
+        try:
+            from ..tools.scope_boundary import set_event_scope_resolver
+
+            set_event_scope_resolver(self.scope_resolver)
+        except Exception as exc:
+            logger.debug(f"[WaveMemory] tool scope resolver registration skipped: {exc}")
 
     def _meta_thinking_bot_maps(self) -> dict:
         profiles = list(self._bot_registry.values())

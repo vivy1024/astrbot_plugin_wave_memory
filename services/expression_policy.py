@@ -7,6 +7,7 @@ does not replace the existing tool-owned Bot few-shot approval projection.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -48,14 +49,33 @@ _UNSAFE = re.compile(
     r"\b(?:i\s+am|my\s+name|password|secret|api[_ -]?key|address|phone)\b",
     re.IGNORECASE,
 )
+# 情景词表只看群友原话里的口语信号，宁可少配也不乱配。多义字（草/行/冲/爽/牛/过了）
+# 都带了边界或固定搭配：「草」只认单独成句，「行」只认「行吧/那行」，「爽」排除「不爽」。
+# 顺序即优先级：一条消息最多取前两个情景。
 _SCENE_PATTERNS = (
-    ("boundary", r"别再|不要再|不舒服|不愿意|越界|stop|boundary"),
-    ("clarify", r"什么意思|怎么|为何|为什么|不懂|请教|[?？]|clarif|why|how"),
-    ("encourage", r"担心|紧张|难过|失败|加油|害怕|焦虑|累了|worried|nervous"),
-    ("celebrate", r"成功|过了|通过|赢了|完成|恭喜|庆祝|开心|congrat|success"),
-    ("acknowledge", r"谢谢|多谢|收到|明白|了解|好哒|thank|got it"),
-    ("humor", r"哈哈|笑死|好笑|逗乐|haha|lol"),
+    ("boundary", r"别再|不要再|不舒服|不愿意|越界|别闹|别理|闭嘴|(?<!不)过分|别刷了?|别发了|骚扰|"
+                 r"(?<![足能就])够了|stop|boundary"),
+    ("clarify", r"什么意思|啥意思|何意|怎么|咋(?!呼)|为何|为什么|为啥|凭啥|(?:是|干|说|叫)啥|啥(?=[?？]|$)|"
+                r"不懂|没懂|看不懂|不明白|请教|真的假的|真的吗|(?<!不)是吗|意思是|说什么|你说我|"
+                r"什么(?=\s*[,，]?\s*\S{0,6}[?？])|^[?？]{2,}|clarif|"
+                r"(?<![a-z])(?:why|how)(?![a-z])"),
+    ("encourage", r"担心|紧张|难过|伤心|难受|失败|加油|害怕|焦虑|累了|好累|心累|崩溃|破防|寄了|"
+                  r"没事(?![干做儿])|别慌|别怕|稳了|顶住|撑住|冲冲冲|冲鸭|worried|nervous"),
+    ("celebrate", r"成功|(?:考|审|测|跑|打|通)过了|过关|通过|赢了|完成|恭喜|庆祝|开心|好耶|"
+                  r"太强了?|好强|真强|牛逼|牛b|太牛|好牛|真牛|牛啊|(?<![不凉飒])爽|欧皇|"
+                  r"(?<![a-z])nb(?![a-z])|congrat|success"),
+    ("acknowledge", r"谢谢|多谢|感谢|谢啦|收到|明白|了解|懂了|^好的|(?<![最美很更太真])好的(?=$|[\s,，。!！~～])|好滴|好哒|"
+                    r"行吧|那行|可以的|确实|有一说一|有道理|没错|(?<![要若])是的(?!话)|"
+                    r"(?<![a-z])ok(?![a-z])|thank|got it"),
+    ("humor", r"哈哈|hhh|笑死|好笑|逗乐|绷不住|绷死|蚌埠住|xswl|乐死|(?<![快欢娱音])乐了|"
+              r"(?<!\d)233+(?!\d)|(?:^|[\s,，。!！~～])草+(?=$|[\s,，。!！?？~～])|😂|🤣|haha|lol"),
 )
+_SCENE_REGEXES = tuple((scene, re.compile(pattern, re.I)) for scene, pattern in _SCENE_PATTERNS)
+# 「@昵称(QQ号)」是转发/提及前缀，昵称里的字不能参与情景判断。
+_MENTION = re.compile(r"@[^@\n]{1,40}?\(\d{5,}\)")
+# 问号不再单独判 clarify：只有整句就是一个疑问反应（「?」「啊？」「蛤??」）才算，
+# 且仅在没有其它情景命中时兜底。普通问句（「能嫁给我吗?」）不是在求解释。
+_LONE_QUESTION = re.compile(r"^(?:[啊蛤哈嗯呃诶欸哦啥]{0,2}|啊这)[?？]+[!！.。…~～]*$")
 
 
 def expression_is_safe(content, *, speaker_name: str = "") -> bool:
@@ -71,8 +91,16 @@ def expression_is_safe(content, *, speaker_name: str = "") -> bool:
 
 
 def situations_for(message: str) -> tuple[str, ...]:
-    text = str(message or "")[:1000]
-    return tuple(scene for scene, pattern in _SCENE_PATTERNS if re.search(pattern, text, re.I))[:2]
+    text = _MENTION.sub(" ", str(message or "")[:1000]).strip()
+    scenes = tuple(scene for scene, regex in _SCENE_REGEXES if regex.search(text))[:2]
+    if not scenes and _LONE_QUESTION.match(re.sub(r"\s+", "", text)):
+        return ("clarify",)
+    return scenes
+
+
+def _rotation_key(seed: str, example_id) -> str:
+    """同质量同情景的句式按「种子+id」哈希打散：同一种子结果固定，换种子就换人。"""
+    return hashlib.sha256(f"{seed}\x1f{example_id}".encode("utf-8")).hexdigest()
 
 
 # 频次门槛：一句话被至少两个人说过，或者同一个人说了至少三次，才算「本群的表达方式」
@@ -385,7 +413,14 @@ class ExpressionPolicy:
                 stats[key] += int(result.get(key, 0))
         return stats
 
-    def recall(self, scope, *, message: str, max_items: int = 2) -> list[dict]:
+    def recall(self, scope, *, message: str, max_items: int = 2, seed: str | None = None) -> list[dict]:
+        """按情景召回已审核表达。
+
+        排序：quality 高者优先，其次情景顺序；两者都相同时按 ``seed`` 确定性打散，
+        不再固定取最大 id —— 否则同情景永远是同一对句式。``seed`` 缺省为
+        「当前消息内容 + 当天日期」，同一句话当天重复召回结果稳定，换句话就会轮换。
+        不写库、不留进程内状态。
+        """
         if not self.enabled or group_owner(scope) is None or max_items <= 0:
             return []
         scenes = situations_for(message)
@@ -409,7 +444,12 @@ class ExpressionPolicy:
             if json.loads(row["evidence_refs_json"]) != [expected_ref] or json.loads(row["evidence_bindings_json"]) != [json.loads(json_value(expected_binding))]:
                 continue
             safe.append((self.quality_adjustment(scope, row["id"]), row))
-        safe.sort(key=lambda pair: (-pair[0], scenes.index(pair[1]["situation"]), -pair[1]["id"]))
+        if seed is None:
+            day = time.strftime("%Y-%m-%d", time.localtime(float(self.now())))
+            seed = f"{day}\x1f{message or ''}"
+        safe.sort(key=lambda pair: (
+            -pair[0], scenes.index(pair[1]["situation"]), _rotation_key(seed, pair[1]["id"]),
+        ))
         selected, seen = [], set()
         for quality, row in safe:
             if row["content"] in seen:

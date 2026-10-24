@@ -246,6 +246,27 @@ class InjectionMixin:
         if removed:
             logger.debug(f"[WaveMemory] tools hidden for this request: {removed}")
 
+    async def _handle_using_llm_tool(self, event: AstrMessageEvent, tool=None, tool_args=None):
+        """on_using_llm_tool：命中数据库文件访问时就地改写参数（AstrBot 钩子不能否决调用）。"""
+        try:
+            from ..services.tool_guard import guard_tool_call, tool_name_of
+
+            tool_name = tool_name_of(tool)
+            marker = guard_tool_call(tool_name, tool_args)
+        except Exception as exc:
+            logger.warning(f"[WaveMemory] db access guard error: {exc}")
+            return
+        if marker is None:
+            return
+        try:
+            umo = str(getattr(event, "unified_msg_origin", "") or "")
+        except Exception:
+            umo = ""
+        logger.warning(
+            f"[WaveMemory] blocked direct database file access tool={tool_name} marker={marker} umo={umo}"
+        )
+        _record_err("DbAccessGuard", f"{tool_name}:{marker}")
+
     async def _handle_inject_memory(self, event: AstrMessageEvent, req=None):
         """Inject only through the canonical scoped orchestrator; failures are fail-closed."""
         if not self.enable_auto_inject or not req:

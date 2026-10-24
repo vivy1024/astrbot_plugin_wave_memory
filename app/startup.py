@@ -549,6 +549,13 @@ class StartupMixin:
     async def _terminate_once(self):
         """插件卸载时清理 — 各资源独立 try-except。"""
         try:
+            from ..tools.scope_boundary import set_event_scope_resolver
+
+            set_event_scope_resolver(None)
+        except Exception as e:
+            logger.debug(f"[WaveMemory] tool scope resolver unregister error: {e}")
+
+        try:
             if hasattr(self, "task_supervisor") and self.task_supervisor:
                 await self.task_supervisor.close_accepting()
         except Exception as e:

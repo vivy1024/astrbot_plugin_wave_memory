@@ -159,3 +159,8 @@ class WaveMemoryPlugin(BootstrapMixin, StartupMixin, IngressMixin, InjectionMixi
     async def inject_memory(self, event: AstrMessageEvent, req=None):
         """Inject only through the canonical scoped orchestrator; failures are fail-closed."""
         await self._handle_inject_memory(event, req)
+
+    @filter.on_using_llm_tool()
+    async def guard_db_file_access(self, event: AstrMessageEvent, tool=None, tool_args=None):
+        """工具执行前拦截 shell/python/文件工具直接访问 SQLite 数据库文件。"""
+        await self._handle_using_llm_tool(event, tool, tool_args)

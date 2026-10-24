@@ -14,6 +14,41 @@ except ImportError:  # pragma: no cover - direct tools imports in isolated tests
     from domain.scope import CatalogScope, RuntimeScope, ScopeCodec, validate_formal_command_scope
 
 
+# 插件持有的唯一 canonical ScopeResolver（app/bootstrap.py::_rebuild_scope_resolver 注入，
+# 插件卸载时清空）。只用于“事件没经过 on_message”的场景：AstrBot 定时任务 / 后台任务
+# 回调构造的 CronMessageEvent 直接进 Agent，工具拿不到入口附着的 RuntimeScope。
+_EVENT_SCOPE_RESOLVER: Any = None
+
+
+def set_event_scope_resolver(resolver: Any) -> None:
+    """登记（或用 None 清除）工具回退解析用的 canonical ScopeResolver。"""
+    global _EVENT_SCOPE_RESOLVER
+    _EVENT_SCOPE_RESOLVER = resolver
+
+
+def _resolve_unattached_event(event: Any) -> RuntimeScope | None:
+    """事件未附着 Scope 时，用与 on_message / after_message_sent 同一个 resolver 解析。
+
+    只接受 resolver 返回的 RuntimeScope；解析失败一律 None（fail closed），绝不从
+    group_id 等 legacy 字段自行拼作用域。成功后缓存到事件上，同一轮后续工具直接复用。
+    """
+    resolver = _EVENT_SCOPE_RESOLVER
+    resolve = getattr(resolver, "resolve_event", None)
+    if not callable(resolve):
+        return None
+    try:
+        scope = getattr(resolve(event), "scope", None)
+    except Exception:
+        return None
+    if not isinstance(scope, RuntimeScope):
+        return None
+    try:
+        setattr(event, "_wave_memory_runtime_scope", scope)
+    except Exception:
+        pass
+    return scope
+
+
 def extract_event_runtime_scope(context: Any) -> RuntimeScope | None:
     """返回事件入口已经解析的 RuntimeScope，缺失或类型不符时 fail closed。"""
     try:
@@ -21,7 +56,12 @@ def extract_event_runtime_scope(context: Any) -> RuntimeScope | None:
         scope = getattr(event, "_wave_memory_runtime_scope", None) if event else None
     except Exception:
         return None
-    return scope if isinstance(scope, RuntimeScope) else None
+    if isinstance(scope, RuntimeScope):
+        return scope
+    if event is None or scope is not None:
+        # 已附着但类型不对的值是脏数据，不覆盖、不重解析。
+        return None
+    return _resolve_unattached_event(event)
 
 
 def extract_group_runtime_scope(context: Any) -> RuntimeScope | None:
@@ -95,7 +135,20 @@ def scope_error_message(action: str, reason_code: str) -> str:
         "catalog_scope_required": "工具没有注入可验证的 CatalogScope",
     }
     detail = labels.get(reason_code, "当前作用域不允许此操作")
-    return f"{detail}，已拒绝{action}（{reason_code}）"
+    message = f"{detail}，已拒绝{action}（{reason_code}）"
+    if reason_code in {"memory_scope_required", "scope_required"}:
+        message += "。" + NO_CHAT_CONTEXT_GUIDANCE
+    return message
+
+
+# 拒绝返回给模型的可操作说明：定时/后台运行拿不到记忆时，模型曾改用 shell/python 直连
+# 线上 SQLite，触发 WAL 被删、库损坏（2026-10-21、10-23 两次事故）。
+NO_CHAT_CONTEXT_GUIDANCE = (
+    "这通常是没有聊天上下文的定时任务或后台运行，本轮 WaveMemory 记忆工具不可用。"
+    "不要用 shell、python、文件读写或任何其他方式直接读取记忆数据库文件"
+    "（wave_memory.db、data_v4.db 及其 -wal/-shm），那会损坏正在运行的数据库；"
+    "请直接基于已有信息完成任务，需要时如实说明这次拿不到记忆。"
+)
 
 
 def require_read_runtime_scope(context: Any, command_type: str) -> tuple[RuntimeScope | None, str | None]:
@@ -189,4 +242,6 @@ __all__ = [
     "resolve_source_memory_id",
     "scope_envelope",
     "scope_error_message",
+    "set_event_scope_resolver",
+    "NO_CHAT_CONTEXT_GUIDANCE",
 ]
