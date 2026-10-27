@@ -621,6 +621,9 @@ class LifecycleService:
         # scoped EvictionService 负责按 RuntimeScope 分组提交 archive/delete/evict 命令。
         archived_count = 0
 
+        # 正式关系（scoped_soul_relationship_values，注入读这里）：长期没来往自动变淡。
+        self._decay_formal_relationships(now)
+
         try:
             rows = self.db.conn.execute(
                 "SELECT user_id, group_id, bot_id, affection, metadata, last_seen FROM user_profiles"
@@ -686,6 +689,30 @@ class LifecycleService:
             logger.warning(f"[WaveMemory] User profile decay processing failed: {e}")
             
         return archived_count
+
+    def _decay_formal_relationships(self, now: float) -> dict | None:
+        service = getattr(self, "_relationship_service", None)
+        repository = getattr(service, "repository", None)
+        decay = getattr(repository, "apply_time_decay", None)
+        if not callable(decay):
+            return None
+        coordinator = getattr(service, "coordinator", None)
+        try:
+            if coordinator is not None and callable(getattr(coordinator, "transaction_blocking", None)):
+                stats = coordinator.transaction_blocking(
+                    lambda connection: decay(now=now, connection=connection)
+                )
+            else:
+                stats = decay(now=now)
+        except Exception as exc:
+            logger.warning(f"[WaveMemory] Relationship time decay failed: {exc}")
+            return None
+        if isinstance(stats, dict) and stats.get("decayed_subjects"):
+            logger.info(
+                f"[WaveMemory] Relationship time decay: {stats['decayed_subjects']} relationships cooled, "
+                f"{stats.get('events', 0)} audit events"
+            )
+        return stats if isinstance(stats, dict) else None
 
     def get_user_affinity(self, user_id: str, group_id: str, bot_id: str | None = None) -> dict | None:
         """读取精确 Bot affinity；未知 Bot 或未记录关系返回 ``None``。"""

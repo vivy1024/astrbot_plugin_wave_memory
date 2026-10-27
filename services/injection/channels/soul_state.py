@@ -87,7 +87,15 @@ class SoulStateChannel:
         if self.repository is None:
             return InjectionResult.empty(self.name, reason="soul_repository_unavailable")
         try:
-            state = _mapping(self.repository.get_state(scope, limit=25, offset=0))
+            # 热路径只要时间线前几条与 revision；get_state 的 mood/concerns/关系查询留给 WebUI。
+            # 多取几条是因为日记条目会被跳过。
+            inject_cfg = _mapping(getattr(ctx, "config", {})).get("Inject_Settings", {}) or {}
+            soul_timeline_max = _as_int(inject_cfg.get("soul_timeline_max_items"), 3)
+            recent = getattr(self.repository, "recent_timeline", None)
+            if callable(recent):
+                state = _mapping(recent(scope, limit=max(8, soul_timeline_max * 3)))
+            else:
+                state = _mapping(self.repository.get_state(scope, limit=25, offset=0))
             timeline = _mapping(state.get("timeline")).get("items") or []
             lines: list[str] = []
             mood_service = self.mood_service
@@ -100,8 +108,6 @@ class SoulStateChannel:
                 # 原因里可能引用群友原话：逐行过身份安全检查，只丢有问题的那一行。
                 lines.extend(line for line in mood_lines if not is_identity_contamination(line))
             # 关切不再常驻注入：本轮是否惦记由 MetaThinking × 印象时间线线索决定。
-            inject_cfg = _mapping(getattr(ctx, "config", {})).get("Inject_Settings", {}) or {}
-            soul_timeline_max = _as_int(inject_cfg.get("soul_timeline_max_items"), 3)
             recent_timeline = []
             for item in timeline:
                 if len(recent_timeline) >= max(1, soul_timeline_max):

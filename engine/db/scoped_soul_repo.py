@@ -94,6 +94,24 @@ def _self_visible_clause(scope: RuntimeScope) -> tuple[str, tuple[str, ...]]:
     )
 
 
+class _StoredSession:
+    __slots__ = ("id",)
+
+    def __init__(self, session_id: str):
+        self.id = session_id
+
+
+class _StoredScope:
+    """库内已有行的定位三元组（批量维护用，不经过 RuntimeScope 校验，也不对外暴露）。"""
+
+    __slots__ = ("bot_id", "visibility", "session")
+
+    def __init__(self, bot_id: str, visibility: str, session: _StoredSession):
+        self.bot_id = bot_id
+        self.visibility = visibility
+        self.session = session
+
+
 def _scope_params(scope: RuntimeScope) -> tuple[str, str, str]:
     assert scope.session is not None
     return scope.bot_id, scope.session.id, scope.visibility
@@ -578,7 +596,7 @@ class ScopedSoulRepository:
             daily_row = tx.execute(
                 """SELECT COALESCE(SUM(delta), 0) FROM scoped_soul_relationship_events
                     WHERE bot_id=? AND session_id=? AND visibility=? AND subject_principal_id=?
-                      AND dimension=? AND created_at>=?""",
+                      AND dimension=? AND created_at>=? AND event_type<>'time_decay'""",
                 (*_scope_params(scope), subject, dimension, now - 86400),
             ).fetchone()
             applied_delta = cap_automatic_delta(
@@ -667,6 +685,119 @@ class ScopedSoulRepository:
                 "revision": revision,
                 "value_layer": "automatic",
             }
+
+        return dict(self._write(persist, connection))
+
+    def apply_time_decay(
+        self,
+        *,
+        now: float | None = None,
+        bot_id: str | None = None,
+        min_change: float = 0.05,
+        limit: int = 2000,
+        connection=None,
+    ) -> dict[str, int]:
+        """长期没来往的关系自动冷却（只改自动层，人工覆盖 / 调整原样保留）。
+
+        距最后一次真实互动（排除 time_decay 自身）的天数 d 越久冷却越快，公式沿用旧
+        user_profiles 衰减：f = min(0.01, 0.01/225·d²)，d≈15 天后达到每次 1%。
+        - familiarity / fun / depth：v ← max(0, v − v·f − f)
+        - trust：向 0 收敛（负的信任不会被一下抹成 0）
+        - hostility：按 f/2 慢慢消气
+        变化小于 ``min_change`` 的维度不写，避免每天给每个人刷一条审计事件。每个对象一次
+        写入：revision +1、维度行、汇总行和每个变化维度一条 ``time_decay`` 审计事件。
+        """
+        timestamp = float(now or time.time())
+        bot_filter = " AND v.bot_id=?" if bot_id else ""
+        bot_params: tuple[Any, ...] = (str(bot_id),) if bot_id else ()
+
+        def decay_amount(dimension: str, value: float, factor: float) -> float:
+            if dimension == "hostility":
+                half = factor / 2.0
+                return max(0.0, value - value * half - half)
+            if dimension == "trust":
+                if value >= 0:
+                    return max(0.0, value - value * factor - factor)
+                return min(0.0, value - value * factor + factor)
+            return max(0.0, value - value * factor - factor)
+
+        def persist(tx):
+            subjects = tx.execute(
+                f"""SELECT v.bot_id, v.session_id, v.visibility, v.subject_principal_id,
+                           (SELECT MAX(e.created_at) FROM scoped_soul_relationship_events e
+                             WHERE e.bot_id=v.bot_id AND e.session_id=v.session_id
+                               AND e.visibility=v.visibility AND e.subject_principal_id=v.subject_principal_id
+                               AND e.event_type<>'time_decay') AS last_event_at,
+                           MIN(v.updated_at)
+                      FROM scoped_soul_relationship_values v
+                     WHERE v.visibility='group'{bot_filter}
+                     GROUP BY v.bot_id, v.session_id, v.visibility, v.subject_principal_id
+                     LIMIT ?""",
+                (*bot_params, max(1, int(limit))),
+            ).fetchall()
+            stats = {"subjects": len(subjects), "decayed_subjects": 0, "events": 0}
+            for bot, session_id, visibility, subject, last_event_at, first_value_at in subjects:
+                last = float(last_event_at if last_event_at is not None else (first_value_at or timestamp))
+                days = max(0.0, (timestamp - last) / 86400.0)
+                factor = min(0.01, (0.01 / 225.0) * days * days)
+                if factor <= 0:
+                    continue
+                # 批量维护直接按表里的三元组定位；这些内部辅助函数只读 bot/session/visibility。
+                scope = _StoredScope(str(bot), str(visibility), _StoredSession(str(session_id)))
+                values = self._value_rows(tx, scope, str(subject))
+                changes: dict[str, tuple[float, float]] = {}
+                for dimension, item in values.items():
+                    if dimension not in _DIMENSION_RANGES:
+                        continue
+                    before = float(item["automatic_value"])
+                    after = clamp_dimension(dimension, decay_amount(dimension, before, factor))
+                    if abs(after - before) >= min_change:
+                        changes[dimension] = (before, round(after, 4))
+                if not changes:
+                    continue
+                revision = self._next_revision(tx, scope, "relationship", str(subject), timestamp)
+                tx.execute(
+                    "UPDATE scoped_soul_relationship_values SET relationship_revision=? WHERE bot_id=? AND session_id=? AND visibility=? AND subject_principal_id=?",
+                    (revision, *_scope_params(scope), str(subject)),
+                )
+                reason = f"已经 {int(days)} 天没有来往，关系自然变淡"
+                encoded_evidence = _json_evidence([{"value_layer": "automatic", "kind": "time_decay", "idle_days": round(days, 1)}])
+                for dimension, (before, after) in changes.items():
+                    item = values[dimension]
+                    effective = self._effective_value(after, item["manual_adjustment"], item["manual_override"], dimension)
+                    before_snapshot = dict(item)
+                    tx.execute(
+                        """UPDATE scoped_soul_relationship_values
+                              SET automatic_value=?, effective_value=?, updated_at=?
+                            WHERE bot_id=? AND session_id=? AND visibility=? AND subject_principal_id=? AND dimension=?""",
+                        (after, effective, timestamp, *_scope_params(scope), str(subject), dimension),
+                    )
+                    after_snapshot = {**before_snapshot, "automatic_value": after, "effective_value": effective,
+                                      "relationship_revision": revision, "updated_at": timestamp}
+                    tx.execute(
+                        """INSERT INTO scoped_soul_relationship_events(
+                               bot_id, session_id, visibility, subject_principal_id, event_type,
+                               dimension, delta, reason, source_episode_id, source_memory_id,
+                               revision, created_at, operation_id, evidence, value_layer, before_json, after_json)
+                           VALUES (?, ?, ?, ?, 'time_decay', ?, ?, ?, NULL, NULL, ?, ?, NULL, ?, 'automatic', ?, ?)""",
+                        (*_scope_params(scope), str(subject), dimension, round(after - before, 4), reason,
+                         revision, timestamp, encoded_evidence,
+                         json.dumps(before_snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                         json.dumps(after_snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))),
+                    )
+                    stats["events"] += 1
+                refreshed = self._value_rows(tx, scope, str(subject))
+                dimensions = {key: item["effective_value"] for key, item in refreshed.items()}
+                affinity = _compute_affinity(dimensions)
+                tx.execute(
+                    """UPDATE scoped_soul_relationships
+                          SET affinity=?, state=?, dimensions=?, revision=?, updated_at=?
+                        WHERE bot_id=? AND session_id=? AND visibility=? AND subject_principal_id=?""",
+                    (affinity, _state_for_affinity(affinity), _json_mapping(dimensions), revision, timestamp,
+                     *_scope_params(scope), str(subject)),
+                )
+                stats["decayed_subjects"] += 1
+            return stats
 
         return dict(self._write(persist, connection))
 
@@ -1417,6 +1548,47 @@ class ScopedSoulRepository:
                 scope=scope,
             ),
         }
+
+    def recent_timeline(self, scope: RuntimeScope, *, limit: int = 6) -> dict[str, Any]:
+        """注入热路径专用：只取最近时间线与当前 revision。
+
+        ``get_state`` 还会查 mood/concerns 计数与明细、关系与审计历史，WebUI 需要这些，
+        注入通道只用时间线前几条和 revision；每轮注入都走全量查询会拖慢 soul_state。
+        可见性规则与 ``get_state`` 的时间线部分完全一致（无 subject 过滤）。
+        """
+        scope = _require_scope(scope)
+        limit = max(1, min(int(limit), 25))
+        self_where, self_params = _self_visible_clause(scope)
+        timeline_subject = ""
+        timeline_subject_params: list[Any] = []
+        subject = scope.subject_principal_id
+        if subject is not None:
+            timeline_subject = " AND (subject_principal_id IS NULL OR subject_principal_id=?)"
+            timeline_subject_params.append(subject)
+        rows = self.cm.execute_read(
+            f"""SELECT id, subject_principal_id, event_summary, event_type, emotional_weight,
+                      occurred_at, revision, session_id
+               FROM scoped_soul_timeline
+               WHERE {self_where}{timeline_subject}
+               ORDER BY occurred_at DESC, id DESC LIMIT ?""",
+            (*self_params, *timeline_subject_params, limit),
+        ).fetchall()
+        items = [{
+            "id": row[0], "subject_principal_id": row[1], "event_summary": row[2],
+            "event_type": row[3], "emotional_weight": row[4], "timestamp": row[5],
+            "revision": row[6], "session_id": row[7],
+        } for row in rows]
+        params = _scope_params(scope)
+        revision_params: list[Any] = list(params)
+        revision_where = "bot_id=? AND session_id=? AND visibility=? AND subject_principal_id=''"
+        if subject is not None:
+            revision_where = "bot_id=? AND session_id=? AND visibility=? AND (subject_principal_id='' OR subject_principal_id=?)"
+            revision_params.append(subject)
+        revision_row = self.cm.execute_read(
+            f"SELECT COALESCE(MAX(revision), 0) FROM scoped_soul_revisions WHERE {revision_where}",
+            revision_params,
+        ).fetchone()
+        return {"revision": int(revision_row[0] or 0), "timeline": {"items": items}}
 
     def refresh_state(
         self,

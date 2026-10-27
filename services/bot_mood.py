@@ -46,6 +46,7 @@ try:
         effect_phrase,
         event_half_life,
         mood_event_horizon,
+        mood_word,
         fatigue_level,
         night_active,
         parse_bookkeeping_mood,
@@ -68,6 +69,7 @@ except ImportError:  # pragma: no cover - focused tests import top-level package
         effect_phrase,
         event_half_life,
         mood_event_horizon,
+        mood_word,
         fatigue_level,
         night_active,
         parse_bookkeeping_mood,
@@ -93,6 +95,10 @@ EVENT_MAX_PAGES = 128
 MAX_CAUSES = 20
 MAX_REPLY_RECORDS = 2 * MAX_FATIGUE_REPLY_THRESHOLD
 CAUSE_MIN_WEIGHT = 0.03
+# 贡献权重 |v| + 0.5|a| 在仓储冲击上限 (|v|,|a|≤1) 下的最大值。
+MAX_CONTRIBUTION_WEIGHT = 1.5
+# 注入时心情快照的可信时长：tick 每 600 秒写一次，事件写入也会即时刷新。
+SNAPSHOT_FRESH_SECONDS = 600.0
 MAX_EVENT_VALENCE = 0.6
 MAX_EVENT_AROUSAL = 0.5
 _MARKUP = re.compile(r"\[[^\]]{0,200}\]|\[CQ:[^\]]*\]|@\S+")
@@ -581,9 +587,95 @@ class BotMoodService:
             "arousal": round(item.arousal, 4),
         }
 
+    def _current_for_injection(
+        self,
+        bot_id: str,
+        *,
+        viewer_scope: RuntimeScope | None,
+        now: float | None,
+        max_causes: int,
+    ) -> dict[str, Any] | None:
+        """注入热路径：心情值取新鲜快照，原因只读还能达到展示阈值的那段事件。
+
+        ``current`` 每次都要把约 80 小时（最强事件衰减到 1e-6）的事件全部读出合成，
+        心情多的 Bot 会让 soul_state 通道超时。两处等价近似：
+        - 心情值：每次写入事件与每 600 秒 tick 都会写快照；快照新鲜（≤ SNAPSHOT_FRESH_SECONDS）
+          且策略版本一致时直接用，否则回退全量 ``current``。
+        - 原因：贡献权重 = |v| + 0.5|a|，仓储冲击上限为 1，权重上限 1.5；窗口外的事件
+          即使按最慢半衰期衰减，权重也已低于 CAUSE_MIN_WEIGHT，不可能被列为原因，
+          所以只读窗口内事件得到的原因与全量完全一致（跨群、私聊的可见性规则不变）。
+        """
+        repo = self.repository
+        if not self.enabled or not bot_id or repo is None:
+            return None
+        timestamp = self._now(now)
+        settings = self.settings_for(bot_id)
+        if not settings.enabled:
+            return {"bot_id": bot_id, "enabled": False, "policy_version": POLICY_VERSION}
+        try:
+            state = repo.get_state(bot_id)
+        except Exception:
+            state = None
+        fresh = (
+            isinstance(state, Mapping)
+            and state.get("policy_version") == POLICY_VERSION
+            and 0.0 <= timestamp - float(state.get("updated_at") or 0.0) <= SNAPSHOT_FRESH_SECONDS
+        )
+        if not fresh:
+            return self.current(bot_id, viewer_scope=viewer_scope, now=timestamp, max_causes=max_causes)
+        max_causes = max(0, min(MAX_CAUSES, int(max_causes)))
+        replies = self.recent_replies(bot_id, settings, timestamp)
+        hour = int(self.hour_of(timestamp))
+        fatigue = fatigue_level(settings, recent_replies=replies, hour=hour)
+        slowest = event_half_life(settings, 1.0, self.default_half_life_minutes)
+        cause_window = slowest * math.log2(MAX_CONTRIBUTION_WEIGHT / CAUSE_MIN_WEIGHT)
+        try:
+            events = repo.iter_events(
+                bot_id, since=timestamp - cause_window, until=timestamp,
+                page_size=EVENT_PAGE_SIZE, max_pages=EVENT_MAX_PAGES,
+            )
+            reading = compose_mood(
+                events, settings, now=timestamp, fatigue=fatigue,
+                default_half_life_minutes=self.default_half_life_minutes,
+                max_contributions=max_causes,
+            )
+        except MoodReadBudgetExceeded:
+            self._count("read_budget_exceeded")
+            return None
+        except Exception as exc:
+            logger.debug(f"[WaveMemory] 心情原因读取失败 {bot_id}: {exc!r}")
+            return None
+        causes = [
+            self._cause(item, viewer_scope, timestamp)
+            for item in reading.contributions
+            if item.weight >= CAUSE_MIN_WEIGHT
+        ][:max_causes]
+        # 快照里的 valence/arousal 已按写入时刻的疲劳压低过（compose_mood：arousal-0.35f、
+        # valence-0.10f）；疲劳随回复数与时段即时变化，这里只补上两次疲劳之差再重算心情词。
+        delta = float(state.get("fatigue") or 0.0) - fatigue
+        valence = max(-1.0, min(1.0, float(state.get("valence") or 0.0) + 0.10 * delta))
+        arousal = max(0.0, min(1.0, float(state.get("arousal") or 0.0) + 0.35 * delta))
+        word, category = mood_word(valence, arousal, fatigue)
+        fatigue_reasons: list[str] = []
+        if fatigue > 0:
+            if replies > settings.fatigue_reply_threshold:
+                fatigue_reasons.append(f"这 {settings.fatigue_window_minutes // 60 or 1} 小时回了很多消息" if settings.fatigue_window_minutes >= 60 else "刚才回了很多消息")
+            if night_active(hour, settings.night_start_hour, settings.night_end_hour):
+                fatigue_reasons.append("夜深了")
+        self._count("rendered_from_snapshot")
+        return {
+            "bot_id": bot_id,
+            "enabled": True,
+            "word": word,
+            "category": category,
+            "causes": causes,
+            "fatigue_reasons": fatigue_reasons,
+            "hint": speaking_hint(settings, word, category),
+        }
+
     def render_lines(self, bot_id: str, viewer_scope: RuntimeScope, *, now: float | None = None, max_causes: int = 2) -> list[str]:
         """注入用的自然语言行；心情就在基线附近、也没有可说的原因时返回空列表。"""
-        mood = self.current(bot_id, viewer_scope=viewer_scope, now=now, max_causes=max_causes)
+        mood = self._current_for_injection(bot_id, viewer_scope=viewer_scope, now=now, max_causes=max_causes)
         if not mood or not mood.get("enabled"):
             return []
         causes = [cause["text"] for cause in mood.get("causes") or []]

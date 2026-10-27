@@ -91,7 +91,7 @@ MEANINGFUL_EVENT_TYPES = frozenset({
     "correction",
     "relationship.manual_calibration",
 })
-NOISY_EVENT_TYPES = frozenset({"message_seen"})
+NOISY_EVENT_TYPES = frozenset({"message_seen", "time_decay"})
 _TIMELINE_JSON_KEYS = (
     "impression",
     "impression_history",

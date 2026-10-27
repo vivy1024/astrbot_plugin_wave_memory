@@ -114,3 +114,62 @@ class SoulStateChannelTest(unittest.TestCase):
         self.assertEqual(result.status, "empty")
         self.assertEqual(result.warnings, ["soul_state_unknown"])
         self.assertEqual(len(repo.calls), 1)
+
+
+def test_channel_prefers_recent_timeline_over_full_state():
+    import asyncio
+    from types import SimpleNamespace
+
+    from domain.scope import RuntimeScope, SessionRef
+    from services.injection.channels.soul_state import SoulStateChannel
+
+    class _Repo:
+        def __init__(self):
+            self.calls = []
+
+        def recent_timeline(self, scope, *, limit):
+            self.calls.append(("recent", limit))
+            return {"revision": 7, "timeline": {"items": [
+                {"event_summary": "【日记】今天很忙", "event_type": "episode"},
+                {"event_summary": "帮群友修好了服务器", "event_type": "time_anchor"},
+            ]}}
+
+        def get_state(self, *args, **kwargs):  # pragma: no cover - must not be reached
+            self.calls.append(("full",))
+            raise AssertionError("hot path must not use get_state")
+
+    repo = _Repo()
+    scope = RuntimeScope("bot-a", "group", SessionRef("qq:group:g1", "qq", "group", "g1"))
+    ctx = SimpleNamespace(mode="full", config={}, scope=scope)
+    result = asyncio.run(SoulStateChannel(repository=repo).build(ctx))
+    assert result.status == "hit"
+    assert "帮群友修好了服务器" in result.text and "日记" not in result.text
+    assert repo.calls == [("recent", 9)]
+    assert result.items[0]["revision"] == 7
+
+
+def test_recent_timeline_matches_get_state_timeline(tmp_path):
+    from domain.scope import RuntimeScope, SessionRef
+    from engine.database import WaveMemoryDB
+
+    db = WaveMemoryDB(str(tmp_path / "soul.sqlite"), dimension=3)
+    try:
+        repo = db.soul_repository
+        scope = RuntimeScope("bot-a", "group", SessionRef("qq:group:g1", "qq", "group", "g1"))
+        other = RuntimeScope("bot-a", "group", SessionRef("qq:group:g2", "qq", "group", "g2"))
+        private = RuntimeScope(
+            "bot-a", "private", SessionRef("qq:private:u1", "qq", "private", "u1"),
+            subject_principal_id="qq:user:u1",
+        )
+        for index in range(5):
+            repo.add_timeline_event(scope, event_summary=f"本群事{index}", emotional_weight=0.5, timestamp=1000.0 + index)
+            repo.add_timeline_event(other, event_summary=f"别群事{index}", emotional_weight=0.5, timestamp=1100.0 + index)
+            repo.add_timeline_event(private, event_summary=f"私聊事{index}", emotional_weight=0.5, timestamp=1200.0 + index)
+        full = repo.get_state(scope, limit=25, offset=0)
+        fast = repo.recent_timeline(scope, limit=6)
+        assert fast["timeline"]["items"], "需要有数据才能比较"
+        assert all("私聊事" not in i["event_summary"] for i in fast["timeline"]["items"]), "私聊经历不外流"
+        assert fast["revision"] == full["revision"]
+        assert [i["id"] for i in fast["timeline"]["items"]] == [i["id"] for i in full["timeline"]["items"][:6]]
+    finally:
+        db.close()

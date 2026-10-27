@@ -35,7 +35,9 @@ VALID_EVENT_TYPES = frozenset({
     "ignored_boundary",
     "manual_adjustment",
 })
-NOISY_EVENT_TYPES = frozenset({"message_seen"})
+# time_decay：长期没来往时关系自动冷却的审计事件，不是一次互动，历史与时间线里都不算。
+TIME_DECAY_EVENT_TYPE = "time_decay"
+NOISY_EVENT_TYPES = frozenset({"message_seen", TIME_DECAY_EVENT_TYPE})
 NOISY_EVENT_REASONS = frozenset({
     "看见一条群友消息",
     "消息带来趣味感",
@@ -136,6 +138,7 @@ __all__ = [
     "MANUAL_ADJUSTMENT_DELTA_CAP",
     "SINGLE_DELTA_CAP",
     "VALID_DIMENSIONS",
+    "TIME_DECAY_EVENT_TYPE",
     "VALID_EVENT_TYPES",
     "attitude_level",
     "cap_automatic_delta",
