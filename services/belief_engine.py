@@ -3,14 +3,19 @@
 信念是她自己从经历里慢慢形成的看法，不是每轮都要背一遍的设定：只有当前这条消息的话题和某条
 已形成 / 稳固的看法相关时，才浮现 1–2 条，措辞明确是她自己的体会，可以参考、不必复述。
 
-相关性只用廉价的办法：反思时顺带产出的触发词 + 看法原文与消息的二元组 / 英文词重叠；
-不调用模型，也不做向量检索。看法属于 Bot 本人（跨群、私聊都可用）；「关于某个群」的看法只在
-依据日记所在的那些群里浮现。
+相关性只用廉价的办法：反思时顺带产出的触发词（双向子串 + 分词命中）+ 看法原文与消息的
+二元组 / 英文词重叠；不调用模型，也不做向量检索。看法属于 Bot 本人（跨群、私聊都可用）；
+「关于某个群」的看法只在依据日记所在的那些群里浮现。
+
+群聊消息短，纯词法常常凑不到相关：没有相关看法时，按低概率、带冷却地让一条稳固看法
+作为「平时就有的态度」浮现（ambient），让长期立场偶尔自然流露，而不是只躺在库里。
 """
 
 from __future__ import annotations
 
+import random
 import re
+import threading
 import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime
@@ -61,22 +66,72 @@ def topic_tokens(text: Any) -> tuple[set[str], set[str]]:
     return grams, latin
 
 
+_MESSAGE_TERM_LIMIT = 12
+
+
+def message_terms(message: Any, limit: int = _MESSAGE_TERM_LIMIT) -> list[str]:
+    """消息里 ≥2 字的词（jieba 分词；没有 jieba 时退回连续中文/字母串），去掉虚词。"""
+    cleaned = _clean(message)
+    try:
+        import jieba  # type: ignore
+
+        try:
+            jieba.setLogLevel(40)
+        except Exception:
+            pass
+        candidates = list(jieba.cut(cleaned))
+    except Exception:  # pragma: no cover - jieba 是 requirements 里的依赖
+        candidates = re.findall(r"[a-z0-9]{2,}|[一-鿿]{2,}", cleaned)
+    terms: list[str] = []
+    for candidate in candidates:
+        term = str(candidate or "").strip()
+        if (
+            len(term) < 2
+            or term in terms
+            or term in _STOP_BIGRAMS
+            or term in _STOP_LATIN
+            or term.isdigit()
+            or all(ch in _PARTICLES for ch in term)
+        ):
+            continue
+        terms.append(term)
+        if len(terms) >= limit:
+            break
+    return terms
+
+
+def _trigger_hit(trigger: str, cleaned: str, terms: Sequence[str]) -> bool:
+    """触发词与消息双向匹配：触发词出现在消息里，或消息里的词是触发词的一部分 / 与之相同。
+
+    例：触发词「冷笑话」能被「讲个笑话」里的「笑话」命中；单字和虚词不参与。
+    """
+    if len(trigger) < 2:
+        return False
+    if trigger in cleaned:
+        return True
+    return any(term == trigger or term in trigger for term in terms)
+
+
 def relevance(message: str, belief: Mapping[str, Any]) -> tuple[float, list[str]]:
     """返回 (分数, 命中的触发词)；分数为 0 表示与当前话题无关。"""
     cleaned = _clean(message)
     if len(cleaned.strip()) < 2:
         return 0.0, []
+    terms = message_terms(cleaned)
     hits = [
         str(trigger) for trigger in belief.get("triggers") or []
-        if len(str(trigger).strip()) >= 2 and str(trigger).strip().casefold() in cleaned
+        if _trigger_hit(str(trigger).strip().casefold(), cleaned, terms)
     ]
     msg_grams, msg_latin = topic_tokens(cleaned)
-    grams, latin = topic_tokens(belief.get("content"))
+    content = _clean(belief.get("content"))
+    grams, latin = topic_tokens(content)
     shared = grams & msg_grams
     shared_latin = latin & msg_latin
-    if not hits and len(shared) < 2 and not shared_latin:
+    # 消息里的完整词（≥2 字、非虚词）直接出现在看法原文里，比零散二元组更可靠。
+    shared_terms = [term for term in terms if term in content]
+    if not hits and not shared_terms and len(shared) < 2 and not shared_latin:
         return 0.0, []
-    return 3.0 * len(hits) + len(shared) + 2.0 * len(shared_latin), hits
+    return 3.0 * len(hits) + 1.5 * len(shared_terms) + len(shared) + 2.0 * len(shared_latin), hits
 
 
 def _xun(day: int) -> str:
@@ -120,6 +175,9 @@ class BeliefEngine:
         policy: BeliefPolicy | None = None,
         max_items: int = MAX_SURFACE,
         clock: Any = None,
+        ambient_probability: float = 0.0,
+        ambient_cooldown_seconds: float = 3600.0,
+        rng: Any = None,
     ):
         # llm_client / soul_repository 只为旧调用方兼容保留：注入不调用模型，也不再按好感门禁。
         self.db = db
@@ -130,6 +188,20 @@ class BeliefEngine:
         self.policy = policy or BeliefPolicy()
         self.max_items = max(1, min(MAX_SURFACE, int(max_items or MAX_SURFACE)))
         self.clock = clock or time.time
+        # 常驻兜底：没有相关看法时以这个概率浮现 1 条稳固看法；同一 Bot+场合有冷却。
+        try:
+            probability = float(ambient_probability or 0.0)
+        except (TypeError, ValueError):
+            probability = 0.0
+        self.ambient_probability = max(0.0, min(1.0, probability))
+        try:
+            cooldown = float(ambient_cooldown_seconds)
+        except (TypeError, ValueError):
+            cooldown = 3600.0
+        self.ambient_cooldown_seconds = max(0.0, cooldown)
+        self._rng = rng or random.Random()
+        self._ambient_lock = threading.Lock()
+        self._ambient_last: dict[tuple[str, str], float] = {}
 
     def get_injection_details(
         self,
@@ -139,6 +211,7 @@ class BeliefEngine:
         *,
         message: str = "",
         max_items: int | None = None,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         empty = {"text": "", "belief_ids": [], "matches": [], "considered": 0}
         if (
@@ -159,6 +232,7 @@ class BeliefEngine:
             return {**empty, "reason": "belief_read_failed"}
         now = float(self.clock())
         scored = []
+        eligible = []
         for belief in beliefs:
             if belief.get("status") not in INJECTABLE_STATUSES or is_identity_contamination(belief.get("content")):
                 continue
@@ -166,6 +240,7 @@ class BeliefEngine:
                 scope.visibility != "group" or scope.session.id not in set(belief.get("session_ids") or [])
             ):
                 continue
+            eligible.append(belief)
             score, hits = relevance(text, belief)
             if score <= 0:
                 continue
@@ -173,21 +248,64 @@ class BeliefEngine:
         scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
         limit = max(1, min(self.max_items, int(max_items or self.max_items)))
         chosen = scored[:limit]
+        ambient = False
         if not chosen:
-            return {**empty, "considered": len(beliefs), "reason": "no_relevant_belief"}
-        lines = ["<beliefs>", "你这段时间的体会（是你自己从经历里慢慢形成的看法，可以参考，不必复述）："]
+            picked = self._pick_ambient(scope, eligible, now=now, dry_run=dry_run)
+            if picked is None:
+                return {**empty, "considered": len(beliefs), "reason": "no_relevant_belief"}
+            chosen = [(0.0, compute_strength(picked, now=now, policy=self.policy), picked, [])]
+            ambient = True
+        if ambient:
+            lines = ["<beliefs>", "你平时就有的一个态度（自己慢慢形成的，不用特意提起，合适时自然流露）："]
+        else:
+            lines = ["<beliefs>", "你这段时间的体会（是你自己从经历里慢慢形成的看法，可以参考，不必复述）："]
         for _score, _strength, belief, _hits in chosen:
             lines.append(f"- {belief['content']}（{describe_experiences(belief.get('support_dates') or [], now=now)}）")
         lines.append("</beliefs>")
-        return {
+        result = {
             "text": "\n".join(lines),
             "belief_ids": [int(belief["id"]) for _s, _t, belief, _h in chosen],
             "matches": [
-                {"id": int(belief["id"]), "score": round(score, 2), "strength": strength, "triggers_hit": hits}
+                {"id": int(belief["id"]), "score": round(score, 2), "strength": strength, "triggers_hit": hits,
+                 **({"ambient": True} if ambient else {})}
                 for score, strength, belief, hits in chosen
             ],
             "considered": len(beliefs),
         }
+        if ambient:
+            result["reason"] = "ambient"
+        return result
+
+    def _pick_ambient(
+        self,
+        scope: RuntimeScope,
+        eligible: Sequence[Mapping[str, Any]],
+        *,
+        now: float,
+        dry_run: bool,
+    ) -> Mapping[str, Any] | None:
+        """没有相关看法时，按概率与冷却挑 1 条稳固看法（越强越容易被想起）。"""
+        if self.ambient_probability <= 0:
+            return None
+        stable = [belief for belief in eligible if belief.get("status") == "stable"]
+        if not stable:
+            return None
+        key = (str(scope.bot_id), str(scope.session.id))
+        with self._ambient_lock:
+            last = self._ambient_last.get(key)
+            if last is not None and now - last < self.ambient_cooldown_seconds:
+                return None
+            if self._rng.random() >= self.ambient_probability:
+                return None
+            weights = [
+                max(0.05, float(compute_strength(belief, now=now, policy=self.policy) or 0.0))
+                for belief in stable
+            ]
+            picked = self._rng.choices(stable, weights=weights, k=1)[0]
+            # 预览 / shadow 不消耗冷却，真实注入才算「想起过」。
+            if not dry_run:
+                self._ambient_last[key] = now
+        return picked
 
     def get_injection(
         self,
@@ -200,4 +318,4 @@ class BeliefEngine:
         return str(self.get_injection_details(scope, sender_id=sender_id, keywords=keywords, message=message).get("text") or "")
 
 
-__all__ = ["BeliefEngine", "MAX_SURFACE", "describe_experiences", "relevance", "topic_tokens"]
+__all__ = ["BeliefEngine", "MAX_SURFACE", "describe_experiences", "message_terms", "relevance", "topic_tokens"]

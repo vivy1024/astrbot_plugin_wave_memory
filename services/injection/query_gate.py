@@ -45,6 +45,38 @@ _NOISE = re.compile(
 )
 
 
+# 平台占位符：图片、表情、语音、视频、@、引用块与 CQ 码本身不携带可检索文字。
+# 纯占位消息（例如只发了一张图）按旧规则会规范化成「图片」二字，命中全库图片行。
+_PLACEHOLDER = re.compile(
+    r"\[(?:图片|动画表情|表情(?:[:：]\s*\d+)?|语音|视频|文件|At[:：]\s*\d+|"
+    r"引用消息|转发消息)\]"
+    r"|\[CQ:[^\]]*\]"
+)
+# 合并记忆里每行可能带「名字: 」前缀（含 sender/名字(QQ) 两种写法）。
+_SPEAKER_PREFIX = re.compile(r"(?m)^[^\n:：\[\]]{1,40}[:：]\s*")
+# 去抖合并会把多条写在同一行：「伊芙: [图片] 伊芙: [图片]」。紧挨占位符的
+# 「名字:」只是发言人标签，不是正文。
+_SPEAKER_BEFORE_PLACEHOLDER = re.compile(r"[^\s:：\[\]]{1,40}[:：]\s*(?=\x00)")
+
+
+def strip_placeholders(text: Any) -> str:
+    """去掉平台占位符与发言人标签，返回剩余的真实文字（已 strip）。"""
+    value = _PLACEHOLDER.sub("\x00", str(text or ""))
+    value = _SPEAKER_BEFORE_PLACEHOLDER.sub("", value)
+    value = value.replace("\x00", " ")
+    value = _SPEAKER_PREFIX.sub("", value)
+    return value.strip()
+
+
+def is_placeholder_only(text: Any) -> bool:
+    """内容去掉占位符、发言人前缀与标点后为空：只有图片/表情等，没有文字。"""
+    raw = str(text or "")
+    # 必须真的出现过占位符，避免把「注意：」这类普通短句误判为纯占位。
+    if not raw.strip() or not _PLACEHOLDER.search(raw):
+        return False
+    return not normalize_query(strip_placeholders(raw))
+
+
 def _as_int(value: Any, default: int) -> int:
     try:
         if value is None or value == "":
@@ -90,6 +122,10 @@ def should_skip_retrieval(ctx: Any) -> tuple[bool, str]:
     if not normalized:
         return True, "empty_query_after_normalization"
 
+    # 只有图片/表情/@ 等占位时没有检索目标，否则会用「图片」二字召回全库图片行。
+    if is_placeholder_only(raw):
+        return True, "placeholder_only_query"
+
     # 明确要求回忆时永不跳过，即使句子很短（例如「还记得吗」）。
     if _RECALL_INTENT.search(raw):
         return False, ""
@@ -112,6 +148,8 @@ def should_skip_retrieval(ctx: Any) -> tuple[bool, str]:
 __all__ = [
     "DEFAULT_MIN_QUERY_CHARS",
     "gate_config",
+    "is_placeholder_only",
     "normalize_query",
     "should_skip_retrieval",
+    "strip_placeholders",
 ]

@@ -63,9 +63,6 @@ const LEGACY_BOT_FIELD_TABS: Record<string, BotEditorTab> = {
   interest_keywords: 'behavior',
   meta_prompt: 'behavior',
   model: 'behavior',
-  proactive_enabled: 'behavior',
-  proactive_interval_seconds: 'behavior',
-  proactive_max_per_hour: 'behavior',
 }
 
 export const LEGACY_BOT_SLOT = /^MetaThinking_Bot\d+$/

@@ -690,16 +690,6 @@
         "type": "int",
         "default": 60
       },
-      "silent_hours_start": {
-        "description": "静默时段开始（小时）",
-        "type": "int",
-        "default": 0
-      },
-      "silent_hours_end": {
-        "description": "静默时段结束（小时）",
-        "type": "int",
-        "default": 6
-      },
       "interest_sample_size": {
         "description": "兴趣关键词数量",
         "type": "int",
@@ -761,21 +751,6 @@
         "default": "",
         "_special": "select_provider",
         "restart_required": true
-      },
-      "proactive_enabled": {
-        "description": "启用主动对话",
-        "type": "bool",
-        "default": true
-      },
-      "proactive_interval_seconds": {
-        "description": "主动对话最小间隔（秒）",
-        "type": "int",
-        "default": 600
-      },
-      "proactive_max_per_hour": {
-        "description": "每小时最多主动插话",
-        "type": "int",
-        "default": 3
       }
     }
   },
@@ -832,21 +807,6 @@
         "default": "",
         "_special": "select_provider",
         "restart_required": true
-      },
-      "proactive_enabled": {
-        "description": "启用主动对话",
-        "type": "bool",
-        "default": false
-      },
-      "proactive_interval_seconds": {
-        "description": "主动对话最小间隔（秒）",
-        "type": "int",
-        "default": 900
-      },
-      "proactive_max_per_hour": {
-        "description": "每小时最多主动插话",
-        "type": "int",
-        "default": 2
       }
     }
   },
@@ -942,6 +902,34 @@
         "default": true,
         "restart_required": true,
         "hint": "只自动转正本群至少 3 次出现、或被至少 2 个人说过的表达；来源消息已失效、内容越界或修订冲突的候选保持待审。"
+      },
+      "expression_auto_min_occurrence": {
+        "description": "表达自动转正：同一句至少出现几次",
+        "type": "int",
+        "default": 3,
+        "restart_required": true,
+        "hint": "同一句在本群出现达到这个次数（或被至少 2 个人说过）才自动转正；可设 2–20。留空按 3。"
+      },
+      "expression_pending_ttl_days": {
+        "description": "表达待审过期天数",
+        "type": "int",
+        "default": 30,
+        "restart_required": true,
+        "hint": "待审超过这么多天仍没达到频次门槛的候选自动作废（留审计备注，管理台可恢复）。0 不过期。留空按 30。"
+      },
+      "expression_max_per_speaker": {
+        "description": "表达召回：每位群友最多几句",
+        "type": "int",
+        "default": 1,
+        "restart_required": true,
+        "hint": "一次召回里同一个群友最多贡献几句表达，避免说话方式越来越像某一两个人。0 不限制。留空按 1。"
+      },
+      "expression_persona_blocklist": {
+        "description": "表达自动转正的人设禁用词",
+        "type": "text",
+        "default": "",
+        "restart_required": true,
+        "hint": "含这些词的表达不会自动转正（仍可人工批准），逗号或换行分隔。攻击性话术（怼回去、阴阳怪气、关你屁事……）已内置拦截。"
       },
       "reply_rules_mode": {
         "description": "开口判断规则模式",
@@ -1131,6 +1119,20 @@
         "default": 20,
         "restart_required": true,
         "hint": "已形成、稳固、动摇中的看法合计超过上限时，最弱的淡出（萌芽另按同一上限，最早的先淡出）。留空按 20。"
+      },
+      "belief_ambient_probability": {
+        "description": "稳固看法自然流露的概率",
+        "type": "float",
+        "default": 0.1,
+        "restart_required": true,
+        "hint": "当前消息没有相关看法时，以这个概率让一条稳固的看法作为「平时就有的态度」带进上下文（不调用模型）。0 关闭。留空按 0.1。"
+      },
+      "belief_ambient_cooldown_minutes": {
+        "description": "稳固看法自然流露的冷却（分钟）",
+        "type": "int",
+        "default": 60,
+        "restart_required": true,
+        "hint": "同一个 Bot 在同一个群 / 私聊里，两次自然流露至少间隔这么久。留空按 60。"
       },
       "game_lesson_enabled": {
         "description": "游戏经验（从自己的游戏经历里总结教训）",

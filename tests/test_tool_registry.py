@@ -122,7 +122,6 @@ def test_builtin_specs_build_all_tools_with_unique_names():
         writer=None,
         write_gateway=None,
         relationship_service=None,
-        concern_tracker=None,
         jargon_service=None,
         _bot_registry={},
         book_lore_index=None,

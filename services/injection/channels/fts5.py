@@ -18,7 +18,7 @@ except ImportError:  # 兼容独立测试/插件顶级加载
 
 from ...identity_safety import is_identity_contamination
 from ..channel_base import InjectionResult, estimate_injection_tokens
-from ..query_gate import should_skip_retrieval
+from ..query_gate import is_placeholder_only, should_skip_retrieval
 from .safety import is_channel_allowed_in_mode
 
 
@@ -506,6 +506,9 @@ class FTS5Channel:
                 continue
             if is_identity_contamination(memory.get("content", "")):
                 filtered.append({**memory, "filter_reason": "identity_contamination", "filter_channel": "fts5"})
+                continue
+            if is_placeholder_only(memory.get("content", "")):
+                filtered.append({**memory, "filter_reason": "placeholder_only", "filter_channel": "fts5"})
                 continue
             if len(selected) >= top_k:
                 filtered.append({**memory, "filter_reason": "top_k", "filter_channel": "fts5"})

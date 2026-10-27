@@ -167,7 +167,11 @@ describe('配置文案不暴露实现术语', () => {
     // v5.1.2 删除做梦（6 项）、噪声删除（2 项）、记忆总量软上限（3 项）：184 → 173
     // 3f8b0889 新增 Learning_Settings.daily_diary_backfill_days（日记补写漏记天数）：173 → 174
     // 自动审核与自动风格学习 3 项（expression_auto_approve_enabled、FewShot_Settings.auto_learn / auto_approve）：174 → 177
-    expect(total).toBe(177)
+    // Learning_Settings 新增 6 项（belief_ambient_probability / _cooldown_minutes、expression_auto_min_occurrence、
+    // expression_pending_ttl_days、expression_max_per_speaker、expression_persona_blocklist）：177 → 183
+    // 删除旧主动发言配置 8 项（MetaThinking_Settings.silent_hours_start / _end，MetaThinking_Bot1/Bot2 的
+    // proactive_enabled / proactive_interval_seconds / proactive_max_per_hour）：183 → 175
+    expect(total).toBe(175)
     expect(noType).toEqual([])
   })
 

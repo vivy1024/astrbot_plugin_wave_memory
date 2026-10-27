@@ -170,28 +170,3 @@ export async function refreshSoulState(
     signal,
   })
 }
-
-export interface TimeAnchorItem {
-  id: number
-  event_summary: string
-  timestamp: number
-  emotional_weight: number
-  bot_id: string
-}
-
-export interface ListTimeAnchorsParams {
-  bot_id?: string
-  search?: string
-  limit?: number
-  offset?: number
-}
-
-export async function getTimeAnchors(params: ListTimeAnchorsParams = {}): Promise<{ items: TimeAnchorItem[]; total: number }> {
-  const query = new URLSearchParams()
-  if (params.bot_id) query.set('bot_id', params.bot_id)
-  if (params.search) query.set('search', params.search)
-  if (params.limit !== undefined) query.set('limit', String(params.limit))
-  if (params.offset !== undefined) query.set('offset', String(params.offset))
-
-  return fetchJson<{ items: TimeAnchorItem[]; total: number }>(`/api/time-anchors?${query.toString()}`)
-}

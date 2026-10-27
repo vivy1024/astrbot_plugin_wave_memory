@@ -18,6 +18,7 @@ from ..engine.database import WaveMemoryDB
 from ..engine.vector_index import VectorIndex
 from ..engine.embedding import EmbeddingService
 from .identity_safety import is_identity_contamination
+from .injection.query_gate import is_placeholder_only
 try:
     from ..domain.display_name import sanitize_display_name
     from ..domain.quality import QualityDecision, QualityProposal
@@ -171,7 +172,12 @@ def classify_source(
     # 0. 系统/模型报错文本一律视为噪音，绝不进入核心记忆或送去提标
     if is_system_error_message(message):
         return "noise"
-    # 1. bot 自己发的 → core
+    # 1. 只有图片/表情/@ 占位、没有任何文字 → noise（含 bot 自己发的表情包）。
+    # 去抖合并的「名字: [图片]」多行、带 @bot 的纯图消息和 bot 的纯表情回复
+    # 曾被判成 core/chat，进入全文检索后被「图片」二字成片召回。
+    if is_placeholder_only(message):
+        return "noise"
+    # 1.5 bot 自己发的 → core
     if sender_id == "bot":
         return "core"
     # 2. 消息含 @bot → core

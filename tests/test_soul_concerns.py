@@ -16,10 +16,11 @@ def test_concern_status_transitions_and_expiry():
     resolved = apply_concern_transition(progressed, action="resolve", now=20, resolution_note="录取结果已公布")
     assert resolved["status"] == "resolved"
     assert resolved["resolution_note"] == "录取结果已公布"
-    expired = apply_concern_transition({"status": "active", "expected_resolution_at": 5}, action="tick", now=10)
+    expired = apply_concern_transition({"status": "active", "expected_resolution_at": 5}, action="expire", now=10)
     assert expired["status"] == "expired"
-    dormant = apply_concern_transition({"status": "active", "last_progress_at": 1}, action="tick", now=1 + 14 * 86400)
-    assert dormant["status"] == "dormant"
+    # 旧的被动 tick 转换已删除：未知动作一律拒绝。
+    with pytest.raises(ValueError):
+        apply_concern_transition({"status": "active"}, action="tick", now=10)
     with pytest.raises(ValueError):
         apply_concern_transition({"status": "archived"}, action="reopen", now=1)
 

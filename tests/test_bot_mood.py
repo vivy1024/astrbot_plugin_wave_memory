@@ -359,3 +359,50 @@ def test_migration_is_additive_and_idempotent(tmp_path):
         assert cm.execute_read("SELECT valence FROM scoped_soul_mood").fetchall() == [(0.3,)], "旧数据不动"
     finally:
         cm.close()
+
+
+# ─── 注入热路径：快照 + 原因窗口 ───
+
+
+def _full_lines(service, viewer):
+    mood = service.current("bot-a", viewer_scope=viewer, max_causes=2)
+    causes = [c["text"] for c in mood.get("causes") or []]
+    return mood["word"], causes
+
+
+def test_injection_uses_fresh_snapshot_and_matches_full_reading(db):
+    service = _service(db)
+    service.observe_message(_group("g1", "u1"), content="你真可爱，太棒了", sender_name="小红", directed=True, now=NOW - 40 * MIN)
+    service.observe_message(_group("g1", "u2"), content="你是废物吧", sender_name="小明", directed=True, now=NOW - 3 * HOUR)
+    service.tick(["bot-a"], now=NOW - 60)  # 快照新鲜（60 秒前）
+    viewer = _group("g2", None)
+
+    word, causes = _full_lines(service, viewer)
+    lines = service.render_lines("bot-a", viewer, now=NOW)
+    assert service.stats.get("rendered_from_snapshot") == 1
+    assert lines[0] == f"心情：{word}"
+    assert lines[1] == "缘由：" + "；".join(causes), "原因窗口截断不改变结果，跨群原因保留"
+    assert "在别的群里" in lines[1]
+
+
+def test_injection_falls_back_when_snapshot_stale(db):
+    service = _service(db)
+    service.observe_message(_group(), content="你真棒", sender_name="小红", directed=True, now=NOW - 2 * HOUR)
+    # 快照停留在 2 小时前：过期，必须全量重算
+    lines = service.render_lines("bot-a", _group(), now=NOW)
+    assert not service.stats.get("rendered_from_snapshot")
+    assert lines and lines[0].startswith("心情：")
+
+
+def test_cause_window_excludes_only_events_below_cause_threshold(db):
+    from domain.mood_policy import event_half_life
+    from services.bot_mood import CAUSE_MIN_WEIGHT, MAX_CONTRIBUTION_WEIGHT
+
+    settings = MoodSettings()
+    slowest = event_half_life(settings, 1.0, 120.0)
+    import math
+
+    window = slowest * math.log2(MAX_CONTRIBUTION_WEIGHT / CAUSE_MIN_WEIGHT)
+    strongest = _event(1.0, arousal=1.0, intensity=1.0, age=window + 1)
+    reading = compose_mood([strongest], settings, now=NOW, max_contributions=2)
+    assert all(item.weight < CAUSE_MIN_WEIGHT for item in reading.contributions)

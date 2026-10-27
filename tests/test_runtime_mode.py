@@ -36,8 +36,8 @@ class RuntimeModeTest(unittest.TestCase):
 
         disabled = [
             "affinity", "persona", "mood", "consolidation",
-            "metathinking", "belief", "belief_emergence", "concern",
-            "mood_trajectory", "subjective_time", "desire", "jargon",
+            "metathinking", "belief", "belief_emergence",
+            "mood_trajectory", "jargon",
             "fewshot", "book_lore", "study", "self_reflect",
             "book_lore_tools", "affinity_tools", "persona_tools",
         ]

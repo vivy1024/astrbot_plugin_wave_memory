@@ -124,9 +124,6 @@ export interface BotProfileDto {
   qq_id: string
   aliases: string[]
   meta_prompt: string
-  proactive_enabled: boolean
-  proactive_interval_seconds: number
-  proactive_max_per_hour: number
   exclude_sources: string[]
   interest_keywords: string[]
   enabled: boolean
@@ -232,9 +229,6 @@ export function emptyBot(dbId = ''): BotProfileDto {
     qq_id: '',
     aliases: [],
     meta_prompt: '',
-    proactive_enabled: false,
-    proactive_interval_seconds: 600,
-    proactive_max_per_hour: 3,
     exclude_sources: [],
     interest_keywords: [],
     enabled: true,

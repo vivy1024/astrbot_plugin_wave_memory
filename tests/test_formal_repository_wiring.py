@@ -217,10 +217,7 @@ def test_main_production_wiring_passes_formal_repositories_writer_and_runtime_sc
     assert "book_lore_repository" not in constructor_source
     assert "repository=self.db.fewshot_repository" in initializer_source
     assert "writer=self.scoped_projection_writer" in initializer_source
-    for service_name in ("ConcernTracker", "BotMoodService", "SubjectiveTime"):
-        assert service_name in _call_names(initializer)
-    assert "repository=soul_repository" in initializer_source
-    assert "coordinator=soul_coordinator" in initializer_source
+    assert "BotMoodService" in _call_names(initializer)
     # v6：通道实例化搬到 services/injection/channel_registry.py，main 只调 build。
     channel_source = (ROOT / "services" / "injection" / "channel_registry.py").read_text(encoding="utf-8")
     channel_tree = ast.parse(channel_source)
@@ -238,10 +235,6 @@ def test_main_production_wiring_passes_formal_repositories_writer_and_runtime_sc
     assert channel_source.count("shared_memory_grants_enabled=d.shared_memory_grants_enabled") == 1
     assert "config['cross_group_enabled'] = self.cross_group_enabled" in context_config_source
     assert "config['shared_memory_grants_enabled'] = self.shared_memory_grants_enabled" in context_config_source
-    # 后台盲抽已整体废除：on_message 不得自动创建关切或时间锚点，
-    # 两者都只能由模型现场基于证据经工具 / 命令链写入。
-    for blind_write in ("concern_tracker.add(", "subjective_time.add_anchor("):
-        assert blind_write not in on_message_source, f"on_message 不得后台盲抽: {blind_write}"
     # v6：工具实例化搬到 tools/builtin_registry.py，main 只按能力开关 build。
     registry_source = (ROOT / "tools" / "builtin_registry.py").read_text(encoding="utf-8")
     assert "builtin_tool_specs()" in initializer_source
@@ -249,7 +242,5 @@ def test_main_production_wiring_passes_formal_repositories_writer_and_runtime_sc
     assert "write_gateway=d.write_gateway" in registry_source, "关切工具必须绑定正式写入网关"
     assert "write_gateway=self.write_gateway" in initializer_source
     assert "scope=runtime_scope" in on_message_source
-    # 注意：proactive 主动追问所需的 concern_score 目前无供数方，
-    # ConcernTracker.match/summary 与 SubjectiveTime.add_anchor 均无生产调用者，
-    # "关切驱动主动关心"尚未接线。此处刻意不断言其存在，
-    # 以免留下"主动行为已守护"的错觉（接线为独立待办，需产品决定）。
+    # 注意：旧 proactive_policy 的 concern_score 目前无供数方（ConcernTracker / SubjectiveTime 已删除），
+    # 此处刻意不断言其存在，以免留下"主动行为已守护"的错觉。

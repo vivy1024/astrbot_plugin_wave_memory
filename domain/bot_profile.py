@@ -298,7 +298,8 @@ def _lines(value: Any) -> list[str]:
 class BotProfile:
     """配置驱动的 Bot 身份描述。
 
-    前 10 个字段与 v5 的 ``BotProfile`` 同名同义，旧代码无需改动即可继续读取。
+    前 7 个字段与 v5 的 ``BotProfile`` 同名同义（v5 的 proactive_* 三项随旧主动发言删除，
+    旧数据里的这些键在 from_dict 时被忽略）。
     """
 
     qq_id: str
@@ -306,9 +307,6 @@ class BotProfile:
     db_id: str = ""
     aliases: list[str] = field(default_factory=list)
     meta_prompt: str = ""
-    proactive_enabled: bool = True
-    proactive_interval_seconds: int = 600
-    proactive_max_per_hour: int = 3
     exclude_sources: list[str] = field(default_factory=list)
     interest_keywords: list[str] = field(default_factory=list)
     # ---- v6 ----
@@ -414,9 +412,6 @@ class BotProfile:
             db_id=db_id,
             aliases=_text_list(data.get("aliases")),
             meta_prompt=_text(data.get("meta_prompt")),
-            proactive_enabled=_bool(data.get("proactive_enabled"), True),
-            proactive_interval_seconds=_int(data.get("proactive_interval_seconds"), 600, minimum=30),
-            proactive_max_per_hour=_int(data.get("proactive_max_per_hour"), 3, minimum=0),
             exclude_sources=_text_list(data.get("exclude_sources")),
             interest_keywords=_text_list(data.get("interest_keywords")),
             enabled=_bool(data.get("enabled"), True),

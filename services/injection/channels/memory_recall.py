@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..channel_base import InjectionResult
-from ..query_gate import should_skip_retrieval
+from ..query_gate import is_placeholder_only, should_skip_retrieval
 from .safety import SafetyChannel, is_channel_allowed_in_mode
 
 # Align with MessageWriter.classify_source: ordinary group chat is "chat".
@@ -121,6 +121,23 @@ def _filter_recent_timestamp(memories: list[dict[str, Any]], ctx: Any, minutes: 
     return kept, filtered
 
 
+def _filter_placeholder_only(
+    memories: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """丢掉只有图片/表情占位、没有任何文字的记忆；图文消息照常保留。"""
+    kept: list[dict[str, Any]] = []
+    filtered: list[dict[str, Any]] = []
+    for memory in memories:
+        if is_placeholder_only(memory.get("content", "")):
+            item = dict(memory)
+            item["filter_reason"] = "placeholder_only"
+            item["filter_channel"] = "memory"
+            filtered.append(item)
+        else:
+            kept.append(memory)
+    return kept, filtered
+
+
 def _filter_min_score(
     memories: list[dict[str, Any]],
     min_score: float | None,
@@ -181,8 +198,12 @@ class MemoryRecallChannel:
                 ctx,
                 _as_int(recall_cfg.get("skip_recent_minutes"), _as_int(_mapping(getattr(ctx, "config", {})).get("recent_dedup_minutes"), 0)),
             )
+            memories, placeholder_filtered = _filter_placeholder_only(memories)
             memories, safety_filtered = self.safety.filter_items(memories, ctx=ctx)
-            filtered = [_audit_filtered(item) for item in [*score_filtered, *recent_ts_filtered, *safety_filtered]]
+            filtered = [
+                _audit_filtered(item)
+                for item in [*score_filtered, *recent_ts_filtered, *placeholder_filtered, *safety_filtered]
+            ]
             if not memories:
                 return InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="no safe memories")
 

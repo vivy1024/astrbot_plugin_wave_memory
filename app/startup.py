@@ -67,9 +67,6 @@ from ..services.meta_thinking import MetaThinking
 from ..services.self_reflect import SelfReflectService
 from ..services.llm_fallback import LLMFallbackClient, build_provider_chain
 from ..services.eviction import EvictionService
-from ..services.concern_tracker import ConcernTracker
-from ..services.subjective_time import SubjectiveTime
-from ..services.desire_engine import DesireEngine
 from ..services.belief_engine import BeliefEngine
 from ..services.belief_gating import snapshot_from_relationship
 from ..services.proactive_audit import record_proactive_timeline
@@ -323,6 +320,11 @@ class StartupMixin:
                     config=fewshot_cfg,
                     repository=self.db.fewshot_repository,
                     writer=self.scoped_projection_writer,
+                    rotation_state_path=(
+                        os.path.join(os.path.dirname(os.path.abspath(fewshot_db_path)), "fewshot_rotation.json")
+                        if (fewshot_db_path := str(getattr(self.db, "db_path", "") or "")) and fewshot_db_path != ":memory:"
+                        else None
+                    ),
                 )
                 logger.info("[WaveMemory] Few-Shot system initialized")
             except Exception as e:
@@ -352,7 +354,6 @@ class StartupMixin:
                     extra_interests=maps["extra_interests"],
                     llm_client=self.llm_routing.client("meta_thinking"),
                 )
-                self.meta_thinking._plugin_config = self.config  # 好感度约束需要顶层 config
             except Exception as e:
                 logger.warning(f"[WaveMemory] MetaThinking init failed: {e}")
                 _record_err("MetaThinking", e)
@@ -409,10 +410,25 @@ class StartupMixin:
             if runtime_capability_enabled(self.runtime_mode, "belief", True) and getattr(self.db, "bot_beliefs", None) is not None:
                 from ..services.belief_lifecycle import BeliefPolicy
 
+                learning_cfg = self.config.get("Learning_Settings", {}) or {}
+
+                def _belief_float(key: str, default: float, lo: float, hi: float) -> float:
+                    # 留空 / 写错 / 旧配置缺字段时回到默认值（AstrBot 保存表单可能写入 None 或空串）。
+                    value = learning_cfg.get(key)
+                    if value is None or value == "":
+                        return default
+                    try:
+                        number = float(value)
+                    except (TypeError, ValueError):
+                        return default
+                    return max(lo, min(hi, number))
+
                 self.belief_engine = BeliefEngine(
                     db=self.db,
                     bot_id=soul_bot_id,
-                    policy=BeliefPolicy.from_config(self.config.get("Learning_Settings", {}) or {}),
+                    policy=BeliefPolicy.from_config(learning_cfg),
+                    ambient_probability=_belief_float("belief_ambient_probability", 0.1, 0.0, 1.0),
+                    ambient_cooldown_seconds=_belief_float("belief_ambient_cooldown_minutes", 60.0, 0.0, 7 * 24 * 60.0) * 60.0,
                 )
             else:
                 self.belief_engine = None
@@ -420,20 +436,6 @@ class StartupMixin:
             logger.warning(f"[WaveMemory] BeliefEngine init failed: {e}")
             _record_err("BeliefEngine", e)
             self.belief_engine = None
-        # 关切 / 情绪轨迹 / 时间锚点：memory_only/compat_only 下属于高级灵魂状态能力，默认不实例化。
-        soul_repository = self.db.soul_repository
-        soul_coordinator = self.write_gateway.coordinator
-        try:
-            self.concern_tracker = ConcernTracker(
-                db=self.db,
-                bot_id=soul_bot_id,
-                repository=soul_repository,
-                coordinator=soul_coordinator,
-            ) if runtime_capability_enabled(self.runtime_mode, "concern", True) and soul_bot_id else None
-        except Exception as e:
-            logger.warning(f"[WaveMemory] ConcernTracker init failed: {e}")
-            _record_err("ConcernTracker", e)
-            self.concern_tracker = None
         # 心情 v2：一个 Bot 一份心情（事件驱动 + 惯性回落），画像来自 Bot Profile 的 mood 段。
         # 取代从未接线的 MoodTrajectory；旧的按群 scoped_soul_mood 只作为群氛围输入。
         try:
@@ -454,28 +456,9 @@ class StartupMixin:
             self._spawn(self._mood_tick_loop(), name="wave-memory:mood-tick", owner="mood")
         from ..webui.container import get_container as _get_container
         _get_container().mood_service = self.mood_service
-        try:
-            self.subjective_time = SubjectiveTime(
-                db=self.db,
-                bot_id=soul_bot_id,
-                repository=soul_repository,
-                coordinator=soul_coordinator,
-            ) if runtime_capability_enabled(self.runtime_mode, "subjective_time", True) and soul_bot_id else None
-        except Exception as e:
-            logger.warning(f"[WaveMemory] SubjectiveTime init failed: {e}")
-            _record_err("SubjectiveTime", e)
-            self.subjective_time = None
-        # 欲望引擎（依赖信念引擎）
-        try:
-            self.desire_engine = DesireEngine(belief_engine=self.belief_engine, bot_id=soul_bot_id) if runtime_capability_enabled(self.runtime_mode, "desire", True) and soul_bot_id else None
-        except Exception as e:
-            logger.warning(f"[WaveMemory] DesireEngine init failed: {e}")
-            _record_err("DesireEngine", e)
-            self.desire_engine = None
         logger.info(
             f"[WaveMemory] 灵魂子系统就绪: belief={bool(self.belief_engine)} "
-            f"concern={bool(self.concern_tracker)} mood={bool(self.mood_service)} "
-            f"time_anchor={bool(self.subjective_time)} desire={bool(self.desire_engine)}"
+            f"mood={bool(self.mood_service)}"
         )
 
         self._init_learning_services()
@@ -516,12 +499,10 @@ class StartupMixin:
             "当前运行模式关闭了信念" if not runtime_capability_enabled(self.runtime_mode, "belief", True)
             else "belief_engine 初始化失败或未启用"
         )
-        soul_state_off_reason = missing_bot_profile_reason if not soul_bot_id else "初始化失败或未启用"
 
         _reg("自省系统", "ok" if getattr(self, 'self_reflect', None) else "off", "" if getattr(self, 'self_reflect', None) else self_reflect_off_reason, dependency="LLM Provider + Bot Profile")
         _reg("记忆淘汰", "ok" if getattr(self, 'eviction_service', None) else "off", "" if getattr(self, 'eviction_service', None) else "Eviction 未启用", dependency="自动启用")
         _reg("信念引擎", "ok" if self.belief_engine else "off", "" if self.belief_engine else soul_off_reason, dependency="Learning_Settings.belief_reflection_enabled（形成看法需 LLM Provider + 每日日记）")
-        _reg("关切追踪", "ok" if self.concern_tracker else "off", "" if self.concern_tracker else f"concern_tracker {soul_state_off_reason}", dependency="Bot Profile")
         _reg("Bot 心情", "ok" if self.mood_service else "off", "" if self.mood_service else "Lifecycle_Settings.enable_mood 关闭或初始化失败", dependency="enable_mood + Bot Profile")
         _reg("黑话系统", "ok" if getattr(self, 'jargon_service', None) else "off", "" if getattr(self, 'jargon_service', None) else "Jargon 未启用", dependency="LLM Provider + 聊天记录积累")
         _reg("风格学习", "ok" if getattr(self, 'few_shot_service', None) else "off", "" if getattr(self, 'few_shot_service', None) else "FewShot 未启用", dependency="FewShot_Settings.enabled（提取需要 LLM，读取已批准样例不需要）")
@@ -780,8 +761,20 @@ class StartupMixin:
 
         from ..services.expression_policy import ExpressionPolicy
         from ..services.reply_feedback import ReplyFeedbackService
+        blocklist_raw = cfg.get("expression_persona_blocklist")
+        if isinstance(blocklist_raw, str):
+            persona_blocklist = [word.strip() for word in re.split(r"[,，\s]+", blocklist_raw)]
+        elif isinstance(blocklist_raw, (list, tuple)):
+            persona_blocklist = [str(word).strip() for word in blocklist_raw]
+        else:
+            persona_blocklist = []
         self.expression_policy = ExpressionPolicy(
             self.db.conn, enabled=_flag("expression_learning_enabled", False),
+            # 留空 / 旧配置缺字段：_num 回到默认值；构造器再夹到合法区间。
+            auto_min_occurrence=int(_num("expression_auto_min_occurrence", 3)),
+            pending_ttl_days=_num("expression_pending_ttl_days", 30),
+            max_per_speaker=int(_num("expression_max_per_speaker", 1)),
+            persona_blocklist=[word for word in persona_blocklist if word],
         )
         self.reply_feedback_service = ReplyFeedbackService(
             self.db.conn, enabled=_flag("reply_feedback_enabled", False), expression_policy=self.expression_policy,
