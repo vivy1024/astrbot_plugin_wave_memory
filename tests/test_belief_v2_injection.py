@@ -128,3 +128,73 @@ def test_legacy_archived_rows_are_never_injected(tmp_path):
         assert engine(db).get_injection_details(group("g1"), message="射击游戏")["text"] == ""
     finally:
         db.close()
+
+
+# ─── 双向词法匹配 + 稳固看法常驻兜底 ───
+
+
+class _Rng:
+    """可控随机：random() 按队列给值，choices 取第一条。"""
+
+    def __init__(self, values):
+        self.values = list(values)
+
+    def random(self):
+        return self.values.pop(0) if self.values else 1.0
+
+    def choices(self, population, weights=None, k=1):
+        return [population[0]]
+
+
+def test_partial_word_hits_trigger_in_both_directions():
+    belief = {"content": "我讲冷笑话群里大多不接", "triggers": ["冷笑话"]}
+    score, hits = relevance("来讲个笑话听听", belief)
+    assert score > 0 and hits == ["冷笑话"], "消息里的「笑话」是触发词「冷笑话」的一部分"
+    score, hits = relevance("我昨天盖房子盖到半夜", {"content": "直播时我更喜欢盖房子", "triggers": ["房子"]})
+    assert hits == ["房子"]
+
+
+def test_whole_word_in_belief_text_counts_without_trigger():
+    belief = {"content": "直播时我更喜欢在 MC 里盖房子而不是打怪", "triggers": []}
+    score, hits = relevance("今天打怪好累", belief)
+    assert score > 0 and hits == []
+
+
+def test_filler_words_do_not_match():
+    belief = {"content": "我讲冷笑话群里大多不接", "triggers": ["冷笑话"]}
+    for message in ("我们知道了", "真的吗", "然后呢"):
+        assert relevance(message, belief) == (0.0, [])
+
+
+def test_ambient_stable_view_surfaces_with_probability_and_cooldown(db):
+    clock = {"now": NOW}
+    eng = BeliefEngine(db, clock=lambda: clock["now"], ambient_probability=0.5,
+                       ambient_cooldown_seconds=3600, rng=_Rng([0.9, 0.1, 0.1]))
+    miss = eng.get_injection_details(group("g1"), message="晚饭吃什么好呢")
+    assert miss["text"] == "" and miss["reason"] == "no_relevant_belief", "概率没抽中"
+
+    hit = eng.get_injection_details(group("g1"), message="晚饭吃什么好呢")
+    assert hit["reason"] == "ambient"
+    assert "平时就有的一个态度" in hit["text"]
+    assert "盖房子" in hit["text"], "只从稳固看法里挑"
+    assert hit["matches"][0]["ambient"] is True
+
+    again = eng.get_injection_details(group("g1"), message="晚饭吃什么好呢")
+    assert again["text"] == "", "冷却期内不再流露"
+    other_place = eng.get_injection_details(group("g2"), message="晚饭吃什么好呢")
+    assert other_place["reason"] == "ambient", "冷却按场合分开"
+
+
+def test_ambient_dry_run_does_not_consume_cooldown(db):
+    eng = BeliefEngine(db, clock=lambda: NOW, ambient_probability=1.0, rng=_Rng([0.0, 0.0]))
+    preview = eng.get_injection_details(group("g1"), message="晚饭吃什么", dry_run=True)
+    assert preview["reason"] == "ambient"
+    real = eng.get_injection_details(group("g1"), message="晚饭吃什么")
+    assert real["reason"] == "ambient", "预览不占冷却"
+
+
+def test_ambient_off_by_default_and_relevant_views_take_priority(db):
+    assert engine(db).get_injection_details(group("g1"), message="晚饭吃什么")["text"] == ""
+    eng = BeliefEngine(db, clock=lambda: NOW, ambient_probability=1.0, rng=_Rng([0.0]))
+    details = eng.get_injection_details(group("g1"), message="我再讲个冷笑话")
+    assert details.get("reason") != "ambient" and "冷笑话" in details["text"]

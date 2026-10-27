@@ -42,6 +42,16 @@ def _extract_belief_ids(text: str) -> list[int]:
     return [int(value) for value in re.findall(r"ID[:#]?(\d+)", text or "")[:10]]
 
 
+def _accepts_dry_run(engine: Any) -> bool:
+    try:
+        import inspect
+
+        params = inspect.signature(engine.get_injection_details).parameters
+    except (TypeError, ValueError, AttributeError):
+        return False
+    return "dry_run" in params or any(p.kind is p.VAR_KEYWORD for p in params.values())
+
+
 def _belief_ids_from_details(details: Any, text: str) -> list[int]:
     """Prefer structured IDs from get_injection_details; fall back to prompt text."""
     ids: list[int] = []
@@ -115,12 +125,15 @@ class BeliefChannel:
                 max_items = int(cfg.get("max_items") or 2)
             except (TypeError, ValueError):
                 max_items = 2
-            details = self.belief_engine.get_injection_details(
-                runtime_scope,
-                sender_id=getattr(ctx, "sender_id", "") or "",
-                message=str(getattr(ctx, "message", "") or ""),
-                max_items=max_items,
-            ) or {}
+            kwargs: dict[str, Any] = {
+                "sender_id": getattr(ctx, "sender_id", "") or "",
+                "message": str(getattr(ctx, "message", "") or ""),
+                "max_items": max_items,
+            }
+            # 预览 / shadow 不消耗常驻兜底的冷却；旧引擎或替身没有这个参数时不传。
+            if bool(getattr(ctx, "dry_run", False)) and _accepts_dry_run(self.belief_engine):
+                kwargs["dry_run"] = True
+            details = self.belief_engine.get_injection_details(runtime_scope, **kwargs) or {}
             text = str(details.get("text") or "").strip()
             if not text:
                 return InjectionResult.empty(
