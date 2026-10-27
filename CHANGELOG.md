@@ -1,5 +1,35 @@
 # Changelog
 
+## v5.1.5（2026-10-28）
+
+### 改进
+
+- **信念能说出口了**。线上 24 小时 234 次注入里 belief 只命中 5 次：触发词只认「整个出现在消息里」，看法原文又要求和消息共享 ≥2 个中文二元组，群聊短句基本凑不齐。现在触发词双向匹配（消息里 jieba 分出的词是触发词的一部分、或与之相同也算，「讲个笑话」能命中「冷笑话」），消息里的完整词出现在看法原文里也计分，虚词与停用词不参与。没有相关看法时，按 `belief_ambient_probability`（默认 0.1）让一条**稳固**看法作为「平时就有的态度」带进上下文，同一 Bot 在同一群 / 私聊里有 `belief_ambient_cooldown_minutes`（默认 60）冷却；预览 / shadow 不消耗冷却。全程不调用模型、不做向量检索；「关于某个群」的看法仍只在那个群浮现。
+- **关系会随时间变淡**。长期不来往的人，熟悉、信任、趣味、深度会慢慢回落，敌意也会慢慢消退（速度减半）；负的信任向 0 收敛，不会一下抹平。公式沿用旧 `user_profiles` 衰减（距最后一次真实互动 d 天：f = min(0.01, 0.01/225·d²)），但旧逻辑只作用在注入早已不读的旧表上，现在落到正式关系表 `scoped_soul_relationship_values`：只改自动层，人工覆盖与调整原样保留；每个对象一次写入、revision +1、每个变化维度留一条 `time_decay` 审计事件（带前后快照）。`time_decay` 不算一次互动：不进关系历史、不当时间线锚点、不占当日变化额度，也不会被当作「最后来往时间」。随 lifecycle 每 24 小时跑一次。
+- **soul_state 通道提速**（日志常见 `soul_state exceeded 180ms`）。注入热路径不再调用 WebUI 用的 `get_state`（它还会查 mood/concerns 计数与明细、关系与审计历史，查完通道全丢），改用只取时间线与 revision 的 `recent_timeline`。心情值优先读 `bot_mood_state` 快照（≤600 秒且策略版本一致，疲劳按当前时刻补差），心情原因只读还可能达到展示阈值的那段事件（约 17 小时，原来每轮读约 80 小时全量）——窗口外的事件权重必然低于展示阈值，所以原因与全量计算完全一致，跨群 / 私聊的可见性规则不变。快照过期时回退全量计算。
+- **表达学习加约束**。线上 731 条候选里 700 条是「一个人说过一次」，永远达不到门槛，待审队列只增不减。现在：自动转正前做无模型的人设检查（攻击性话术内置拦截，另可配 `expression_persona_blocklist`），不合格的留待人工；门槛可配 `expression_auto_min_occurrence`（默认 3，下限 2）；待审超过 `expression_pending_ttl_days`（默认 30）仍未达门槛的自动作废，留 `auto:` 审计备注；召回时同一群友最多贡献 `expression_max_per_speaker`（默认 1）句、候选池从 40 放大到 120，避免说话方式越来越像某一两个人。风格样例的「不连续重复同一条」记录落盘到数据库同目录的 `fewshot_rotation.json`，重启后不再和重启前最后一轮撞车。
+
+### 修复
+
+- **纯图片消息召回一堆别人的「[图片] [图片]」**。只发一张图时，查询门控把 `[图片]` 规范化成「图片」二字放行，FTS5 用它命中全库图片行，memory 通道也白算一次 embedding。现在消息去掉图片 / 表情 / 语音 / 视频 / @ / 引用 / CQ 码占位和发言人标签后为空就跳过检索（`placeholder_only_query`）；召回结果里只有占位符、没有任何文字的条目也被过滤（`placeholder_only`）。带文字的图文消息照常检索、照常召回。写入端同样把纯占位消息（含去抖合并的「名字: [图片]」多行、@bot 的纯图、Bot 自己的纯表情回复）归为 noise，不再进入全文检索。存量的纯占位记忆不在本次处理。
+
+### 删除（空转模块，只删代码，不删表）
+
+- **desire（欲望）**：只在消息含「红包」时写入，全仓没有读取方。
+- **subjective_time（主观时间锚点）**：`add_anchor` 只有测试调用，自身也不注入。`scoped_soul_timeline` 的 `time_anchor` 事件类型不受影响。
+- **MetaThinking 旧主动发言与旧表好感**：`should_respond` / `should_proactive` / `should_check_proactive` / `generate_proactive_reply` 等没有生产调用方，写 `user_profiles.affection` 的整条链随之删除（正式好感只由社交工具裁决）。兴趣词 `is_interesting`、刷屏检测保留。真正的主动开口仍是关切跟进（`Learning_Settings.proactive_reply_enabled`），不受影响。
+- **ConcernTracker**：生产只调用 `invalidate`，清的是没人读的缓存；它读的旧表 `concerns` 没有写入方。
+- **`soul_concerns` 的 `tick`（dormant 转换）**：系统收敛与关切工具的动作表都不含 `tick`，不可达。`dormant` 状态本身保留。
+- **旧表 WebUI 端点**：`/api/soul/concerns`、`/time-anchors`、`/mood/trajectory`、`/mood/<id>`（写端点本就被 410 拦截，读端点前端无调用），未被引用的 `TimeAnchorsExplorer` 组件，系统概览里读旧 `bot_mood` 的 `active_moods`，以及 `set_mood` / `get_active_mood`。
+- 启动日志「灵魂子系统就绪」只列仍存在的子系统（belief、mood）。
+
+### 升级须知
+
+- **新增配置**（均在 `Learning_Settings`，留空按默认值，升级用户无需改动，但建议检查一遍）：`belief_ambient_probability`、`belief_ambient_cooldown_minutes`、`expression_auto_min_occurrence`、`expression_pending_ttl_days`、`expression_max_per_speaker`、`expression_persona_blocklist`。不想要信念常驻流露，把 `belief_ambient_probability` 设为 0。
+- **删除的配置**：`MetaThinking_Settings.silent_hours_start` / `silent_hours_end`，`MetaThinking_Bot1` / `Bot2` 的 `proactive_enabled` / `proactive_interval_seconds` / `proactive_max_per_hour`。这些项此前就不生效；旧配置里残留的值会被忽略。
+- **行为变化**：关系冷却首次运行时，长期没来往的关系会一次性按当前天数冷却一档（单次最多 1%），之后每天继续。表达待审过期首次运行会作废一批 30 天前、只出现过一次的候选（可在管理台恢复）。
+- 数据库表一律保留：`concerns`、`time_anchors`、`bot_mood` 等旧表变成无代码访问，是否 `DROP` 另行决定。
+
 ## v5.1.4（2026-10-25）
 
 ### 新增

@@ -2,7 +2,7 @@
 
 # Wave Memory
 
-[![Version](https://img.shields.io/badge/version-v5.1.4-blue.svg)](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
+[![Version](https://img.shields.io/badge/version-v5.1.5-blue.svg)](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![AstrBot](https://img.shields.io/badge/AstrBot-≥4.14-green.svg)](https://github.com/AstrBotDevs/AstrBot)
@@ -121,6 +121,7 @@ v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现�
 
 | 版本 | 日期 | 重点 |
 |------|------|------|
+| **v5.1.5** | 2026-10-28 | 拟人修整：信念双向词法匹配并让稳固看法低频自然流露（不调用模型）；正式关系随时间冷却（只改自动层、留 time_decay 审计）；soul_state 注入提速（快照 + 原因窗口，结果不变）；表达学习加人设检查、待审过期与按人限流；纯图片消息不再召回占位噪声；删除 desire、主观时间、旧主动发言、ConcernTracker 等空转模块 |
 | **v5.1.4** | 2026-10-25 | 原著原文检索工具 `wave_memory_novel_source`（关键词 / 章节号直读小说全文，不依赖向量）；修掉向量补算链幂等键冲突（payload reason 变化导致 `JobRequestConflictError`，缺向量只能等重启才补）与 BookLoreIndex 幽灵映射（写入失败污染映射，962–1023 章笔记永远补不进检索）；定时任务作用域回退解析与数据库文件访问拦截 |
 | **v5.1.3** | 2026-10-20 | 喜恶预设（跨群稳定的喜欢 / 不喜欢 / 典型反应）与心事 v1（未了事、对方反应、疲累，可犹豫可不开口）；风格样例与表达候选按证据和频次门槛自动沉淀；事实页可人工修正客体与原话；Runtime API 令牌可在管理台管理；事实证据回挂与黑话标签链补全脚本；废除旧 `facts` 表与死代码；关切跟进改为发送后才结算；事实注入按主语轮转；日记带关切与已有看法，反思游标改水位判定并补 503 重试 |
 | **v5.1.2** | 2026-10-14 | 性能与精简：管理台重统计移出事件循环并缓存（记忆页 33 秒 → 0.06 秒）；冷召回跳过万能标签（一次取回十几万行 → 提前截断）；按昵称找人走新索引（读 690MB → 0）；删除做梦引擎与 PatternAggregator、噪声记忆删除、会话最近消息作检索上下文（评测 nDCG@5 0.229 → 0.390）、记忆总量软上限（此前新聊天向量算好却被丢，重启后又补算）；新增 D1 脚本把向量挪到表尾（读盘降到 1/3.5）；12 项写死常量改热参数；人情账词表可配 |
