@@ -16,7 +16,9 @@ except ImportError:  # top-level import in isolated tests
 import asyncio
 import hashlib
 import json
+import os
 import random
+import threading
 import re
 import time
 from html import escape
@@ -122,6 +124,7 @@ class FewShotService:
         expression_policy: Any = None,
         bot_reply_repository: Any = None,
         auto_approve: bool = True,
+        rotation_state_path: str | None = None,
     ):
         self._db = db
         self._llm = llm_client
@@ -137,6 +140,10 @@ class FewShotService:
         self._last_extract_by_bot: dict[str, float] = {}  # 每个 Bot 上次提取时间
         self._last_injected_ids: List[int] = []  # 避免连续注入同一条
         self._last_injected_by_scope: dict[tuple, list[int]] = {}
+        # 防复读记录落盘：只在内存里时，重启后第一轮总是和重启前最后一轮撞同一条。
+        self._rotation_state_path = rotation_state_path
+        self._rotation_lock = threading.Lock()
+        self._load_rotation_state()
 
         # 从配置读取参数
         self._min_score = float(self._config.get("min_score", 0.7))
@@ -415,13 +422,52 @@ class FewShotService:
 
         selected = random.sample(available, min(legacy_limit, len(available)))
         self._last_injected_ids = [s[0] for s in selected]
+        changed = self._last_injected_by_scope.get(key) != self._last_injected_ids
         if len(self._last_injected_by_scope) >= 128 and key not in self._last_injected_by_scope:
             self._last_injected_by_scope.pop(next(iter(self._last_injected_by_scope)))
         self._last_injected_by_scope[key] = self._last_injected_ids
+        if changed:
+            self._save_rotation_state()
         return [
             {"example_id": ident, "content": content, "source": "FewShotService.get_injection"}
             for ident, content in selected
         ] + learned
+
+    def _load_rotation_state(self) -> None:
+        path = self._rotation_state_path
+        if not path or not os.path.exists(path):
+            return
+        try:
+            with open(path, encoding="utf-8") as handle:
+                raw = json.load(handle)
+            entries = raw.get("last_injected") if isinstance(raw, Mapping) else None
+            for item in entries or []:
+                if not isinstance(item, Mapping):
+                    continue
+                key = (str(item.get("bot_id") or ""), str(item.get("session_id") or ""), str(item.get("visibility") or ""))
+                ids = [int(value) for value in item.get("ids") or [] if isinstance(value, int) and not isinstance(value, bool)]
+                if all(key) and len(self._last_injected_by_scope) < 128:
+                    self._last_injected_by_scope[key] = ids
+        except Exception as exc:
+            logger.debug(f"[FewShot] 防复读记录读取失败，按空记录开始: {exc!r}")
+            self._last_injected_by_scope.clear()
+
+    def _save_rotation_state(self) -> None:
+        path = self._rotation_state_path
+        if not path:
+            return
+        with self._rotation_lock:
+            payload = {"last_injected": [
+                {"bot_id": key[0], "session_id": key[1], "visibility": key[2], "ids": list(ids)}
+                for key, ids in list(self._last_injected_by_scope.items())
+            ]}
+            partial = f"{path}.partial"
+            try:
+                with open(partial, "w", encoding="utf-8") as handle:
+                    json.dump(payload, handle, ensure_ascii=False)
+                os.replace(partial, path)
+            except Exception as exc:
+                logger.debug(f"[FewShot] 防复读记录保存失败: {exc!r}")
 
     # ─── US-5.4: 风格漂移检测 ───
 
