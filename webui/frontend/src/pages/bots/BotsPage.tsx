@@ -364,12 +364,6 @@ function BotEditor({ draft, onChange, isNew, initialTab = 'identity' }: { draft:
       <TabsContent value="behavior" className="grid gap-4 md:grid-cols-2">
         <TextField id="bot-interest" label="兴趣关键词（逗号分隔）" value={csv(draft.interest_keywords)} onChange={(v) => set('interest_keywords', fromCsv(v))} />
         <TextField id="bot-exclude" label="排除的记忆来源（逗号分隔）" value={csv(draft.exclude_sources)} onChange={(v) => set('exclude_sources', fromCsv(v))} />
-        <Field className="gap-1">
-          <FieldLabel htmlFor="bot-proactive">主动插话</FieldLabel>
-          <Switch id="bot-proactive" checked={draft.proactive_enabled} onCheckedChange={(value) => set('proactive_enabled', value)} />
-        </Field>
-        <TextField id="bot-interval" label="主动插话最小间隔（秒）" value={String(draft.proactive_interval_seconds)} onChange={(v) => set('proactive_interval_seconds', Number(v) || 0)} />
-        <TextField id="bot-max" label="每小时最多主动插话" value={String(draft.proactive_max_per_hour)} onChange={(v) => set('proactive_max_per_hour', Number(v) || 0)} />
         <div className="md:col-span-2">
           <AreaField id="bot-meta" label="MetaThinking 提示词" rows={6} value={draft.meta_prompt} onChange={(v) => set('meta_prompt', v)} hint="留空用默认模板。" />
         </div>

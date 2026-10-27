@@ -46,7 +46,6 @@ class _Plugin:
         self.jargon_service = None
         self.self_reflect = None
         self.lifecycle = None
-        self.desire_engine = None
         self._bot_qq_ids = ["10001"]
         self.group_names = {}
         self.bot_replies = []

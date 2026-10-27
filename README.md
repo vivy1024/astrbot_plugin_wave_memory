@@ -249,9 +249,6 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 | BeliefEngine / BeliefReflection | 每日日记之后按 Bot 反思经历，形成、印证、动摇、淡出看法；只在话题相关时注入已形成/稳固的看法 |
 | 现场提审工具 | 印象 / 人情 / 黑话 / 事实由主对话 LLM 按需调用，进入 pending 审核 |
 | BotMoodService | 心情 v2：一个 Bot 一份心情，跨群/私聊共享。冲她来的话（按情绪词 + 关系加权）、关系事件、事后记账顺带给出的心情影响、群氛围（小权重）作为带来源的情绪事件，按半衰期向画像基线回落，可选疲劳；`soul_state` 通道注入情绪词与原因，不输出裸数字，私聊来源的原因在别处只说「私下有件事」。画像见下方「Bot 心情画像」 |
-| SubjectiveTime | 代码仅初始化保留，经历时间线注入直接来源于 Bot 亲笔日记（`scoped_soul_timeline`） |
-| ConcernTracker | 关切只读展示；v5 不再从入站消息截词入库 |
-| DesireEngine | 看到红包等事件会记一条短暂冲动；`resolve` 尚未接入回复决策，冲动不影响是否回复 |
 
 ### 社交认知
 
@@ -548,6 +545,10 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | reply_feedback_enabled | false | 同一次事后记账记录有证据的回复反馈；没有回应为未知，不自动调整好感或记忆重要度 |
 | expression_learning_enabled | false | 同一次事后记账提取群友情景表达，先审核，批准后才可用于风格注入 |
 | expression_auto_approve_enabled | true | 表达候选自动审核：只转正本群至少 3 次出现或被至少 2 个人说过的表达；来源失效、内容越界或修订冲突的候选保持待审 |
+| expression_auto_min_occurrence | 3 | 表达自动转正：同一句在本群至少出现几次（或被至少 2 人说过），可设 2–20 |
+| expression_pending_ttl_days | 30 | 待审超过这么多天仍未达门槛的表达自动作废（留审计备注）；0 不过期 |
+| expression_max_per_speaker | 1 | 一次召回里同一群友最多贡献几句表达；0 不限 |
+| expression_persona_blocklist | 空 | 含这些词的表达不自动转正（仍可人工批准）；攻击性话术已内置拦截 |
 | reply_rules_mode | off | off 保持原行为；shadow 仅记录建议；enforce 筛选已获准的回复候选，不能新增宿主权限 |
 | reply_rules_json | `{}` | JSON 阈值与 Bot/会话覆盖：score_threshold、reply_window_seconds、max_recent_replies、backoff_base_seconds、backoff_max_seconds；bots/groups 使用稳定 Bot ID 和完整会话 ID |
 | auto_approve_enabled | false | 自动审核：带原话与来源记忆的事实、被多人多次使用的黑话直接生效；关闭时全部进待审（信念不走审核，见信念反思） |
@@ -578,6 +579,8 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | belief_form_min_days | 2 | 看法在多少个不同日子里得到支持并被再次印证才算形成 |
 | belief_decay_days | 30 | 多少天没被印证就降一级（稳固→形成→动摇→淡出） |
 | belief_max_active | 20 | 每个 Bot 同时有效的看法上限，超出时最弱的淡出 |
+| belief_ambient_probability | 0.1 | 当前消息没有相关看法时，让一条稳固看法作为「平时就有的态度」浮现的概率（不调用模型）；0 关闭 |
+| belief_ambient_cooldown_minutes | 60 | 同一 Bot 在同一群 / 私聊里两次自然流露的最短间隔 |
 | game_lesson_enabled | false | 游戏经验：Bot 回想 Cortico 写回的游戏经历与当时的对话，把教训写成只属于自己的经验卡（不预设攻略）；每个游戏可在游戏知识库设置里单独关 |
 | game_lesson_delay_seconds | 180 | 死亡 / 危机后等几秒再回想；同一个 Bot 两次之间至少隔 10 分钟 |
 | game_lesson_daily_limit | 30 | 每个 Bot 每天最多调用几次模型回想游戏经验 |
@@ -713,13 +716,11 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | default_model | （空） | 默认模型 |
 | spam_threshold | 6 | 刷屏检测阈值 |
 | spam_window_seconds | 60 | 刷屏检测窗口（秒） |
-| silent_hours_start | 0 | 静默时段开始（小时） |
-| silent_hours_end | 6 | 静默时段结束（小时） |
 | interest_sample_size | 20 | 兴趣关键词数量 |
 
 ### MetaThinking 旧 Bot 槽位 (MetaThinking_Bot1 / MetaThinking_Bot2)
 
-> v5.1.0 起 Bot 身份、人格与这些字段都以 9876「Bot 管理」里的 Bot Profile 为准，保存即热生效。6185 里的这两个槽位只在首次迁移时作为数据来源读取一次，迁移完成后不会再覆盖数据库里的 Bot 资料；新部署请直接在 9876 新增 Bot。下表默认值中，`proactive_*` 三项按 Bot1 / Bot2 分别为 true / false、600 / 900、3 / 2。
+> v5.1.0 起 Bot 身份、人格与这些字段都以 9876「Bot 管理」里的 Bot Profile 为准，保存即热生效。6185 里的这两个槽位只在首次迁移时作为数据来源读取一次，迁移完成后不会再覆盖数据库里的 Bot 资料；新部署请直接在 9876 新增 Bot。
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
@@ -731,9 +732,6 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | interest_keywords | （空） | 自定义兴趣关键词（逗号分隔） |
 | meta_prompt | （空） | 自定义 MetaThinking prompt（留空用默认模板） |
 | model | （空） | 模型（留空用全局默认） |
-| proactive_enabled | Bot1 true / Bot2 false | 旧槽位默认值；当前以 Bot Profile 为准 |
-| proactive_interval_seconds | Bot1 600 / Bot2 900 | 主动对话最小间隔（秒） |
-| proactive_max_per_hour | Bot1 3 / Bot2 2 | 每小时最多主动插话 |
 ### 与 SelfLearning / ChatPlus 共存
 
 | 目标 | WaveMemory 推荐配置 | 外部插件建议 |
@@ -903,9 +901,7 @@ Runtime_Settings.runtime_mode = memory_only
 │   ├── belief_reflection.py     # 每日日记后的信念反思
 │   ├── experience_episodes.py   # 经历片段
 │   ├── identity_safety.py       # 身份污染防线
-│   ├── desire_engine.py         # 红包等事件的短暂冲动（不参与回复决策）
 │   ├── bot_mood.py              # Bot 心情 v2（一个 Bot 一份心情）
-│   ├── subjective_time.py       # 主观时间
 │   ├── memory_budget_policy.py  # 内存预算档位
 │   ├── data_governance_jobs.py  # 数据治理作业
 │   ├── scope_recovery.py        # Scope 恢复

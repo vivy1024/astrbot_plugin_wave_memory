@@ -92,22 +92,6 @@ class _FakeMood:
         self.replies.append(bot_id)
 
 
-class _FakeConcernTracker:
-    def __init__(self):
-        self.added = []
-
-    def add(self, **kwargs):
-        self.added.append(dict(kwargs))
-
-
-class _FakeSubjectiveTime:
-    def __init__(self):
-        self.anchors = []
-
-    def add_anchor(self, *args, **kwargs):
-        self.anchors.append((args, dict(kwargs)))
-
-
 class _FakeEvent:
     def __init__(self, *, message="作用域入口测试", sender_id="user-event", group_id="group-event", self_id="bot-event"):
         self.message_str = message
@@ -236,10 +220,7 @@ class _IngressPlugin:
         self.self_reflect = None
         self.lifecycle = None
         self.belief_emergence = None
-        self.desire_engine = None
         self.meta_thinking = None
-        self.concern_tracker = None
-        self.subjective_time = None
         self._scope_resolution_failed_total = {}
         self._scope_resolution_last_warning = {}
         self._spawned = []
@@ -491,23 +472,6 @@ class ScopeMessageIngressTest(unittest.TestCase):
         self.assertNotIn("self.consolidation.start(", source)
         self.assertNotIn("from .services.consolidation import ConsolidationService", source)
         self.assertIn("ConsolidationService removed", source)
-
-    def test_long_inbound_message_does_not_guess_concern_or_time_anchor(self):
-        on_message, _, _ = _load_on_message()
-        resolver = self._resolver()
-        plugin = _IngressPlugin(resolver)
-        plugin.lifecycle = _FakeLifecycle()
-        plugin.concern_tracker = _FakeConcernTracker()
-        plugin.subjective_time = _FakeSubjectiveTime()
-        plugin._bot_qq_ids = ["bot-event"]
-        event = _FakeEvent(message="这是一条超过八十字的群聊灌水，用来确认入站不会再靠字数截出关切或主观时间锚点。" + ("哈" * 40))
-
-        asyncio.run(on_message(plugin, event))
-
-        self.assertEqual(len(plugin.writer.items), 1)
-        self.assertEqual(plugin.concern_tracker.added, [])
-        self.assertEqual(plugin.subjective_time.anchors, [])
-        self.assertEqual(len(plugin.lifecycle.calls), 1)
 
     def test_mood_observes_private_as_directed_and_group_only_when_addressed(self):
         on_message, _, _ = _load_on_message()

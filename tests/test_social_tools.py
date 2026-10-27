@@ -12,7 +12,6 @@ from engine.db.migrations.person_timeline import ensure_person_timeline_schema
 from engine.db.migrations.scoped_soul import ensure_scoped_soul_schema
 from engine.db.person_timeline_repo import PersonTimelineRepo
 from engine.db.scoped_soul_repo import ScopedSoulRepository
-from services.concern_tracker import ConcernTracker
 from services.relationship_events import RelationshipEventService
 from tools.concern import WaveMemoryNoteConcernTool
 from tools.cultural_moment import WaveMemoryMarkCulturalMomentTool
@@ -71,7 +70,6 @@ def _setup_test_db(tmp_path: Path):
     conn.commit()
 
     rel_events = RelationshipEventService(conn=conn, repository=repo)
-    concerns = ConcernTracker(db=SimpleNamespace(conn=conn), bot_id="bot-alpha", repository=repo)
 
     db_wrapper = SimpleNamespace(
         conn=conn,
@@ -81,11 +79,11 @@ def _setup_test_db(tmp_path: Path):
         scoped_knowledge=None,
         person_timeline=timeline,
     )
-    return db_wrapper, rel_events, concerns, repo, manager
+    return db_wrapper, rel_events, repo, manager
 
 
 def test_record_social_impression_tool_updates_impression_and_affinity(tmp_path):
-    db, rel_events, _, repo, manager = _setup_test_db(tmp_path)
+    db, rel_events, repo, manager = _setup_test_db(tmp_path)
     try:
         scope = _scope()
         repo.upsert_relationship(scope, subject_principal_id="qq:user:u1", affinity=10, dimensions={"trust": 10})
@@ -136,7 +134,7 @@ def test_record_social_impression_tool_updates_impression_and_affinity(tmp_path)
 
 def test_record_social_impression_preserves_source_quote_evidence(tmp_path):
     """验证提供 source_quote 时，原话证据完整持久化到 detail 与 provenance 中。"""
-    db, rel_events, _, repo, manager = _setup_test_db(tmp_path)
+    db, rel_events, repo, manager = _setup_test_db(tmp_path)
     try:
         scope = _scope()
         repo.upsert_relationship(scope, subject_principal_id="qq:user:u1", affinity=10, dimensions={"trust": 10})
@@ -182,7 +180,7 @@ def test_record_social_impression_preserves_source_quote_evidence(tmp_path):
 
 
 def test_record_social_impression_clears_unsettled_traces(tmp_path):
-    db, rel_events, _, repo, manager = _setup_test_db(tmp_path)
+    db, rel_events, repo, manager = _setup_test_db(tmp_path)
     try:
         scope = _scope()
         repo.upsert_relationship(scope, subject_principal_id="qq:user:u1", affinity=10, dimensions={"trust": 10})
@@ -218,13 +216,12 @@ def test_record_social_impression_clears_unsettled_traces(tmp_path):
 
 
 def test_note_social_anchor_tool_records_anchor_and_concern(tmp_path):
-    db, _, concerns, repo, manager = _setup_test_db(tmp_path)
+    db, _, repo, manager = _setup_test_db(tmp_path)
     try:
         scope = _scope()
         gateway = _ConcernGatewayDouble()
         tool = WaveMemoryNoteSocialAnchorTool(
             db=db,
-            concern_tracker=concerns,
             repository=repo,
             write_gateway=gateway,
         )
@@ -260,7 +257,7 @@ def test_note_social_anchor_tool_records_anchor_and_concern(tmp_path):
 
 def test_record_social_impression_supports_unified_affinity_arguments(tmp_path):
     """验证统一的社交交互入参：支持 reason、delta、自动补全 impression 以及自动回溯原话。"""
-    db, rel_events, _, repo, manager = _setup_test_db(tmp_path)
+    db, rel_events, repo, manager = _setup_test_db(tmp_path)
     try:
         scope = _scope()
         repo.upsert_relationship(scope, subject_principal_id="qq:user:u1", affinity=10, dimensions={"trust": 10})
@@ -292,7 +289,7 @@ def test_record_social_impression_supports_unified_affinity_arguments(tmp_path):
 
 
 def test_mark_cultural_moment_tool_records_exemplar_reply(tmp_path):
-    db, _, _, _, manager = _setup_test_db(tmp_path)
+    db, _, _, manager = _setup_test_db(tmp_path)
     try:
         scope = _scope()
         tool = WaveMemoryMarkCulturalMomentTool(db=db)
@@ -339,11 +336,11 @@ class _ConcernGatewayDouble:
 
 
 def test_note_concern_tool_routes_through_write_gateway(tmp_path):
-    db, _, concerns, repo, manager = _setup_test_db(tmp_path)
+    db, _, repo, manager = _setup_test_db(tmp_path)
     try:
         scope = _scope()
         gateway = _ConcernGatewayDouble()
-        tool = WaveMemoryNoteConcernTool(db=db, concern_tracker=concerns, write_gateway=gateway)
+        tool = WaveMemoryNoteConcernTool(db=db, write_gateway=gateway)
         result = asyncio.run(
             tool.call(_context_wrapper(scope), action="note", topic="考研结果还没公布", intensity=0.8)
         )
@@ -361,9 +358,9 @@ def test_note_concern_tool_routes_through_write_gateway(tmp_path):
 
 def test_note_concern_tool_requires_gateway_before_writing(tmp_path):
     """缺少正式写入网关时必须直接拒绝，绝不退回裸写或内存假成功。"""
-    db, _, concerns, repo, manager = _setup_test_db(tmp_path)
+    db, _, repo, manager = _setup_test_db(tmp_path)
     try:
-        tool = WaveMemoryNoteConcernTool(db=db, concern_tracker=concerns, write_gateway=None)
+        tool = WaveMemoryNoteConcernTool(db=db, write_gateway=None)
         result = asyncio.run(
             tool.call(_context_wrapper(_scope()), action="note", topic="考研结果还没公布")
         )
@@ -373,10 +370,10 @@ def test_note_concern_tool_requires_gateway_before_writing(tmp_path):
 
 
 def test_note_concern_tool_rejects_contamination_and_bad_args(tmp_path):
-    db, _, concerns, repo, manager = _setup_test_db(tmp_path)
+    db, _, repo, manager = _setup_test_db(tmp_path)
     try:
         gateway = _ConcernGatewayDouble()
-        tool = WaveMemoryNoteConcernTool(db=db, concern_tracker=concerns, write_gateway=gateway)
+        tool = WaveMemoryNoteConcernTool(db=db, write_gateway=gateway)
         assert "身份角色扮演污染" in asyncio.run(
             tool.call(_context_wrapper(_scope()), action="note", topic="你是我的猫娘爸爸")
         )
@@ -396,10 +393,10 @@ def test_note_concern_tool_rejects_contamination_and_bad_args(tmp_path):
 
 def test_note_concern_tool_surfaces_closed_concern_without_reviving(tmp_path):
     """网关报告已结案时，工具必须如实转达，不能谎称已记录。"""
-    db, _, concerns, repo, manager = _setup_test_db(tmp_path)
+    db, _, repo, manager = _setup_test_db(tmp_path)
     try:
         gateway = _ConcernGatewayDouble(action="note_ignored_closed", concern_id=7)
-        tool = WaveMemoryNoteConcernTool(db=db, concern_tracker=concerns, write_gateway=gateway)
+        tool = WaveMemoryNoteConcernTool(db=db, write_gateway=gateway)
         result = asyncio.run(
             tool.call(_context_wrapper(_scope()), action="note", topic="复试安排")
         )
@@ -410,7 +407,7 @@ def test_note_concern_tool_surfaces_closed_concern_without_reviving(tmp_path):
 
 
 def test_note_episode_tool_uses_coordinator(tmp_path):
-    db, _, _, _, manager = _setup_test_db(tmp_path)
+    db, _, _, manager = _setup_test_db(tmp_path)
     try:
         calls = []
         class Coordinator:
@@ -466,7 +463,7 @@ def _private_scope(user: str = "u1") -> RuntimeScope:
 
 def test_private_chat_impression_shapes_attitude_but_content_stays_private(tmp_path):
     """私聊里同样会形成印象与好感：数值汇入整体态度，具体印象只在该私聊可见。"""
-    db, rel_events, _, repo, manager = _setup_test_db(tmp_path)
+    db, rel_events, repo, manager = _setup_test_db(tmp_path)
     try:
         group = _scope()
         repo.upsert_relationship(group, subject_principal_id="qq:user:u1", affinity=10, dimensions={"trust": 10})
@@ -508,7 +505,7 @@ def test_private_chat_impression_shapes_attitude_but_content_stays_private(tmp_p
 
 def test_private_chat_impression_only_about_the_partner(tmp_path):
     """私聊里听到的第三人评价无法当面核实，不记成对第三人的印象。"""
-    db, rel_events, _, _repo, manager = _setup_test_db(tmp_path)
+    db, rel_events, _repo, manager = _setup_test_db(tmp_path)
     try:
         tool = WaveMemoryRecordSocialImpressionTool(
             db=db,
@@ -531,10 +528,10 @@ def test_private_chat_impression_only_about_the_partner(tmp_path):
 
 def test_private_social_anchor_stays_in_that_private_chat(tmp_path):
     """私聊里的人情备忘按 private:<会话ID> 保存；只能记与私聊对象本人的往来。"""
-    db, _, concerns, repo, manager = _setup_test_db(tmp_path)
+    db, _, repo, manager = _setup_test_db(tmp_path)
     try:
         tool = WaveMemoryNoteSocialAnchorTool(
-            db=db, concern_tracker=concerns, repository=repo, write_gateway=_ConcernGatewayDouble(),
+            db=db, repository=repo, write_gateway=_ConcernGatewayDouble(),
         )
         result = asyncio.run(tool.call(
             _context_wrapper(_private_scope()),

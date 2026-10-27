@@ -1,9 +1,8 @@
-"""SocialRepo — user_profiles + bot_mood + person_registry"""
+"""SocialRepo — user_profiles + person_registry（旧 bot_mood 表只保留建表，读写方法已删除）"""
 
 from __future__ import annotations
 
 import json
-import time
 from typing import Optional
 
 from .connection import ConnectionManager
@@ -82,39 +81,6 @@ class SocialRepo:
             self.cm.commit()
         except Exception:
             pass
-
-    # ─── Bot Mood ───
-
-    def set_mood(self, group_id: str, mood_type: str, intensity: float = 0.5, description: str = "", duration_hours: float = 2.0):
-        now = time.time()
-        end_time = now + duration_hours * 3600
-        self.cm.execute_write(
-            "UPDATE bot_mood SET is_active = 0 WHERE group_id = ? AND is_active = 1",
-            (group_id,),
-        )
-        self.cm.execute_write(
-            """INSERT INTO bot_mood (group_id, mood_type, intensity, description, start_time, end_time, is_active)
-               VALUES (?, ?, ?, ?, ?, ?, 1)""",
-            (group_id, mood_type, intensity, description, now, end_time),
-        )
-        self.cm.commit()
-
-    def get_active_mood(self, group_id: str) -> Optional[dict]:
-        now = time.time()
-        self.cm.execute_write(
-            "UPDATE bot_mood SET is_active = 0 WHERE is_active = 1 AND end_time < ?",
-            (now,),
-        )
-        row = self.cm.execute_read(
-            "SELECT mood_type, intensity, description, start_time, end_time FROM bot_mood WHERE group_id = ? AND is_active = 1 ORDER BY start_time DESC LIMIT 1",
-            (group_id,),
-        ).fetchone()
-        if not row:
-            return None
-        return {
-            "mood_type": row[0], "intensity": row[1], "description": row[2],
-            "start_time": row[3], "end_time": row[4],
-        }
 
     # ─── Person Registry ───
 

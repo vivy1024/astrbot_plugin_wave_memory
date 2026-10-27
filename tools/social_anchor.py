@@ -71,7 +71,6 @@ class WaveMemoryNoteSocialAnchorTool(FunctionTool[AstrAgentContext]):
     })
 
     db: Any = field(default=None, repr=False)
-    concern_tracker: Any = field(default=None, repr=False)
     repository: Any = field(default=None, repr=False)
     write_gateway: Any = field(default=None, repr=False)
 
@@ -136,9 +135,6 @@ class WaveMemoryNoteSocialAnchorTool(FunctionTool[AstrAgentContext]):
                         ],
                         actor="social_anchor_tool",
                     )
-                    tracker = self.concern_tracker
-                    if tracker is not None and hasattr(tracker, "invalidate"):
-                        tracker.invalidate(runtime_scope)
                 except Exception as concern_error:
                     # 关切挂接失败不得回滚已成立的锚点，但必须可见，不能静默吞掉。
                     logger.warning(

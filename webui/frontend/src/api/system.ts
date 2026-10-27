@@ -42,7 +42,6 @@ export interface SystemPayload {
     user_profiles?: number
     active_users?: number
     top_users?: Array<{ name?: string; interactions?: number }>
-    active_moods?: Array<{ group_id?: string; type?: string; intensity?: number; desc?: string }>
     unspoken_desire?: { topic?: string; motive?: string }
   }
   todos?: {

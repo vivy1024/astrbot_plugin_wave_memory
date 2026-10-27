@@ -83,7 +83,6 @@ class WaveMemoryNoteConcernTool(FunctionTool[AstrAgentContext]):
         "required": ["action"],
     })
     db: Any = field(default=None, repr=False)
-    concern_tracker: Any = field(default=None, repr=False)
     write_gateway: Any = field(default=None, repr=False)
 
     async def call(self, ctx: ContextWrapper[AstrAgentContext], **kwargs) -> str:
@@ -150,13 +149,6 @@ class WaveMemoryNoteConcernTool(FunctionTool[AstrAgentContext]):
             )
         except Exception as exc:
             return f"关切更新失败：{exc}"
-
-        tracker = self.concern_tracker
-        if tracker is not None and hasattr(tracker, "invalidate"):
-            try:
-                tracker.invalidate(scope)
-            except Exception:  # 缓存失效失败不影响已提交的正式写入
-                pass
 
         change = str(result.get("action") or action)
         template = _ACTION_MESSAGES.get(change, "已更新关切 concern:{id}。")

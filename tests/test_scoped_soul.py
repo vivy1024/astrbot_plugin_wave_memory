@@ -143,25 +143,15 @@ class _InjectedRepo:
 
 
 def test_runtime_services_use_injected_coordinator_and_repository():
-    from services.concern_tracker import ConcernTracker
     from services.relationship_events import RelationshipEventService
-    from services.subjective_time import SubjectiveTime
 
     coordinator = _Coordinator()
     repo = _InjectedRepo()
     scope = group_scope(subject="qq:user:u1")
-    other_scope = group_scope("g2", subject="qq:user:u2")
     db = types.SimpleNamespace(conn=types.SimpleNamespace(execute=lambda *_a, **_k: None, commit=lambda: None))
 
-    # 心情 v2 不再经 MoodTrajectory 写 scoped_soul_mood（见 tests/test_bot_mood.py）。
-    concerns = ConcernTracker(db, bot_id="bot-alpha", repository=repo, coordinator=coordinator)
-    # 关切写入已迁出 tracker：只能经 ProductionWriteGateway.transition_concern 命令链落库，
-    # 旧的全量替换（_persist）与物理剔除（tick）不得回流。
-    for removed_writer in ("add", "tick", "_persist"):
-        assert not hasattr(concerns, removed_writer), f"ConcernTracker 不应保留写路径: {removed_writer}"
-    subjective_time = SubjectiveTime(db, bot_id="bot-alpha", repository=repo, coordinator=coordinator)
-    subjective_time.add_anchor("anchor", timestamp=10.0, scope=scope, evidence=[{"memory_id": 3}])
-    subjective_time.add_anchor("other anchor", timestamp=20.0, scope=other_scope, evidence=[{"memory_id": 7}])
+    # 心情 v2 不再经 MoodTrajectory 写 scoped_soul_mood（见 tests/test_bot_mood.py）；
+    # 关切只经 ProductionWriteGateway.transition_concern 命令链落库。
     result = RelationshipEventService(
         db.conn, repository=repo, coordinator=coordinator
     ).record_event(
@@ -173,13 +163,9 @@ def test_runtime_services_use_injected_coordinator_and_repository():
         source_memory_id=4,
     )
 
-    assert coordinator.calls == 3
-    assert [call[0] for call in repo.calls] == [
-        "timeline", "timeline", "relationship"
-    ]
-    assert [call[1] for call in repo.calls[:2]] == [
-        scope, other_scope
-    ]
+    assert coordinator.calls == 1
+    assert [call[0] for call in repo.calls] == ["relationship"]
+    assert repo.calls[0][1] == scope
     assert all("connection" in call[2] for call in repo.calls)
     assert result.after_affection == 2
 

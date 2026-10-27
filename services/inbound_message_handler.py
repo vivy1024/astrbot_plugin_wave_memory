@@ -274,16 +274,3 @@ class InboundMessagePipeline:
                 is_reply_to_bot=is_reply_to_bot,
                 hour=hour,
             )
-
-        # 6. 欲望引擎检测
-        desire_engine = getattr(self.plugin, "desire_engine", None)
-        if desire_engine:
-            raw_msg = event.message_str or ""
-            if "redbag" in raw_msg or "红包" in locked_message:
-                desire_engine.trigger(
-                    desire_type="想抢红包",
-                    trigger_desc=f"{sender_name}发了红包",
-                    intensity=0.6,
-                    action="react_to_hongbao",
-                    ttl=30.0,
-                )

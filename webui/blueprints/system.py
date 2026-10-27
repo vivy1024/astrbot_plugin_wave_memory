@@ -307,9 +307,6 @@ def _system_db_stats_sync(c, *, need_tag_counts: bool) -> dict:
         "type_dist": conn.execute(
             "SELECT tag_type, COUNT(*) FROM tags GROUP BY tag_type ORDER BY COUNT(*) DESC"
         ).fetchall(),
-        "active_moods": conn.execute(
-            "SELECT group_id, mood_type, intensity, description FROM bot_mood WHERE is_active = 1 AND typeof(start_time) IN ('real', 'integer')"
-        ).fetchall(),
         "person_count": conn.execute("SELECT COUNT(*) FROM person_registry").fetchone()[0],
         "user_profiles_count": conn.execute("SELECT COUNT(*) FROM user_profiles").fetchone()[0],
         "active_users": conn.execute(
@@ -427,7 +424,6 @@ async def system_status():
             "user_profiles": stats["user_profiles_count"],
             "active_users": stats["active_users"],
             "top_users": [{"name": r[0] or "?", "interactions": r[1]} for r in stats["top_users"]],
-            "active_moods": [{"group_id": m[0], "type": m[1], "intensity": m[2], "desc": m[3]} for m in stats["active_moods"]],
         },
         "todos": {
             "untagged_count": untagged_count,

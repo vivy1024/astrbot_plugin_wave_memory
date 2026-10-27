@@ -7,7 +7,6 @@ from domain.scope import RuntimeScope, SessionRef
 from engine.db.connection import ConnectionManager
 from engine.db.migrations.scoped_soul import ensure_scoped_soul_schema
 from engine.db.scoped_soul_repo import ScopedSoulRepository
-from services.concern_tracker import ConcernTracker
 from services.reflection_trigger import ReflectionTriggerService
 from tools.concern import WaveMemoryNoteConcernTool
 from tools.episode import WaveMemoryNoteEpisodeTool
@@ -78,7 +77,6 @@ def test_live_candidates_then_tools_persist_in_scope(tmp_path):
                 }
 
         db = SimpleNamespace(conn=conn, closed=False, reopen=lambda: None, soul_repository=repo, scoped_knowledge=None)
-        tracker = ConcernTracker(db=db, bot_id="bot-a", repository=repo)
         repo.replace_concerns(_scope(), concerns=[
             {"topic": "考研结果还没公布", "intensity": 0.8, "status": "active"},
         ])
@@ -86,7 +84,7 @@ def test_live_candidates_then_tools_persist_in_scope(tmp_path):
         assert "关切 concern:" in prompt
 
         gateway = Gateway()
-        concern_tool = WaveMemoryNoteConcernTool(db=db, concern_tracker=tracker, write_gateway=gateway)
+        concern_tool = WaveMemoryNoteConcernTool(db=db, write_gateway=gateway)
         episode_tool = WaveMemoryNoteEpisodeTool(db=db, writer=None, write_gateway=gateway)
         assert "已记录未决关切" in asyncio.run(concern_tool.call(_ctx(_scope()), topic="等录取通知"))
         assert "episode:" in asyncio.run(episode_tool.call(_ctx(_scope()), episode_type="shared_event", trigger_text="一起等结果", outcome="还没公布"))

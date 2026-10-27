@@ -80,7 +80,6 @@ def _social_tools() -> list[ToolSpec]:
             "wave_memory_note_social_anchor",
             lambda d: WaveMemoryNoteSocialAnchorTool(
                 db=d.db,
-                concern_tracker=getattr(d, "concern_tracker", None),
                 repository=getattr(d.db, "soul_repository", None),
                 write_gateway=d.write_gateway,
             ),
@@ -121,7 +120,6 @@ def _social_tools() -> list[ToolSpec]:
             "wave_memory_note_concern",
             lambda d: WaveMemoryNoteConcernTool(
                 db=d.db,
-                concern_tracker=getattr(d, "concern_tracker", None),
                 write_gateway=d.write_gateway,
             ),
             writes=True,

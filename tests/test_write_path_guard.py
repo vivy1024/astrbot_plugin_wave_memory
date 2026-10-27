@@ -68,13 +68,11 @@ SELF_COMMIT_ALLOWLIST = WRITE_ENTRY_ALLOWLIST | {
     "inbound_message_handler.py",  # 遗留：入口自提交
     "lifecycle.py",  # 遗留：好感/画像自提交，含已无调用者的 legacy 事件写入
     "meta_thinking.py",  # 遗留：现场思考自提交
-    "subjective_time.py",  # 遗留：时间锚点写入未走命令链
     "tag_job.py",  # 遗留：标签作业
 }
 
 # 本轮已收敛的文件：必须零裸提交、零受保护表直写。
 MUST_STAY_CLEAN = (
-    "concern_tracker.py",
     "reflection_trigger.py",
     "experience_episodes.py",
 )
@@ -161,9 +159,6 @@ def test_concern_writes_are_command_owned():
     assert any("scoped_soul_concerns" in statement for _, statement in runtime_writes), (
         "Concern 命令 handler 应存在对 scoped_soul_concerns 的受控写入"
     )
-    tracker = (SERVICES_DIR / "concern_tracker.py").read_text(encoding="utf-8")
-    for forbidden in ("replace_concerns", "DELETE FROM scoped_soul_concerns", "def add(", "def tick("):
-        assert forbidden not in tracker, f"ConcernTracker 不得保留写路径: {forbidden}"
     assert repo_path.exists()
 
 

@@ -67,9 +67,6 @@ from ..services.meta_thinking import MetaThinking
 from ..services.self_reflect import SelfReflectService
 from ..services.llm_fallback import LLMFallbackClient, build_provider_chain
 from ..services.eviction import EvictionService
-from ..services.concern_tracker import ConcernTracker
-from ..services.subjective_time import SubjectiveTime
-from ..services.desire_engine import DesireEngine
 from ..services.belief_engine import BeliefEngine
 from ..services.belief_gating import snapshot_from_relationship
 from ..services.proactive_audit import record_proactive_timeline
@@ -780,10 +777,7 @@ class BootstrapMixin:
         self.reflection_trigger = ReflectionTriggerService(self.db)
         self._belief_tag_refresh_delay_seconds = 0.4
         self._pending_belief_tag_refresh: dict[tuple[str, str, str, int], asyncio.Task] = {}
-        self.concern_tracker = None
         self.mood_service = None
-        self.subjective_time = None
-        self.desire_engine = None
         self.lifecycle = None
         self.webui = None
         self.injection_trace_store = None

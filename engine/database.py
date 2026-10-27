@@ -452,12 +452,6 @@ class WaveMemoryDB:
     # Social 委托
     # ═══════════════════════════════════════════════════════
 
-    def set_mood(self, group_id, mood_type, intensity=0.5, description="", duration_hours=2.0):
-        return self._social_repo.set_mood(group_id, mood_type, intensity, description, duration_hours)
-
-    def get_active_mood(self, group_id):
-        return self._social_repo.get_active_mood(group_id)
-
     def get_person_by_qq(self, qq_id):
         return self._social_repo.get_person_by_qq(qq_id)
 
