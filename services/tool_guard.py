@@ -14,6 +14,7 @@ AstrBot 的 ``on_using_llm_tool`` 钩子在工具执行前调用，但不能否�
 
 from __future__ import annotations
 
+import ast
 import os
 from typing import Any
 
@@ -75,13 +76,54 @@ def _iter_strings(value: Any, depth: int = 0):
 
 
 def find_db_marker(tool_args: Any) -> str | None:
-    """返回参数里命中的第一个数据库访问标记，没有则 None。"""
-    for text in _iter_strings(tool_args):
+    """返回参数里命中的第一个数据库访问标记，没有则 None（按原文扫描）。"""
+    return _match(*(str(text) for text in _iter_strings(tool_args)))
+
+
+def _match(*texts: str) -> str | None:
+    for text in texts:
         lowered = text.casefold()
         for marker in DB_ACCESS_MARKERS:
             if marker in lowered:
                 return marker
     return None
+
+
+def _docstring_nodes(tree: Any) -> set[int]:
+    """模块/函数/类开头的裸字符串常量节点：它们是说明文字，不是代码。"""
+    docstrings: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        body = getattr(node, "body", None) or []
+        if not body:
+            continue
+        first = body[0]
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+            docstrings.add(id(first.value))
+    return docstrings
+
+
+def find_python_db_marker(code: str) -> str | None:
+    """按 Python 语法扫描要执行的代码，注释与文档字符串不算访问。
+
+    2026-10-28 线上误报：模型为了找合并转发内容去读 ``astrbot.log``，注释里写了
+    「严禁直接碰 wave_memory.db」，整段调用被判为数据库访问而拦掉。注释根本不会进
+    AST，所以按语法树取值既能消掉这类误报，又仍然命中 ``sqlite3.connect('…db')``、
+    ``open('…/wave_memory.db')`` 这类真实访问。语法错误时退回全文扫描（宁拦不漏）。
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return _match(code)
+    skip = _docstring_nodes(tree)
+    pieces: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip:
+            pieces.append(node.value)
+        elif isinstance(node, (ast.Name, ast.Attribute, ast.alias)):
+            pieces.append(getattr(node, "id", None) or getattr(node, "attr", None) or getattr(node, "name", ""))
+    return _match(*pieces)
 
 
 def _shell_echo(message: str) -> str:
@@ -94,7 +136,12 @@ def guard_tool_call(tool_name: str, tool_args: Any) -> str | None:
     name = str(tool_name or "")
     if name not in GUARDED_TOOLS or not isinstance(tool_args, dict):
         return None
-    marker = find_db_marker(tool_args)
+    if name in PYTHON_TOOLS:
+        code = tool_args.get("code")
+        # python 工具只认真正要执行的代码；shell/文件工具仍按全文匹配整份参数。
+        marker = find_python_db_marker(code) if isinstance(code, str) else find_python_db_marker("")
+    else:
+        marker = find_db_marker(tool_args)
     if marker is None:
         return None
 
@@ -132,6 +179,7 @@ __all__ = [
     "GUARDED_TOOLS",
     "blocked_path",
     "find_db_marker",
+    "find_python_db_marker",
     "guard_tool_call",
     "tool_name_of",
 ]

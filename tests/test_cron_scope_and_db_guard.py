@@ -19,7 +19,13 @@ import pytest
 from domain.bot_profile import BotProfile
 from domain.scope import RuntimeScope, SessionRef
 from services.scopes import BotIdentityBinding, ScopeResolutionError, ScopeResolver, bindings_from_profiles
-from services.tool_guard import GUARD_REASON, blocked_path, find_db_marker, guard_tool_call
+from services.tool_guard import (
+    GUARD_REASON,
+    blocked_path,
+    find_db_marker,
+    find_python_db_marker,
+    guard_tool_call,
+)
 from tools import scope_boundary
 from tools.scope_boundary import (
     NO_CHAT_CONTEXT_GUIDANCE,
@@ -298,6 +304,47 @@ def test_python_db_access_is_rewritten(tool):
 @pytest.mark.parametrize("marker", ["wave_memory.db-wal", "x.db-shm", "DATA_V4.DB"])
 def test_markers_case_insensitive(marker):
     assert find_db_marker({"command": f"cat {marker}"}) is not None
+
+
+def test_python_comments_and_docstrings_are_not_database_access():
+    """2026-10-28 线上误报：读 astrbot.log 的代码只在注释里提到库名，整段调用被拦掉。"""
+    code = (
+        "# 严禁直接碰 wave_memory.db 或 data_v4.db\n"
+        "with open('/AstrBot/data/logs/astrbot.log', 'r', encoding='utf-8') as f:\n"
+        "    print(len(f.readlines()[-100:]))\n"
+    )
+    assert find_python_db_marker(code) is None
+    args = {"code": code}
+    assert guard_tool_call("astrbot_execute_python", args) is None
+    assert args["code"] == code
+
+    docstring_code = '"""说明：不要动 wave_memory.db"""\nprint(1)\n'
+    assert find_python_db_marker(docstring_code) is None
+    assert guard_tool_call("astrbot_execute_python", {"code": docstring_code}) is None
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "import sqlite3\nsqlite3.connect('/AstrBot/data/plugin_data/astrbot_plugin_wave_memory/wave_memory.db')",
+        "open('/AstrBot/data/data_v4.db', 'rb')",
+        "import os\np = '/AstrBot/data/' + 'data_v4.db'\nopen(p)",
+        # 语法错误时退回全文扫描，宁拦不漏
+        "connect( wave_memory.db",
+    ],
+)
+def test_python_real_access_still_blocked(code):
+    args = {"code": code}
+    assert guard_tool_call("astrbot_execute_python", args) is not None
+    assert args["code"] == f"print({GUARD_REASON!r})"
+
+
+def test_python_guard_ignores_non_code_args():
+    """只认真正要执行的 code；其它参数里的库名不该触发改写。"""
+    code = "print('hello')"
+    args = {"code": code, "note": "wave_memory.db 只读检查"}
+    assert guard_tool_call("astrbot_execute_python", args) is None
+    assert args == {"code": code, "note": "wave_memory.db 只读检查"}
 
 
 @pytest.mark.parametrize(
