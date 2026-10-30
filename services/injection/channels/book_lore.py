@@ -12,6 +12,7 @@ from typing import Any
 
 from ...identity_safety import is_identity_contamination
 from ..channel_base import InjectionResult
+from ..query_gate import is_placeholder_only
 from .safety import is_channel_allowed_in_mode
 
 try:
@@ -125,6 +126,12 @@ class BookLoreChannel:
         cfg = _channel_cfg(ctx)
         if not _as_bool(cfg.get("enabled"), True):
             return InjectionResult.disabled(self.name, reason="book_lore channel disabled by config")
+        # 纯图片/表情消息没有检索目标：占位符会被向量化成「图片」，召回完全无关的世界知识。
+        # 放在最前面，连 catalog 解析与向量化都不用做。
+        if is_placeholder_only(getattr(ctx, "message", "")):
+            return InjectionResult.empty(
+                self.name, latency_ms=self._latency_ms(started), reason="placeholder_only_query"
+            )
         catalog_scope, reason = bot_catalog_scope(self._profile(ctx), self.catalog_scope)
         if reason:
             return InjectionResult.disabled(self.name, reason=reason)

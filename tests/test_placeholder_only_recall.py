@@ -113,3 +113,38 @@ def test_classify_source_marks_placeholder_only_as_noise():
 def test_classify_source_keeps_text_with_image():
     classify_source = _classify()
     assert classify_source("今天的晚饭真不错吃饱了 [图片]", "u1", set()) == "chat"
+
+
+@pytest.mark.parametrize("message", ["[图片]", "[动画表情] [图片]"])
+def test_facts_channel_skips_placeholder_only(message):
+    """纯图片消息不该按「图片」二字召回全库图片相关事实。"""
+    from services.injection.channels.facts import FactsChannel
+
+    channel = FactsChannel(db=object())
+    result = _run(channel.build(_Ctx(message)))
+    assert result.status == "empty"
+    assert result.warnings == ["placeholder_only_query"]
+
+
+def test_book_lore_channel_skips_placeholder_only():
+    from services.injection.channels.book_lore import BookLoreChannel
+
+    channel = BookLoreChannel()
+    result = _run(channel.build(_Ctx("[图片]")))
+    assert result.status == "empty"
+    assert result.warnings == ["placeholder_only_query"]
+
+
+def test_book_lore_channel_keeps_image_with_text():
+    """带文字配图仍应继续走书设检索（不会在门控处被挡）。"""
+    from services.injection.channels.book_lore import BookLoreChannel
+
+    channel = BookLoreChannel()
+    result = _run(channel.build(_Ctx("这张图里的人是谁 [图片]")))
+    assert "placeholder_only_query" not in result.warnings
+
+
+def _run(coro):
+    import asyncio
+
+    return asyncio.run(coro)

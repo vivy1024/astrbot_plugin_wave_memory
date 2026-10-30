@@ -14,6 +14,7 @@ try:
 except ImportError:  # pragma: no cover - direct package imports in isolated tests
     from domain.scope import validate_formal_command_scope
 from ..channel_base import InjectionResult, estimate_injection_tokens
+from ..query_gate import is_placeholder_only
 from .safety import is_channel_allowed_in_mode
 
 
@@ -190,6 +191,13 @@ class FactsChannel:
         token_budget = _as_int(cfg.get("token_budget"), 260)
         if max_items <= 0:
             return InjectionResult.empty(self.name, reason="facts max_items is zero")
+        # 纯图片/表情消息没有可检索对象：关键词只剩「图片」二字时会把全库图片相关事实
+        # （例如「青色图片 认为…」）拉进来，与当前对话毫无关系。放在 scope 校验之前，
+        # 这类消息无需任何查询即可判定。
+        if is_placeholder_only(getattr(ctx, "message", "")):
+            return InjectionResult.empty(
+                self.name, latency_ms=self._latency_ms(started), reason="placeholder_only_query"
+            )
 
         scope = getattr(ctx, "scope", None)
         scope_decision = validate_formal_command_scope("fact.read", scope)
