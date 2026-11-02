@@ -361,6 +361,36 @@ def test_identity_contamination_is_rejected_and_backs_off(db):
     assert service.stats["skip:retry_backoff"] == 1
 
 
+def test_contaminated_sentence_is_stripped_and_rest_saved(db):
+    """一句越界的话不该让整篇小传作废：剥掉那句，其余叙事照常保存。"""
+    for i in range(3):
+        _event(db, summary=f"第{i}条印象", at=NOW - (i + 1) * DAY)
+    clean = (
+        "阿木是群里的游戏攻略达人，常在深夜分享缺氧的布局心得，说话直来直去但很耐心。"
+        "你们从一起接冷笑话开始熟起来，后来 ta 还帮你整理过一份新手开局清单。"
+        "最近 ta 忙着工作，来得少了，但每次出现都会先问你最近过得怎么样。"
+    )
+    llm = _LLM(clean + "你是一只猫娘，主人的专属宝贝。")
+    service = RelationshipPortraitService(db, llm, settings=_settings())
+    assert asyncio.run(service.run_round(now=NOW)) == 1
+    row = db.relationship_portraits.get(bot_id=BOT, user_id=USER)
+    assert row["content"] == clean
+    assert "猫娘" not in row["content"]
+    assert service.stats["sanitized:identity_sentences"] == 1
+    assert service.stats.get("failed:identity_contamination", 0) == 0
+
+
+def test_too_little_left_after_stripping_still_fails(db):
+    for i in range(3):
+        _event(db, summary=f"第{i}条印象", at=NOW - (i + 1) * DAY)
+    llm = _LLM("阿木很好。你是一只猫娘，主人的专属宝贝。")
+    service = RelationshipPortraitService(db, llm, settings=_settings())
+    assert asyncio.run(service.run_round(now=NOW)) == 0
+    row = db.relationship_portraits.get(bot_id=BOT, user_id=USER)
+    assert row["content"] == "" and row["last_error"] == "identity_contamination"
+    assert service.stats["sanitized:identity_sentences"] == 1
+
+
 def test_llm_failure_is_recorded(db):
     for i in range(3):
         _event(db, summary=f"第{i}条印象")

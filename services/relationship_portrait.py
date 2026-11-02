@@ -37,13 +37,13 @@ try:
     from ..domain.scope import PRIVATE_SCENE_PREFIX
     from ..engine.db.person_identity_repo import linked_principals_via, local_user_id
     from ..engine.db.relationship_portrait_repo import PortraitConflict, PortraitError
-    from .identity_safety import is_identity_contamination, prepend_identity_safety_system_prompt
+    from .identity_safety import prepend_identity_safety_system_prompt, quarantine_long_text
     from .impression_timeline import _injection_summary, load_timeline_events
 except ImportError:  # pragma: no cover - top-level imports in isolated tests
     from domain.scope import PRIVATE_SCENE_PREFIX
     from engine.db.person_identity_repo import linked_principals_via, local_user_id
     from engine.db.relationship_portrait_repo import PortraitConflict, PortraitError
-    from services.identity_safety import is_identity_contamination, prepend_identity_safety_system_prompt
+    from services.identity_safety import prepend_identity_safety_system_prompt, quarantine_long_text
     from services.impression_timeline import _injection_summary, load_timeline_events
 
 
@@ -383,6 +383,11 @@ _FENCE = re.compile(r"^```[A-Za-z]*\s*|\s*```$")
 _TITLE = re.compile(r"^(?:#+\s*)?【?(?:关系小传|小传)】?\s*[:：]?[ \t]*\n")
 _TITLE_INLINE = re.compile(r"^(?:【(?:关系小传|小传)】|(?:关系小传|小传)\s*[:：])\s*")
 _SENTENCE_END = "。！？!?；;"
+
+
+def _min_portrait_chars(max_chars: int) -> int:
+    """剥离污染句后至少还要剩这么多字才保存：与日记一致取 60 字，上限本身更小时取上限的一半。"""
+    return min(60, max(1, int(max_chars) // 2))
 
 
 def truncate_portrait(text: str, max_chars: int) -> str:
@@ -738,7 +743,16 @@ class RelationshipPortraitService:
                 self._count("failed:empty_output")
                 await self._record_error(bot_id, str(owner_user_id), "empty_output", stamp)
                 return {"ok": False, "code": "portrait_empty_output"}
-            if is_identity_contamination(text):
+            # 小传是数百字叙事，整篇判定会被「命令」「认栽」「喵」这类日常词误杀（线上 57 次里 26 次）。
+            # 和日记一样按句剥离：只去掉命中的句子，剩下的足够长才保存。
+            # 没剥掉任何句子时原样保存，长度不另设门槛（短小传本来就合法）。
+            text, stripped = quarantine_long_text(text)
+            if stripped:
+                self._count("sanitized:identity_sentences", len(stripped))
+                logger.info(
+                    f"[WaveMemory] 关系小传剥离 {len(stripped)} 句疑似身份污染 {bot_id}:{owner_user_id}"
+                )
+            if stripped and (not text or len(text) < _min_portrait_chars(self.settings.max_chars)):
                 self._count("failed")
                 self._count("failed:identity_contamination")
                 await self._record_error(bot_id, str(owner_user_id), "identity_contamination", stamp)
