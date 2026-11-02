@@ -78,6 +78,7 @@ from ..services.relationship_events import RelationshipEventService
 from ..domain.scope import CatalogScope, RuntimeScope, SessionRef
 from ..services.identity_safety import (
     build_identity_safety_injection,
+    build_speaker_scene_prompt,
     filter_identity_contamination_memories,
     is_identity_contamination,
     prepend_identity_safety_system_prompt,
@@ -88,6 +89,35 @@ from .common import _record_err, _ObservationEvent, _stringify_config_value, _pa
 
 
 class InjectionMixin:
+    @staticmethod
+    def _append_text_part(req, text: str) -> None:
+        try:
+            from astrbot.core.agent.message import TextPart
+            req.extra_user_content_parts.append(TextPart(text=text))
+        except Exception:
+            extra = getattr(req, "extra_user_content_parts", None)
+            if extra is None:
+                req.extra_user_content_parts = extra = []
+            extra.append({"type": "text", "text": text})
+
+    @staticmethod
+    def _speaker_scene_prompt(event, sender_id: str, group_id: str, is_at_bot: bool) -> str:
+        """本轮的说话人场景标签（谁在说、对谁说、怎么触发的），防止把群友的话当成自己的。"""
+        try:
+            sender_name = ""
+            message_obj = getattr(event, "message_obj", None)
+            sender = getattr(message_obj, "sender", None) if message_obj else None
+            if sender is not None:
+                sender_name = getattr(sender, "nickname", "") or ""
+            return build_speaker_scene_prompt(
+                sender_name=sender_name,
+                sender_id=sender_id,
+                is_private=not group_id,
+                addressed_to_bot=bool(is_at_bot),
+            )
+        except Exception:
+            return ""
+
     async def _handle_meta_thinking_check(self, event: AstrMessageEvent, req=None):
         """v1.3.0: 纯规则判断 + 态度注入，不独立调 LLM。
         
@@ -124,6 +154,10 @@ class InjectionMixin:
             if callable(release_claim):
                 release_claim(event)
             return
+        scene_prompt = self._speaker_scene_prompt(event, sender_id, group_id, is_at_bot)
+        if scene_prompt:
+            self._append_text_part(req, scene_prompt)
+
         cue = getattr(event, "_wave_memory_timeline_cue", None)
         if isinstance(cue, dict):
             try:
@@ -262,7 +296,8 @@ class InjectionMixin:
         logger.warning(
             f"[WaveMemory] blocked direct database file access tool={tool_name} marker={marker} umo={umo}"
         )
-        _record_err("DbAccessGuard", f"{tool_name}:{marker}")
+        # 拦截生效说明防护在工作，不是故障：记 warning，仪表盘不会因此报「系统异常」。
+        _record_err("DbAccessGuard", f"{tool_name}:{marker}", level="warning")
 
     async def _handle_inject_memory(self, event: AstrMessageEvent, req=None):
         """Inject only through the canonical scoped orchestrator; failures are fail-closed."""

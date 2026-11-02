@@ -418,7 +418,7 @@ def _load_guard_handler():
     errors: list[tuple] = []
     namespace = {
         "logger": SimpleNamespace(warning=warnings.append, debug=lambda *_: None),
-        "_record_err": lambda *a: errors.append(a),
+        "_record_err": lambda *a, level="error": errors.append((*a, level)),
     }
     exec(compile(module, "injection.py", "exec"), namespace)
     return namespace["_handle_using_llm_tool"], warnings, errors
@@ -433,6 +433,7 @@ def test_plugin_hook_rewrites_args_in_place_and_logs():
     assert args["command"].startswith("echo '")
     assert warnings and "astrbot_execute_shell" in warnings[0]
     assert errors and errors[0][0] == "DbAccessGuard"
+    assert errors[0][-1] == "warning", "拦截生效记 warning，不让仪表盘报系统故障"
 
     clean = {"command": "ls"}
     asyncio.run(handler(None, event, tool, clean))

@@ -85,10 +85,10 @@ from ..domain.bot_profile import BotProfile, BotProfileError, profile_from_legac
 from ..services.bot_registry import BotRegistry, legacy_profiles_from_config
 
 
-def _record_err(source: str, msg):
+def _record_err(source: str, msg, level: str = "error"):
     try:
         from ..utils.health_registry import record_error
-        record_error(source, str(msg))
+        record_error(source, str(msg), level=level)
     except Exception:
         pass
 
