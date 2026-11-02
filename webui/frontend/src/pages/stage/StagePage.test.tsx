@@ -107,4 +107,21 @@ describe('StagePage', () => {
     renderStage('bot_id=yushu')
     expect(screen.getByText(/舞台页需要 bot_id 与 session_id/)).toBeInTheDocument()
   })
+
+  // 直播姬内置 CEF 105：不认 svh（要 Chrome 108+）、不认 oklch（要 Chrome 111+）。
+  // 舞台页必须写死 100vh 与 sRGB 色，否则容器塌成 0 高、文字变黑看不见。
+  it('高度与文字色不依赖 svh / oklch，兼容直播姬旧内核', async () => {
+    api.getRecallReplay
+      .mockResolvedValueOnce(payload([ev('b1', 90, 'bilibili:group:9', '弹幕内容')]))
+      .mockResolvedValue(payload([], false))
+    const { container } = renderStage(`${SCOPE}&idle=0.2`)
+    const root = container.querySelector('[data-page="stage"]') as HTMLElement
+    expect(root.style.height).toBe('100vh')
+    expect(root.style.color.toLowerCase()).toMatch(/^#|^rgb/)
+    expect(root.className).not.toMatch(/h-svh/)
+    // 字幕里的颜色也必须是内联 sRGB，而不是依赖主题变量的 Tailwind 类
+    const caption = await screen.findByText(/羽书想起了/)
+    expect(caption.getAttribute('class') ?? '').not.toMatch(/text-(slate|amber|rose|white)/)
+    expect((caption as HTMLElement).style.color).toMatch(/^#|^rgb/)
+  })
 })

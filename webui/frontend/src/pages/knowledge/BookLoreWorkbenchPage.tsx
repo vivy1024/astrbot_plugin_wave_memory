@@ -18,6 +18,7 @@ import {
   type WorkbenchNoteRow,
   type WorkbenchOverview,
 } from '@/api/bookLoreWorkbench'
+import { useUnsavedChangesConfirm, useUnsavedChangesGuard } from '@/app/unsaved-changes'
 import { QueryState } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -305,6 +306,7 @@ function PasteImport({ overview, onChanged }: { overview: WorkbenchOverview; onC
 }
 
 const EMPTY_NOTE: Partial<WorkbenchNote> = { id: '', title: '', category: '世界观', arc: '', content: '' }
+const NOTE_FIELDS = ['title', 'category', 'arc', 'content'] as const
 
 function NotesEditor({ overview, version, onChanged }: { overview: WorkbenchOverview; version: number; onChanged: () => Promise<void> }) {
   const [filters, setFilters] = useState({ q: '', category: '', arc: '', indexed: '' as '' | '0' | '1' })
@@ -313,9 +315,19 @@ function NotesEditor({ overview, version, onChanged }: { overview: WorkbenchOver
   const [rows, setRows] = useState<WorkbenchNoteRow[]>([])
   const [total, setTotal] = useState(0)
   const [editing, setEditing] = useState<Partial<WorkbenchNote> | null>(null)
+  const [baseline, setBaseline] = useState<Partial<WorkbenchNote> | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [busy, setBusy] = useState(false)
   const limit = 30
+  const dirty = Boolean(editing) && NOTE_FIELDS.some((key) => (editing?.[key] ?? '') !== (baseline?.[key] ?? ''))
+  useUnsavedChangesGuard(dirty, '书设笔记的修改尚未保存。')
+  const confirmDiscard = useUnsavedChangesConfirm()
+
+  /** 打开/新建/关闭编辑器时同步基线；字段输入只改 editing。 */
+  function startEditing(note: Partial<WorkbenchNote> | null) {
+    setEditing(note)
+    setBaseline(note)
+  }
 
   useEffect(() => {
     const controller = new AbortController()
@@ -327,7 +339,7 @@ function NotesEditor({ overview, version, onChanged }: { overview: WorkbenchOver
 
   async function open(id: string) {
     try {
-      setEditing((await getWorkbenchNote(id)).item)
+      startEditing((await getWorkbenchNote(id)).item)
       setConfirmDelete(false)
     } catch (reason) {
       toast.error(errorText(reason))
@@ -340,7 +352,7 @@ function NotesEditor({ overview, version, onChanged }: { overview: WorkbenchOver
     try {
       const result = await saveWorkbenchNote(editing)
       toast.success(result.indexed ? '已保存，已可检索' : '已保存；向量服务暂时不可用，稍后在概览里补齐索引')
-      setEditing(null)
+      startEditing(null)
       await onChanged()
     } catch (reason) {
       toast.error(errorText(reason))
@@ -355,7 +367,7 @@ function NotesEditor({ overview, version, onChanged }: { overview: WorkbenchOver
     try {
       await deleteWorkbenchNote(editing.id)
       toast.success('已删除')
-      setEditing(null)
+      startEditing(null)
       await onChanged()
     } catch (reason) {
       toast.error(errorText(reason))
@@ -370,7 +382,7 @@ function NotesEditor({ overview, version, onChanged }: { overview: WorkbenchOver
         <CardHeader className="gap-2 border-b pb-3">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="text-sm">笔记（{number.format(total)}）</CardTitle>
-            <Button type="button" size="sm" variant="outline" onClick={() => { setEditing({ ...EMPTY_NOTE }); setConfirmDelete(false) }}><FilePlus2Icon aria-hidden="true" />新建笔记</Button>
+            <Button type="button" size="sm" variant="outline" onClick={() => confirmDiscard(() => { startEditing({ ...EMPTY_NOTE }); setConfirmDelete(false) })}><FilePlus2Icon aria-hidden="true" />新建笔记</Button>
           </div>
           <form className="flex flex-wrap gap-2" onSubmit={(event) => { event.preventDefault(); setOffset(0); setFilters((f) => ({ ...f, q: draftQuery.trim() })) }}>
             <Input aria-label="搜索笔记" className="h-8 w-40 text-xs" value={draftQuery} onChange={(event) => setDraftQuery(event.target.value)} placeholder="标题 / 正文 / id" />
@@ -394,7 +406,7 @@ function NotesEditor({ overview, version, onChanged }: { overview: WorkbenchOver
           <ul className="flex flex-col divide-y" aria-label="笔记列表">
             {rows.map((row) => (
               <li key={row.id}>
-                <button type="button" className="flex w-full flex-col gap-0.5 p-2 text-left hover:bg-muted/50" onClick={() => void open(row.id)}>
+                <button type="button" className="flex w-full flex-col gap-0.5 p-2 text-left hover:bg-muted/50" onClick={() => confirmDiscard(() => open(row.id))}>
                   <span className="flex flex-wrap items-center gap-2 text-sm">
                     <span className="font-medium">{row.title}</span>
                     <Badge variant="outline">{row.category || '无类别'}</Badge>
@@ -433,7 +445,7 @@ function NotesEditor({ overview, version, onChanged }: { overview: WorkbenchOver
               <Textarea aria-label="正文" rows={16} value={editing.content ?? ''} onChange={(event) => setEditing({ ...editing, content: event.target.value })} placeholder="正文" />
               <div className="flex flex-wrap gap-2">
                 <Button type="button" size="sm" disabled={busy || !editing.title?.trim() || !editing.content?.trim()} onClick={() => void save()}><SaveIcon aria-hidden="true" />保存并更新索引</Button>
-                <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => setEditing(null)}>取消</Button>
+                <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => confirmDiscard(() => startEditing(null))}>取消</Button>
                 {editing.id ? (
                   confirmDelete ? (
                     <>

@@ -25,7 +25,8 @@ import {
 import { DEFAULT_PRONOUN, PRONOUN_OPTIONS, type CharacterPronoun } from '@/api/characterExperience'
 import { isRequestCancelled } from '@/api/client'
 import { listProviders, type ProviderPayload } from '@/api/config'
-import { QueryState } from '@/components/shared'
+import { useUnsavedChangesConfirm, useUnsavedChangesGuard } from '@/app/unsaved-changes'
+import { QueryState, useConfirmAction } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -439,6 +440,25 @@ export function BotsPage() {
   }, [selected])
 
   const dirty = useMemo(() => Boolean(draft && detail && JSON.stringify(draft) !== JSON.stringify(detail.item)) || isNew, [draft, detail, isNew])
+  useUnsavedChangesGuard(dirty, 'Bot 配置的修改尚未保存。')
+  const confirmDiscard = useUnsavedChangesConfirm()
+  const { request: requestConfirm, dialog: confirmDialog } = useConfirmAction()
+
+  function selectBot(dbId: string) {
+    if (dbId === selected && !isNew) return
+    confirmDiscard(() => setSelected(dbId))
+  }
+
+  function requestToggle(bot: BotProfileDto) {
+    if (!bot.enabled) { void handleToggle(bot); return }
+    requestConfirm({
+      title: `停用 Bot「${bot.name}」？`,
+      description: `停用后「${bot.name}」（${bot.db_id}）不再接收消息、不参与注入，数据保留，可随时重新启用。`,
+      label: '确认停用',
+      destructive: true,
+      run: () => handleToggle(bot),
+    })
+  }
 
   async function handleSave() {
     if (!draft) return
@@ -496,7 +516,7 @@ export function BotsPage() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" onClick={() => { setSelected(null); setDetail(null); setDraft(emptyBot()) }}><PlusIcon className="size-4" />新建 Bot</Button>
+        <Button type="button" onClick={() => confirmDiscard(() => { setSelected(null); setDetail(null); setDraft(emptyBot()) })}><PlusIcon className="size-4" />新建 Bot</Button>
         <Button type="button" variant="outline" onClick={() => void load()}><RefreshCwIcon className="size-4" />刷新</Button>
         <Button type="button" variant="outline" onClick={() => void handleExport()}><DownloadIcon className="size-4" />导出</Button>
         <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm">
@@ -520,7 +540,7 @@ export function BotsPage() {
             <CardContent className="flex flex-col gap-2">
               {(payload?.items ?? []).map((bot) => (
                 <div key={bot.db_id} className={`flex items-center justify-between gap-2 rounded-md border p-2 ${selected === bot.db_id ? 'border-primary' : ''}`}>
-                  <button type="button" className="flex flex-1 flex-col items-start text-left" onClick={() => setSelected(bot.db_id)}>
+                  <button type="button" className="flex flex-1 flex-col items-start text-left" onClick={() => selectBot(bot.db_id)}>
                     <span className="font-medium">{bot.name} <span className="font-mono text-xs text-muted-foreground">{bot.db_id}</span></span>
                     <span className="text-xs text-muted-foreground">
                       {bot.self_ids?.length ? `QQ ${bot.self_ids.join('/')}` : '无 QQ 账号'}
@@ -531,7 +551,7 @@ export function BotsPage() {
                       <Badge variant="outline">{ORIGIN_LABELS[bot.origin] ?? bot.origin}</Badge>
                     </span>
                   </button>
-                  <Switch aria-label={`启用 ${bot.name}`} checked={bot.enabled} onCheckedChange={() => void handleToggle(bot)} />
+                  <Switch aria-label={`启用 ${bot.name}`} checked={bot.enabled} onCheckedChange={() => requestToggle(bot)} />
                 </div>
               ))}
             </CardContent>
@@ -558,6 +578,7 @@ export function BotsPage() {
           </Card>
         </div>
       </QueryState>
+      {confirmDialog}
     </div>
   )
 }

@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 
 import { isRequestCancelled } from '@/api/client'
 import { controlService, getServices, reloadExtensions, setToolEnabled, type ServiceDto, type ServicesPayload } from '@/api/services'
-import { QueryState } from '@/components/shared'
+import { QueryState, useConfirmAction } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,6 +25,8 @@ export function ServicesPage() {
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
+  const [toolBusy, setToolBusy] = useState<Set<string>>(() => new Set())
+  const { request: requestConfirm, dialog: confirmDialog } = useConfirmAction()
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -56,12 +58,29 @@ export function ServicesPage() {
     }
   }
 
+  function requestAct(service: ServiceDto, action: 'stop' | 'restart') {
+    const verb = action === 'stop' ? '停止' : '重启'
+    requestConfirm({
+      title: `${verb}服务「${service.title}」？`,
+      description: action === 'stop'
+        ? `将停止「${service.title}」（${service.name}），停止期间该后台任务不再运行，需手动启动恢复。`
+        : `将重启「${service.title}」（${service.name}），重启期间该后台任务会短暂中断。`,
+      label: `确认${verb}`,
+      destructive: action === 'stop',
+      run: () => act(service, action),
+    })
+  }
+
   async function toggleTool(name: string, enabled: boolean) {
+    if (toolBusy.has(name)) return
+    setToolBusy((current) => new Set(current).add(name))
     try {
       await setToolEnabled(name, enabled)
       await load()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setToolBusy((current) => { const next = new Set(current); next.delete(name); return next })
     }
   }
 
@@ -117,8 +136,8 @@ export function ServicesPage() {
                     {service.created && service.stoppable ? (
                       <>
                         <Button type="button" size="sm" variant="outline" disabled={busy !== null || service.running === true} onClick={() => void act(service, 'start')}><PlayIcon className="size-4" />启动</Button>
-                        <Button type="button" size="sm" variant="outline" disabled={busy !== null || service.running === false} onClick={() => void act(service, 'stop')}><SquareIcon className="size-4" />停止</Button>
-                        <Button type="button" size="sm" variant="outline" disabled={busy !== null} onClick={() => void act(service, 'restart')}><RotateCwIcon className="size-4" />重启</Button>
+                        <Button type="button" size="sm" variant="outline" disabled={busy !== null || service.running === false} onClick={() => requestAct(service, 'stop')}><SquareIcon className="size-4" />停止</Button>
+                        <Button type="button" size="sm" variant="outline" disabled={busy !== null} onClick={() => requestAct(service, 'restart')}><RotateCwIcon className="size-4" />重启</Button>
                       </>
                     ) : null}
                   </div>
@@ -143,7 +162,7 @@ export function ServicesPage() {
                   <Badge variant="outline">{GROUP_LABELS[tool.group] ?? tool.group}</Badge>
                   {tool.writes ? <Badge variant="secondary">会写入</Badge> : null}
                   <span className="text-xs text-muted-foreground">调用 {tool.stats.calls} · 失败 {tool.stats.errors}</span>
-                  <Switch aria-label={`启用 ${tool.name}`} checked={tool.enabled} onCheckedChange={(value) => void toggleTool(tool.name, value)} />
+                  <Switch aria-label={`启用 ${tool.name}`} checked={tool.enabled} disabled={toolBusy.has(tool.name)} aria-busy={toolBusy.has(tool.name)} onCheckedChange={(value) => void toggleTool(tool.name, value)} />
                 </div>
               </div>
             ))}
@@ -165,6 +184,7 @@ export function ServicesPage() {
           <CardContent className="flex flex-wrap gap-1">{(payload?.channels ?? []).map((name) => <Badge key={name} variant="outline" className="font-mono">{name}</Badge>)}</CardContent>
         </Card>
       </QueryState>
+      {confirmDialog}
     </div>
   )
 }

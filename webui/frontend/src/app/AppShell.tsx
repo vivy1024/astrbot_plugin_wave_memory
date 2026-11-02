@@ -77,7 +77,8 @@ export function AppRoutes() {
         <Route path="/explore" element={<RenamedPath to="/graph" set={{ layer: 'kg' }} drop={['embed']} />} />
         <Route path="/login" element={<RenamedPath to={defaultRoute} />} />
       </Route>
-      <Route path="/stage" element={<Suspense fallback={<div className="h-svh bg-black" />}><StagePage /></Suspense>} />
+      {/* 舞台页给 OBS / 直播姬（CEF 105）用，高度必须写死 100vh：它不认 svh，会塌成 0 高 */}
+      <Route path="/stage" element={<Suspense fallback={<div style={{ height: '100vh', background: '#000' }} />}><StagePage /></Suspense>} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   )

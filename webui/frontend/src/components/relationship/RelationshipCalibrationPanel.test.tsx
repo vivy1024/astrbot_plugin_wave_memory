@@ -148,17 +148,38 @@ describe('RelationshipCalibrationPanel 证据选择', () => {
       offset: 0,
     })))
     await waitFor(() => expect(screen.getByRole('option', { name: /2 · 新群记忆/ })).toBeInTheDocument())
-    // 方案 B：切换作用域后会自动预选新作用域最新一条，绝不沿用旧选择
-    await waitFor(() => expect(evidenceSelect).toHaveValue('2'))
-    expect(evidenceSelect).not.toHaveValue('1')
+    // 切换作用域后清空旧选择，且不自动预选
+    expect(evidenceSelect).toHaveValue('')
   })
 
-  it('首次加载完成后自动预选最新一条记忆作为证据', async () => {
+  it('加载完成后默认不预选证据，未选证据时禁用提交并提示', async () => {
     listMemoriesMock.mockResolvedValue(response([memory(5, '最近记忆'), memory(4, '更早记忆')]))
 
     render(<RelationshipCalibrationPanel item={baseItem} query={baseQuery} />)
 
-    await waitFor(() => expect(screen.getByLabelText('记忆证据')).toHaveValue('5'))
+    await waitFor(() => expect(screen.getByRole('option', { name: /5 · 最近记忆/ })).toBeInTheDocument())
+    expect(screen.getByLabelText('记忆证据')).toHaveValue('')
+    fireEvent.change(screen.getByLabelText('理由'), { target: { value: '理由' } })
+    expect(screen.getByRole('button', { name: '提交人工校准' })).toBeDisabled()
+    expect(screen.getByText('请在上方选择一条记忆证据后再提交。')).toBeInTheDocument()
+  })
+
+  it('绝对覆盖提交前确认并展示当前值到新值', async () => {
+    listMemoriesMock.mockResolvedValue(response([memory(17, '支持校准的真实消息')]))
+    const item = { ...baseItem, values: { trust: { automatic_value: 30, manual_adjustment: 0, manual_override: null, effective_value: 30 } } } as typeof baseItem
+
+    render(<RelationshipCalibrationPanel item={item} query={baseQuery} />)
+    await waitFor(() => expect(screen.getByRole('option', { name: /17 · 支持校准的真实消息/ })).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: '该维归零' }))
+    fireEvent.change(screen.getByLabelText('理由'), { target: { value: '人工归零' } })
+    fireEvent.change(screen.getByLabelText('记忆证据'), { target: { value: '17' } })
+    fireEvent.click(screen.getByRole('button', { name: '提交人工校准' }))
+
+    expect(calibrateRelationshipMock).not.toHaveBeenCalled()
+    expect(await screen.findByRole('dialog')).toHaveTextContent('信任：30 → 0')
+    fireEvent.click(screen.getByRole('button', { name: '确认覆盖' }))
+    await waitFor(() => expect(calibrateRelationshipMock).toHaveBeenCalledWith(baseQuery, expect.objectContaining({ action: 'override', value: 0 })))
   })
 
   it('提交时把选中的真实记忆组装成服务端可校验的证据描述符', async () => {

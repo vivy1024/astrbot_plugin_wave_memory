@@ -198,6 +198,9 @@ describe('知识、人物与诊断页面关键约束', () => {
     await user.click(await screen.findByLabelText('选择黑话 v我50'))
     expect(screen.getByText('已选 1 条')).toBeVisible()
     await user.click(screen.getByRole('button', { name: '批量拒绝并全局拉黑' }))
+    expect(mocks.batchReviewJargons).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toHaveTextContent('拒绝会让所有群拉黑这个词')
+    await user.click(screen.getByRole('button', { name: '确认拒绝 1 条' }))
     await waitFor(() => expect(mocks.batchReviewJargons).toHaveBeenCalledWith([expect.objectContaining({ id: 7 })], 'reject', { bot_id: 'bot-real', session_id: 'qq:group:42', visibility: 'group' }))
 
     await user.click(screen.getByRole('button', { name: '编辑黑话 v我50' }))

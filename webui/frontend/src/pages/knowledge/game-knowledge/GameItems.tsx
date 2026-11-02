@@ -17,7 +17,7 @@ import {
   type GameLibrary,
   type GameTerm,
 } from '@/api/gameKnowledge'
-import { BatchActionBar } from '@/components/shared'
+import { BatchActionBar, useConfirmAction } from '@/components/shared'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -497,6 +497,7 @@ export function ReviewPanel({ game, version, onChanged, onEdit }: {
   const [total, setTotal] = useState(0)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [busy, setBusy] = useState(false)
+  const { request: requestConfirm, dialog: confirmDialog } = useConfirmAction()
   const [reload, setReload] = useState(0)
 
   useEffect(() => {
@@ -554,7 +555,12 @@ export function ReviewPanel({ game, version, onChanged, onEdit }: {
           <label className="flex items-center gap-1 text-xs"><input type="checkbox" aria-label="全选草稿" checked={allSelected} onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map((row) => row.id)))} />全选（本页 {rows.length} 条）</label>
         </div>
         <BatchActionBar selectedCount={selected.size} onClear={() => setSelected(new Set())} disabled={busy}>
-          <Button type="button" size="sm" disabled={busy} onClick={() => void apply('active')}><CheckCheckIcon aria-hidden="true" />批量启用</Button>
+          <Button type="button" size="sm" disabled={busy} onClick={() => requestConfirm({
+            title: `批量启用 ${selected.size} 条草稿？`,
+            description: `将启用所选 ${selected.size} 条草稿，启用后立即注入直播，工具也能查到。`,
+            label: `确认启用 ${selected.size} 条`,
+            run: () => apply('active'),
+          })}><CheckCheckIcon aria-hidden="true" />批量启用</Button>
           <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void apply('archived')}><ArchiveIcon aria-hidden="true" />批量归档</Button>
         </BatchActionBar>
       </CardHeader>
@@ -580,6 +586,7 @@ export function ReviewPanel({ game, version, onChanged, onEdit }: {
             ))}
           </ul>
         ) : <p className="p-2 text-sm text-muted-foreground">没有待审核的草稿。</p>}
+        {confirmDialog}
       </CardContent>
     </Card>
   )

@@ -1,4 +1,5 @@
 import { useHidePageScopeSelectors } from '@/app/global-scope'
+import { useUnsavedChangesConfirm, useUnsavedChangesGuard } from '@/app/unsaved-changes'
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { AlertCircleIcon, CheckCircle2Icon, FileEditIcon, Loader2Icon, RefreshCwIcon, SaveIcon, SearchIcon, TagIcon, Trash2Icon } from 'lucide-react'
@@ -28,7 +29,7 @@ import {
 import { getScopeOptions, scopeOptionsFor } from '@/api/options'
 import { type TagExecutionOptions, type TagWritePolicy } from '@/api/tags'
 import { TagExtractionConfigPanel } from '@/components/tag/TagExtractionConfigPanel'
-import { DeclarativeDataTable, PaginationControls, QueryState, ScopeSelect, type ObjectRefState } from '@/components/shared'
+import { DeclarativeDataTable, PaginationControls, QueryState, ScopeSelect, useConfirmAction, type ObjectRefState } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -52,14 +53,6 @@ const DEEP_LINK_LABELS: Record<Exclude<ObjectRefState, 'ready'>, string> = {
   'not-found': '对象不存在、引用无效或版本已变化；不会用裸编号回退定位。',
   'scope-mismatch': '这条记忆不属于当前 Bot 和群。',
   'version-stale': '对象版本已更新，请从最新列表重新打开。',
-}
-
-interface ConfirmAction {
-  title: string
-  description: string
-  label: string
-  destructive?: boolean
-  run: () => Promise<void> | void
 }
 
 function deepLinkFailureState(reason: unknown): ObjectRefState {
@@ -130,8 +123,7 @@ export function MemoriesPage() {
   const detailRequest = useRef(0)
   const listRequest = useRef(0)
 
-  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
-  const [confirmRunning, setConfirmRunning] = useState(false)
+  const { request: setConfirmAction, dialog: confirmDialog } = useConfirmAction()
   const [configOpen, setConfigOpen] = useState(false)
   const [streamOpen, setStreamOpen] = useState(false)
   const [streamTitle, setStreamTitle] = useState('')
@@ -142,6 +134,10 @@ export function MemoriesPage() {
   const [tagWritePolicy, setTagWritePolicy] = useState<TagWritePolicy>('missing_only')
 
   useEffect(() => setFilterDraft({ search, source, sender, hasTags, hasVector }), [hasTags, hasVector, search, sender, source])
+
+  const detailDirty = Boolean(detail) && (content !== detail?.content || importance !== Number(detail?.importance ?? 0))
+  useUnsavedChangesGuard(detailDirty, '记忆详情的内容或重要度修改尚未保存。')
+  const confirmDiscard = useUnsavedChangesConfirm()
 
   const loadBots = useCallback(async () => scopeOptionsFor(await getScopeOptions(), ['bot']), [])
   const loadSessions = useCallback(async () => {
@@ -304,18 +300,21 @@ export function MemoriesPage() {
 
   function submitSearch(event: FormEvent) {
     event.preventDefault()
-    pagination.setFilters({
+    // 翻页/改筛选会强制关闭详情；有未保存草稿时先确认
+    confirmDiscard(() => pagination.setFilters({
       search: filterDraft.search.trim() || null,
       source: filterDraft.source || null,
       sender: filterDraft.sender || null,
       has_tags: filterDraft.hasTags || null,
       has_vector: filterDraft.hasVector || null,
-    })
+    }))
   }
 
   function resetFilters() {
-    setFilterDraft({ search: '', source: '', sender: '', hasTags: '', hasVector: '' })
-    pagination.setFilters({ search: null, source: null, sender: null, has_tags: null, has_vector: null })
+    confirmDiscard(() => {
+      setFilterDraft({ search: '', source: '', sender: '', hasTags: '', hasVector: '' })
+      pagination.setFilters({ search: null, source: null, sender: null, has_tags: null, has_vector: null })
+    })
   }
 
   useEffect(() => {
@@ -497,19 +496,6 @@ export function MemoriesPage() {
     }).finally(() => setStreamRunning(false))
   }
 
-  async function executeConfirm() {
-    if (!confirmAction) return
-    setConfirmRunning(true)
-    try {
-      await confirmAction.run()
-      setConfirmAction(null)
-    } catch (reason) {
-      toast.error(humanizeApiError(reason, '操作失败'))
-    } finally {
-      setConfirmRunning(false)
-    }
-  }
-
   const items = payload?.items ?? []
 
   function formatCount(value: unknown): string {
@@ -540,10 +526,10 @@ export function MemoriesPage() {
             {hidePageScope ? null : (
               <>
                 <div className="w-48 shrink-0">
-                  <ScopeSelect value={botId || undefined} loadOptions={loadBots} label="Bot" onValueChange={(value) => pagination.setFilters({ bot_id: value, session_id: null })} />
+                  <ScopeSelect value={botId || undefined} loadOptions={loadBots} label="Bot" onValueChange={(value) => confirmDiscard(() => pagination.setFilters({ bot_id: value, session_id: null }))} />
                 </div>
                 <div className="w-56 shrink-0">
-                  <ScopeSelect value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" disabled={!botId} onValueChange={(value) => pagination.setFilters({ session_id: value })} />
+                  <ScopeSelect value={sessionId || undefined} loadOptions={loadSessions} label="群 / 会话" disabled={!botId} onValueChange={(value) => confirmDiscard(() => pagination.setFilters({ session_id: value }))} />
                 </div>
               </>
             )}
@@ -604,7 +590,7 @@ export function MemoriesPage() {
               selectedKeys={new Set(selectedRefs)}
               onToggleSelect={(row) => toggleRow(row.ref, !selectedRefs.includes(row.ref))}
               onToggleAll={(checked) => toggleAll(checked)}
-              onRowClick={(row) => void open(row)}
+              onRowClick={(row) => confirmDiscard(() => open(row))}
               rowClassName={(row) => selectedRefs.includes(row.ref) ? 'bg-primary/5' : undefined}
               columns={[
                 { key: 'id', header: 'ID', className: 'w-16 font-mono text-xs text-muted-foreground', render: (row) => `#${row.id}` },
@@ -614,16 +600,16 @@ export function MemoriesPage() {
                 { key: 'tags', header: '标签', render: (row) => <div className="flex flex-wrap gap-1">{row.tags?.length ? row.tags.slice(0, 2).map((tag, index) => <Badge key={`${tag.name}-${index}`} className={tagBadgeClass(tag.type)}>{tag.name}</Badge>) : <span className="text-xs text-muted-foreground">—</span>}</div> },
                 { key: 'vector', header: '向量', className: 'text-center', render: (row) => <span className={row.has_vector ? 'text-xs text-muted-foreground' : 'text-xs font-medium text-amber-600 dark:text-amber-400'} title={row.has_vector ? '已向量化，可被语义检索' : '还没有向量，后台回填后才能被语义检索'}>{row.has_vector ? '有向量' : '待补向量'}</span> },
                 { key: 'time', header: '时间', className: 'whitespace-nowrap font-mono text-xs text-muted-foreground', render: (row) => formatTime(row.timestamp) },
-                { key: 'actions', header: null, render: (row) => <Button variant="ghost" size="icon-sm" title="打开详情" onClick={(e) => { e.stopPropagation(); void open(row) }}><FileEditIcon /></Button> },
+                { key: 'actions', header: null, render: (row) => <Button variant="ghost" size="icon-sm" title="打开详情" onClick={(e) => { e.stopPropagation(); confirmDiscard(() => open(row)) }}><FileEditIcon /></Button> },
               ]}
             />
           </QueryState>
-          {payload ? <PaginationControls className="mt-4" page={payload.page} disabled={status === 'loading'} onOffsetChange={pagination.setOffset} onLimitChange={pagination.setLimit} /> : null}
+          {payload ? <PaginationControls className="mt-4" page={payload.page} disabled={status === 'loading'} onOffsetChange={(offset) => confirmDiscard(() => pagination.setOffset(offset))} onLimitChange={(limit) => confirmDiscard(() => pagination.setLimit(limit))} /> : null}
         </CardContent>
       </Card>
 
 
-      <Sheet open={detailOpen} onOpenChange={(openValue) => { if (!openValue) closeDetail() }}>
+      <Sheet open={detailOpen} onOpenChange={(openValue) => { if (!openValue) confirmDiscard(closeDetail) }}>
         <SheetContent className="w-full gap-0 overflow-hidden sm:max-w-2xl">
           <SheetHeader className="border-b pr-12"><SheetTitle>记忆明细</SheetTitle><SheetDescription>{detail ? `${detail.bot_id} · ${detail.session_id} · 版本 ${detail.version}` : '正在按当前群读取'}</SheetDescription></SheetHeader>
           <ScrollArea className="flex-1"><div className="flex flex-col gap-5 p-4">
@@ -640,7 +626,7 @@ export function MemoriesPage() {
         </SheetContent>
       </Sheet>
 
-      <Dialog open={Boolean(confirmAction)} onOpenChange={(openValue) => { if (!openValue && !confirmRunning) setConfirmAction(null) }}><DialogContent><DialogHeader><DialogTitle>{confirmAction?.title}</DialogTitle><DialogDescription>{confirmAction?.description}</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" disabled={confirmRunning} onClick={() => setConfirmAction(null)}>取消</Button><Button variant={confirmAction?.destructive ? 'destructive' : 'default'} disabled={confirmRunning} onClick={() => void executeConfirm()}>{confirmRunning ? <Loader2Icon className="animate-spin" /> : null}{confirmAction?.label}</Button></DialogFooter></DialogContent></Dialog>
+      {confirmDialog}
 
       <Dialog open={configOpen} onOpenChange={setConfigOpen}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>标签提取参数</DialogTitle><DialogDescription>配置仅用于当前勾选的本群记忆。</DialogDescription></DialogHeader><TagExtractionConfigPanel title="LLM 运行配置" description="只补缺最安全；追加或替换会在执行前再次确认。" disabled={streamRunning} onOptionsChange={(options: Required<TagExecutionOptions>) => { setTagBatchSize(options.tag_batch_size); setTagWritePolicy(options.tag_write_policy) }} /><DialogFooter><Button onClick={() => setConfigOpen(false)}>保存配置</Button></DialogFooter></DialogContent></Dialog>
 

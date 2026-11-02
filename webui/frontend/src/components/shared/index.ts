@@ -1,5 +1,6 @@
 export * from './BatchActionBar'
 export * from './ChatContextEvidenceDialog'
+export * from './ConfirmActionDialog'
 export * from './DeclarativeDataTable'
 export * from './EvidenceList'
 export * from './FieldValueState'

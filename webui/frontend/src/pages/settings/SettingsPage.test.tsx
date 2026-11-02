@@ -75,7 +75,48 @@ describe('SettingsPage Provider 下拉', () => {
     await user.click(screen.getByRole('option', { name: '留空：跟随所属默认' }))
     expect(screen.getByRole('combobox', { name: '修改 每日日记' })).toHaveTextContent('留空：跟随所属默认')
     await user.click(screen.getByRole('button', { name: '保存配置' }))
+    expect(api.saveFull).not.toHaveBeenCalled()
+    expect(screen.getByRole('list', { name: '配置改动' })).toHaveTextContent('每日日记provider-b → （空）')
+    await user.click(screen.getByRole('button', { name: '确认保存' }))
     expect(api.saveFull).toHaveBeenCalledWith({ Model_Routing_Settings: { diary: '' } })
+  })
+
+  it('密钥字段用密码框且 diff 打码，高风险键标注；回读失败提示已保存', async () => {
+    api.getSchema.mockResolvedValueOnce({
+      groups: [{
+        key: 'WebUI_Settings', kind: 'object', description: 'WebUI', hint: '',
+        items: [
+          { key: 'webui_password', type: 'string', description: '访问密码', hint: '', ...state, default: '', saved: 'old-secret', effective: 'old-secret', value: 'old-secret' },
+          { key: 'webui_host', type: 'string', description: '监听地址', hint: '', ...state, default: '127.0.0.1', saved: '127.0.0.1', effective: '127.0.0.1', value: '127.0.0.1' },
+        ],
+      }],
+      warnings: [],
+    }).mockRejectedValueOnce(new Error('回读失败'))
+    api.saveFull.mockResolvedValue({ ok: true, saved: true, message: '配置已保存。' })
+    const { toast } = await import('sonner')
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(await screen.findByRole('button', { name: '展开 控制台' }))
+    const password = await screen.findByLabelText('修改 访问密码')
+    expect(password).toHaveAttribute('type', 'password')
+    expect(screen.queryByText('old-secret')).not.toBeInTheDocument()
+    await user.clear(password)
+    await user.type(password, 'new-secret')
+    const host = screen.getByLabelText('修改 监听地址')
+    await user.clear(host)
+    await user.type(host, '0.0.0.0')
+    await user.click(screen.getByRole('button', { name: '保存配置' }))
+
+    const diff = screen.getByRole('list', { name: '配置改动' })
+    expect(diff).toHaveTextContent('已设置（已隐藏） → 已设置（已隐藏）')
+    expect(diff).not.toHaveTextContent('new-secret')
+    expect(diff).toHaveTextContent('127.0.0.1 → 0.0.0.0')
+    expect(screen.getAllByText('高风险').length).toBe(2)
+    await user.click(screen.getByRole('button', { name: '确认保存' }))
+    expect(api.saveFull).toHaveBeenCalledWith({ WebUI_Settings: { webui_password: 'new-secret', webui_host: '0.0.0.0' } })
+    await vi.waitFor(() => expect(toast.warning).toHaveBeenCalledWith('已保存，但刷新显示失败，请手动刷新'))
+    expect(toast.error).not.toHaveBeenCalled()
   })
 
   it('默认值非空的 Provider 项不提供「留空」', async () => {

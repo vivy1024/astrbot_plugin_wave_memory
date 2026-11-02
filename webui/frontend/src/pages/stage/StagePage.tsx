@@ -35,6 +35,33 @@ const CORNERS: Record<Exclude<CaptionCorner, 'none'>, string> = {
   tr: 'top-[4%] right-[3%]',
 }
 
+/**
+ * 直播姬（Livehime）内置 CEF 105.0.5195.127，比 Tailwind v4 的默认产出旧很多：
+ * - `svh` / `dvh` 要 Chrome 108+ → `h-svh` 整条 height 被丢弃，容器塌成 0 高（画面全黑）；
+ * - `oklch()` 要 Chrome 111+ → `--color-slate-*` 等主题变量在计算值阶段失效，
+ *   `color: var(--color-slate-300)` 退回继承的黑色，深色底上的文字等于看不见。
+ *
+ * 因此舞台页的文字色一律写死成 sRGB hex（与 oklch 换算后等价），高度一律用 `100vh`。
+ * 后台管理页跑在正常浏览器里，继续用 Tailwind 主题变量。
+ */
+const INK = {
+  /** slate-100 */
+  primary: '#f1f5f9',
+  /** slate-300 */
+  body: '#cad5e2',
+  /** slate-400 */
+  muted: '#90a1b9',
+  /** slate-500 */
+  faint: '#62748e',
+  /** amber-200 */
+  accent: '#fee685',
+  /** rose-400 */
+  rose: '#ff637e',
+} as const
+
+/** 一整个视口高：CEF 105 认 `vh`，不认 `svh`。 */
+const FULL_HEIGHT = { height: '100vh' } as const
+
 function pickHours(value: string | null): number {
   const hours = Number(value)
   return [24, 72, 168].includes(hours) ? hours : 24
@@ -77,7 +104,8 @@ export function StagePage() {
   const idlePointer = useRef(0)
   const pollSince = useRef(0)
 
-  const data = useMemo(() => (payload ? buildShowcaseData(payload, { labelCount: widget ? 0 : 12, maxLinksPerNode: widget ? 3 : 5 }) : null), [payload, widget])
+  // 小窗也要点亮标签：labelCount 归零时星空上一个名字都不显示，回放等于没有内容。
+  const data = useMemo(() => (payload ? buildShowcaseData(payload, { labelCount: widget ? 8 : 12, maxLinksPerNode: widget ? 3 : 5 }) : null), [payload, widget])
   const dataRef = useRef(data)
   dataRef.current = data
 
@@ -194,21 +222,37 @@ export function StagePage() {
 
   if (!scope) {
     return (
-      <div className="flex h-svh items-center justify-center p-6 text-center text-sm text-slate-300" style={{ background: STAGE_BACKGROUND }}>
+      <div
+        className="flex items-center justify-center p-6 text-center text-sm"
+        style={{ ...FULL_HEIGHT, background: STAGE_BACKGROUND, color: INK.body }}
+      >
         舞台页需要 bot_id 与 session_id 参数，例如 /#/stage?bot_id=yushu&amp;session_id=羽书:group:群号
       </div>
     )
   }
 
   return (
-    <div className="relative h-svh w-screen overflow-hidden text-slate-100" style={{ background: STAGE_BACKGROUND }} data-page="stage" data-layout={widget ? 'widget' : 'full'}>
+    <div
+      className="relative w-screen overflow-hidden"
+      style={{ ...FULL_HEIGHT, background: STAGE_BACKGROUND, color: INK.primary }}
+      data-page="stage"
+      data-layout={widget ? 'widget' : 'full'}
+    >
       {data && data.nodes.length ? (
         <ShowcaseScene ref={sceneRef} data={data} dimmed={focused} autoRotate reducedMotion={false} onSelectNode={() => undefined} />
       ) : null}
 
       {showBrand ? (
-        <div className="pointer-events-none absolute top-[4%] left-[3%] flex items-center gap-2 text-sm tracking-wide text-slate-300" data-slot="stage-brand">
-          <span className={cn('size-2 rounded-full', liveNow ? 'animate-pulse bg-rose-400' : 'bg-slate-500')} aria-hidden="true" />
+        <div
+          className="pointer-events-none absolute top-[4%] left-[3%] flex items-center gap-2 text-sm tracking-wide"
+          data-slot="stage-brand"
+          style={{ color: INK.body }}
+        >
+          <span
+            className={cn('size-2 rounded-full', liveNow && 'animate-pulse')}
+            style={{ background: liveNow ? INK.rose : INK.faint }}
+            aria-hidden="true"
+          />
           {botName} 的记忆星空{liveNow ? ' · 正在回忆' : ''}
         </div>
       ) : null}
@@ -224,8 +268,15 @@ export function StagePage() {
           data-live={shown?.live ? '1' : '0'}
         >
           <div className={cn('rounded-xl border border-white/10 bg-black/60 backdrop-blur-md', widget ? 'px-2.5 py-1.5' : 'px-4 py-3')}>
-            <p className={cn('flex items-center gap-2 text-slate-400', widget ? 'text-xs' : 'text-xs')}>
-              <span className={cn('rounded px-1.5 py-0.5 font-medium', shown?.live ? 'bg-rose-500/80 text-white' : 'bg-white/10 text-slate-300')}>
+            <p className="flex items-center gap-2 text-xs" style={{ color: INK.muted }}>
+              <span
+                className="rounded px-1.5 py-0.5 font-medium"
+                style={
+                  shown?.live
+                    ? { background: 'rgba(255, 32, 86, 0.8)', color: '#ffffff' }
+                    : { background: 'rgba(255, 255, 255, 0.1)', color: INK.body }
+                }
+              >
                 {shown?.live ? '实时' : '回放'}
               </span>
               <span>{caption.source}</span>
@@ -234,15 +285,15 @@ export function StagePage() {
             {!widget ? (
               <p className="mt-1.5 line-clamp-2 text-base leading-snug">
                 {caption.message !== null
-                  ? <><span className="text-slate-400">{caption.speaker}：</span>{caption.message}</>
-                  : <span className="text-slate-300">群里有人说了一句话</span>}
+                  ? <><span style={{ color: INK.muted }}>{caption.speaker}：</span>{caption.message}</>
+                  : <span style={{ color: INK.body }}>群里有人说了一句话</span>}
               </p>
             ) : null}
-            <p className={cn('text-amber-200', widget ? 'mt-0.5 line-clamp-1 text-xs' : 'mt-1.5 text-sm')}>
+            <p className={cn(widget ? 'mt-0.5 line-clamp-1 text-xs' : 'mt-1.5 text-sm')} style={{ color: INK.accent }}>
               {botName}想起了 {caption.memoryCount} 条记忆{caption.litNames.length ? `：${caption.litNames.join('、')}` : ''}
             </p>
             {caption.memories.length && !widget ? (
-              <ul className="mt-1.5 flex flex-col gap-1 text-xs text-slate-300">
+              <ul className="mt-1.5 flex flex-col gap-1 text-xs" style={{ color: INK.body }}>
                 {caption.memories.map((text, index) => <li key={index} className="line-clamp-1 border-l border-white/20 pl-2">{text}</li>)}
               </ul>
             ) : null}
@@ -250,7 +301,7 @@ export function StagePage() {
         </div>
       ) : null}
 
-      {status ? <p className="pointer-events-none absolute right-2 bottom-1 text-xs text-slate-500" role="status">{status}</p> : null}
+      {status ? <p className="pointer-events-none absolute right-2 bottom-1 text-xs" role="status" style={{ color: INK.faint }}>{status}</p> : null}
     </div>
   )
 }

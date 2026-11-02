@@ -12,6 +12,7 @@ import {
   type KeyEvent,
   type TimelineStage,
 } from '@/api/characterExperience'
+import { useConfirmAction } from '@/components/shared/ConfirmActionDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -84,6 +85,7 @@ export function CharacterTimelinePanel({ botId, overview, onChanged }: { botId: 
   const [draft, setDraft] = useState<StageDraft>(toDraft())
   const [creating, setCreating] = useState(false)
   const [busy, setBusy] = useState(false)
+  const { request: requestConfirm, dialog: confirmDialog } = useConfirmAction()
   const stages = overview.stages
   const drafts = stages.filter((stage) => stage.status === 'draft')
 
@@ -183,7 +185,13 @@ export function CharacterTimelinePanel({ botId, overview, onChanged }: { botId: 
                       <Button type="button" size="icon" variant="ghost" aria-label={`编辑 ${stage.title}`} disabled={busy} onClick={() => { setEditing(stage.stage_key); setCreating(false); setDraft(toDraft(stage)) }}><PencilIcon /></Button>
                       {!used && !stage.is_current ? (
                         <Button type="button" size="icon" variant="ghost" aria-label={`删除 ${stage.title}`} disabled={busy}
-                          onClick={() => void act(() => deleteTimelineStage(botId, stage.stage_key, stage.version), `已删除「${stage.title}」`)}><Trash2Icon /></Button>
+                          onClick={() => requestConfirm({
+                            title: `删除时间线阶段「${stage.title}」？`,
+                            description: `将删除阶段「${stage.title}」（${stage.stage_key}），操作不可撤销。`,
+                            label: '确认删除',
+                            destructive: true,
+                            run: async () => { await act(() => deleteTimelineStage(botId, stage.stage_key, stage.version), `已删除「${stage.title}」`) },
+                          })}><Trash2Icon /></Button>
                       ) : null}
                     </span>
                   </div>
@@ -215,6 +223,7 @@ export function CharacterTimelinePanel({ botId, overview, onChanged }: { botId: 
             </Button>
           </div>
         ) : null}
+        {confirmDialog}
       </CardContent>
     </Card>
   )

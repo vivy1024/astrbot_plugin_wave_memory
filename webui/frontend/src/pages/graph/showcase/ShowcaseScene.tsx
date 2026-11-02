@@ -45,11 +45,17 @@ function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char)
 }
 
-/** 文字用 HTML 叠加（CSS2DRenderer）：不进辉光、屏幕上字号固定、清晰可读。 */
+/**
+ * 文字用 HTML 叠加（CSS2DRenderer）：不进辉光、屏幕上字号固定、清晰可读。
+ *
+ * 颜色写死 sRGB：直播姬的 CEF 105 不认 `oklch()`（要 Chrome 111+），
+ * 用 `text-slate-100` 会让 `--color-slate-100` 失效、字退回黑色，深底上等于看不见。
+ */
 function makeLabel(node: ShowcaseNode): CSS2DObject {
   const element = document.createElement('div')
   element.textContent = node.name
-  element.className = 'pointer-events-none select-none whitespace-nowrap rounded px-1.5 py-0.5 text-xs font-medium text-slate-100 transition-opacity duration-300'
+  element.className = 'pointer-events-none select-none whitespace-nowrap rounded px-1.5 py-0.5 text-xs font-medium transition-opacity duration-300'
+  element.style.color = '#f1f5f9'
   element.style.background = 'rgba(0,0,0,0.45)'
   element.style.textShadow = '0 0 4px rgba(0,0,0,0.9)'
   const label = new CSS2DObject(element)
@@ -277,7 +283,11 @@ export const ShowcaseScene = forwardRef<ShowcaseSceneHandle, ShowcaseSceneProps>
     <div className="absolute inset-0" data-slot="showcase-scene">
       <div ref={containerRef} className="absolute inset-0" />
       {unsupported ? (
-        <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-sm text-slate-300" role="alert">
+        <div
+          className="absolute inset-0 flex items-center justify-center p-6 text-center text-sm"
+          role="alert"
+          style={{ color: '#cad5e2' }}
+        >
           当前浏览器不支持 WebGL，无法显示 3D 展示模式。请换用平面图。
         </div>
       ) : null}

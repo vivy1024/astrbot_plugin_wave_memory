@@ -13,6 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { InjectionTrendCard } from '@/pages/dashboard/InjectionTrendCard'
 import { SystemHealthCard } from '@/pages/dashboard/SystemHealthCard'
 import { humanizeApiError } from '@/lib/reason-label'
+import { formatRelativeSeconds, latestErrorTs, readErrorsWatermark, unreadErrors, writeErrorsWatermark } from '@/pages/dashboard/error-read-watermark'
 
 interface SectionState<T> {
   data?: T
@@ -369,50 +370,77 @@ function CompactSystemHealth({ system }: { system: SystemPayload }) {
 }
 
 function RecentErrors({ errors }: { errors?: ErrorPayload }) {
-  const items = errors?.errors ?? []
-  const [expanded, setExpanded] = useState<Record<number, boolean>>({})
+  const [watermark, setWatermark] = useState(() => readErrorsWatermark())
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  // 后端已按最新在前排序并限定 24h 内，这里不再重排
+  const items = unreadErrors(errors?.errors ?? [], watermark)
 
-  const toggleExpand = (index: number) => {
-    setExpanded(prev => ({ ...prev, [index]: !prev[index] }))
+  const toggleExpand = (key: string) => {
+    setExpanded(prev => ({ ...prev, [key]: !prev[key] }))
   }
 
-  if (items.length === 0) return null // 平时100%零占用，不占大盘任何空白！
+  const markRead = () => {
+    const latest = latestErrorTs(items)
+    if (!latest) return
+    writeErrorsWatermark(latest)
+    setWatermark(latest)
+  }
+
+  if (items.length === 0) return null // 无未读条目时不占位
+
+  const hasError = items.some((item) => item.level === 'error')
+  const tone = hasError
+    ? { card: 'border-l-destructive/80', title: 'text-destructive', item: 'border-destructive/15', text: 'text-destructive/80', label: '检测到系统异常故障' }
+    : { card: 'border-l-amber-500/80', title: 'text-amber-600 dark:text-amber-400', item: 'border-amber-500/20', text: 'text-amber-700/90 dark:text-amber-300/90', label: '运行警告' }
 
   return (
-    <Card className="border-border/60 bg-gradient-to-b from-card to-card/95 shadow-sm border-l-4 border-l-destructive/80">
+    <Card data-slot="recent-errors" className={`border-border/60 bg-gradient-to-b from-card to-card/95 shadow-sm border-l-4 ${tone.card}`}>
       <CardHeader className="pb-2.5">
-        <CardTitle className="tracking-tight text-base font-semibold flex items-center gap-2 text-destructive">
-          <AlertTriangleIcon className="size-4.5" />
-          <span>检测到系统异常故障</span>
-        </CardTitle>
-        <CardDescription className="text-xs">注入与认知管道运行时警告、异常与断点记录，建议排查</CardDescription>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <CardTitle className={`tracking-tight text-base font-semibold flex items-center gap-2 ${tone.title}`}>
+              <AlertTriangleIcon className="size-4.5" />
+              <span>{tone.label}</span>
+              <Badge variant="outline" className="text-xs font-normal">{items.length} 条未读</Badge>
+            </CardTitle>
+            <CardDescription className="text-xs">最近 24 小时注入与认知管道的运行时警告、异常与断点记录，建议排查</CardDescription>
+          </div>
+          <Button type="button" size="sm" variant="outline" className="shrink-0" onClick={markRead}>标为已读</Button>
+        </div>
       </CardHeader>
       <CardContent className="px-6 pb-5 flex flex-col gap-3">
         {items.slice(0, 2).map((item, index) => {
-          const errMsg = String(item.message ?? item.error ?? JSON.stringify(item))
+          const key = `${item.ts}-${index}`
+          const errMsg = String(item.message ?? '')
           const isLong = errMsg.length > 80
-          const isExpanded = !!expanded[index]
+          const isExpanded = !!expanded[key]
           const displayMsg = !isExpanded && isLong ? `${errMsg.substring(0, 80)}...` : errMsg
+          const isErrorLevel = item.level === 'error'
+          const absolute = Number(item.ts) > 0 ? new Date(Number(item.ts) * 1000).toLocaleString('zh-CN') : '时间未知'
 
           return (
             <div
-              key={`${index}-${errMsg}`}
-              className="flex flex-col gap-2 rounded-xl border border-destructive/15 bg-destructive-foreground/[0.01] p-3.5 transition-all duration-300"
+              key={key}
+              className={`flex flex-col gap-2 rounded-xl border ${tone.item} bg-muted/[0.03] p-3.5 transition-all duration-300`}
             >
               <div className="flex items-center justify-between gap-3 w-full">
-                <span className="font-semibold text-xs text-destructive/90">{errorLevelLabel(item.level ?? item.type)}</span>
+                <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
+                  <Badge variant={isErrorLevel ? 'destructive' : 'outline'} className={isErrorLevel ? 'text-xs' : 'text-xs border-amber-500/40 text-amber-600 dark:text-amber-400'}>{errorLevelLabel(item.level)}</Badge>
+                  <span className="font-mono text-muted-foreground truncate">{item.source || '未知来源'}</span>
+                  <time className="text-muted-foreground" dateTime={Number(item.ts) > 0 ? new Date(Number(item.ts) * 1000).toISOString() : undefined} title={absolute}>{formatRelativeSeconds(item.ts)}</time>
+                </div>
                 {isLong && (
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => toggleExpand(index)}
-                    className="h-5.5 px-2 text-xs font-semibold text-destructive/80 hover:text-destructive hover:bg-destructive/10 shrink-0"
+                    onClick={() => toggleExpand(key)}
+                    className={`h-5.5 px-2 text-xs font-semibold shrink-0 ${tone.text}`}
                   >
                     {isExpanded ? '收起详情' : '展开故障堆栈'}
                   </Button>
                 )}
               </div>
-              <pre className="mt-1 max-h-48 w-full overflow-auto rounded-md bg-destructive-foreground/[0.03] p-2 font-mono text-xs text-destructive/80 whitespace-pre-wrap break-all leading-relaxed transition-all duration-300">
+              <pre className={`mt-1 max-h-48 w-full overflow-auto rounded-md bg-muted/30 p-2 font-mono text-xs whitespace-pre-wrap break-all leading-relaxed transition-all duration-300 ${tone.text}`}>
                 {displayMsg}
               </pre>
             </div>

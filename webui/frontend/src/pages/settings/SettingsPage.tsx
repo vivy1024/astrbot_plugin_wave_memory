@@ -17,7 +17,7 @@ import {
   type ProviderPayload,
 } from '@/api/config'
 import { useUnsavedChangesGuard } from '@/app/unsaved-changes'
-import { FieldValueState, QueryState, type ApplyMode } from '@/components/shared'
+import { FieldValueState, QueryState, useConfirmAction, type ApplyMode } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -30,6 +30,8 @@ import { SettingsSection } from '@/components/ui/collapsible'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { validateNumericDraft } from '@/lib/numeric-draft'
+import { displayValue, isSecretKey } from '@/pages/config/config-catalog'
+import { RISK_RULES } from '@/pages/config/risk'
 import { changedPayload } from '@/pages/settings/settings-state'
 import { groupMeta, isHiddenSection, matchesSearch } from '@/pages/settings/settings-groups'
 
@@ -85,6 +87,37 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 const SETTINGS_TABS = ['static', 'hot', 'restart', 'advanced'] as const
+
+interface SchemaChange {
+  key: string
+  label: string
+  before: string
+  after: string
+  risk: string | null
+}
+
+/** 把待保存 payload 展开成「字段：旧值 → 新值」，密钥打码，命中高风险表时附说明。 */
+function schemaChanges(payload: Record<string, unknown>, original: ConfigGroup[], current: ConfigGroup[]): SchemaChange[] {
+  const changes: SchemaChange[] = []
+  const describe = (key: string, label: string, before: unknown, after: unknown) => {
+    const rule = RISK_RULES.find((candidate) => candidate.key === key)
+    changes.push({ key, label, before: displayValue(key, before), after: displayValue(key, after), risk: rule ? rule.impact : null })
+  }
+  for (const [groupKey, value] of Object.entries(payload)) {
+    const previous = original.find((group) => group.key === groupKey)
+    const next = current.find((group) => group.key === groupKey)
+    if (next?.kind === 'object' && value && typeof value === 'object') {
+      for (const [itemKey, itemValue] of Object.entries(value as Record<string, unknown>)) {
+        const item = next.items?.find((candidate) => candidate.key === itemKey)
+        const oldItem = previous?.items?.find((candidate) => candidate.key === itemKey)
+        describe(`${groupKey}.${itemKey}`, item?.description || `${groupKey}.${itemKey}`, oldItem?.value, itemValue)
+      }
+    } else {
+      describe(groupKey, next?.description || groupKey, previous?.value, value)
+    }
+  }
+  return changes
+}
 
 /** Provider 下拉里「留空」的占位值（Radix Select 不接受空字符串作为选项值）。 */
 const PROVIDER_EMPTY = '__wm_provider_empty__'
@@ -191,6 +224,7 @@ export function SettingsPage() {
   const hasHotErrors = Object.keys(hotErrors).length > 0
   const isDirty = Object.keys(fullPayload).length > 0 || dirtyHot.length > 0 || hasSchemaErrors || hasHotErrors
   useUnsavedChangesGuard(isDirty, '您当前有未保存的系统配置修改，离开后这些草稿将丢失。')
+  const { request: requestConfirm, dialog: confirmDialog } = useConfirmAction()
 
   function updateScalar(groupKey: string, value: unknown) {
     setSchemaGroups((groups) => groups.map((group) => group.key === groupKey ? { ...group, value } : group))
@@ -256,23 +290,57 @@ export function SettingsPage() {
     setHotErrors({})
   }
 
-  async function saveSchema() {
+  function requestSaveSchema() {
     if (hasSchemaErrors) {
       toast.error('请先修正配置中的数值错误')
       return
     }
+    const changes = schemaChanges(fullPayload, originalGroups, schemaGroups)
+    if (!changes.length) return
+    const risky = changes.some((change) => change.risk)
+    requestConfirm({
+      title: `保存 ${changes.length} 项配置修改？`,
+      description: (
+        <div className="flex flex-col gap-2">
+          <span>请核对以下改动，密钥类字段只显示是否已设置。</span>
+          <ul className="flex max-h-72 flex-col gap-1.5 overflow-auto text-foreground" aria-label="配置改动">
+            {changes.map((change) => (
+              <li key={change.key} className={`rounded-md border p-2 text-xs ${change.risk ? 'border-destructive/40 bg-destructive/5' : ''}`}>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-medium">{change.label}</span>
+                  {change.risk ? <Badge variant="destructive" className="text-xs">高风险</Badge> : null}
+                </div>
+                <div className="mt-0.5 break-all font-mono">{change.before} → {change.after}</div>
+                {change.risk ? <div className="mt-0.5 text-destructive">{change.risk}</div> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ),
+      label: '确认保存',
+      destructive: risky,
+      run: saveSchema,
+    })
+  }
+
+  async function saveSchema() {
     setSaving(true)
     try {
       const response = await saveFullConfig(fullPayload)
       if (!response.ok) throw new Error(response.errors?.join('；') || response.error || '配置保存失败')
       toast.success(response.message || '配置已保存；运行时是否生效以回读值为准。')
-      const schema = response.schema ?? await getConfigSchema()
-      const groups = cloneGroups(schema.groups ?? [])
-      setSchemaGroups(groups)
-      setOriginalGroups(cloneGroups(groups))
-      setSchemaDrafts(schemaNumericDrafts(groups))
-      setSchemaErrors({})
-      setWarnings(schema.warnings ?? [])
+      try {
+        const schema = response.schema ?? await getConfigSchema()
+        const groups = cloneGroups(schema.groups ?? [])
+        setSchemaGroups(groups)
+        setOriginalGroups(cloneGroups(groups))
+        setSchemaDrafts(schemaNumericDrafts(groups))
+        setSchemaErrors({})
+        setWarnings(schema.warnings ?? [])
+      } catch {
+        // 写入已成功，只是回读失败：不能报“保存失败”，否则用户会重复提交
+        toast.warning('已保存，但刷新显示失败，请手动刷新')
+      }
     } catch (error) {
       toast.error(errorMessage(error, '配置保存失败'))
     } finally {
@@ -369,7 +437,8 @@ export function SettingsPage() {
         </div>
       )
     }
-    return <Input type="text" value={value == null ? '' : String(value)} onChange={(event) => setValue(event.target.value)} />
+    const secret = isSecretKey(key)
+    return <Input type={secret ? 'password' : 'text'} autoComplete={secret ? 'new-password' : undefined} aria-label={`修改 ${item?.description ?? group.description}`} value={value == null ? '' : String(value)} onChange={(event) => setValue(event.target.value)} />
   }
 
   // 分组展开状态：默认按「常用组」展开，用户的手动开合覆盖默认值。
@@ -426,7 +495,7 @@ export function SettingsPage() {
       <Card>
         <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6">
           <Input className="max-w-md" placeholder="搜索配置键、名称或说明" value={search} onChange={(event) => setSearch(event.target.value)} />
-          <div className="flex gap-2"><Button variant="outline" onClick={discardSchema} disabled={saving}><Undo2Icon />放弃修改</Button><Button onClick={() => void saveSchema()} disabled={saving || !Object.keys(fullPayload).length || hasSchemaErrors}>{saving ? <Loader2Icon className="animate-spin" /> : <SaveIcon />}保存配置</Button></div>
+          <div className="flex gap-2"><Button variant="outline" onClick={discardSchema} disabled={saving}><Undo2Icon />放弃修改</Button><Button onClick={requestSaveSchema} disabled={saving || !Object.keys(fullPayload).length || hasSchemaErrors}>{saving ? <Loader2Icon className="animate-spin" /> : <SaveIcon />}保存配置</Button></div>
         </CardContent>
       </Card>
       {!visibleGroups.length ? <QueryState status="empty" title="没有匹配的配置项" description="请调整搜索词或切换配置分类。" /> : visibleGroups.map(({ group, meta, itemCount }) => {
@@ -460,7 +529,7 @@ export function SettingsPage() {
                       {item.error ? <span className="text-destructive"> {item.error}</span> : null}
                     </FieldDescription>
                   </Field>
-                  <FieldValueState label={item.description} {...pathState(item)} />
+                  <FieldValueState label={item.description} secret={isSecretKey(`${group.key}.${item.key}`)} {...pathState(item)} />
                 </div>
               )) : (
                 <div id={`setting-${group.key}`} className={`grid gap-3 rounded-lg transition-shadow xl:grid-cols-[minmax(16rem,0.8fr)_minmax(0,1.2fr)] ${highlightKey === group.key ? 'ring-2 ring-primary' : ''}`}>
@@ -479,7 +548,7 @@ export function SettingsPage() {
                       {group.error ? <span className="text-destructive"> {group.error}</span> : null}
                     </FieldDescription>
                   </Field>
-                  <FieldValueState label={group.description} {...pathState(group)} />
+                  <FieldValueState label={group.description} secret={isSecretKey(group.key)} {...pathState(group)} />
                 </div>
               )}
             </div>
@@ -526,6 +595,7 @@ export function SettingsPage() {
 
         {(['static', 'restart', 'advanced'] as const).map((tab) => <TabsContent key={tab} value={tab} className="mt-4 space-y-4">{schemaRegion}</TabsContent>)}
       </Tabs>
+      {confirmDialog}
     </div>
   )
 }

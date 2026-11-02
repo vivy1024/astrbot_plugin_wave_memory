@@ -52,8 +52,17 @@ export interface SystemPayload {
   registry_bots?: RegistryBotItem[]
 }
 
+export interface RecentErrorItem {
+  source: string
+  message: string
+  level: 'error' | 'warning' | string
+  /** Unix 秒 */
+  ts: number
+}
+
+/** /api/errors：最新在前，只含 24h 内条目。 */
 export interface ErrorPayload {
-  errors?: Array<Record<string, unknown>>
+  errors?: RecentErrorItem[]
   total?: number
 }
 

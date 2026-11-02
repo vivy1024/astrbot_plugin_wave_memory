@@ -18,6 +18,7 @@ import {
   ResponsiveDetail,
   ResponsiveTable,
   ScopeFilterBar,
+  useConfirmAction,
   type ObjectRefState,
 } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -87,6 +88,11 @@ function normalizeJargonItem(item: JargonItem): JargonItem {
 
 function normalizeJargonResponse(payload: JargonResponse): JargonResponse {
   return { ...payload, items: Array.isArray(payload.items) ? payload.items.map(normalizeJargonItem) : [] }
+}
+
+/** 批量选择只作用于可审条目：待审核、具备审核能力且有服务端签发的 ObjectRef。 */
+function canBatchReview(item: JargonItem, reviewAvailable: boolean): boolean {
+  return item.status === 'pending' && reviewAvailable && Boolean(item.object_ref)
 }
 
 function formatTime(seconds: unknown): string {
@@ -233,6 +239,7 @@ export function JargonPage() {
   const [activeTab, setActiveTab] = useState<'local' | 'global'>('local')
   const listRequest = useRef(0)
   const blocklistRequest = useRef(0)
+  const { request: requestConfirm, dialog: confirmDialog } = useConfirmAction()
 
   useEffect(() => setFilterDraft({ search, status: statusFilter, source: sourceFilter, hasEvidence: evidenceFilter, minFrequency }), [evidenceFilter, minFrequency, search, sourceFilter, statusFilter])
   useEffect(() => {
@@ -321,8 +328,44 @@ export function JargonPage() {
     } finally { setMutating(null) }
   }
 
+  function requestReview(item: JargonItem, action: 'approve' | 'reject') {
+    if (action === 'approve') { void review(item, action); return }
+    requestConfirm({
+      title: `拒绝黑话“${item.word}”？`,
+      description: '将拒绝 1 条候选。拒绝会让所有群拉黑这个词：规范化词形写入全局拉黑列表，后续不再理解、入库与注入。',
+      label: '确认拒绝并全局拉黑',
+      destructive: true,
+      run: () => review(item, 'reject'),
+    })
+  }
+
+  function requestReviewSelected(action: 'approve' | 'reject') {
+    const count = selectedItems.length
+    if (!count) return
+    if (action === 'approve') { void reviewSelected(action); return }
+    requestConfirm({
+      title: `批量拒绝 ${count} 条黑话？`,
+      description: `将拒绝所选 ${count} 条候选。拒绝会让所有群拉黑这个词：这些词的规范化词形都会写入全局拉黑列表。`,
+      label: `确认拒绝 ${count} 条`,
+      destructive: true,
+      run: () => reviewSelected('reject'),
+    })
+  }
+
+  function requestArchiveSelected() {
+    const count = selectedItems.length
+    if (!count) return
+    requestConfirm({
+      title: `批量归档 ${count} 条黑话？`,
+      description: `将归档所选 ${count} 条黑话。归档后不再参与注入；目前界面不支持恢复。`,
+      label: `确认归档 ${count} 条`,
+      destructive: true,
+      run: archiveSelected,
+    })
+  }
+
   async function reviewSelected(action: 'approve' | 'reject') {
-    const selected = (payload?.items ?? []).filter((item) => selectedIds.includes(item.id))
+    const selected = selectedItems
     if (!selected.length) return
     setBatchMutating(true)
     try {
@@ -353,21 +396,20 @@ export function JargonPage() {
   }
 
   async function archiveSelected() {
-    const selected = (payload?.items ?? []).filter((item) => selectedIds.includes(item.id))
+    const selected = selectedItems
     if (!selected.length) return
     setBatchMutating(true)
     try {
-      const results = await Promise.all(selected.map((item) => archiveJargon(item, scope)))
-      if (results.some((result) => !result.ok || result.operation.status !== 'succeeded')) {
-        throw new Error('服务端未确认所有黑话归档成功')
-      }
-      toast.success(`已归档 ${selected.length} 条黑话记录，保留证据与审计信息`)
+      const results = await Promise.allSettled(selected.map((item) => archiveJargon(item, scope)))
+      const succeeded = results.filter((result) => result.status === 'fulfilled' && result.value.ok && result.value.operation.status === 'succeeded').length
+      const failed = results.length - succeeded
+      if (failed === 0) toast.success(`已归档 ${succeeded} 条黑话记录，保留证据与审计信息`)
+      else if (succeeded === 0) toast.error(`批量归档失败：${failed} 条均未成功`)
+      else toast.warning(`批量归档部分完成：成功 ${succeeded} 条，失败 ${failed} 条`)
       setSelectedIds([])
-      await load()
-    } catch (reason) {
-      toast.error(humanizeApiError(reason, '批量归档失败'))
     } finally {
       setBatchMutating(false)
+      await load()
     }
   }
 
@@ -441,13 +483,14 @@ export function JargonPage() {
   }
 
   const pageItems = payload?.items ?? []
-  const selectedItems = pageItems.filter((item) => selectedIds.includes(item.id))
-  const allPageSelected = pageItems.length > 0 && selectedItems.length === pageItems.length
+  const reviewAvailable = payload?.capabilities.review?.available === true
+  const reviewableItems = pageItems.filter((item) => canBatchReview(item, reviewAvailable))
+  const selectedItems = reviewableItems.filter((item) => selectedIds.includes(item.id))
+  const allPageSelected = reviewableItems.length > 0 && selectedItems.length === reviewableItems.length
   const confirmedCount = payload ? pageItems.filter((item) => item.status === 'confirmed').length : '—'
   const pendingCount = payload ? pageItems.filter((item) => item.status === 'pending').length : '—'
   const anchorCount = payload ? pageItems.reduce((sum, item) => sum + item.anchors.length, 0) : '—'
   const totalText = payload?.page.total_status === 'exact' && payload.page.total !== null ? payload.page.total : '—'
-  const reviewAvailable = payload?.capabilities.review?.available === true
   const editAvailable = payload?.capabilities.edit?.available === true
   const archiveAvailable = payload?.capabilities.archive?.available === true
 
@@ -553,8 +596,8 @@ export function JargonPage() {
               <Button
                 type="button"
                 size="sm"
-                disabled={batchMutating || selectedItems.some((item) => !item.object_ref)}
-                onClick={() => void reviewSelected('approve')}
+                disabled={batchMutating || !selectedItems.length}
+                onClick={() => requestReviewSelected('approve')}
               >
                 <CheckIcon data-icon="inline-start" />
                 批量通过
@@ -563,8 +606,8 @@ export function JargonPage() {
                 type="button"
                 size="sm"
                 variant="outline"
-                disabled={batchMutating || selectedItems.some((item) => !item.object_ref)}
-                onClick={() => void reviewSelected('reject')}
+                disabled={batchMutating || !selectedItems.length}
+                onClick={() => requestReviewSelected('reject')}
               >
                 <XIcon data-icon="inline-start" />
                 批量拒绝并全局拉黑
@@ -573,8 +616,8 @@ export function JargonPage() {
                 type="button"
                 size="sm"
                 variant="outline"
-                disabled={batchMutating || !archiveAvailable || selectedItems.some((item) => !item.object_ref)}
-                onClick={() => void archiveSelected()}
+                disabled={batchMutating || !archiveAvailable || !selectedItems.length}
+                onClick={requestArchiveSelected}
               >
                 <ArchiveIcon data-icon="inline-start" />
                 批量归档
@@ -582,9 +625,9 @@ export function JargonPage() {
             </BatchActionBar>
 <QueryState status={queryStatus} error={error} onRetry={() => void load()} title={!botId || !sessionId ? '请选择真实 Bot 与会话' : undefined} description={!botId || !sessionId ? '作用域未选择时不会查询，也不会补入默认 Bot。' : undefined}>
 <ResponsiveTable label="群聊黑话清单" table={<Table className="w-full table-fixed">
-<TableHeader><TableRow><TableHead className="w-8"><input aria-label="选择当前页全部黑话" type="checkbox" checked={allPageSelected} onChange={(event) => setSelectedIds(event.target.checked ? pageItems.map((item) => item.id) : [])} /></TableHead><TableHead className="w-28">词条</TableHead><TableHead className="w-auto">释义</TableHead><TableHead className="w-16">频次</TableHead><TableHead className="w-28">来源</TableHead><TableHead className="w-24">状态</TableHead><TableHead className="w-16">证据</TableHead><TableHead className="w-52 text-right">操作</TableHead></TableRow></TableHeader>
-<TableBody>{pageItems.map((item) => <TableRow key={item.id} className={selectedIds.includes(item.id) ? 'bg-primary/5' : undefined}><TableCell><input aria-label={`选择黑话 ${item.word}`} type="checkbox" checked={selectedIds.includes(item.id)} onChange={(event) => toggleSelected(item.id, event.target.checked)} /></TableCell><TableCell className="font-semibold truncate">{item.word}</TableCell><TableCell className="whitespace-normal break-words"><p className="line-clamp-2 text-sm text-muted-foreground">{item.meaning || '尚未形成可展示的释义'}</p></TableCell><TableCell className="tabular-nums">{item.frequency}</TableCell><TableCell className="whitespace-nowrap"><Badge variant="secondary" className="font-mono text-xs" title={item.source || 'wave_memory'}>{SOURCE_LABELS[item.source] || item.source || '本群习得'}</Badge></TableCell><TableCell className="whitespace-nowrap"><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></TableCell><TableCell>{item.anchors.length ? `${item.anchors.length} 条` : '无锚点'}</TableCell><TableCell className="text-right"><div className="flex justify-end gap-1"><Button type="button" variant="outline" size="sm" disabled={!item.object_ref} title={item.object_ref ? '还原同作用域聊天证据' : '缺少服务端签发的 ObjectRef'} onClick={() => setEvidenceItem(item)}><MessageSquareQuoteIcon data-icon="inline-start" />证据</Button>{item.status === 'pending' ? <><Button type="button" size="icon-sm" aria-label={`确认黑话 ${item.word}`} disabled={mutating === item.id || !reviewAvailable || !item.object_ref} title="确认黑话" onClick={() => void review(item, 'approve')}><CheckIcon /></Button><Button type="button" variant="outline" size="icon-sm" aria-label={`拒绝并全局拉黑黑话 ${item.word}`} disabled={mutating === item.id || !reviewAvailable} title="拒绝并全局拉黑" onClick={() => void review(item, 'reject')}><XIcon /></Button></> : null}<Button type="button" variant="ghost" size="icon-sm" aria-label={`编辑黑话 ${item.word}`} disabled={!editAvailable || !item.object_ref} title={editAvailable ? '编辑释义；保存后回到待审核' : payload?.capabilities.edit?.reason_code ?? '编辑不可用'} onClick={() => openMeaningEditor(item)}><Edit2Icon data-icon="inline-start" /></Button><ResponsiveDetail title={item.word} description="黑话释义、证据引用与审核操作" className="sm:max-w-4xl" trigger={<Button type="button" variant="ghost" size="icon-sm" aria-label={`查看黑话 ${item.word} 详情`}><EyeIcon /></Button>}><JargonDetails item={item} reviewAvailable={reviewAvailable} busy={mutating === item.id} onReview={(action) => void review(item, action)} /></ResponsiveDetail><Button type="button" variant="ghost" size="icon-sm" aria-label={`归档黑话 ${item.word}`} disabled={mutating === item.id || !archiveAvailable || !item.object_ref} title={archiveAvailable ? '归档黑话，移出正式注入' : payload?.capabilities.archive?.reason_code ?? '归档不可用'} onClick={() => setArchiveItem(item)}><ArchiveIcon data-icon="inline-start" /></Button></div></TableCell></TableRow>)}</TableBody>
-</Table>} cards={pageItems.map((item) => <article key={item.id} className={`flex flex-col gap-3 rounded-lg border bg-card p-4 ${selectedIds.includes(item.id) ? 'border-primary/50 bg-primary/5' : ''}`}><div className="flex items-start justify-between gap-2"><label className="flex min-w-0 items-start gap-2"><input aria-label={`选择黑话 ${item.word}`} type="checkbox" checked={selectedIds.includes(item.id)} onChange={(event) => toggleSelected(item.id, event.target.checked)} /><span><span className="block font-semibold">{item.word}</span><span className="mt-1 block whitespace-pre-wrap break-words text-sm text-muted-foreground">{item.meaning || '尚未形成可展示的释义'}</span></span></label><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></div><div className="flex flex-wrap gap-2 text-xs text-muted-foreground"><span>频次 {item.frequency}</span><span>来源 {SOURCE_LABELS[item.source] || item.source || '本群习得'}</span><span>证据 {item.anchors.length} 条</span></div><div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" size="sm" disabled={!item.object_ref} onClick={() => setEvidenceItem(item)}><MessageSquareQuoteIcon data-icon="inline-start" />证据</Button><Button type="button" variant="outline" size="sm" disabled={!editAvailable || !item.object_ref} onClick={() => openMeaningEditor(item)}><Edit2Icon data-icon="inline-start" />编辑</Button>{item.status === 'confirmed' ? <Button type="button" variant="outline" size="sm" disabled={mutating === item.id || !item.object_ref} onClick={() => void promote(item)}>提升为广域</Button> : null}<ResponsiveDetail title={item.word} description="黑话释义、证据引用与审核操作" className="sm:max-w-4xl" trigger={<Button type="button" variant="outline" size="sm">详情</Button>}><JargonDetails item={item} reviewAvailable={reviewAvailable} busy={mutating === item.id} onReview={(action) => void review(item, action)} /></ResponsiveDetail></div></article>)} />
+<TableHeader><TableRow><TableHead className="w-8"><input aria-label="选择当前页全部可审黑话" title="只选择待审核且可审的条目" type="checkbox" disabled={!reviewableItems.length} checked={allPageSelected} onChange={(event) => setSelectedIds(event.target.checked ? reviewableItems.map((item) => item.id) : [])} /></TableHead><TableHead className="w-28">词条</TableHead><TableHead className="w-auto">释义</TableHead><TableHead className="w-16">频次</TableHead><TableHead className="w-28">来源</TableHead><TableHead className="w-24">状态</TableHead><TableHead className="w-16">证据</TableHead><TableHead className="w-52 text-right">操作</TableHead></TableRow></TableHeader>
+<TableBody>{pageItems.map((item) => <TableRow key={item.id} className={selectedIds.includes(item.id) ? 'bg-primary/5' : undefined}><TableCell><input aria-label={`选择黑话 ${item.word}`} type="checkbox" disabled={!canBatchReview(item, reviewAvailable)} title={canBatchReview(item, reviewAvailable) ? undefined : '只有待审核且可审的条目可批量操作'} checked={selectedIds.includes(item.id)} onChange={(event) => toggleSelected(item.id, event.target.checked)} /></TableCell><TableCell className="font-semibold truncate">{item.word}</TableCell><TableCell className="whitespace-normal break-words"><p className="line-clamp-2 text-sm text-muted-foreground">{item.meaning || '尚未形成可展示的释义'}</p></TableCell><TableCell className="tabular-nums">{item.frequency}</TableCell><TableCell className="whitespace-nowrap"><Badge variant="secondary" className="font-mono text-xs" title={item.source || 'wave_memory'}>{SOURCE_LABELS[item.source] || item.source || '本群习得'}</Badge></TableCell><TableCell className="whitespace-nowrap"><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></TableCell><TableCell>{item.anchors.length ? `${item.anchors.length} 条` : '无锚点'}</TableCell><TableCell className="text-right"><div className="flex justify-end gap-1"><Button type="button" variant="outline" size="sm" disabled={!item.object_ref} title={item.object_ref ? '还原同作用域聊天证据' : '缺少服务端签发的 ObjectRef'} onClick={() => setEvidenceItem(item)}><MessageSquareQuoteIcon data-icon="inline-start" />证据</Button>{item.status === 'pending' ? <><Button type="button" size="icon-sm" aria-label={`确认黑话 ${item.word}`} disabled={mutating === item.id || !reviewAvailable || !item.object_ref} title="确认黑话" onClick={() => void review(item, 'approve')}><CheckIcon /></Button><Button type="button" variant="outline" size="icon-sm" aria-label={`拒绝并全局拉黑黑话 ${item.word}`} disabled={mutating === item.id || !reviewAvailable} title="拒绝并全局拉黑" onClick={() => requestReview(item, 'reject')}><XIcon /></Button></> : null}<Button type="button" variant="ghost" size="icon-sm" aria-label={`编辑黑话 ${item.word}`} disabled={!editAvailable || !item.object_ref} title={editAvailable ? '编辑释义；保存后回到待审核' : payload?.capabilities.edit?.reason_code ?? '编辑不可用'} onClick={() => openMeaningEditor(item)}><Edit2Icon data-icon="inline-start" /></Button><ResponsiveDetail title={item.word} description="黑话释义、证据引用与审核操作" className="sm:max-w-4xl" trigger={<Button type="button" variant="ghost" size="icon-sm" aria-label={`查看黑话 ${item.word} 详情`}><EyeIcon /></Button>}><JargonDetails item={item} reviewAvailable={reviewAvailable} busy={mutating === item.id} onReview={(action) => requestReview(item, action)} /></ResponsiveDetail><Button type="button" variant="ghost" size="icon-sm" aria-label={`归档黑话 ${item.word}`} disabled={mutating === item.id || !archiveAvailable || !item.object_ref} title={archiveAvailable ? '归档黑话，移出正式注入' : payload?.capabilities.archive?.reason_code ?? '归档不可用'} onClick={() => setArchiveItem(item)}><ArchiveIcon data-icon="inline-start" /></Button></div></TableCell></TableRow>)}</TableBody>
+</Table>} cards={pageItems.map((item) => <article key={item.id} className={`flex flex-col gap-3 rounded-lg border bg-card p-4 ${selectedIds.includes(item.id) ? 'border-primary/50 bg-primary/5' : ''}`}><div className="flex items-start justify-between gap-2"><label className="flex min-w-0 items-start gap-2"><input aria-label={`选择黑话 ${item.word}`} type="checkbox" disabled={!canBatchReview(item, reviewAvailable)} title={canBatchReview(item, reviewAvailable) ? undefined : '只有待审核且可审的条目可批量操作'} checked={selectedIds.includes(item.id)} onChange={(event) => toggleSelected(item.id, event.target.checked)} /><span><span className="block font-semibold">{item.word}</span><span className="mt-1 block whitespace-pre-wrap break-words text-sm text-muted-foreground">{item.meaning || '尚未形成可展示的释义'}</span></span></label><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></div><div className="flex flex-wrap gap-2 text-xs text-muted-foreground"><span>频次 {item.frequency}</span><span>来源 {SOURCE_LABELS[item.source] || item.source || '本群习得'}</span><span>证据 {item.anchors.length} 条</span></div><div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" size="sm" disabled={!item.object_ref} onClick={() => setEvidenceItem(item)}><MessageSquareQuoteIcon data-icon="inline-start" />证据</Button><Button type="button" variant="outline" size="sm" disabled={!editAvailable || !item.object_ref} onClick={() => openMeaningEditor(item)}><Edit2Icon data-icon="inline-start" />编辑</Button>{item.status === 'confirmed' ? <Button type="button" variant="outline" size="sm" disabled={mutating === item.id || !item.object_ref} onClick={() => void promote(item)}>提升为广域</Button> : null}<ResponsiveDetail title={item.word} description="黑话释义、证据引用与审核操作" className="sm:max-w-4xl" trigger={<Button type="button" variant="outline" size="sm">详情</Button>}><JargonDetails item={item} reviewAvailable={reviewAvailable} busy={mutating === item.id} onReview={(action) => requestReview(item, action)} /></ResponsiveDetail></div></article>)} />
 </QueryState>
           {payload ? <PaginationControls page={payload.page} onOffsetChange={pagination.setOffset} onLimitChange={pagination.setLimit} /> : null}
           </CardContent>
@@ -604,8 +647,9 @@ export function JargonPage() {
     </Tabs>
 
     <Dialog open={Boolean(editItem)} onOpenChange={(open) => { if (!open && mutating === null) setEditItem(null) }}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>编辑黑话释义{editItem ? ` · ${editItem.word}` : ''}</DialogTitle><DialogDescription>保存后该词条将重新进入待审核状态。</DialogDescription></DialogHeader><Field><FieldLabel htmlFor="jargon-edit-meaning">黑话释义</FieldLabel><Textarea id="jargon-edit-meaning" className="min-h-28" value={editMeaning} onChange={(event) => setEditMeaning(event.target.value)} /></Field><DialogFooter><Button type="button" variant="outline" disabled={mutating !== null} onClick={() => setEditItem(null)}>取消</Button><Button type="button" disabled={mutating !== null || !editMeaning.trim()} onClick={() => void saveMeaning()}>{mutating !== null ? <Loader2Icon data-icon="inline-start" className="animate-spin" /> : <Edit2Icon data-icon="inline-start" />}保存并回到待审核</Button></DialogFooter></DialogContent></Dialog>
-    <Dialog open={Boolean(archiveItem)} onOpenChange={(open) => { if (!open && mutating === null) setArchiveItem(null) }}><DialogContent><DialogHeader><DialogTitle>归档黑话{archiveItem ? ` · ${archiveItem.word}` : ''}</DialogTitle><DialogDescription>将黑话移出正式注入列表，历史记录与证据依然保留。</DialogDescription></DialogHeader><Alert><ArchiveIcon /><AlertTitle>可随时恢复</AlertTitle><AlertDescription>归档后的黑话可随时在已归档列表中恢复，不会丢失数据。</AlertDescription></Alert><DialogFooter><Button type="button" variant="outline" disabled={mutating !== null} onClick={() => setArchiveItem(null)}>取消</Button><Button type="button" variant="destructive" disabled={mutating !== null} onClick={() => void archiveSelectedItem()}>{mutating !== null ? <Loader2Icon data-icon="inline-start" className="animate-spin" /> : <ArchiveIcon data-icon="inline-start" />}确认归档</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={Boolean(archiveItem)} onOpenChange={(open) => { if (!open && mutating === null) setArchiveItem(null) }}><DialogContent><DialogHeader><DialogTitle>归档黑话{archiveItem ? ` · ${archiveItem.word}` : ''}</DialogTitle><DialogDescription>将黑话移出正式注入列表，历史记录与证据依然保留。</DialogDescription></DialogHeader><Alert><ArchiveIcon /><AlertTitle>目前无法从界面恢复</AlertTitle><AlertDescription>归档后不再参与注入；目前界面不支持恢复。</AlertDescription></Alert><DialogFooter><Button type="button" variant="outline" disabled={mutating !== null} onClick={() => setArchiveItem(null)}>取消</Button><Button type="button" variant="destructive" disabled={mutating !== null} onClick={() => void archiveSelectedItem()}>{mutating !== null ? <Loader2Icon data-icon="inline-start" className="animate-spin" /> : <ArchiveIcon data-icon="inline-start" />}确认归档</Button></DialogFooter></DialogContent></Dialog>
     <JargonEvidenceDialog item={evidenceItem} scope={scope} onClose={() => setEvidenceItem(null)} />
+    {confirmDialog}
   </div>
 }
 

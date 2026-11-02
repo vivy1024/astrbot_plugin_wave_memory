@@ -13,10 +13,13 @@ export interface FieldValueStateProps {
   effectiveValue?: unknown
   applyMode?: ApplyMode | null
   effectiveSince?: string | number | null
+  /** 密钥类字段：三栏只显示「已设置 / 未设置」，不渲染明文。调用方用 isSecretKey(key) 判断。 */
+  secret?: boolean
   className?: string
 }
 
-function displayValue(value: unknown): string {
+function displayValue(value: unknown, secret = false): string {
+  if (secret) return value === undefined || value === null || value === '' ? '未设置' : '已设置（已隐藏）'
   if (value === undefined || value === null) return '未配置'
   if (typeof value === 'boolean') return value ? 'true' : 'false'
   if (typeof value === 'string') return value || '空'
@@ -55,6 +58,7 @@ export function FieldValueState({
   effectiveValue,
   applyMode,
   effectiveSince,
+  secret = false,
   className,
 }: FieldValueStateProps) {
   const mode = applyMode ?? 'unknown'
@@ -75,11 +79,11 @@ export function FieldValueState({
       <div className="grid gap-2 grid-cols-3 text-xs leading-normal font-mono mb-2">
         <div className="flex flex-col gap-0.5 rounded-lg bg-background/50 p-2 border border-border/20">
           <span className="text-muted-foreground scale-95 origin-left">默认</span>
-          <span className="truncate text-foreground/80">{displayValue(defaultValue)}</span>
+          <span className="truncate text-foreground/80">{displayValue(defaultValue, secret)}</span>
         </div>
         <div className="flex flex-col gap-0.5 rounded-lg bg-background/50 p-2 border border-border/20">
           <span className="text-muted-foreground scale-95 origin-left">已保存</span>
-          <span className="truncate text-foreground/80">{displayValue(savedValue)}</span>
+          <span className="truncate text-foreground/80">{displayValue(savedValue, secret)}</span>
         </div>
         <div className={cn(
           "flex flex-col gap-0.5 rounded-lg p-2 border",
@@ -88,7 +92,7 @@ export function FieldValueState({
             : "bg-background/50 border-border/20 text-foreground/80"
         )}>
           <span className="text-muted-foreground scale-95 origin-left">当前生效</span>
-          <span className="truncate font-semibold">{displayValue(effectiveValue)}</span>
+          <span className="truncate font-semibold">{displayValue(effectiveValue, secret)}</span>
         </div>
       </div>
 

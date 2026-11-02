@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 
 import { listMemories, type MemoryItem, type MemoriesResponse } from '@/api/memories'
 import { calibrateRelationship, type PeopleQuery, type RelationshipItem } from '@/api/people'
+import { useConfirmAction } from '@/components/shared/ConfirmActionDialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
@@ -84,6 +85,7 @@ export function RelationshipCalibrationPanel({ item, query, onChanged }: { item:
   const [busy, setBusy] = useState(false)
   const [evidenceError, setEvidenceError] = useState<string | null>(null)
   const evidenceRequestRef = useRef(0)
+  const { request: requestConfirm, dialog: confirmDialog } = useConfirmAction()
   const values = item.values ?? {}
   const available = Boolean(item.object_ref?.ref && item.revision !== null && item.calibration.available)
   const senderId = senderFromQuery(query, item.subject_principal_id)
@@ -113,10 +115,7 @@ export function RelationshipCalibrationPanel({ item, query, onChanged }: { item:
           return true
         })
       })
-      // 方案 B：列表保持服务端时间倒序，首次加载自动预选最新一条，用户仍可改选。
-      if (!append && payload.items.length > 0) {
-        setSelectedEvidenceId(String(payload.items[0].id))
-      }
+      // 列表保持服务端时间倒序；默认不预选，必须由人工挑选支撑本次校准的那条记忆。
     } catch (reason: unknown) {
       if (requestId !== evidenceRequestRef.current) return
       setEvidenceError(humanizeApiError(reason, '当前群友记忆读取失败'))
@@ -154,6 +153,22 @@ export function RelationshipCalibrationPanel({ item, query, onChanged }: { item:
   function applyQuickAmount(nextAction: 'adjust' | 'override', value: number) {
     setAction(nextAction)
     setAmount(String(value))
+  }
+
+  function requestSubmit() {
+    if (action !== 'override') { void submit(); return }
+    const numeric = amount.trim() ? Number(amount) : undefined
+    if (numeric === undefined || !Number.isFinite(numeric)) { toast.warning('请输入有效的关系数值'); return }
+    const dimensionLabel = DIMENSIONS.find(([key]) => key === dimension)?.[1] ?? dimension
+    const current = displayValue(values[dimension]?.effective_value, '未建立')
+    const next = displayValue(numeric)
+    requestConfirm({
+      title: numeric === 0 ? `把“${dimensionLabel}”归零？` : `绝对覆盖“${dimensionLabel}”？`,
+      description: `${dimensionLabel}：${current} → ${next}。人工覆盖会替代自动学习的值且默认不衰减，提交后记录审计。`,
+      label: '确认覆盖',
+      destructive: true,
+      run: submit,
+    })
   }
 
   async function submit() {
@@ -299,8 +314,10 @@ export function RelationshipCalibrationPanel({ item, query, onChanged }: { item:
           </FieldDescription>
         </Field>
         <Field><FieldLabel htmlFor="relationship-evidence">补充证据说明（可选）</FieldLabel><Textarea id="relationship-evidence" value={evidence} disabled={busy} onChange={(event) => setEvidence(event.target.value)} placeholder="补充说明这条真实消息为什么支持校准…" /></Field>
-        <Button type="button" disabled={busy} onClick={() => void submit()}>{busy ? '提交中…' : '提交人工校准'}</Button>
+        {!reason.trim() || !selectedEvidenceId ? <p className="text-xs text-muted-foreground">{!reason.trim() && !selectedEvidenceId ? '请填写理由并选择一条记忆证据后再提交。' : !reason.trim() ? '请填写理由后再提交。' : '请在上方选择一条记忆证据后再提交。'}</p> : null}
+        <Button type="button" disabled={busy || !reason.trim() || !selectedEvidenceId} onClick={requestSubmit}>{busy ? '提交中…' : '提交人工校准'}</Button>
       </>}
+      {confirmDialog}
     </CardContent>
   </Card>
 }
