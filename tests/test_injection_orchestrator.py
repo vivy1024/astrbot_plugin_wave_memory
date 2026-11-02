@@ -333,6 +333,110 @@ class InjectionOrchestratorTest(unittest.TestCase):
         self.assertGreaterEqual(latency_by_channel["memory"], 1)
         self.assertGreaterEqual(latency_by_channel["facts"], 1)
 
+    def _deadline_ctx(self, req, trace_id):
+        from services.injection.context import InjectionContext
+
+        return InjectionContext(
+            event="event",
+            req=req,
+            message="hello",
+            group_id="g1",
+            sender_id="u1",
+            sender_name="用户",
+            bot_id="bot",
+            bot_profile_id="yushu",
+            mode="full",
+            trace_id=trace_id,
+        )
+
+    def test_channel_past_total_deadline_is_skipped_without_blocking_others(self):
+        """总截止到了还没回来的通道这一轮记 timeout；其他通道照常注入，整次不再干等。"""
+        import time
+
+        from services.config.channel_config import build_default_channel_config
+        from services.injection import orchestrator as orch_mod
+        from services.injection.orchestrator import InjectionOrchestrator
+
+        req = FakeReq()
+        trace_store = self._trace_store()
+        orchestrator = InjectionOrchestrator(
+            channels=[
+                DelayedHitChannel("memory", "迟到的记忆", 0.5),
+                DelayedHitChannel("facts", "按时的事实", 0.01),
+            ],
+            config=build_default_channel_config(runtime_mode="full"),
+            trace_store=trace_store,
+            text_part_factory=FakeTextPart,
+        )
+        with patch.object(orch_mod, "INJECTION_DEADLINE_MS", 100):
+            started = time.perf_counter()
+            result = asyncio.run(orchestrator.run(self._deadline_ctx(req, "trace-deadline")))
+            elapsed = time.perf_counter() - started
+
+        statuses = {item.channel: item.status for item in result.channel_results}
+        self.assertEqual(statuses["memory"], "timeout")
+        self.assertEqual(statuses["facts"], "hit")
+        self.assertIn("按时的事实", result.final_text)
+        self.assertNotIn("迟到的记忆", result.final_text)
+        self.assertLess(elapsed, 0.4, "整次注入不应等到慢通道跑完")
+        detail = trace_store.get("trace-deadline")
+        self.assertEqual(detail["status"], "degraded")
+
+    def test_channels_within_total_deadline_are_unchanged(self):
+        from services.config.channel_config import build_default_channel_config
+        from services.injection import orchestrator as orch_mod
+        from services.injection.orchestrator import InjectionOrchestrator
+
+        req = FakeReq()
+        orchestrator = InjectionOrchestrator(
+            channels=[
+                DelayedHitChannel("memory", "记忆", 0.02),
+                DelayedHitChannel("facts", "事实", 0.01),
+            ],
+            config=build_default_channel_config(runtime_mode="full"),
+            text_part_factory=FakeTextPart,
+        )
+        with patch.object(orch_mod, "INJECTION_DEADLINE_MS", 1000):
+            result = asyncio.run(orchestrator.run(self._deadline_ctx(req, "trace-in-time")))
+        self.assertEqual({item.channel: item.status for item in result.channel_results}, {"memory": "hit", "facts": "hit"})
+        self.assertIn("记忆", result.final_text)
+        self.assertIn("事实", result.final_text)
+
+    def test_late_channel_exception_is_consumed(self):
+        """截止后才抛错的通道不能留下 “Task exception was never retrieved”。"""
+        from services.config.channel_config import build_default_channel_config
+        from services.injection import orchestrator as orch_mod
+        from services.injection.orchestrator import InjectionOrchestrator
+
+        class LateBoom:
+            name = "memory"
+
+            async def build(self, ctx):
+                await asyncio.sleep(0.15)
+                raise RuntimeError("late boom")
+
+        unhandled: list[dict] = []
+
+        async def scenario():
+            loop = asyncio.get_running_loop()
+            loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+            orchestrator = InjectionOrchestrator(
+                channels=[LateBoom(), DelayedHitChannel("facts", "事实", 0.01)],
+                config=build_default_channel_config(runtime_mode="full"),
+                text_part_factory=FakeTextPart,
+            )
+            with patch.object(orch_mod, "INJECTION_DEADLINE_MS", 50):
+                result = await orchestrator.run(self._deadline_ctx(FakeReq(), "trace-late-boom"))
+            await asyncio.sleep(0.3)  # 等迟到的通道真正结束
+            import gc
+
+            gc.collect()
+            return result
+
+        result = asyncio.run(scenario())
+        self.assertEqual({item.channel: item.status for item in result.channel_results}["memory"], "timeout")
+        self.assertEqual(unhandled, [])
+
     def test_slow_total_injection_warning_contains_channel_breakdown(self):
         from services.config.channel_config import apply_channel_overrides, build_default_channel_config
         from services.injection.context import InjectionContext

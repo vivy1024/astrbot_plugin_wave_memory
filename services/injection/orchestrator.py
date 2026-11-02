@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 # 默认值；运行时由热参数 injection.slow_warning_ms 通过 set_slow_warning_ms() 调整。
 SLOW_INJECTION_WARNING_MS = 2000
 _slow_warning_ms = SLOW_INJECTION_WARNING_MS
+# 整次注入的总截止。单通道超时只记警告、不丢结果（见 _run_one）；但线上偶发上游 embedding
+# 4~5 秒才返回，memory 与 book_lore 同句向量被一起拖住，整条回复跟着等 5.5 秒。到总截止
+# 仍没跑完的通道这一轮记为 timeout、不注入；任务本身不取消（线程里的同步读库取消不了，
+# embedding 跑完照样写进缓存，消息入库时算同一句能直接命中）。
+INJECTION_DEADLINE_MS = 3000
 
 
 def set_slow_warning_ms(value: int) -> None:
@@ -61,6 +66,15 @@ def reply_decision_metadata(event: Any) -> dict[str, Any]:
         }
     return {"reply_decision": decision} if decision else {}
 
+
+
+def _consume_late_result(task: "asyncio.Future[Any]") -> None:
+    """总截止之后才结束的通道：结果已被丢弃，只把异常取走并记 debug。"""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.debug("[WaveMemory] late injection channel failed after deadline: %r", exc)
 
 
 def _run_in_thread(channel: Any, ctx: Any) -> Any:
@@ -293,10 +307,32 @@ class InjectionOrchestrator:
     async def _run_channels(self, ctx: InjectionContext) -> list[InjectionResult]:
         """并行跑各通道；声明 ``offload_to_thread`` 的通道在工作线程里跑（见 :func:`_build`）。"""
         runnable = [channel for channel in self.channels if self._channel_runnable(channel)]
-        tasks = [self._run_one(channel, ctx) for channel in runnable]
-        if not tasks:
+        if not runnable:
             return []
-        return list(await asyncio.gather(*tasks))
+        tasks = [asyncio.ensure_future(self._run_one(channel, ctx)) for channel in runnable]
+        deadline_ms = INJECTION_DEADLINE_MS
+        _done, pending = await asyncio.wait(tasks, timeout=max(deadline_ms / 1000.0, 0.001))
+        results: list[InjectionResult] = []
+        late: list[str] = []
+        for channel, task in zip(runnable, tasks):
+            name = getattr(channel, "name", "unknown")
+            if task in pending:
+                # 不取消：只是这一轮不再等它。后面的异常吞掉，避免 “Task exception was never retrieved”。
+                task.add_done_callback(_consume_late_result)
+                late.append(name)
+                results.append(InjectionResult.timeout(name, timeout_ms=deadline_ms))
+                continue
+            try:
+                results.append(task.result())
+            except Exception as exc:  # _run_one 自己已兜底，这里只防万一
+                results.append(InjectionResult.error_result(name, exc))
+        if late:
+            logger.warning(
+                "[WaveMemory] injection deadline %sms reached; skipped this round: %s",
+                deadline_ms,
+                ",".join(late),
+            )
+        return results
 
     def _channel_runnable(self, channel: InjectionChannel) -> bool:
         name = getattr(channel, "name", "unknown")
