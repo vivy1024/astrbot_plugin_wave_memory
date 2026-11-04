@@ -15,9 +15,16 @@ const api = vi.hoisted(() => ({
   editFact: vi.fn(),
   batchReviewFacts: vi.fn(),
   getFactEvidence: vi.fn(),
+  getReviewSummary: vi.fn(),
+  invalidateReviewSummary: vi.fn(),
 }))
 
 vi.mock('@/api/facts', () => api)
+vi.mock('@/api/reviewSummary', () => ({
+  getReviewSummary: api.getReviewSummary,
+  invalidateReviewSummary: api.invalidateReviewSummary,
+  subscribeReviewSummary: () => () => {},
+}))
 vi.mock('@/api/options', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/options')>(),
   getScopeOptions: api.getScopeOptions,
@@ -43,7 +50,7 @@ function fact(id: number, changes: Partial<ScopedFactItem> = {}): ScopedFactItem
   }
 }
 
-function showFacts(items: ScopedFactItem[]) {
+function showFacts(items: ScopedFactItem[], search = '') {
   const response: ScopedFactsResponse = {
     items,
     page: { total: items.length, total_status: 'exact', reason_code: null, limit: 25, offset: 0, page: 1, page_count: 1, has_more: false },
@@ -51,11 +58,13 @@ function showFacts(items: ScopedFactItem[]) {
     capabilities: {},
   }
   api.listFacts.mockResolvedValue(response)
-  return render(<MemoryRouter initialEntries={['/facts?bot_id=bot-a&session_id=qq%3Agroup%3A42']}><FactsPage /></MemoryRouter>)
+  return render(<MemoryRouter initialEntries={[`/facts?bot_id=bot-a&session_id=qq%3Agroup%3A42${search}`]}><FactsPage /></MemoryRouter>)
 }
 
 beforeEach(() => {
   setViewport(1280)
+  Object.values(api).forEach((fn) => fn.mockReset())
+  api.getReviewSummary.mockResolvedValue({ bot_id: 'bot-a', counts: { facts: 42, jargon: 0, expressions: 0, beliefs: 0, game_drafts: 0 }, total: 42, generated_at: 1 })
   vi.spyOn(Date, 'now').mockReturnValue(NOW * 1000)
   api.getScopeOptions.mockResolvedValue({
     bots: [], sessions: [], channels: [], generated_at: 1,
@@ -194,5 +203,68 @@ describe('修正事实客体与原话', () => {
     fireEvent.click(await screen.findByRole('button', { name: '查看事实 9 详情' }))
     const detail = within(await screen.findByRole('dialog'))
     expect(detail.getByRole('button', { name: '修正' })).toBeDisabled()
+  })
+})
+
+describe('审核后就地更新', () => {
+  const pending = (id: number, changes: Partial<ScopedFactItem> = {}) => fact(id, {
+    status: 'pending', editable: true, effective: false, ineffective_reason: 'pending', review_actions: ['approve', 'reject'], ...changes,
+  })
+
+  it('筛选待审核时批准成功：该行移出列表、总数减一、不重新拉列表，并刷新全局待审数', async () => {
+    showFacts([pending(1), pending(2)], '&status=pending')
+    await screen.findByText('测试事实 1')
+    expect(await screen.findByText('全部 42 条')).toBeVisible()
+    api.reviewFact.mockResolvedValue({ ok: true, operation: { kind: 'fact.review', status: 'succeeded' }, revision: 4, item: fact(1, { revision: 4 }) })
+    fireEvent.click(screen.getByRole('button', { name: '批准事实 1' }))
+    await waitFor(() => expect(screen.queryByText('测试事实 1')).not.toBeInTheDocument())
+    expect(screen.getByText('测试事实 2')).toBeVisible()
+    expect(api.listFacts).toHaveBeenCalledTimes(1)
+    expect(api.invalidateReviewSummary).toHaveBeenCalledWith('bot-a')
+  })
+
+  it('未筛选状态时批准成功：就地替换为新版本，不重新拉列表', async () => {
+    showFacts([pending(1)])
+    await screen.findByText('pending')
+    api.reviewFact.mockResolvedValue({ ok: true, operation: { kind: 'fact.review', status: 'succeeded' }, revision: 4, item: fact(1, { revision: 4 }) })
+    fireEvent.click(screen.getByRole('button', { name: '批准事实 1' }))
+    expect(await screen.findByText('active')).toBeVisible()
+    expect(screen.queryByRole('button', { name: '批准事实 1' })).not.toBeInTheDocument()
+    expect(api.listFacts).toHaveBeenCalledTimes(1)
+  })
+
+  it('审核返回 conflict 时重新拉列表', async () => {
+    showFacts([pending(1)], '&status=pending')
+    await screen.findByText('测试事实 1')
+    api.reviewFact.mockResolvedValue({ ok: true, operation: { kind: 'fact.review', status: 'succeeded' }, revision: 4, item: pending(1, { status: 'conflict', revision: 4 }) })
+    fireEvent.click(screen.getByRole('button', { name: '批准事实 1' }))
+    await waitFor(() => expect(api.listFacts).toHaveBeenCalledTimes(2))
+  })
+
+  it('一条在审时仍可审核另一条；同一条不能重复提交', async () => {
+    showFacts([pending(1), pending(2)], '&status=pending')
+    await screen.findByText('测试事实 1')
+    let resolveFirst!: (value: unknown) => void
+    api.reviewFact.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve }))
+      .mockResolvedValueOnce({ ok: true, operation: { kind: 'fact.review', status: 'succeeded' }, revision: 4, item: fact(2, { revision: 4 }) })
+    fireEvent.click(screen.getByRole('button', { name: '批准事实 1' }))
+    expect(screen.getByRole('button', { name: '批准事实 1' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '批准事实 2' }))
+    await waitFor(() => expect(screen.queryByText('测试事实 2')).not.toBeInTheDocument())
+    expect(api.reviewFact).toHaveBeenCalledTimes(2)
+    await act(async () => resolveFirst({ ok: true, operation: { kind: 'fact.review', status: 'succeeded' }, revision: 4, item: fact(1, { revision: 4 }) }))
+    expect(screen.queryByText('测试事实 1')).not.toBeInTheDocument()
+    expect(api.listFacts).toHaveBeenCalledTimes(1)
+  })
+
+  it('批量审核部分失败时才重新拉列表', async () => {
+    showFacts([pending(1), pending(2)], '&status=pending')
+    await screen.findByText('测试事实 1')
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择当前页全部事实' }))
+    api.batchReviewFacts.mockResolvedValueOnce({ operation_kind: 'fact.batch_review', status: 'succeeded', succeeded: [{ id: 1, status: 'active', revision: 4 }, { id: 2, status: 'active', revision: 4 }], failed: [] })
+    fireEvent.click(screen.getByRole('button', { name: '批量批准' }))
+    await waitFor(() => expect(screen.queryByText('测试事实 2')).not.toBeInTheDocument())
+    expect(screen.queryByText('测试事实 1')).not.toBeInTheDocument()
+    expect(api.listFacts).toHaveBeenCalledTimes(1)
   })
 })

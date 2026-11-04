@@ -5,6 +5,8 @@ import { toast } from 'sonner'
 
 import { fetchJson } from '@/api/client'
 import { humanizeApiError } from '@/lib/reason-label'
+import { invalidateReviewSummary } from '@/api/reviewSummary'
+import { useReviewSummary } from '@/hooks/useReviewSummary'
 import { archiveJargon, batchReviewJargons, getJargonEvidence, listJargonBlocklist, listJargons, promoteJargonToGlobal, removeJargonBlocklistItem, reviewJargon, updateJargonMeaning, type JargonBlocklistItem, type JargonEvidencePayload, type JargonItem, type JargonResponse, type JargonScopeSelection } from '@/api/jargon'
 import { getScopeOptions, groupSessionOptions, scopeOptionsFor } from '@/api/options'
 import {
@@ -240,6 +242,7 @@ export function JargonPage() {
   const listRequest = useRef(0)
   const blocklistRequest = useRef(0)
   const { request: requestConfirm, dialog: confirmDialog } = useConfirmAction()
+  const reviewSummary = useReviewSummary(botId)
 
   useEffect(() => setFilterDraft({ search, status: statusFilter, source: sourceFilter, hasEvidence: evidenceFilter, minFrequency }), [evidenceFilter, minFrequency, search, sourceFilter, statusFilter])
   useEffect(() => {
@@ -315,13 +318,33 @@ export function JargonPage() {
     return () => { cancelled = true }
   }, [botId, objectId, objectRef, scope, sessionId, visibility])
 
+  /** 审核成功后就地更新：不再匹配当前状态筛选的条目移出本页并扣减总数，其余条目改为新状态。 */
+  function applyReviewed(ids: number[], action: 'approve' | 'reject') {
+    const nextStatus: JargonItem['status'] = action === 'approve' ? 'confirmed' : 'rejected'
+    const reviewed = new Set(ids)
+    setPayload((current) => {
+      if (!current) return current
+      const remove = Boolean(statusFilter) && statusFilter !== nextStatus
+      const items = remove
+        ? current.items.filter((row) => !reviewed.has(row.id))
+        : current.items.map((row) => reviewed.has(row.id) ? { ...row, status: nextStatus } : row)
+      const removed = current.items.length - items.length
+      const total = current.page.total
+      return { ...current, items, page: { ...current.page, total: typeof total === 'number' ? Math.max(0, total - removed) : total } }
+    })
+    setSelectedIds((current) => current.filter((id) => !reviewed.has(id)))
+    invalidateReviewSummary(botId)
+  }
+
   async function review(item: JargonItem, action: 'approve' | 'reject') {
     setMutating(item.id)
     try {
       const result = await reviewJargon(item, action, scope)
       if (!result.ok || result.operation.status !== 'succeeded') throw new Error('服务端未确认审核命令成功')
       toast.success(action === 'approve' ? '候选已通过证据审核' : '候选已拒绝并全局拉黑')
-      await Promise.all([load(), loadBlocklist()])
+      applyReviewed([item.id], action)
+      // 拒绝会写入全局拉黑列表，需同步刷新。
+      if (action === 'reject') await loadBlocklist()
     } catch (reason) {
       toast.error(humanizeApiError(reason, '审核失败'))
       void load()
@@ -372,7 +395,8 @@ export function JargonPage() {
       const result = await batchReviewJargons(selected, action, scope)
       if (!result.ok || result.operation.status !== 'succeeded') throw new Error('服务端未确认批量审核成功')
       toast.success(action === 'approve' ? '已批量通过选择的黑话' : '已批量拒绝并全局拉黑')
-      await Promise.all([load(), loadBlocklist()])
+      applyReviewed(selected.map((item) => item.id), action)
+      if (action === 'reject') await loadBlocklist()
     } catch (reason) {
       toast.error(humanizeApiError(reason, '批量审核失败'))
       void load()
@@ -515,7 +539,7 @@ export function JargonPage() {
       metrics={[
         { label: '匹配总数', value: totalText },
         { label: '本页已确认', value: confirmedCount },
-        { label: '本页待审核', value: pendingCount },
+        { label: '本页待审核', value: pendingCount, description: typeof reviewSummary.data?.counts.jargon === 'number' ? `全部 ${reviewSummary.data.counts.jargon} 条` : undefined },
         { label: '本页证据锚点', value: anchorCount },
       ]}
     />
@@ -623,7 +647,7 @@ export function JargonPage() {
                 批量归档
               </Button>
             </BatchActionBar>
-<QueryState status={queryStatus} error={error} onRetry={() => void load()} title={!botId || !sessionId ? '请选择真实 Bot 与会话' : undefined} description={!botId || !sessionId ? '作用域未选择时不会查询，也不会补入默认 Bot。' : undefined}>
+<QueryState status={queryStatus === 'success' && !pageItems.length ? 'empty' : queryStatus} error={error} onRetry={() => void load()} title={!botId || !sessionId ? '请选择真实 Bot 与会话' : undefined} description={!botId || !sessionId ? '作用域未选择时不会查询，也不会补入默认 Bot。' : undefined}>
 <ResponsiveTable label="群聊黑话清单" table={<Table className="w-full table-fixed">
 <TableHeader><TableRow><TableHead className="w-8"><input aria-label="选择当前页全部可审黑话" title="只选择待审核且可审的条目" type="checkbox" disabled={!reviewableItems.length} checked={allPageSelected} onChange={(event) => setSelectedIds(event.target.checked ? reviewableItems.map((item) => item.id) : [])} /></TableHead><TableHead className="w-28">词条</TableHead><TableHead className="w-auto">释义</TableHead><TableHead className="w-16">频次</TableHead><TableHead className="w-28">来源</TableHead><TableHead className="w-24">状态</TableHead><TableHead className="w-16">证据</TableHead><TableHead className="w-52 text-right">操作</TableHead></TableRow></TableHeader>
 <TableBody>{pageItems.map((item) => <TableRow key={item.id} className={selectedIds.includes(item.id) ? 'bg-primary/5' : undefined}><TableCell><input aria-label={`选择黑话 ${item.word}`} type="checkbox" disabled={!canBatchReview(item, reviewAvailable)} title={canBatchReview(item, reviewAvailable) ? undefined : '只有待审核且可审的条目可批量操作'} checked={selectedIds.includes(item.id)} onChange={(event) => toggleSelected(item.id, event.target.checked)} /></TableCell><TableCell className="font-semibold truncate">{item.word}</TableCell><TableCell className="whitespace-normal break-words"><p className="line-clamp-2 text-sm text-muted-foreground">{item.meaning || '尚未形成可展示的释义'}</p></TableCell><TableCell className="tabular-nums">{item.frequency}</TableCell><TableCell className="whitespace-nowrap"><Badge variant="secondary" className="font-mono text-xs" title={item.source || 'wave_memory'}>{SOURCE_LABELS[item.source] || item.source || '本群习得'}</Badge></TableCell><TableCell className="whitespace-nowrap"><Badge className={statusClass(item.status)}>{STATUS_LABELS[item.status]}</Badge></TableCell><TableCell>{item.anchors.length ? `${item.anchors.length} 条` : '无锚点'}</TableCell><TableCell className="text-right"><div className="flex justify-end gap-1"><Button type="button" variant="outline" size="sm" disabled={!item.object_ref} title={item.object_ref ? '还原同作用域聊天证据' : '缺少服务端签发的 ObjectRef'} onClick={() => setEvidenceItem(item)}><MessageSquareQuoteIcon data-icon="inline-start" />证据</Button>{item.status === 'pending' ? <><Button type="button" size="icon-sm" aria-label={`确认黑话 ${item.word}`} disabled={mutating === item.id || !reviewAvailable || !item.object_ref} title="确认黑话" onClick={() => void review(item, 'approve')}><CheckIcon /></Button><Button type="button" variant="outline" size="icon-sm" aria-label={`拒绝并全局拉黑黑话 ${item.word}`} disabled={mutating === item.id || !reviewAvailable} title="拒绝并全局拉黑" onClick={() => requestReview(item, 'reject')}><XIcon /></Button></> : null}<Button type="button" variant="ghost" size="icon-sm" aria-label={`编辑黑话 ${item.word}`} disabled={!editAvailable || !item.object_ref} title={editAvailable ? '编辑释义；保存后回到待审核' : payload?.capabilities.edit?.reason_code ?? '编辑不可用'} onClick={() => openMeaningEditor(item)}><Edit2Icon data-icon="inline-start" /></Button><ResponsiveDetail title={item.word} description="黑话释义、证据引用与审核操作" className="sm:max-w-4xl" trigger={<Button type="button" variant="ghost" size="icon-sm" aria-label={`查看黑话 ${item.word} 详情`}><EyeIcon /></Button>}><JargonDetails item={item} reviewAvailable={reviewAvailable} busy={mutating === item.id} onReview={(action) => requestReview(item, action)} /></ResponsiveDetail><Button type="button" variant="ghost" size="icon-sm" aria-label={`归档黑话 ${item.word}`} disabled={mutating === item.id || !archiveAvailable || !item.object_ref} title={archiveAvailable ? '归档黑话，移出正式注入' : payload?.capabilities.archive?.reason_code ?? '归档不可用'} onClick={() => setArchiveItem(item)}><ArchiveIcon data-icon="inline-start" /></Button></div></TableCell></TableRow>)}</TableBody>

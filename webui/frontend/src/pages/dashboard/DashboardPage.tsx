@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { ArrowRightIcon, AlertTriangleIcon, DatabaseIcon, TagsIcon, UsersIcon, WavesIcon, CheckCircle2Icon, BookOpenIcon } from 'lucide-react'
 
 import { getChannelConfig, type ChannelConfigPayload } from '@/api/channels'
+import { REVIEW_SUMMARY_ROUTES } from '@/api/reviewSummary'
+import { useGlobalScope } from '@/app/global-scope'
+import { useReviewSummary } from '@/hooks/useReviewSummary'
+import { scopedHref } from '@/lib/navigation-search'
 import { isRequestCancelled } from '@/api/client'
 import { getInjectionMetrics, getRecentErrors, getSystemStatus, type ErrorPayload, type InjectionMetricsPayload, type SystemPayload } from '@/api/system'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -224,6 +228,48 @@ function NeedsAttentionCards({ system }: { system?: SystemPayload }) {
             </div>
           ))}
         </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/** 当前 Bot 的全局待审数；没有 Bot 或读取失败时整张卡片不显示。 */
+function PendingReviewCard() {
+  const location = useLocation()
+  const { botId } = useGlobalScope()
+  const { data } = useReviewSummary(botId)
+  if (!botId || !data) return null
+  const entries = REVIEW_SUMMARY_ROUTES.flatMap((route) => {
+    const count = data.counts[route.kind]
+    return typeof count === 'number' && count > 0 ? [{ ...route, count }] : []
+  })
+  return (
+    <Card data-slot="pending-review" className="border-border/60 bg-gradient-to-b from-card to-card/95 shadow-sm">
+      <CardHeader className="flex flex-row items-center justify-between gap-4 p-4 pb-2">
+        <div>
+          <CardTitle className="text-base font-semibold tracking-tight">待审核</CardTitle>
+          <CardDescription className="text-xs mt-0.5">当前 Bot 全部群待人工审核的条目，点击进入对应页面处理。</CardDescription>
+        </div>
+        <Badge variant="outline" className="font-mono text-xs py-0.5 px-2 bg-amber-500/5 text-amber-600 border-amber-500/20">
+          共 {data.total} 条
+        </Badge>
+      </CardHeader>
+      <CardContent className="px-4 pb-4">
+        {entries.length ? (
+          <ul className="flex flex-wrap gap-2">
+            {entries.map((entry) => (
+              <li key={entry.kind}>
+                <Button asChild variant="outline" size="sm" className="h-8 px-3 text-xs">
+                  <Link to={scopedHref(entry.path, location.search)} className="inline-flex items-center gap-1.5">
+                    <span>{entry.label}</span>
+                    <span className="font-mono tabular-nums text-amber-600">{entry.count}</span>
+                    <ArrowRightIcon className="size-3.5" data-icon="inline-end" />
+                  </Link>
+                </Button>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="text-xs text-muted-foreground">当前没有待审核的条目。</p>}
       </CardContent>
     </Card>
   )
@@ -516,6 +562,7 @@ export function DashboardPage() {
         {storageWarning ? <Alert variant="destructive"><AlertTriangleIcon /><AlertTitle>数据库体积超过 2GB</AlertTitle><AlertDescription>建议在维护窗口执行清理与备份，避免 SQLite 体积继续膨胀。</AlertDescription></Alert> : null}
         <NeedsAttentionCards system={system.data} />
       </> : null}
+      <PendingReviewCard />
 
       {metrics.error ? <RetryAlert title="注入指标加载失败" error={`${metrics.error}；未沿用上一时间范围的旧数据。`} onRetry={() => setMetricsVersion((value) => value + 1)} /> : null}
       {channels.error ? <RetryAlert title="通道配置加载失败" error={`${channels.error}；经历注入通道配置标记为不可用。`} onRetry={() => setChannelsVersion((value) => value + 1)} /> : null}

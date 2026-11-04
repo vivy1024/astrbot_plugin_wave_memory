@@ -19,6 +19,8 @@ import {
   type ScopedFactsResponse,
 } from '@/api/facts'
 import { getScopeOptions, groupSessionOptions, isPrivateSessionId, scopeOptionsFor } from '@/api/options'
+import { invalidateReviewSummary } from '@/api/reviewSummary'
+import { useReviewSummary } from '@/hooks/useReviewSummary'
 import {
   BatchActionBar,
   ChatContextEvidenceDialog,
@@ -392,6 +394,8 @@ function FactsScopePage({ useDefaults }: { useDefaults: boolean }) {
   const [batchBusy, setBatchBusy] = useState(false)
   const pendingReviews = useRef(new Set<number>())
   const mounted = useRef(true)
+  const listScopeKey = useRef('')
+  const reviewSummary = useReviewSummary(botId)
   const [now, setNow] = useState(() => Date.now() / 1000)
 
   useEffect(() => {
@@ -412,7 +416,9 @@ function FactsScopePage({ useDefaults }: { useDefaults: boolean }) {
     if (!botId || !sessionId) { setData(null); setLoading(false); setError(undefined); return }
     let active = true
     setLoading(true)
-    setData(null)
+    // 同一 Bot/群/可见性内翻页或筛选时保留旧数据，避免整表闪空；作用域变化时才清空。
+    const scopeKey = JSON.stringify([botId, sessionId, visibility])
+    if (listScopeKey.current !== scopeKey) { listScopeKey.current = scopeKey; setData(null) }
     setSelectedIds([])
     setError(undefined)
     listFacts({
@@ -444,8 +450,27 @@ function FactsScopePage({ useDefaults }: { useDefaults: boolean }) {
     setDetailOpen(true)
   }
 
+  /** 审核成功后就地更新：状态不再匹配当前筛选的行移出本页并扣减总数，其余行替换为新版本。 */
+  const applyReviewed = useCallback((updates: Array<{ id: number; item?: ScopedFactItem; status: string; revision?: number }>) => {
+    setData((current) => {
+      if (!current) return current
+      const byId = new Map(updates.map((update) => [update.id, update]))
+      let removed = 0
+      const items: ScopedFactItem[] = []
+      for (const row of current.items) {
+        const update = byId.get(row.id)
+        if (!update) { items.push(row); continue }
+        if (statusFilter && update.status !== statusFilter) { removed += 1; continue }
+        items.push(update.item ?? { ...row, status: update.status, revision: update.revision ?? row.revision })
+      }
+      const total = current.page.total
+      return { ...current, items, page: { ...current.page, total: typeof total === 'number' ? Math.max(0, total - removed) : total } }
+    })
+  }, [statusFilter])
+
   const reviewOne = async (fact: ScopedFactItem, action: FactReviewAction, target?: FactConflictCandidate) => {
-    if (loading || !canReview(fact, action) || pendingReviews.current.size || !mounted.current) return
+    // 只拒绝同一条事实的重复提交；批量进行中仍禁止单条审核。
+    if (loading || batchBusy || !canReview(fact, action) || pendingReviews.current.has(fact.id) || !mounted.current) return
     pendingReviews.current.add(fact.id)
     setBusyIds((current) => [...current, fact.id])
     try {
@@ -457,7 +482,12 @@ function FactsScopePage({ useDefaults }: { useDefaults: boolean }) {
       else toast.success(`已${ACTION_LABEL[action]}事实`)
       setDetailOpen(false)
       setSelectedFact(null)
-      setReload((value) => value + 1)
+      if (result.item.status === 'conflict') setReload((value) => value + 1)
+      else {
+        applyReviewed([{ id: fact.id, item: result.item, status: result.item.status }])
+        setSelectedIds((current) => current.filter((id) => id !== fact.id))
+      }
+      invalidateReviewSummary(botId)
     } catch (reason) {
       if (!mounted.current) return
       toast.error(humanizeApiError(reason, `${ACTION_LABEL[action]}事实失败`))
@@ -489,7 +519,9 @@ function FactsScopePage({ useDefaults }: { useDefaults: boolean }) {
       if (failed.length) toast.warning(`${result.succeeded?.length ?? 0} 条已处理，${failed.length} 条失败`)
       else toast.success(`已${action === 'approve' ? '批准' : '拒绝'} ${result.succeeded?.length ?? 0} 条事实`)
       setSelectedIds([])
-      setReload((value) => value + 1)
+      applyReviewed(result.succeeded ?? [])
+      if (failed.length) setReload((value) => value + 1)
+      invalidateReviewSummary(botId)
     } catch (reason) {
       if (!mounted.current) return
       toast.error(humanizeApiError(reason, '批量审核失败'))
@@ -529,7 +561,7 @@ function FactsScopePage({ useDefaults }: { useDefaults: boolean }) {
       metrics={[
         { label: '匹配总数', value: loading ? '…' : total },
         { label: '本页已生效', value: loading ? '…' : activeCount },
-        { label: '本页待审核', value: loading ? '…' : pendingCount, tone: 'text-amber-600' },
+        { label: '本页待审核', value: loading ? '…' : pendingCount, tone: 'text-amber-600', description: typeof reviewSummary.data?.counts.facts === 'number' ? `全部 ${reviewSummary.data.counts.facts} 条` : undefined },
         { label: '本页证据引用', value: loading ? '…' : evidenceCount, tone: 'text-emerald-600' },
       ]}
     />
@@ -640,7 +672,7 @@ function FactsScopePage({ useDefaults }: { useDefaults: boolean }) {
               </TableRow></TableHeader>
               <TableBody>{facts.map((fact) => {
                 const reviewable = canBatchReview(fact, 'approve') || canBatchReview(fact, 'reject')
-                const busy = batchBusy || busyIds.length > 0
+                const busy = batchBusy || busyIds.includes(fact.id)
                 return <TableRow key={`${fact.bot_id}:${fact.session_id}:${fact.id}`} className="h-9 hover:bg-muted/10">
                   <TableCell className="py-1 align-top">
                     <input type="checkbox" aria-label={`选择事实 ${fact.id}`} className="size-3.5" disabled={!reviewable || !reviewAvailable} checked={selectedIds.includes(fact.id)} onChange={() => toggleSelected(fact)} />
@@ -675,7 +707,7 @@ function FactsScopePage({ useDefaults }: { useDefaults: boolean }) {
               })}</TableBody>
             </Table>}
             cards={facts.map((fact) => {
-              const busy = batchBusy || busyIds.length > 0
+              const busy = batchBusy || busyIds.includes(fact.id)
               return <article key={`${fact.bot_id}:${fact.session_id}:${fact.id}`} className="flex flex-col gap-3 rounded-lg border bg-card p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-mono text-xs text-muted-foreground">事实 #{fact.id}</span>
@@ -716,7 +748,7 @@ function FactsScopePage({ useDefaults }: { useDefaults: boolean }) {
     <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
       <SheetContent className="w-[min(94vw,34rem)] sm:max-w-xl">
         <SheetHeader className="border-b pr-12"><SheetTitle>事实关系详情</SheetTitle><SheetDescription>查看主体、关系、客体、本群证据，并完成审核。</SheetDescription></SheetHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">{selectedFact ? <FactDetail key={`${selectedFact.id}:${selectedFact.revision}`} fact={selectedFact} now={now} busy={loading || batchBusy || busyIds.length > 0} onReview={reviewOne} onOpenEvidence={(f) => setEvidenceFact(f)} onEdit={(f) => setEditTarget(f)} /> : null}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">{selectedFact ? <FactDetail key={`${selectedFact.id}:${selectedFact.revision}`} fact={selectedFact} now={now} busy={loading || batchBusy || busyIds.includes(selectedFact.id)} onReview={reviewOne} onOpenEvidence={(f) => setEvidenceFact(f)} onEdit={(f) => setEditTarget(f)} /> : null}</div>
       </SheetContent>
     </Sheet>
 

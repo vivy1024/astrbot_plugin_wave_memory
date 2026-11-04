@@ -161,7 +161,7 @@ describe('事实审核按钮到后端 wire contract', () => {
     await act(async () => pending.resolve({ ok: true, item: nextItem }))
     expect(toast.success).not.toHaveBeenCalled()
     expect(writes()).toHaveLength(1)
-    expect(vi.mocked(fetchJson).mock.calls.filter(([, init]) => init?.method !== 'POST')).toHaveLength(2)
+    expect(vi.mocked(fetchJson).mock.calls.filter(([path, init]) => init?.method !== 'POST' && String(path).startsWith('/api/facts'))).toHaveLength(2)
     expect(screen.getByText('新群地点')).toBeVisible()
   })
 

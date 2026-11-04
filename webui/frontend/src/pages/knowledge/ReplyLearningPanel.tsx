@@ -7,6 +7,7 @@ import {
   type ExpressionCandidate, type ExpressionReviewAction, type ExpressionSituation, type ExpressionStatus, type ReplyLearningScope, type ReplyOutcome,
 } from '@/api/replyLearning'
 import type { ApiError } from '@/api/client'
+import { invalidateReviewSummary } from '@/api/reviewSummary'
 import { PaginationControls, QueryState, type PageSize } from '@/components/shared'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -18,6 +19,8 @@ const SITUATIONS: Record<ExpressionSituation, string> = {
 }
 const OUTCOMES: Record<ReplyOutcome, string> = { accepted: '明确承接', corrected: '被纠正', rejected: '被拒绝', unknown: '未知' }
 type Notice = { text: string; error?: boolean }
+/** removedId：审核成功的条目，父组件就地移除；未提供时整表刷新（冲突/不存在/校验失败）。 */
+type ChangedHandler = (notice: Notice, removedId?: number) => void
 
 function formatTime(seconds: number): string {
   const date = new Date(seconds * 1000)
@@ -28,6 +31,10 @@ function formatTime(seconds: number): string {
 // A changed request hides the previous result in the very first render.
 function useLearningPage<T>(load: (signal: AbortSignal) => Promise<T>, revision: number) {
   const [state, setState] = useState<{ load: typeof load; revision: number; data?: T; error?: string; loading: boolean }>({ load, revision, loading: true })
+  // 审核成功后就地修改当前结果，不触发整表重拉。
+  const update = useCallback((change: (data: T) => T) => {
+    setState((current) => current.data === undefined ? current : { ...current, data: change(current.data) })
+  }, [])
   useEffect(() => {
     const controller = new AbortController()
     setState({ load, revision, loading: true })
@@ -37,7 +44,7 @@ function useLearningPage<T>(load: (signal: AbortSignal) => Promise<T>, revision:
     )
     return () => controller.abort()
   }, [load, revision])
-  return state.load === load && state.revision === revision ? state : { loading: true, data: undefined, error: undefined }
+  return state.load === load && state.revision === revision ? { ...state, update } : { loading: true, data: undefined, error: undefined, update }
 }
 
 function newReviewKey(): string {
@@ -45,7 +52,7 @@ function newReviewKey(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
-function ExpressionCard({ item, scope, onChanged }: { item: ExpressionCandidate; scope: ReplyLearningScope; onChanged: (notice: Notice) => void }) {
+function ExpressionCard({ item, scope, onChanged }: { item: ExpressionCandidate; scope: ReplyLearningScope; onChanged: ChangedHandler }) {
   const checkboxId = useId()
   const [styleOnly, setStyleOnly] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -74,7 +81,8 @@ function ExpressionCard({ item, scope, onChanged }: { item: ExpressionCandidate;
       if (!mounted.current) return
       if (!result.ok) throw new Error('审核未完成，请刷新列表核对状态。')
       const labels = { approved: '已批准', rejected: '已拒绝', pending: '待审核' }
-      onChanged({ text: `表达 #${item.id} 当前为${labels[result.item.status]}，已刷新列表。${result.item.status === 'approved' ? '表达学习开启且来源证据有效时，可按适用情景召回。' : ''}` })
+      invalidateReviewSummary(scope.bot_id)
+      onChanged({ text: `表达 #${item.id} 当前为${labels[result.item.status]}，已移出列表。${result.item.status === 'approved' ? '表达学习开启且来源证据有效时，可按适用情景召回。' : ''}` }, item.id)
     } catch (reason) {
       if (!mounted.current) return
       const text = replyLearningErrorMessage(reason, '审核失败，请重试或刷新列表核对状态。')
@@ -121,8 +129,18 @@ function Expressions({ scope }: { scope: ReplyLearningScope }) {
   const [notice, setNotice] = useState<Notice | null>(null)
   const { bot_id, session_id, visibility } = scope
   const load = useCallback((signal: AbortSignal) => listExpressionCandidates({ bot_id, session_id, visibility, status, qualified: qualifiedOnly, limit, offset }, signal), [bot_id, session_id, visibility, status, qualifiedOnly, limit, offset])
-  const { data, error, loading } = useLearningPage(load, reload)
+  const { data, error, loading, update } = useLearningPage(load, reload)
   const refresh = () => setReload((value) => value + 1)
+  const onChanged: ChangedHandler = (next, removedId) => {
+    setNotice(next)
+    if (removedId === undefined) { setOffset(0); refresh(); return }
+    update((current) => {
+      const items = current.items.filter((candidate) => candidate.id !== removedId)
+      if (items.length === current.items.length) return current
+      const total = current.page.total
+      return { ...current, items, page: { ...current.page, total: typeof total === 'number' ? Math.max(0, total - 1) : total } }
+    })
+  }
 
   return <Card aria-label="群友表达审核">
     <CardHeader className="flex flex-wrap items-start justify-between gap-3">
@@ -140,7 +158,7 @@ function Expressions({ scope }: { scope: ReplyLearningScope }) {
       {data ? <p className="text-sm text-muted-foreground">{data.enabled ? '表达学习已开启。已批准且来源证据有效的表达可按适用情景召回；批准不保证每次使用。' : '表达学习已关闭。已有候选仍可审核，启用后才会学习使用。'}</p> : null}
       {notice ? <p role={notice.error ? 'alert' : 'status'} className={notice.error ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'}>{notice.text}</p> : null}
       <QueryState status={loading ? 'loading' : error ? 'error' : data?.items.length ? 'success' : 'empty'} error={error} title="表达读取失败" emptyTitle={qualifiedOnly && status === 'pending' ? '暂无达标的待审表达' : `当前群暂无${status === 'pending' ? '待审' : status === 'approved' ? '已批准' : '已拒绝'}表达`} emptyDescription={qualifiedOnly && status === 'pending' ? '出现两次以上或跨两位群友说过的表达，才会进入这里。取消勾选可查看全部待审候选。' : status === 'pending' ? '有符合要求的群友表达被收录后，会在这里等待人工审核。' : '可切换表达状态查看其他记录。'} onRetry={refresh}>
-        <div className="grid gap-3 lg:grid-cols-2">{data?.items.map((item) => <ExpressionCard key={`${item.id}:${item.revision}`} item={item} scope={scope} onChanged={(next) => { setNotice(next); setOffset(0); refresh() }} />)}</div>
+        <div className="grid gap-3 lg:grid-cols-2">{data?.items.map((item) => <ExpressionCard key={`${item.id}:${item.revision}`} item={item} scope={scope} onChanged={onChanged} />)}</div>
       </QueryState>
       {data ? <PaginationControls page={data.page} label="待审表达分页" onOffsetChange={setOffset} onLimitChange={(value) => { setLimit(value); setOffset(0) }} /> : null}
     </CardContent>

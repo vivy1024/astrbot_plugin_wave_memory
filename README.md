@@ -2,7 +2,7 @@
 
 # Wave Memory
 
-[![Version](https://img.shields.io/badge/version-v5.1.6-blue.svg)](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
+[![Version](https://img.shields.io/badge/version-v5.1.7-blue.svg)](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![AstrBot](https://img.shields.io/badge/AstrBot-≥4.14-green.svg)](https://github.com/AstrBotDevs/AstrBot)
@@ -121,6 +121,7 @@ v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现�
 
 | 版本 | 日期 | 重点 |
 |------|------|------|
+| **v5.1.7** | 2026-11-05 | 审核效率：审核后列表就地更新不再整表重拉；侧栏与仪表盘显示全局待审数（新接口 `/api/review/summary`）；软超时排查测量：注入 trace 记录线程池排队与事件循环晚醒 |
 | **v5.1.6** | 2026-11-01 | 加固：注入总截止 3 秒（上游 embedding 偶发慢时不再拖住回复）；说话人场景标签防身份污染；关系小传污染改按句剥离；告警 24 小时过期且拦截生效只记警告；数据库直连拦截不再误伤注释；纯图片消息不再召回无关事实与书设；管理台破坏性操作加确认、未保存离开提示、配置密钥打码 |
 | **v5.1.5** | 2026-10-28 | 拟人修整：信念双向词法匹配并让稳固看法低频自然流露（不调用模型）；正式关系随时间冷却（只改自动层、留 time_decay 审计）；soul_state 注入提速（快照 + 原因窗口，结果不变）；表达学习加人设检查、待审过期与按人限流；纯图片消息不再召回占位噪声；删除 desire、主观时间、旧主动发言、ConcernTracker 等空转模块 |
 | **v5.1.4** | 2026-10-25 | 原著原文检索工具 `wave_memory_novel_source`（关键词 / 章节号直读小说全文，不依赖向量）；修掉向量补算链幂等键冲突（payload reason 变化导致 `JobRequestConflictError`，缺向量只能等重启才补）与 BookLoreIndex 幽灵映射（写入失败污染映射，962–1023 章笔记永远补不进检索）；定时任务作用域回退解析与数据库文件访问拦截 |
