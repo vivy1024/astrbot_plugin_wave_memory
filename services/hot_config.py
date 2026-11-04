@@ -118,6 +118,8 @@ class HotConfig:
              "description": "消息合并最长等待（秒）：从第一条算起，到点强制截断"},
             {"key": "injection.slow_warning_ms", "type": "int", "min": 200, "max": 20000, "default": 2000,
              "description": "注入总耗时超过这个值时记警告日志（毫秒）"},
+            {"key": "injection.loop_lag_probe", "type": "int", "min": 0, "max": 1, "default": 1,
+             "description": "事件循环延迟探针：1 = 开（注入 trace 记录循环晚醒与线程池排队，用于排查软超时），0 = 关；重启生效"},
             {"key": "query.cold_tag_max_links", "type": "int", "min": 0, "max": 1000000, "default": 2000,
              "description": "冷召回跳过关联记忆数超过这个值的万能标签（如「吐槽」「群友互动」）；0 = 不跳过"},
             {"key": "query.cold_tag_count_cache_seconds", "type": "int", "min": 0, "max": 86400, "default": 3600,

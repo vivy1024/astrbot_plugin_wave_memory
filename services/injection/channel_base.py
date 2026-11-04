@@ -33,6 +33,9 @@ class InjectionResult:
     score: float | None = None
     # 仅用于正式 affinity 的全量印象摘要，不能被普通召回预算静默丢弃。
     preserve_full_text: bool = False
+    # 线程化通道从提交到真正开始执行等了多久（线程池排队）；非线程化通道为 0。
+    # 只用于测量，由编排器填写，通道自己不用管。
+    queue_ms: float = 0.0
 
     def __post_init__(self) -> None:
         if self.status not in VALID_INJECTION_STATUSES:

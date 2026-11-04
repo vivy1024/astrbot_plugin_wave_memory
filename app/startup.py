@@ -517,6 +517,22 @@ class StartupMixin:
         # 高频互动者缓存预热 (US-2.3) — 异步执行，不阻塞启动
         self._spawn(self._async_cache_warmup(), owner="cache")
 
+        # 事件循环延迟探针：注入 trace 里记录这一段时间的循环晚醒情况（只测量）
+        try:
+            from ..services.injection.loop_lag import get_probe, start_probe
+
+            probe = get_probe()
+            hot = getattr(self, "hot_config", None)
+            raw = hot.get("injection.loop_lag_probe", 1) if hot is not None else 1
+            try:
+                probe.enabled = int(raw) != 0
+            except (TypeError, ValueError):
+                probe.enabled = True
+            if probe.enabled:
+                start_probe()
+        except Exception as e:
+            logger.debug(f"[WaveMemory] loop lag probe start error: {e}")
+
         try:
             from ..utils.build_info import build_info
             build = build_info()
@@ -547,6 +563,13 @@ class StartupMixin:
                 self.maintenance_job_runner.stop()
         except Exception as e:
             logger.debug(f"[WaveMemory] maintenance job runner stop error: {e}")
+
+        try:
+            from ..services.injection.loop_lag import stop_probe
+
+            stop_probe()
+        except Exception as e:
+            logger.debug(f"[WaveMemory] loop lag probe stop error: {e}")
 
         try:
             character_runner = getattr(self, "character_experience_job_runner", None)

@@ -77,9 +77,31 @@ def _consume_late_result(task: "asyncio.Future[Any]") -> None:
         logger.debug("[WaveMemory] late injection channel failed after deadline: %r", exc)
 
 
-def _run_in_thread(channel: Any, ctx: Any) -> Any:
-    # 这类通道的 build 里没有 await（纯同步读库），在工作线程自己的事件循环里一次跑完
-    return asyncio.run(channel.build(ctx))
+def _latency_probe_metadata(results: list[InjectionResult], started: float) -> dict[str, Any]:
+    """trace 里的测量信息：线程池排队耗时 + 注入期间事件循环晚醒情况。只读，不影响注入。"""
+    queue_by_channel = {
+        result.channel: round(float(result.queue_ms), 1)
+        for result in results
+        if float(getattr(result, "queue_ms", 0) or 0) > 0
+    }
+    probe: dict[str, Any] = {}
+    if queue_by_channel:
+        probe["queue_ms_max"] = max(queue_by_channel.values())
+        probe["queue_ms_by_channel"] = queue_by_channel
+    try:
+        from .loop_lag import get_probe
+
+        probe.update(get_probe().window(started))
+    except Exception:  # 测量失败不能影响注入
+        pass
+    return {"latency_probe": probe} if probe else {}
+
+
+def _run_in_thread(channel: Any, ctx: Any, submitted: float) -> tuple[Any, float]:
+    # 这类通道的 build 里没有 await（纯同步读库），在工作线程自己的事件循环里一次跑完。
+    # 顺带记下线程池排队了多久：所有通道成批变慢时，用它区分「排队」和「执行慢」。
+    queue_ms = max(0.0, (time.perf_counter() - submitted) * 1000)
+    return asyncio.run(channel.build(ctx)), queue_ms
 
 
 async def _build(channel: Any, ctx: Any) -> Any:
@@ -91,7 +113,10 @@ async def _build(channel: Any, ctx: Any) -> Any:
     ``check_same_thread=False`` 且库为串行化线程模式（threadsafety=3）。
     """
     if getattr(channel, "offload_to_thread", False):
-        return await asyncio.to_thread(_run_in_thread, channel, ctx)
+        result, queue_ms = await asyncio.to_thread(_run_in_thread, channel, ctx, time.perf_counter())
+        if isinstance(result, InjectionResult):
+            result.queue_ms = round(queue_ms, 2)
+        return result
     return await channel.build(ctx)
 
 # ── 单通道预算截断 ─────────────────────────────────────────────
@@ -284,6 +309,7 @@ class InjectionOrchestrator:
                         "config_revision": channel_config_revision(self.config),
                         "source": getattr(ctx, "source", "astrbot") or "astrbot",
                         **reply_decision_metadata(ctx.event),
+                        **_latency_probe_metadata(ordered, started),
                     },
                     "message": ctx.message,
                     "final_text": final_text,
@@ -372,6 +398,16 @@ class InjectionOrchestrator:
                 result = InjectionResult.error_result(name, f"timed out after {timeout_ms}ms then failed: {exc}")
         except Exception as exc:
             result = InjectionResult.error_result(name, exc)
+        if timed_out:
+            # 跑完之后再补一条：拆开排队与执行，看是线程池排队还是通道本身慢。
+            total_ms = (time.perf_counter() - started) * 1000
+            logger.warning(
+                "[WaveMemory] %s finished after soft timeout: total=%.0fms queue=%.0fms run=%.0fms",
+                name,
+                total_ms,
+                result.queue_ms,
+                max(0.0, total_ms - result.queue_ms),
+            )
         if timed_out and result.status == "hit":
             warning = f"channel exceeded {timeout_ms}ms"
             if warning not in result.warnings:
