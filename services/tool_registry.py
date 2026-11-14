@@ -42,6 +42,9 @@ class ToolSpec:
     writes: bool = False
     runtime_exposed: bool = True
     description: str = ""
+    # 是否交给模型（AstrBot 的 LLM 工具清单）。False 的工具仍然实例化并登记在注册表里，
+    # 供事后记账、每日日记等内部服务按名调用，但不占模型的 schema 体积。
+    llm_visible: bool = True
 
 
 @dataclass
@@ -134,7 +137,8 @@ class ToolRegistry:
                 self._build_errors[spec.key] = f"duplicate tool name {name!r}"
                 continue
             self._records[name] = ToolRecord(spec=spec, instance=instance, name=name)
-            instances.append(instance)
+            if spec.llm_visible:
+                instances.append(instance)
         return instances
 
     def records(self) -> list[ToolRecord]:
@@ -142,6 +146,13 @@ class ToolRegistry:
 
     def get(self, name: str) -> ToolRecord | None:
         return self._records.get(str(name or ""))
+
+    def child_instance(self, name: str) -> Any | None:
+        """按名取工具实例（合并工具把调用转发给它）；没有或被 9876 停用时返回 None。"""
+        record = self._records.get(str(name or ""))
+        if record is None or not record.enabled:
+            return None
+        return record.instance
 
     def set_enabled(self, name: str, enabled: bool) -> ToolRecord:
         record = self.get(name)

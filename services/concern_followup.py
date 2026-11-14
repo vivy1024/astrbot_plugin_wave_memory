@@ -35,8 +35,10 @@ except ImportError:  # pragma: no cover
 
 try:
     from ..domain.scope import RuntimeScope
+    from ..domain.tool_names import tool_ref
 except ImportError:  # pragma: no cover
     from domain.scope import RuntimeScope
+    from domain.tool_names import tool_ref
 
 OPEN_STATUSES = ("active", "progressing")
 
@@ -418,7 +420,7 @@ class ConcernFollowupService:
             f"【你惦记的事】{opener}。你之前记挂着：{concern.get('topic')}"
             f"（concern:{concern.get('id')}{'，' + since + ' 记下' if since else ''}{due}）。"
             "合适就自然地问一句后来怎么样、或兑现答应过的事；不合适就正常说话，别硬转话题。"
-            f"这件事已经了结就调用 wave_memory_note_concern(action=resolve, concern_id={concern.get('id')}, note=怎么了结的)。"
+            f"这件事已经了结就调用 {tool_ref('wave_memory_note_concern', action='resolve', concern_id=concern.get('id'), note='怎么了结的')}。"
         )
         if proactive:
             text += (

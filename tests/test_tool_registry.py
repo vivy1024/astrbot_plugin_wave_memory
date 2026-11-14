@@ -130,7 +130,7 @@ def test_builtin_specs_build_all_tools_with_unique_names():
         book_lore_catalog_scope=None,
     )
     registry = ToolRegistry()
-    registry.register_many(builtin_tool_specs())
+    registry.register_many(builtin_tool_specs("legacy"))
     built = registry.build(deps, capability_enabled=lambda capability, default: True)
     names = [record.name for record in registry.records()]
     assert registry.status()["build_errors"] == {}
@@ -227,3 +227,73 @@ def test_extension_hot_reload_replaces_only_extension_tools_and_channels(tmp_pat
     tools.load_extensions(ext, extra_registries={"channel_registry": channels})
     assert channels.build_extensions(None) == ["ext_channel"]
     assert "ext_channel" not in [c.name for c in channels.channels()]  # 停用状态按名字保留
+
+
+def _builtin_deps():
+    return SimpleNamespace(
+        db=SimpleNamespace(soul_repository=None),
+        query_engine=None, writer=None, write_gateway=None, relationship_service=None, jargon_service=None,
+        _bot_registry={}, book_lore_index=None, embedding_service=None, lore_db_path="", book_lore_catalog_scope=None,
+        bot_registry=None,
+    )
+
+
+def _build_surface(surface: str, capability=lambda capability, default: True):
+    from tools.builtin_registry import builtin_tool_specs
+
+    deps = _builtin_deps()
+    registry = ToolRegistry()
+    deps.tool_registry = registry
+    registry.register_many(builtin_tool_specs(surface))
+    built = registry.build(deps, capability_enabled=capability)
+    return registry, built
+
+
+def _schema_chars(tools) -> int:
+    import json
+
+    return sum(
+        len(t.name) + len(t.description) + len(json.dumps(t.parameters, ensure_ascii=False, separators=(",", ":")))
+        for t in tools
+    )
+
+
+def test_merged_surface_gives_the_model_seven_tools_and_keeps_children_internal():
+    registry, built = _build_surface("merged")
+    assert registry.status()["build_errors"] == {}
+    model_names = sorted(t.name for t in built)
+    assert model_names == sorted([
+        "wave_memory_recall", "wave_memory_lookup", "wave_memory_social", "wave_memory_note",
+        "wave_memory_episode", "wave_memory_hold_peace", "wave_memory_debug",
+    ])
+    # 内部服务按旧名调用的子工具仍然登记在注册表里
+    for internal in ("wave_memory_record_social_impression", "wave_memory_record_diary_episode",
+                     "wave_memory_note_concern", "wave_memory_propose_fact"):
+        assert registry.get(internal) is not None, internal
+
+
+def test_merged_surface_is_much_smaller_than_legacy_for_the_default_tool_set():
+    default_caps = lambda capability, default: capability != "agent_feedback_tools"  # 默认不含调试组
+    _, legacy = _build_surface("legacy", default_caps)
+    _, merged = _build_surface("merged", default_caps)
+    legacy_chars, merged_chars = _schema_chars(legacy), _schema_chars(merged)
+    assert len(legacy) == 17 and len(merged) == 6
+    # 目标：每次请求的工具说明至少省 30%
+    assert merged_chars <= legacy_chars * 0.70, (legacy_chars, merged_chars)
+
+
+def test_merged_tool_schema_is_a_real_union_with_modes():
+    registry, built = _build_surface("merged")
+    by_name = {t.name: t for t in built}
+    social = by_name["wave_memory_social"].parameters
+    assert social["properties"]["mode"]["enum"] == ["impression", "anchor", "concern"]
+    assert {"target_user", "dimension", "anchor_type", "action", "topic"} <= set(social["properties"])
+    assert social["properties"]["dimension"]["enum"] == ["trust", "fun", "depth", "hostility", "familiarity"]
+    assert "diary" not in by_name["wave_memory_episode"].parameters["properties"]["mode"]["enum"]
+
+
+def test_merged_dispatch_reaches_the_real_child_tool():
+    registry, built = _build_surface("merged")
+    recall = {t.name: t for t in built}["wave_memory_recall"]
+    reply = asyncio.run(recall.call(None, mode="search"))
+    assert "缺少必填参数" in reply and "query" in reply, "转发前先按子工具的 required 校验"

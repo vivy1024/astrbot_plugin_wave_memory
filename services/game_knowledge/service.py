@@ -25,6 +25,7 @@ from datetime import datetime
 from typing import Any
 
 try:
+    from ...domain.tool_names import tool_ref
     from ...domain.game_knowledge import (
         EXPERIENCE_SOURCE_TYPE,
         GameContext,
@@ -46,6 +47,7 @@ try:
     from ...engine.db import fts_cjk
     from . import importers
 except ImportError:  # pragma: no cover - 仓库测试以插件根目录为顶层
+    from domain.tool_names import tool_ref
     from domain.game_knowledge import (
         EXPERIENCE_SOURCE_TYPE,
         GameContext,
@@ -97,11 +99,21 @@ INJECTION_HEADER = (
 EXPERIENCE_HEADER = (
     "[你自己玩出来的经验 · {name}：这些是你以前玩的时候亲身经历过、自己总结的；眼前用不用得上由你判断]"
 )
+# 常量保留旧形态的文字（外部与测试按名引用）；运行时给模型看的文字走下面两个函数，
+# 按当前工具形态写出模型真正能调用的名字。
 TOOL_FOOTER = "（以上是攻略参考，不是你的亲身经历；想查自己以前玩过的事，用记忆搜索 wave_memory_search）"
 TOOL_FOOTER_WITH_EXPERIENCE = (
     "（标了「你自己的经验」的是你亲身经历过、自己总结的；其余是攻略参考，不是你的亲身经历。"
     "想查以前玩过的具体经过，用记忆搜索 wave_memory_search）"
 )
+
+
+def tool_footer(has_experience: bool = False) -> str:
+    """给模型看的页脚：按当前工具形态引用能查记忆的那个工具。"""
+    search = tool_ref("wave_memory_search")
+    if has_experience:
+        return TOOL_FOOTER_WITH_EXPERIENCE.replace("wave_memory_search", search)
+    return TOOL_FOOTER.replace("wave_memory_search", search)
 _QUERY_STOPWORDS = frozenset({
     "怎么", "怎么办", "如何", "什么", "为什么", "怎样", "可以", "应该", "需要", "这个", "那个", "一下", "我们",
     "你们", "他们", "现在", "还是", "就是", "没有", "不是", "知道", "办法", "攻略", "教程", "一个", "有没有",
@@ -264,7 +276,7 @@ def render_search(result: GameSearch, *, max_chars: int = TOOL_MAX_CHARS) -> str
     has_experience = any(is_experience(card) for card in result.cards)
     label = "游戏知识" if has_experience else "游戏攻略参考"
     header = f"[{label} · {game.get('name') or game.get('id')}｜查「{_clip(result.query, 30)}」]"
-    footer = TOOL_FOOTER_WITH_EXPERIENCE if has_experience else TOOL_FOOTER
+    footer = tool_footer(has_experience)
     budget = max(200, int(max_chars)) - len(header) - len(footer) - 2
     focus = query_words(result.query)
     body: list[str] = []
@@ -931,6 +943,7 @@ __all__ = [
     "MAX_INJECT_CARDS",
     "MAX_INJECT_TERMS",
     "TOOL_FOOTER",
+    "tool_footer",
     "TOOL_MAX_CHARS",
     "TermHit",
     "focus_words",

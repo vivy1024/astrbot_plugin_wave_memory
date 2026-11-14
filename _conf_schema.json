@@ -195,6 +195,14 @@
         "default": false,
         "restart_required": true
       },
+      "tool_surface": {
+        "description": "模型看到的工具形态",
+        "hint": "merged（默认）：把同族工具合并成 7 个「一个工具 + mode」，每次请求少约 3.5 千字符的工具说明；legacy：回到原来的 17 个独立工具，遇到问题时用来回滚。",
+        "type": "string",
+        "options": ["merged", "legacy"],
+        "default": "merged",
+        "restart_required": true
+      },
       "compat_only_auto_inject_enabled": {
         "description": "兼容模式下强行启用原生注入",
         "hint": "仅在您确实希望在 compat_only 极简后端级别下，也让本插件在消息流中插入记忆时开启。默认关闭，确保不重复插话。",

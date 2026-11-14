@@ -11,7 +11,7 @@ from domain.scope import RuntimeScope, SessionRef
 from engine.db.connection import ConnectionManager
 from engine.db.game_knowledge_repo import GameKnowledgeRepo
 from services.game_knowledge import GameKnowledgeService
-from services.game_knowledge.service import TOOL_FOOTER, TOOL_MAX_CHARS
+from services.game_knowledge.service import TOOL_FOOTER, TOOL_MAX_CHARS, tool_footer
 from services.tool_registry import ToolRegistry, ToolSpec, runtime_tool_context
 from tools.game_knowledge import WaveMemoryGameKnowledgeTool
 
@@ -50,7 +50,7 @@ def test_query_returns_cards_and_terms_marked_as_reference(service):
     assert text.startswith("[游戏攻略参考 · 我的世界｜查「苦力怕」]")
     assert "【苦力怕 · 前期】" in text and "要点：听到嘶嘶声马上后退" in text and "出处：测试来源 A" in text
     assert "词条：\n- 苦力怕（Creeper）：会爆炸的绿色怪物" in text
-    assert text.endswith(TOOL_FOOTER) and "wave_memory_search" in text
+    assert text.endswith(tool_footer()) and "wave_memory_recall(mode=search)" in text
     by_name = _call(WaveMemoryGameKnowledgeTool(service=service), LIVE, game="我的世界", query="第一夜")
     assert "【第一夜怎么过】" in by_name, "游戏可以写显示名或别名"
 
@@ -68,7 +68,7 @@ def test_output_is_capped(service):
         })
     text = _call(WaveMemoryGameKnowledgeTool(service=service), LIVE, game="minecraft", query="苦力怕")
     assert len(text) <= TOOL_MAX_CHARS
-    assert text.startswith("[游戏攻略参考") and text.endswith(TOOL_FOOTER)
+    assert text.startswith("[游戏攻略参考") and text.endswith(tool_footer())
 
 
 def test_omitted_game_uses_current_game_or_asks(service):

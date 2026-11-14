@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import json
 import time
 from types import SimpleNamespace
@@ -280,13 +282,26 @@ def test_prompt_exposes_exact_tool_names():
     """提示必须写出确切工具名，模型才能在多个 wave_memory_* 工具中选对。"""
     service = ReflectionTriggerService(_db(), cooldown_seconds=0)
     prompt = service.build_prompt(scope=group_scope(), message="小明还在考研吗", sender_id="u1")
-    for tool in (
-        "wave_memory_propose_fact",
-        "wave_memory_mark_cultural_moment",
-        "wave_memory_note_social_anchor",
+    # 默认是合并形态：模型看到的是「一个工具 + mode」，提示必须写出这个真实的调用方式
+    for call in (
+        "wave_memory_note(mode=fact)",
+        "wave_memory_note(mode=cultural)",
+        "wave_memory_social(mode=anchor)",
+        "wave_memory_social(mode=impression)",
+        "wave_memory_social(mode=concern)",
+        "wave_memory_episode(mode=group)",
     ):
-        assert tool in prompt, tool
+        assert call in prompt, call
     assert "wave_memory_propose_belief" not in prompt, "信念提审工具已退役"
+    # 旧形态（回滚用）仍写旧名
+    from domain import tool_names as N
+    N.set_tool_surface("legacy")
+    try:
+        legacy = service.build_prompt(scope=group_scope(), message="小明还在考研吗", sender_id="u1")
+    finally:
+        N.set_tool_surface("merged")
+    for tool in ("wave_memory_propose_fact", "wave_memory_mark_cultural_moment", "wave_memory_note_social_anchor"):
+        assert tool in legacy, tool
 
 
 def test_exposed_tool_names_actually_exist():
@@ -302,10 +317,13 @@ def test_exposed_tool_names_actually_exist():
                 declared.add(line.split('"')[1])
     service = ReflectionTriggerService(_db(), cooldown_seconds=0)
     prompt = service.build_prompt(scope=group_scope(), message="小明还在考研吗", sender_id="u1")
-    mentioned = {token for token in declared if token in prompt}
-    assert mentioned, "提示至少应写出一部分真实工具名"
-    for name in mentioned:
-        assert name in declared
+    # 合并后的工具名由 tools/merged_families.py 声明；提示里 ``wave_memory_xxx(`` 形式的引用必须都真实存在
+    from tools import names as N
+    declared |= set(N.MERGED_TOOLS)
+    referenced = set(re.findall(r"wave_memory_[a-z_]+(?=[(）；，。、\s])", prompt))
+    assert referenced, "提示至少应写出一部分真实工具名"
+    unknown = referenced - declared
+    assert not unknown, f"提示引用了不存在的工具：{sorted(unknown)}"
 
 def test_persona_prompt_only_references_real_tools():
     """人格提示词里引用的 wave_memory_* / book_lore_* 必须真实存在。
@@ -327,6 +345,9 @@ def test_persona_prompt_only_references_real_tools():
     prompt_path = root / "docs" / "persona-prompt-optimized.md"
     assert prompt_path.exists(), "人格提示词优化版缺失"
     prompt = prompt_path.read_text(encoding="utf-8")
+    # 合并后的工具名由 tools/merged_families.py 声明
+    from tools import names as N
+    declared |= set(N.MERGED_TOOLS) | {N.HOLD_PEACE}
     referenced = set(re.findall(r"(?:wave_memory_[a-z_]+|book_lore_[a-z_]+)", prompt))
     assert referenced, "提示词应引用工具名"
     missing = sorted(name for name in referenced if name not in declared)

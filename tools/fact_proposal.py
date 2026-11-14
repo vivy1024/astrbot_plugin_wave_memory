@@ -21,12 +21,14 @@ except Exception:  # pragma: no cover
 
 try:
     from ..domain.scope import RuntimeScope
+    from ..domain.tool_names import tool_ref
     from ..services.identity_safety import is_identity_contamination
     from ..services.fact_policy import get_fact_policy, valid_subject
     from ..engine.db.fact_policy_repo import FactPolicyRepo, source_memory, resolve_subject
     from .scope_boundary import require_memory_runtime_scope, resolve_source_memory_id, scope_error_message
 except ImportError:  # pragma: no cover
     from domain.scope import RuntimeScope
+    from domain.tool_names import tool_ref
     from services.identity_safety import is_identity_contamination
     from services.fact_policy import get_fact_policy, valid_subject
     from engine.db.fact_policy_repo import FactPolicyRepo, source_memory, resolve_subject
@@ -232,7 +234,7 @@ class WaveMemoryProposeFactTool(FunctionTool[AstrAgentContext]):
             words = "、".join(str(hit.get("word") or "") for hit in ironic_hits if hit.get("word"))
             return (
                 f"事实提审被拒绝：原话中的「{words}」已标记为反串/阴阳，不能升格为认真事实。"
-                "如需记录梗本身，请改用 wave_memory_mark_cultural_moment。"
+                f"如需记录梗本身，请改用 {tool_ref('wave_memory_mark_cultural_moment')}。"
             )
 
         source_memory_id = resolve_source_memory_id(

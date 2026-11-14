@@ -196,7 +196,10 @@ def _game_knowledge_tools() -> list[ToolSpec]:
     ]
 
 
-def builtin_tool_specs() -> list[ToolSpec]:
+TOOL_SURFACES = ("merged", "legacy")
+
+
+def _legacy_specs() -> list[ToolSpec]:
     return [
         *_memory_tools(),
         *_agent_feedback_tools(),
@@ -207,4 +210,52 @@ def builtin_tool_specs() -> list[ToolSpec]:
     ]
 
 
-__all__ = ["builtin_tool_specs"]
+def _merged_specs() -> list[ToolSpec]:
+    """合并工具的登记。
+
+    子工具照常按各自的能力开关实例化并登记（内部服务按旧名调用它们），只是对模型不可见；
+    模型看到的是下面几个「一个工具 + mode」。合并工具本身排在子工具之后构造，
+    schema 与 mode 列表在构造时从实际存在的子工具取。
+    """
+    from dataclasses import replace
+
+    from . import names as N
+    from .merged_families import build_merged_tool
+
+    hidden = [replace(spec, llm_visible=False) for spec in _legacy_specs() if spec.key != N.HOLD_PEACE]
+    keep = [spec for spec in _legacy_specs() if spec.key == N.HOLD_PEACE]
+
+    def make(name: str):
+        def factory(d: Any) -> Any:
+            registry = getattr(d, "tool_registry", None)
+            if registry is None:
+                return None
+
+            def allowed(ctx: Any, tool: str, mode: str) -> bool:
+                # 当前 Bot 来自这次调用已解析的 RuntimeScope；找不到 Profile 时不额外限制
+                scope = getattr(getattr(getattr(ctx, "context", None), "event", None), "_wave_memory_runtime_scope", None)
+                bot_id = str(getattr(scope, "bot_id", "") or "")
+                bots = getattr(d, "bot_registry", None)
+                profile = bots.get(bot_id) if (bots is not None and bot_id) else None
+                return True if profile is None else bool(profile.tool_enabled(tool, mode))
+
+            return build_merged_tool(name, registry.child_instance, is_allowed=allowed)
+        return factory
+
+    merged = [
+        ToolSpec(name, make(name), group="merged", capability="memory_tools", capability_default=True,
+                 writes=name in {N.SOCIAL, N.NOTE, N.EPISODE})
+        for name in (N.RECALL, N.LOOKUP, N.SOCIAL, N.NOTE, N.EPISODE)
+    ]
+    merged.append(ToolSpec(
+        N.DEBUG, make(N.DEBUG), group="merged", capability="agent_feedback_tools", capability_default=False, writes=True,
+    ))
+    return [*keep, *hidden, *merged]
+
+
+def builtin_tool_specs(surface: str = "merged") -> list[ToolSpec]:
+    """内置工具登记。``surface='merged'``（默认）给模型 7 个合并工具；``'legacy'`` 回到原来的 17 个。"""
+    return _legacy_specs() if str(surface or "merged").lower() == "legacy" else _merged_specs()
+
+
+__all__ = ["TOOL_SURFACES", "builtin_tool_specs"]

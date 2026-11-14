@@ -237,7 +237,8 @@ def test_main_production_wiring_passes_formal_repositories_writer_and_runtime_sc
     assert "config['shared_memory_grants_enabled'] = self.shared_memory_grants_enabled" in context_config_source
     # v6：工具实例化搬到 tools/builtin_registry.py，main 只按能力开关 build。
     registry_source = (ROOT / "tools" / "builtin_registry.py").read_text(encoding="utf-8")
-    assert "builtin_tool_specs()" in initializer_source
+    assert "builtin_tool_specs(" in initializer_source
+    assert "tool_surface" in initializer_source, "工具形态（merged/legacy）必须由配置决定"
     assert "WaveMemoryNoteConcernTool(" in registry_source, "关切必须由现场工具显式提审"
     assert "write_gateway=d.write_gateway" in registry_source, "关切工具必须绑定正式写入网关"
     assert "write_gateway=self.write_gateway" in initializer_source

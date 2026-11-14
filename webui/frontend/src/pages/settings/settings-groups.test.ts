@@ -171,7 +171,8 @@ describe('配置文案不暴露实现术语', () => {
     // expression_pending_ttl_days、expression_max_per_speaker、expression_persona_blocklist）：177 → 183
     // 删除旧主动发言配置 8 项（MetaThinking_Settings.silent_hours_start / _end，MetaThinking_Bot1/Bot2 的
     // proactive_enabled / proactive_interval_seconds / proactive_max_per_hour）：183 → 175
-    expect(total).toBe(175)
+    // v5.2.0 新增 Compatibility_Settings.tool_surface（模型看到的工具形态 merged / legacy）：175 → 176
+    expect(total).toBe(176)
     expect(noType).toEqual([])
   })
 
