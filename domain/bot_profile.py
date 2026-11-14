@@ -244,6 +244,18 @@ def _float(value: Any, default: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, parsed))
 
 
+DEFAULT_QUIET_REPLIES = (
+    "（打哈欠）这会儿困得睁不开眼，{end}再来找我吧……",
+    "zzz……梦里算账呢，{end}见。",
+    "夜深了，我先去睡了，{end}以后再聊。",
+    "眼皮打架中，明早{end}再陪你。",
+    "已经睡着啦，{end}再叫醒我哦。",
+    "账本合上了，睡觉去，{end}见。",
+)
+QUIET_REPLY_MAX = 12
+QUIET_REPLY_CHARS = 80
+
+
 @dataclass
 class BodySettings:
     """Bot 的身体（激素）与睡眠设置（对应 Profile 的 ``body`` 段）。
@@ -258,6 +270,12 @@ class BodySettings:
     sleep_replies: list[str] = field(default_factory=lambda: ["……zzz", "（睡着了）", "困……明天再说"])
     sleep_reply_cooldown_seconds: float = 1800.0
     hormone_gain: float = 1.0                  # 事件增量总系数：0 = 事件不再影响身体，只剩昼夜节律
+    # 模型服务静默时段（如 antigravity 23:00~06:00 停服）：窗口内模型本来就不可用，被叫到直接回话术、不调用模型。
+    # 与 enabled 无关（没开激素的 Bot 也能用）；窗口内不掷骰唤醒，因为叫醒了也答不上。两项都给出才启用。
+    service_quiet_start: int | None = None
+    service_quiet_end: int | None = None
+    # 静默话术，支持 {end} 占位（替换成「6 点」）；留空用默认的多句。
+    quiet_replies: list[str] = field(default_factory=lambda: list(DEFAULT_QUIET_REPLIES))
 
     @classmethod
     def from_dict(cls, data: Any) -> "BodySettings":
@@ -272,7 +290,13 @@ class BodySettings:
             except (TypeError, ValueError):
                 return None
 
-        replies = [r for r in _text_list(data.get("sleep_replies")) if r][:8]
+        def _lines(v: Any) -> list[str]:
+            if isinstance(v, str):
+                return _text_list([ln for ln in v.splitlines() if ln.strip()])
+            return _text_list(v)
+
+        replies = [r for r in _lines(data.get("sleep_replies")) if r][:8]
+        quiet = [r[:QUIET_REPLY_CHARS] for r in _lines(data.get("quiet_replies")) if r][:QUIET_REPLY_MAX]
         return cls(
             enabled=_bool(data.get("enabled"), defaults.enabled),
             sleep_start=_hour(data.get("sleep_start")),
@@ -282,6 +306,9 @@ class BodySettings:
                 data.get("sleep_reply_cooldown_seconds"), defaults.sleep_reply_cooldown_seconds, 0.0, 86400.0,
             ),
             hormone_gain=_float(data.get("hormone_gain"), defaults.hormone_gain, 0.0, 3.0),
+            service_quiet_start=_hour(data.get("service_quiet_start")),
+            service_quiet_end=_hour(data.get("service_quiet_end")),
+            quiet_replies=quiet or list(defaults.quiet_replies),
         )
 
 

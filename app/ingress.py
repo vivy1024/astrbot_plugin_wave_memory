@@ -427,6 +427,7 @@ class IngressMixin:
             mind_drive = None
             mind_energy = None
             mind_stance = ""
+            body_drive = None
             silence_messages = 0
             group_msgs_per_min = 0
             ignored_streak = 0
@@ -521,6 +522,16 @@ class IngressMixin:
                         except Exception:
                             pass
 
+                    # 激素身体的主动意愿：只有这个 Bot 开了身体才有值，关着就不参与打分
+                    body_service = getattr(self, "body_service", None)
+                    if body_service is not None and body_service.active_for(scope.bot_id):
+                        try:
+                            body_reading = body_service.reading(scope.bot_id)
+                            if body_reading is not None:
+                                body_drive = body_reading.proactive_drive
+                        except Exception:
+                            body_drive = None
+
                     # 夜间免打扰与单向滑动配额 + 双 Bot 群级互斥冷却
                     if proactive_enabled and proactive_cfg is not None:
                         hour = datetime.fromtimestamp(service.clock()).hour
@@ -593,6 +604,7 @@ class IngressMixin:
                     mind_energy=mind_energy,
                     mind_stance=mind_stance,
                     mood_influence=mood_influence,
+                    body_drive=body_drive,
                     silence_messages=silence_messages,
                     group_msgs_per_min=group_msgs_per_min,
                     ignored_streak=ignored_streak,

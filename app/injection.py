@@ -391,10 +391,14 @@ class InjectionMixin:
             logger.debug("[WaveMemory] settle concern claim failed: %s", exc)
 
     def _sleep_gate(self, event) -> bool:
-        """睡眠态：睡着时被叫到，不调模型。
+        """睡眠与静默：这个时候不调模型，回一句话术。
 
-        10 分钟窗口内第 2 次起按概率醒来（第 6 次必醒，睡得沉更难醒）；没醒只回一句固定短语
-        （同一个人 30 分钟内不重复回），不再让「所有模型都不可用」的报错原文发到群里。
+        两种情形：
+        1. **模型服务静默时段**（Profile 的 ``body.service_quiet_start/end``，如 antigravity 23:00~06:00 停服）：
+           模型本来就不可用，叫醒也答不上，所以不掷骰唤醒，直接回静默话术。不依赖 ``body.enabled``。
+        2. **睡眠态**（``body.enabled`` 且褪黑素高或在睡眠时段）：10 分钟窗口内第 2 次起按概率醒来
+           （第 6 次必醒，睡得沉更难醒）；没醒只回一句固定短语。
+        同一个人 30 分钟内不重复回话术，不再让「所有模型都不可用」的报错原文发到群里。
         醒了之后返回 False，请求照常处理。
         """
         body = getattr(self, "body_service", None)
@@ -402,14 +406,17 @@ class InjectionMixin:
         if body is None or not isinstance(scope, RuntimeScope) or scope.session is None:
             return False
         try:
-            if not body.active_for(scope.bot_id) or not body.is_asleep(scope.bot_id):
-                return False
-            principal = str(scope.subject_principal_id or f"{scope.session.platform_id}:user:{event.get_sender_id() or ''}")
             import random
 
-            if body.should_wake(scope.bot_id, principal, roll=random.random()):
-                return False
-            phrase = body.sleep_reply(scope.bot_id, principal, pick=random.randrange(1 << 16))
+            principal = str(scope.subject_principal_id or f"{scope.session.platform_id}:user:{event.get_sender_id() or ''}")
+            if body.in_service_quiet(scope.bot_id):
+                phrase = body.quiet_reply(scope.bot_id, principal, pick=random.randrange(1 << 16))
+            else:
+                if not body.active_for(scope.bot_id) or not body.is_asleep(scope.bot_id):
+                    return False
+                if body.should_wake(scope.bot_id, principal, roll=random.random()):
+                    return False
+                phrase = body.sleep_reply(scope.bot_id, principal, pick=random.randrange(1 << 16))
             if phrase:
                 event.set_result(event.plain_result(phrase))
             event.should_call_llm(False)

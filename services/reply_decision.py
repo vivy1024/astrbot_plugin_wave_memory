@@ -259,6 +259,8 @@ class ReplySignals:
     mind_energy: float | None = None
     mind_stance: str = ""
     mood_influence: float = 1.0
+    # 激素身体的主动意愿 0..1（BodyReading.proactive_drive）；None 表示这个 Bot 没开身体，不参与打分
+    body_drive: float | None = None
     silence_messages: int = 0
     group_msgs_per_min: int = 0
     ignored_streak: int = 0
@@ -569,6 +571,15 @@ class ReplyDecisionService:
                 mind_delta -= 12.0 * max(0.5, influence)
                 reasons.append("mind_cooling")
             factors["mind_state"] = round(mind_delta, 2)
+        if signals.body_drive is not None:
+            # 身体一天里的常态主动意愿约 0.15（0 = 困/压力大，0.45 = 很无聊或很想说话）；偏离常态才推一把。
+            # 量级刻意比话题（最多 +38）和心智（+18/-28）小：身体只轻推，不替读空气做主。
+            body_delta = (_number(signals.body_drive, 0.15, 0.0, 1.0) - 0.15) * 40.0
+            body_delta *= _number(signals.mood_influence, 1.0, 0.0, 2.0)
+            body_delta = max(-15.0, min(15.0, body_delta))
+            if abs(body_delta) >= 0.5:
+                factors["body_drive"] = round(body_delta, 2)
+                reasons.append("body_drive_up" if body_delta > 0 else "body_drive_down")
         if signals.silence_messages > 0 and signals.proactive_enabled:
             factors["silence_buildup"] = round(min(14.0, signals.silence_messages * 1.4), 2)
         if signals.group_msgs_per_min >= 12:

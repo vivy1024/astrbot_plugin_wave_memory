@@ -138,3 +138,24 @@ describe('BotsPage 深链接', () => {
     await waitFor(() => expect(api.getBot).toHaveBeenCalledWith('yushu', expect.anything()))
   })
 })
+
+describe('BotsPage 身体与静默睡眠', () => {
+  it('身体与睡眠标签页支持编辑静默时段与自定义静默话术', async () => {
+    const user = userEvent.setup()
+    api.saveBot.mockResolvedValue({ ok: true, item: { ...yushu, version: 4 } })
+    render(<MemoryRouter initialEntries={['/bots?bot=yushu&tab=body']}><BotsPage /></MemoryRouter>)
+    const start = await screen.findByLabelText('静默开始（时 0~23）')
+    await user.type(start, '23')
+    await user.type(screen.getByLabelText('静默结束（时 0~23）'), '6')
+    const phrases = screen.getByLabelText('静默睡觉回复话术（每行一句，最多 12 句，支持 {end} 占位）')
+    await user.clear(phrases)
+    await user.type(phrases, '困死我了，{{end}再算账\n账本打烊中')
+    await user.click(screen.getByRole('button', { name: /保存/ }))
+    await waitFor(() => expect(api.saveBot).toHaveBeenCalled())
+    const body = api.saveBot.mock.calls[0][1].body
+    expect(body.service_quiet_start).toBe(23)
+    expect(body.service_quiet_end).toBe(6)
+    expect(body.quiet_replies).toEqual(['困死我了，{end}再算账', '账本打烊中'])
+    expect(body.enabled).toBe(false)
+  })
+})

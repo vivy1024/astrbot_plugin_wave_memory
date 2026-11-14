@@ -261,25 +261,45 @@ def read(
         - 0.4 * max(0.0, dev["cortisol"])
         - 0.5 * max(0.0, sleepiness - 0.4)
     )
+    length_factor = round(max(0.4, min(1.4, length)), 3)
+    stressed = dev["cortisol"] >= EDGE_THRESHOLD
+    wired = dev["dopamine"] >= EDGE_THRESHOLD
+    low = dev["serotonin"] <= -EDGE_THRESHOLD
+    drowsy = sleepiness >= 0.6
     flags = {
-        "stressed": dev["cortisol"] >= EDGE_THRESHOLD,
-        "wired": dev["dopamine"] >= EDGE_THRESHOLD,
-        "low": dev["serotonin"] <= -EDGE_THRESHOLD,
+        "stressed": stressed,
+        "wired": wired,
+        "low": low,
         "affectionate": dev["oxytocin"] >= EDGE_THRESHOLD,
         "lonely": dev["oxytocin"] <= -EDGE_THRESHOLD,
         "bored": values["boredom"] >= 80.0,
-        "drowsy": sleepiness >= 0.6,
+        "drowsy": drowsy,
+        # 长度系数拉低/拉高时给出事实提示；若已经说了「没劲/困/绷着/兴奋」，不重复说长短。
+        "terse": length_factor <= 0.85 and not (low or drowsy or stressed),
+        "chatty": length_factor >= 1.25 and not wired,
     }
     return BodyReading(
         hormones={name: round(value, 2) for name, value in values.items()},
         mood_bias=round(mood_bias, 4),
         arousal_bias=round(arousal_bias, 4),
-        reply_length_factor=round(max(0.4, min(1.4, length)), 3),
+        reply_length_factor=length_factor,
         proactive_drive=round(max(0.0, min(1.0, proactive)), 4),
         sleepiness=round(sleepiness, 4),
         asleep=asleep,
         flags=flags,
     )
+
+
+def in_quiet_window(hour: float, start: int | None, end: int | None) -> bool:
+    """是否处在模型服务静默时段（跨午夜自动处理；起止相同或缺一项视为没有静默）。"""
+    return _in_sleep_window(hour, start, end)
+
+
+def quiet_end_label(end: int | None) -> str:
+    """「几点回来」的口语写法，用于替换话术里的 {end}；没配置时给一个不带钟点的说法。"""
+    if end is None:
+        return "天亮"
+    return f"{int(end) % 24} 点"
 
 
 def _in_sleep_window(hour: float, start: int | None, end: int | None) -> bool:
@@ -300,6 +320,8 @@ _EDGE_LINES: Mapping[str, str] = {
     "lonely": "你这会儿有点没着落，想有人说说话。",
     "bored": "你闲了好一阵，有点无聊。",
     "drowsy": "你有点困了。",
+    "terse": "这会儿不太想多打字，回短点也没事。",
+    "chatty": "这会儿挺顺口的，可以多聊两句。",
 }
 EDGE_REPEAT_SECONDS = 40 * 60.0
 EDGE_MAX_CHARS = 80
@@ -372,7 +394,9 @@ __all__ = [
     "default_state",
     "edge_notes",
     "habituation_factor",
+    "in_quiet_window",
     "intimacy_scale",
+    "quiet_end_label",
     "read",
     "wake_probability",
     "wave",

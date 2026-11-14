@@ -118,6 +118,39 @@ export function emptyCharacterExperience(): CharacterExperienceDto {
   return { enabled: false, current_stage: '', pronoun: DEFAULT_PRONOUN, top_k: 3, max_chars: 600, min_score: 0.35, legacy_sources: [], lore_categories: [] }
 }
 
+export interface BodyDto {
+  enabled: boolean
+  sleep_start: number | null
+  sleep_end: number | null
+  sleep_replies: string[]
+  sleep_reply_cooldown_seconds: number
+  hormone_gain: number
+  service_quiet_start: number | null
+  service_quiet_end: number | null
+  quiet_replies: string[]
+}
+
+export function emptyBody(): BodyDto {
+  return {
+    enabled: false,
+    sleep_start: null,
+    sleep_end: null,
+    sleep_replies: ['……zzz', '（睡着了）', '困……明天再说'],
+    sleep_reply_cooldown_seconds: 1800,
+    hormone_gain: 1,
+    service_quiet_start: null,
+    service_quiet_end: null,
+    quiet_replies: [
+      '（打哈欠）这会儿困得睁不开眼，{end}再来找我吧……',
+      'zzz……梦里算账呢，{end}见。',
+      '夜深了，我先去睡了，{end}以后再聊。',
+      '眼皮打架中，明早{end}再陪你。',
+      '已经睡着啦，{end}再叫醒我哦。',
+      '账本合上了，睡觉去，{end}见。',
+    ],
+  }
+}
+
 export type ProactiveMode = 'off' | 'shadow' | 'enforce'
 export type ProactiveStylePreset = 'quiet' | 'balanced' | 'active'
 
@@ -182,6 +215,8 @@ export interface BotProfileDto {
   character_experience?: CharacterExperienceDto
   /** 旧后端没有这一段；编辑器按 emptyProactive() 补齐 */
   proactive?: ProactiveDto
+  /** 旧后端没有这一段；编辑器按 emptyBody() 补齐 */
+  body?: BodyDto
   channels: Record<string, Record<string, unknown>>
   tools_allow: string[]
   tools_deny: string[]
@@ -295,6 +330,7 @@ export function emptyBot(dbId = ''): BotProfileDto {
     mood: emptyMood(),
     character_experience: emptyCharacterExperience(),
     proactive: emptyProactive(),
+    body: emptyBody(),
     channels: {},
     tools_allow: [],
     tools_deny: [],

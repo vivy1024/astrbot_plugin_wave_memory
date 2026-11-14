@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 
 import {
   BOT_MODEL_TASKS,
+  emptyBody,
   emptyBot,
   emptyCharacterExperience,
   emptyMood,
@@ -19,6 +20,7 @@ import {
   type BotBindingDto,
   type BotDetailPayload,
   type BotListPayload,
+  type BodyDto,
   type BotProfileDto,
   type CharacterExperienceDto,
   type MoodDto,
@@ -228,6 +230,111 @@ const PROACTIVE_PRESETS: Record<ProactiveStylePreset, { label: string; desc: str
   },
 }
 
+function OptionalHourField({ id, label, value, onChange, hint }: {
+  id: string; label: string; value: number | null; onChange: (value: number | null) => void; hint?: string
+}) {
+  return (
+    <Field className="gap-1">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Input
+        id={id}
+        type="number"
+        min={0}
+        max={23}
+        placeholder="留空不启用"
+        value={value ?? ''}
+        onChange={(event) => {
+          const raw = event.target.value.trim()
+          if (!raw) { onChange(null); return }
+          const n = Number(raw)
+          if (Number.isFinite(n)) onChange(Math.max(0, Math.min(23, Math.round(n))))
+        }}
+      />
+      {hint ? <FieldDescription>{hint}</FieldDescription> : null}
+    </Field>
+  )
+}
+
+function LinesArea({ id, label, rows, value, onChange, hint }: {
+  id: string; label: string; rows: number; value: string[]; onChange: (next: string[]) => void; hint?: string
+}) {
+  // 保留输入过程中的空行与末尾换行，否则按回车准备写下一句时会被吃掉。
+  const [text, setText] = useState(() => lines(value))
+  const joined = lines(value)
+  const [lastProp, setLastProp] = useState(joined)
+  if (joined !== lastProp) {
+    setLastProp(joined)
+    if (lines(fromLines(text)) !== joined) setText(joined)
+  }
+  return (
+    <AreaField
+      id={id}
+      label={label}
+      rows={rows}
+      value={text}
+      onChange={(next) => {
+        setText(next)
+        const parsed = fromLines(next)
+        setLastProp(lines(parsed))
+        onChange(parsed)
+      }}
+      hint={hint}
+    />
+  )
+}
+
+/** 身体与睡眠设置：模型停服静默话术（独立开关，直接回话术不调模型）+ 激素身体与褪黑素睡眠。 */
+function BodyEditor({ value, onChange }: { value: BodyDto; onChange: (next: BodyDto) => void }) {
+  const set = <K extends keyof BodyDto>(key: K, next: BodyDto[K]) => onChange({ ...value, [key]: next })
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      <div className="md:col-span-2 rounded-lg border bg-muted/15 p-3">
+        <p className="text-xs font-semibold">模型服务静默窗口（例如 antigravity 夜间停服）</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          配了起止小时就生效，不依赖下方「激素身体」开关。窗口内被叫到不会调用模型（省得模型报错漏进群），也不掷骰唤醒，直接按冷却挑一句静默话术回复；话术里的 {'{end}'} 会替换成结束钟点（如「6 点」）。
+        </p>
+      </div>
+      <OptionalHourField id="bot-quiet-start" label="静默开始（时 0~23）" value={value.service_quiet_start}
+        onChange={(v) => set('service_quiet_start', v)} hint="如 23（晚上 11 点）；留空则关闭静默窗口。" />
+      <OptionalHourField id="bot-quiet-end" label="静默结束（时 0~23）" value={value.service_quiet_end}
+        onChange={(v) => set('service_quiet_end', v)} hint="如 6（早上 6 点），支持跨午夜。" />
+      <div className="md:col-span-2">
+        <LinesArea
+          id="bot-quiet-replies"
+          label="静默睡觉回复话术（每行一句，最多 12 句，支持 {end} 占位）"
+          rows={5}
+          value={value.quiet_replies}
+          onChange={(v) => set('quiet_replies', v)}
+          hint="按人冷却，同一个人在冷却期内不重复回（保持沉默）；全部清空保存时会恢复默认话术。"
+        />
+      </div>
+
+      <Field className="gap-1">
+        <FieldLabel htmlFor="bot-body-enabled">启用激素身体与褪黑素睡眠</FieldLabel>
+        <Switch id="bot-body-enabled" checked={value.enabled} onCheckedChange={(next) => set('enabled', next)} />
+        <FieldDescription>开启后由昼夜节律与真人事件推动多巴胺/血清素/催产素/皮质醇/褪黑素/无聊，过阈值时向模型给一句边沿事实提示，褪黑素过高时入睡（可被叫醒）。</FieldDescription>
+      </Field>
+      <NumberField id="bot-body-cooldown" label="话术同人冷却（秒）" value={value.sleep_reply_cooldown_seconds} min={0} max={86400}
+        onChange={(v) => set('sleep_reply_cooldown_seconds', Math.round(v))} hint="默认 1800 秒（30 分钟）。" />
+      <OptionalHourField id="bot-sleep-start" label="作息睡眠开始（时 0~23）" value={value.sleep_start}
+        onChange={(v) => set('sleep_start', v)} hint="仅影响身体入睡（留空则只按褪黑素入睡），10 分钟内多次被叫可醒。" />
+      <OptionalHourField id="bot-sleep-end" label="作息睡眠结束（时 0~23）" value={value.sleep_end}
+        onChange={(v) => set('sleep_end', v)} />
+      <NumberField id="bot-body-gain" label="事件敏度系数（0~3）" value={value.hormone_gain} min={0} max={3}
+        onChange={(v) => set('hormone_gain', v)} hint="1 = 默认；0 = 事件不再推动激素，只剩昼夜节律。" />
+      <div className="md:col-span-2">
+        <LinesArea
+          id="bot-sleep-replies"
+          label="作息/褪黑素睡眠短语（每行一句，最多 8 句）"
+          rows={3}
+          value={value.sleep_replies}
+          onChange={(v) => set('sleep_replies', v)}
+        />
+      </div>
+    </div>
+  )
+}
+
 /** 主动对话与读空气设置：决定 Bot 何时不经 @ 主动插话、擅长话题与多 Bot 协同边界。 */
 function ProactiveEditor({ value, onChange }: { value: ProactiveDto; onChange: (next: ProactiveDto) => void }) {
   const set = <K extends keyof ProactiveDto>(key: K, next: ProactiveDto[K]) => onChange({ ...value, [key]: next })
@@ -425,6 +532,7 @@ function BotEditor({ draft, onChange, isNew, initialTab = 'identity' }: { draft:
         <TabsTrigger value="persona">人设</TabsTrigger>
         <TabsTrigger value="behavior">行为</TabsTrigger>
         <TabsTrigger value="proactive">主动对话</TabsTrigger>
+        <TabsTrigger value="body">身体与睡眠</TabsTrigger>
         <TabsTrigger value="mood">心情</TabsTrigger>
         <TabsTrigger value="character">角色经历</TabsTrigger>
         <TabsTrigger value="advanced">通道与工具</TabsTrigger>
@@ -481,6 +589,9 @@ function BotEditor({ draft, onChange, isNew, initialTab = 'identity' }: { draft:
       </TabsContent>
       <TabsContent value="proactive">
         <ProactiveEditor value={draft.proactive ?? emptyProactive()} onChange={(next) => set('proactive', next)} />
+      </TabsContent>
+      <TabsContent value="body">
+        <BodyEditor value={draft.body ?? emptyBody()} onChange={(next) => set('body', next)} />
       </TabsContent>
       <TabsContent value="mood">
         <MoodEditor mood={draft.mood ?? emptyMood()} onChange={(next) => set('mood', next)} />

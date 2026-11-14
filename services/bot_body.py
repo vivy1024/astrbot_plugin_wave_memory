@@ -53,6 +53,7 @@ class BotBodyService:
         self._wake_calls: dict[tuple[str, str], list[float]] = {}
         self._awake_until: dict[str, float] = {}
         self._sleep_replied: dict[tuple[str, str], float] = {}
+        self._quiet_replied: dict[tuple[str, str], float] = {}
         self._bots: set[str] = set()
 
     # ─── 基础 ───
@@ -103,6 +104,49 @@ class BotBodyService:
             return (int(start), int(end)) if start is not None and end is not None else (None, None)
         except (TypeError, ValueError):
             return None, None
+
+    # ─── 模型服务静默（如 antigravity 夜间停服） ───
+
+    def _quiet_window(self, bot_id: str) -> tuple[int | None, int | None]:
+        body = self._settings(bot_id)
+        start = getattr(body, "service_quiet_start", None)
+        end = getattr(body, "service_quiet_end", None)
+        try:
+            return (int(start), int(end)) if start is not None and end is not None else (None, None)
+        except (TypeError, ValueError):
+            return None, None
+
+    def in_service_quiet(self, bot_id: str, *, now: float | None = None) -> bool:
+        """现在是不是模型服务静默时段。不看 ``body.enabled``：没开激素的 Bot 也能配静默窗口。"""
+        if not self.enabled:
+            return False
+        start, end = self._quiet_window(bot_id)
+        if start is None or end is None:
+            return False
+        return bp.in_quiet_window(self.hour_of(self._now(now)), start, end)
+
+    def quiet_reply(self, bot_id: str, principal_id: str = "", *, now: float | None = None, pick: int = 0) -> str:
+        """静默时段被叫到回的话术；同一个人在冷却期内不重复回，返回空串表示这次保持沉默。
+
+        话术里的 ``{end}`` 换成「几点回来」。冷却与睡眠短语共用 ``sleep_reply_cooldown_seconds``，
+        但记账独立，所以静默话术不会吃掉睡眠短语的冷却。
+        """
+        stamp = self._now(now)
+        body = self._settings(bot_id)
+        cooldown = float(getattr(body, "sleep_reply_cooldown_seconds", 1800.0) or 0.0)
+        key = (bot_id, principal_id)
+        with self._lock:
+            last = self._quiet_replied.get(key, 0.0)
+            if cooldown > 0 and stamp - last < cooldown:
+                return ""
+            self._quiet_replied[key] = stamp
+        phrases = [p for p in (getattr(body, "quiet_replies", None) or []) if p]
+        if not phrases:
+            return ""
+        _start, end = self._quiet_window(bot_id)
+        text = phrases[int(pick) % len(phrases)].replace("{end}", bp.quiet_end_label(end))
+        self._count("quiet_reply")
+        return text
 
     def sleep_reply(self, bot_id: str, principal_id: str = "", *, now: float | None = None, pick: int = 0) -> str:
         """睡着时回的固定短语；同一个人在冷却期内不重复回，返回空串表示这次保持沉默。"""

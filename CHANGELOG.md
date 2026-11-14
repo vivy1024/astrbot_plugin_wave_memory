@@ -31,12 +31,11 @@
 - **只由真人事件改变**。被叫到、被夸、被凶、玩梗、投喂、长谈、越界、重逢、开口没人理；关系事件（`bot_praised` / `bot_attacked` / `gift_or_feed` …）按映射表作用到身体，按关系事件 id 幂等，跃迁事件分量翻倍。被识别为 Bot 的发言者不算，避免两个 Bot 互相刺激。
 - **像人的细节**。同一个人同一类事件 24 小时内按 0.8ⁿ 习惯化；血清素高时压力增量打 7 折；陌生人示好只算约 40%，亲近的人伤到更疼；皮质醇在多巴胺高时消得更快；皮质醇长期过高会拖累血清素；单次增量刻意取小，不会一两轮顶满。
 - **停机不算冷落**。关闭时记下离线起点，重启后的推进只算关闭之前的在线时间；一次推进封顶 48 小时。
-- **对外只说边沿事实**。状态刚越过阈值才注入一句（≤80 字，同一状态 40 分钟内不重复），接入 `soul_state` 通道；不给数值，不写「你很生气」这类指令。身体对快层心情只给一个夹在 ±0.2 内的小偏置。
-- **睡眠态**。Profile 的 `body.sleep_start` / `sleep_end` 或褪黑素过高即入睡。睡着时被叫到**不调用模型**：10 分钟窗口内第 1 次不醒，第 2 次起按概率醒来，第 6 次必醒（深睡 ×0.45）；没醒只回一句固定短语（`body.sleep_replies`），同一个人 30 分钟内不重复。醒了之后 10 分钟内保持清醒。
-- **管理台**。新增只读接口 `GET /api/soul/body?bot_id=…` 与 SoulPage「身体（激素）」卡片：六个激素条、睡眠状态、给心情的偏置、主动意愿、回复长度系数、最近的身体事件（不含任何人的身份或聊天原文）。
-- `BotProfile` 新增 `body` 段（`enabled` / `sleep_start` / `sleep_end` / `sleep_replies` / `sleep_reply_cooldown_seconds` / `hormone_gain`）。`hormone_gain=0` 表示事件不再影响身体，只剩昼夜节律。
-- 睡眠门禁只覆盖「她知道自己睡着了」的情况。服务商整体不可用时（例如 antigravity 夜间静默）AstrBot 自己会把「LLM 响应错误: …」发到群里，这需要在 AstrBot 人设里设置 `custom_error_message`，属于线上人设配置，不在本版本里自动修改。
-
+- **对外只说边沿事实**。状态刚越过阈值才注入一句（≤80 字，同一状态 40 分钟内不重复），接入 `soul_state` 通道；不给数值，不写「你很生气」这类指令。身体对快层心情只给一个夹在 ±0.2 内的小偏置。派生的主动意愿（`proactive_drive`）作为轻推因子 `body_drive`（±15）接进读空气打分；回复长度系数（`reply_length_factor`）通过 `terse`/`chatty` 边沿提示让模型少打字或多聊两句（与「没劲/困/绷着/兴奋」重叠时让位，不重复）。
+- **睡眠态与服务静默窗口**。Profile 的 `body.sleep_start` / `sleep_end` 或褪黑素过高即入睡：睡着时被叫到**不调用模型**，10 分钟窗口内第 1 次不醒，第 2 次起按概率醒来，第 6 次必醒（深睡 ×0.45）；没醒只回一句固定短语（`body.sleep_replies`），醒了之后 10 分钟内保持清醒。另外新增**模型服务静默窗口**（`body.service_quiet_start` / `service_quiet_end`，如 antigravity 夜间停服），独立于 `body.enabled` 生效：窗口内被叫到**不调模型、不掷骰唤醒**，按人冷却挑一句 `body.quiet_replies` 回复（默认 6 句，支持 `{end}` 占位替换成结束钟点，可在 Bot 页自定义）。
+- **管理台**。新增只读接口 `GET /api/soul/body?bot_id=…` 与 SoulPage「身体（激素）」卡片：六个激素条、睡眠状态、给心情的偏置、主动意愿、回复长度系数、最近的身体事件（不含任何人的身份或聊天原文）；Bot 管理页新增「身体与睡眠」页签，可直接配静默时段、多种静默话术、激素开关与作息睡眠时段。
+- `BotProfile` 新增 `body` 段（`enabled` / `sleep_start` / `sleep_end` / `sleep_replies` / `sleep_reply_cooldown_seconds` / `hormone_gain` / `service_quiet_start` / `service_quiet_end` / `quiet_replies`）。`hormone_gain=0` 表示事件不再影响身体，只剩昼夜节律。
+- 静默窗口覆盖「提前知道服务商这段时间固定停服」的情况；非计划内的服务商故障仍需在 AstrBot 人设里设置 `custom_error_message` 兜底（属于线上人设配置，不在本版本里自动修改）。
 ### 注入提速
 
 把还在占着事件循环的同步重活移走。起因是 v5.1.7 加的 `latency_probe` 测量：`safety`、`meme_hint` 这类不读库的通道 p95 也有 206ms，且和读库通道一起变慢，说明慢的是事件循环被同步代码占住，不是数据库锁。
