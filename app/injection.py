@@ -188,14 +188,15 @@ class InjectionMixin:
 
         heart_prompt = self._preoccupation_prompt(event, sender_id)
         if heart_prompt:
-            try:
-                from astrbot.core.agent.message import TextPart
-                req.extra_user_content_parts.append(TextPart(text=heart_prompt))
-            except Exception:
-                extra = getattr(req, "extra_user_content_parts", None)
-                if extra is None:
-                    req.extra_user_content_parts = extra = []
-                extra.append({"type": "text", "text": heart_prompt})
+            self._append_text_part(req, heart_prompt)
+
+        air_proactive = getattr(event, "_wave_memory_air_proactive", None)
+        if isinstance(air_proactive, dict) and not getattr(event, "_wave_memory_concern_followup", None):
+            self._append_text_part(
+                req,
+                "[主动接话提示] 这是你在群里读空气后自愿决定插一句嘴的场合，并非有人点名要求你回复。"
+                "自然接一两句即可；若看完上下文觉得现在插嘴不太合适，直接调用 wave_memory_hold_peace 保持沉默。",
+            )
 
         # ─── 硬规则：极端攻击 + 辱骂冷却 ───
         from ..services.meta_thinking import EXTREME_ATTACK
@@ -389,6 +390,35 @@ class InjectionMixin:
         except Exception as exc:
             logger.debug("[WaveMemory] settle concern claim failed: %s", exc)
 
+    def _sleep_gate(self, event) -> bool:
+        """睡眠态：睡着时被叫到，不调模型。
+
+        10 分钟窗口内第 2 次起按概率醒来（第 6 次必醒，睡得沉更难醒）；没醒只回一句固定短语
+        （同一个人 30 分钟内不重复回），不再让「所有模型都不可用」的报错原文发到群里。
+        醒了之后返回 False，请求照常处理。
+        """
+        body = getattr(self, "body_service", None)
+        scope = getattr(event, "_wave_memory_runtime_scope", None)
+        if body is None or not isinstance(scope, RuntimeScope) or scope.session is None:
+            return False
+        try:
+            if not body.active_for(scope.bot_id) or not body.is_asleep(scope.bot_id):
+                return False
+            principal = str(scope.subject_principal_id or f"{scope.session.platform_id}:user:{event.get_sender_id() or ''}")
+            import random
+
+            if body.should_wake(scope.bot_id, principal, roll=random.random()):
+                return False
+            phrase = body.sleep_reply(scope.bot_id, principal, pick=random.randrange(1 << 16))
+            if phrase:
+                event.set_result(event.plain_result(phrase))
+            event.should_call_llm(False)
+            event.stop_event()
+            return True
+        except Exception as exc:
+            logger.debug(f"[WaveMemory] sleep gate failed, falling through: {exc!r}")
+            return False
+
     def _reply_request_suppressed(self, event) -> bool:
         """Recheck the ingress veto before retrieval or concern prompt side effects.
 
@@ -399,6 +429,11 @@ class InjectionMixin:
         release_claim = getattr(self, "_release_concern_claim", None)
         stopped = getattr(event, "is_stopped", None)
         if callable(stopped) and stopped():
+            if callable(release_claim):
+                release_claim(event)
+            return True
+        sleep_gate = getattr(self, "_sleep_gate", None)
+        if callable(sleep_gate) and sleep_gate(event):
             if callable(release_claim):
                 release_claim(event)
             return True

@@ -39,9 +39,11 @@ try:
         MAX_FATIGUE_REPLY_THRESHOLD,
         MAX_FATIGUE_WINDOW_MINUTES,
         POLICY_VERSION,
+        MindStateReading,
         MoodContribution,
         MoodSettings,
         compose_mood,
+        compute_mind_state,
         describe_age,
         effect_phrase,
         event_half_life,
@@ -62,9 +64,11 @@ except ImportError:  # pragma: no cover - focused tests import top-level package
         MAX_FATIGUE_REPLY_THRESHOLD,
         MAX_FATIGUE_WINDOW_MINUTES,
         POLICY_VERSION,
+        MindStateReading,
         MoodContribution,
         MoodSettings,
         compose_mood,
+        compute_mind_state,
         describe_age,
         effect_phrase,
         event_half_life,
@@ -147,6 +151,10 @@ class BotMoodService:
         self._last_sync: dict[str, float] = {}
         self._last_atmosphere: dict[tuple[str, str], float] = {}
         self._bots: set[str] = set()
+        # 群心流/注意力焦点：(bot_id, session_id) -> {"topic": str, "last_speaker": str, "silence_messages": int, ...}
+        self._group_focus: dict[tuple[str, str], dict[str, Any]] = {}
+        # 身体（激素）慢层：由启动流程挂接；关系事件导入时同步作用到身体，身体再给快层心情一个小偏置
+        self.body_service: Any | None = None
 
     # ─── 基础 ───
 
@@ -229,7 +237,7 @@ class BotMoodService:
         directed: bool = False,
         now: float | None = None,
     ) -> int | None:
-        """别人说的一句话。只有冲她来的（@/回复/私聊）才按情绪词评估，其余只顺带增量导入关系事件。"""
+        """别人说的一句话。刷新群心流注意力与沉默蓄能；冲她来的话按情绪词评估，其余顺带导入关系事件。"""
         if not self._valid_scope(scope):
             return None
         settings = self._active(scope.bot_id)
@@ -237,6 +245,7 @@ class BotMoodService:
             return None
         timestamp = self._now(now)
         self._bots.add(scope.bot_id)
+        self._update_group_focus(scope, content=content, sender_name=sender_name, directed=directed, now=timestamp)
         self.sync_relationship_events(scope.bot_id, now=timestamp)
         if not directed:
             return None
@@ -387,6 +396,7 @@ class BotMoodService:
                 new_cursor = max(new_cursor, int(row["id"]))
                 if self._import_relationship_event(bot_id, row, settings):
                     imported += 1
+                self._feed_body(bot_id, row)
             if len(rows) < 200:
                 break
         if first_run and new_cursor == 0:
@@ -397,6 +407,23 @@ class BotMoodService:
         if imported:
             self._count("relationship_imported", imported)
         return imported
+
+    def _feed_body(self, bot_id: str, row: Mapping[str, Any]) -> None:
+        """关系事件同时作用到身体（按关系事件 id 幂等；跃迁事件分量翻倍）。身体不可用时静默跳过。"""
+        body = self.body_service
+        if body is None:
+            return
+        try:
+            body.note_relationship_event(
+                bot_id,
+                str(row.get("event_type") or ""),
+                principal_id=str(row.get("subject_principal_id") or ""),
+                relationship_event_id=int(row["id"]),
+                scene=str(row.get("session_id") or ""),
+                now=float(row.get("created_at") or 0.0) or None,
+            )
+        except Exception as exc:
+            logger.debug(f"[WaveMemory] 关系事件作用到身体失败: {exc!r}")
 
     def _import_relationship_event(self, bot_id: str, row: Mapping[str, Any], settings: MoodSettings) -> bool:
         impulse = relationship_event_impulse(row.get("event_type"), row.get("delta"), settings)
@@ -443,13 +470,208 @@ class BotMoodService:
             created_at=created_at,
         ) is not None
 
-    # ─── 输入：Bot 自己的回复（疲劳） ───
+    # ─── 心流注意力与立体心智 ───
 
-    def note_bot_reply(self, bot_id: str, *, now: float | None = None) -> None:
-        settings = self._active(bot_id)
-        if settings is None or not settings.fatigue_enabled:
+    @staticmethod
+    def _extract_focus_topic(content: str) -> str:
+        text = _MARKUP.sub(" ", str(content or ""))
+        text = re.sub(r"\s+", " ", text).strip()
+        if len(text) < 4:
+            return ""
+        # 提取较有信息量的短句片段作为当前注意力焦点提示
+        tokens = re.findall(r"[\u4e00-\u9fffA-Za-z0-9]{2,12}", text)
+        stop = {"哈哈哈", "哈哈", "呵呵", "确实", "不是", "怎么", "为什么", "什么", "就是", "这个", "那个", "这样", "可以", "真的"}
+        picked = [tok for tok in tokens if tok.lower() not in stop]
+        if not picked:
+            return text[:18]
+        return "·".join(picked[:3])[:24]
+
+    def _update_group_focus(
+        self,
+        scope: RuntimeScope,
+        *,
+        content: str,
+        sender_name: str,
+        directed: bool,
+        now: float,
+    ) -> None:
+        if scope.session is None:
+            return
+        key = (scope.bot_id, scope.session.id)
+        with self._lock:
+            entry = self._group_focus.setdefault(
+                key,
+                {
+                    "topic": "",
+                    "last_speaker": "",
+                    "silence_messages": 0,
+                    "engaged_until": 0.0,
+                    "cooling_until": 0.0,
+                    "ignored_streak": 0,
+                    "last_bot_proactive_at": 0.0,
+                    "last_activity_at": 0.0,
+                    "recent_msg_timestamps": deque(maxlen=40),
+                },
+            )
+            entry["recent_msg_timestamps"].append(now)
+            entry["last_activity_at"] = now
+            if sender_name:
+                entry["last_speaker"] = sanitize_display_name(sender_name)[:20]
+            topic = self._extract_focus_topic(content)
+            if topic:
+                entry["topic"] = topic
+            if directed:
+                entry["engaged_until"] = max(float(entry.get("engaged_until") or 0.0), now + 600.0)
+                entry["cooling_until"] = 0.0
+                entry["ignored_streak"] = 0
+                entry["silence_messages"] = 0
+            else:
+                entry["silence_messages"] = min(50, int(entry.get("silence_messages") or 0) + 1)
+                # 如果 Bot 刚主动发完言在 90 秒内有人继续说普通话（且不是被冷落很久），先清掉主动冷场计数
+                last_proactive = float(entry.get("last_bot_proactive_at") or 0.0)
+                if last_proactive > 0 and 0 < now - last_proactive <= 90.0:
+                    entry["ignored_streak"] = 0
+                    entry["last_bot_proactive_at"] = 0.0
+
+    def note_bot_spoken_in_session(self, bot_id: str, session_id: str, *, proactive: bool = False, now: float | None = None) -> None:
+        """记录 Bot 在某群发过言：更新心流姿势、重置沉默计数，并跟踪主动插话是否被接茬。"""
+        if not bot_id or not session_id:
             return
         timestamp = self._now(now)
+        key = (bot_id, session_id)
+        with self._lock:
+            entry = self._group_focus.setdefault(
+                key,
+                {
+                    "topic": "",
+                    "last_speaker": "",
+                    "silence_messages": 0,
+                    "engaged_until": 0.0,
+                    "cooling_until": 0.0,
+                    "ignored_streak": 0,
+                    "last_bot_proactive_at": 0.0,
+                    "last_activity_at": timestamp,
+                    "recent_msg_timestamps": deque(maxlen=40),
+                },
+            )
+            # 如果上一次主动插话超过 120s 还没人接话（期间沉默消息增加），记一次冷场
+            prev_proactive = float(entry.get("last_bot_proactive_at") or 0.0)
+            if prev_proactive > 0 and timestamp - prev_proactive > 120.0:
+                entry["ignored_streak"] = min(5, int(entry.get("ignored_streak") or 0) + 1)
+            entry["silence_messages"] = 0
+            entry["engaged_until"] = max(float(entry.get("engaged_until") or 0.0), timestamp + 300.0)
+            if proactive:
+                entry["last_bot_proactive_at"] = timestamp
+                entry["cooling_until"] = timestamp + 90.0
+
+    def note_silence_or_ignored(self, bot_id: str, session_id: str, *, reason: str = "hold_peace", now: float | None = None) -> None:
+        """Bot 主动选择沉默或被群聊冷场后进入短暂收敛态。"""
+        if not bot_id or not session_id:
+            return
+        timestamp = self._now(now)
+        key = (bot_id, session_id)
+        with self._lock:
+            entry = self._group_focus.setdefault(
+                key,
+                {
+                    "topic": "",
+                    "last_speaker": "",
+                    "silence_messages": 0,
+                    "engaged_until": 0.0,
+                    "cooling_until": 0.0,
+                    "ignored_streak": 0,
+                    "last_bot_proactive_at": 0.0,
+                    "last_activity_at": timestamp,
+                    "recent_msg_timestamps": deque(maxlen=40),
+                },
+            )
+            entry["cooling_until"] = max(float(entry.get("cooling_until") or 0.0), timestamp + 180.0)
+            if reason == "ignored":
+                entry["ignored_streak"] = min(5, int(entry.get("ignored_streak") or 0) + 1)
+
+    def group_pace(self, bot_id: str, session_id: str, *, now: float | None = None) -> dict[str, Any]:
+        """当前群聊天速度与心流摘要，供读空气打分和注入使用。"""
+        timestamp = self._now(now)
+        with self._lock:
+            entry = dict(self._group_focus.get((bot_id, session_id)) or {})
+        stamps = [t for t in (entry.get("recent_msg_timestamps") or ()) if 0 <= timestamp - float(t) <= 60.0]
+        prev_proactive = float(entry.get("last_bot_proactive_at") or 0.0)
+        ignored = int(entry.get("ignored_streak") or 0)
+        if prev_proactive > 0 and timestamp - prev_proactive > 150.0 and int(entry.get("silence_messages") or 0) >= 3:
+            ignored = max(ignored, 1)
+        return {
+            "topic": str(entry.get("topic") or ""),
+            "last_speaker": str(entry.get("last_speaker") or ""),
+            "silence_messages": int(entry.get("silence_messages") or 0),
+            "msgs_per_minute": len(stamps),
+            "engaged_active": float(entry.get("engaged_until") or 0.0) > timestamp,
+            "cooling_active": float(entry.get("cooling_until") or 0.0) > timestamp,
+            "ignored_streak": ignored,
+        }
+
+    def mind_state(
+        self,
+        bot_id: str,
+        *,
+        viewer_scope: RuntimeScope | None = None,
+        now: float | None = None,
+    ) -> dict[str, Any] | None:
+        """合成完整心智读数（情绪 + 能量 + 困倦 + 余裕 + 倾诉欲 + 对话姿态 + 群心流）。"""
+        timestamp = self._now(now)
+        mood = self.current(bot_id, viewer_scope=viewer_scope, now=timestamp, max_causes=3)
+        if not mood or not mood.get("enabled"):
+            return None
+        settings = self.settings_for(bot_id)
+        replies = int(mood.get("recent_replies") or 0)
+        bucket = self._reply_bucket(bot_id, settings, timestamp)
+        with self._lock:
+            last_reply_ts = bucket[-1] if bucket else None
+        seconds_since_last = (timestamp - last_reply_ts) if last_reply_ts is not None else None
+        session_id = viewer_scope.session.id if isinstance(viewer_scope, RuntimeScope) and viewer_scope.session else ""
+        pace = self.group_pace(bot_id, session_id, now=timestamp) if session_id else {
+            "topic": "", "last_speaker": "", "silence_messages": 0,
+            "msgs_per_minute": 0, "engaged_active": False, "cooling_active": False, "ignored_streak": 0,
+        }
+        hour = int(self.hour_of(timestamp))
+        reading: MindStateReading = compute_mind_state(
+            valence=float(mood.get("valence") or 0.0),
+            arousal=float(mood.get("arousal") or 0.0),
+            fatigue=float(mood.get("fatigue") or 0.0),
+            settings=settings,
+            hour=hour,
+            recent_replies=replies,
+            seconds_since_last_reply=seconds_since_last,
+            engaged_active=bool(pace["engaged_active"]),
+            cooling_active=bool(pace["cooling_active"]),
+            ignored_streak=int(pace["ignored_streak"]),
+            silence_messages=int(pace["silence_messages"]),
+            focus_topic=str(pace["topic"]),
+        )
+        return {
+            **mood,
+            "energy": reading.energy,
+            "sleepiness": reading.sleepiness,
+            "composure": reading.composure,
+            "social_drive": reading.social_drive,
+            "stance": reading.stance,
+            "stance_label": reading.stance_label,
+            "circadian": reading.circadian,
+            "inner_drivers": reading.inner_drivers,
+            "narrative": reading.narrative,
+            "group_focus": pace,
+        }
+
+    # ─── 输入：Bot 自己的回复（疲劳） ───
+
+    def note_bot_reply(self, bot_id: str, *, session_id: str = "", proactive: bool = False, now: float | None = None) -> None:
+        settings = self._active(bot_id)
+        if settings is None:
+            return
+        timestamp = self._now(now)
+        if session_id:
+            self.note_bot_spoken_in_session(bot_id, session_id, proactive=proactive, now=timestamp)
+        if not settings.fatigue_enabled:
+            return
         bucket = self._reply_bucket(bot_id, settings, timestamp)
         with self._lock:
             if bucket and timestamp < bucket[-1]:
@@ -524,6 +746,19 @@ class BotMoodService:
         except Exception as exc:
             logger.debug(f"[WaveMemory] 心情读取失败 {bot_id}: {exc!r}")
             return None
+        valence, arousal = reading.valence, reading.arousal
+        word, category = reading.word, reading.category
+        body = self.body_service
+        if body is not None:
+            try:
+                bias_v, bias_a = body.mood_bias(bot_id, now=timestamp)
+            except Exception:
+                bias_v = bias_a = 0.0
+            if bias_v or bias_a:
+                # 身体只是慢层的轻推：夹在合法范围内，再按合成后的数值重新取词
+                valence = max(-1.0, min(1.0, valence + bias_v))
+                arousal = max(0.0, min(1.0, arousal + bias_a))
+                word, category = mood_word(valence, arousal, reading.fatigue)
         causes = [
             self._cause(item, viewer_scope, timestamp)
             for item in reading.contributions
@@ -538,15 +773,15 @@ class BotMoodService:
         return {
             "bot_id": bot_id,
             "enabled": True,
-            "valence": reading.valence,
-            "arousal": reading.arousal,
+            "valence": round(valence, 4),
+            "arousal": round(arousal, 4),
             "fatigue": reading.fatigue,
-            "word": reading.word,
-            "category": reading.category,
+            "word": word,
+            "category": category,
             "baseline": {"valence": settings.baseline_valence, "arousal": settings.baseline_arousal},
             "causes": causes,
             "fatigue_reasons": fatigue_reasons,
-            "hint": speaking_hint(settings, reading.word, reading.category),
+            "hint": speaking_hint(settings, word, category),
             "recent_replies": replies,
             "active_events": reading.active_events,
             "observed_at": timestamp,
@@ -662,6 +897,19 @@ class BotMoodService:
                 fatigue_reasons.append(f"这 {settings.fatigue_window_minutes // 60 or 1} 小时回了很多消息" if settings.fatigue_window_minutes >= 60 else "刚才回了很多消息")
             if night_active(hour, settings.night_start_hour, settings.night_end_hour):
                 fatigue_reasons.append("夜深了")
+        mind = compute_mind_state(
+            valence=valence,
+            arousal=arousal,
+            fatigue=fatigue,
+            settings=settings,
+            hour=hour,
+            recent_replies=replies,
+            engaged_active=bool(viewer_scope and viewer_scope.session and self.group_pace(bot_id, viewer_scope.session.id, now=timestamp)["engaged_active"]),
+            cooling_active=bool(viewer_scope and viewer_scope.session and self.group_pace(bot_id, viewer_scope.session.id, now=timestamp)["cooling_active"]),
+            ignored_streak=(self.group_pace(bot_id, viewer_scope.session.id, now=timestamp)["ignored_streak"] if viewer_scope and viewer_scope.session else 0),
+            silence_messages=(self.group_pace(bot_id, viewer_scope.session.id, now=timestamp)["silence_messages"] if viewer_scope and viewer_scope.session else 0),
+            focus_topic=(self.group_pace(bot_id, viewer_scope.session.id, now=timestamp)["topic"] if viewer_scope and viewer_scope.session else ""),
+        )
         self._count("rendered_from_snapshot")
         return {
             "bot_id": bot_id,
@@ -671,6 +919,13 @@ class BotMoodService:
             "causes": causes,
             "fatigue_reasons": fatigue_reasons,
             "hint": speaking_hint(settings, word, category),
+            "stance": mind.stance,
+            "stance_label": mind.stance_label,
+            "energy": mind.energy,
+            "sleepiness": mind.sleepiness,
+            "composure": mind.composure,
+            "social_drive": mind.social_drive,
+            "narrative": mind.narrative,
         }
 
     def render_lines(self, bot_id: str, viewer_scope: RuntimeScope, *, now: float | None = None, max_causes: int = 2) -> list[str]:
@@ -685,8 +940,49 @@ class BotMoodService:
         lines = [f"心情：{mood['word']}", "缘由：" + "；".join(reasons[: max_causes + 1])]
         if mood.get("hint"):
             lines.append(f"说话倾向：{mood['hint']}")
+        narrative = str(mood.get("narrative") or "").strip()
+        if narrative:
+            lines.append(f"心境姿态：{narrative}")
         self._count("rendered")
         return lines
+
+    def get_soul_context(self, *, scope: RuntimeScope, now: float | None = None) -> dict[str, Any]:
+        """作为 ScopedSoulRepository 的 formal SoulContextProvider，输出立体心智读数。"""
+        if not self._valid_scope(scope):
+            return {"status": "unavailable", "reason_code": "soul_scope_invalid"}
+        timestamp = self._now(now)
+        mind = self.mind_state(scope.bot_id, viewer_scope=scope, now=timestamp)
+        if not mind or not mind.get("enabled"):
+            return {"status": "unavailable", "reason_code": "mood_disabled_or_unavailable"}
+        tz_name = time.tzname[0] if time.tzname else "Local"
+        try:
+            from datetime import datetime
+            local_tz = datetime.now().astimezone().tzname()
+            if local_tz:
+                tz_name = str(local_tz)
+        except Exception:
+            pass
+        return {
+            "status": "available",
+            "timezone": tz_name,
+            "circadian": mind.get("circadian"),
+            "energy": mind.get("energy"),
+            "sleepiness": mind.get("sleepiness"),
+            "source": "bot_mood_v2_mind",
+            "mind_state": {
+                "composure": mind.get("composure"),
+                "social_drive": mind.get("social_drive"),
+                "stance": mind.get("stance"),
+                "stance_label": mind.get("stance_label"),
+                "inner_drivers": mind.get("inner_drivers"),
+                "narrative": mind.get("narrative"),
+                "group_focus": mind.get("group_focus"),
+                "word": mind.get("word"),
+                "category": mind.get("category"),
+                "causes": mind.get("causes") or [],
+                "fatigue_reasons": mind.get("fatigue_reasons") or [],
+            },
+        }
 
     # ─── 维护 ───
 

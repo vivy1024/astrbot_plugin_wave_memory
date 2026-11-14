@@ -19,10 +19,10 @@ except ImportError:  # pragma: no cover - focused repository tests
 
 try:
     from ..domain.display_name import sanitize_display_name
-    from ..domain.scope import RuntimeScope
+    from ..domain.scope import RuntimeScope, scene_key
 except ImportError:  # pragma: no cover - focused repository tests
     from domain.display_name import sanitize_display_name
-    from domain.scope import RuntimeScope
+    from domain.scope import RuntimeScope, scene_key
 
 
 def event_message_id(event: Any) -> Any:
@@ -264,6 +264,51 @@ class InboundMessagePipeline:
                 )
             except Exception as exc:
                 logger.debug(f"[WaveMemory] mood observe failed: {exc!r}")
+
+        # 身体（激素）：真人在任何场合说话都算——同一个人的出现、重逢、被叫到只记在一副身体上。
+        # 被识别为 Bot 的发言者不算（避免两个 Bot 互相刺激出一个激素循环）。
+        body_service = getattr(self.plugin, "body_service", None)
+        if body_service is not None and sender_id and sender_id != "bot":
+            sender_tag = getattr(getattr(self.plugin, "bot_discovery", None), "get_tag", None)
+            tagged_bot = False
+            if callable(sender_tag):
+                try:
+                    tagged_bot = bool((sender_tag(sender_id, display_name=sender_name or "") or {}).get("is_bot"))
+                except Exception:
+                    tagged_bot = False
+            if not tagged_bot:
+                try:
+                    principal = getattr(runtime_scope, "subject_principal_id", None) or (
+                        f"{runtime_scope.session.platform_id}:user:{sender_id}"
+                    )
+                    woken_now = bool(getattr(event, "is_at_or_wake_command", False)) and not getattr(
+                        event, "_wave_memory_concern_followup", None
+                    )
+                    body_directed = runtime_scope.visibility == "private" or is_at_bot or is_reply_to_bot or woken_now
+                    body_service.note_human_message(
+                        runtime_scope.bot_id, principal, directed=body_directed,
+                        scene=scene_key(runtime_scope), now=message_ts,
+                    )
+                except Exception as exc:
+                    logger.debug(f"[WaveMemory] body observe failed: {exc!r}")
+
+        # 人物 Bot 自动发现（零 Token 启发式：昵称标记 / 框架报错泄密 / 机械等间隔 / 复读对刷 / 群友点破）
+        discovery = getattr(self.plugin, "bot_discovery", None)
+        if runtime_scope.visibility == "group" and discovery is not None and sender_id and sender_id != "bot":
+            try:
+                tag = discovery.observe_group_message(
+                    session_id=runtime_scope.session.id,
+                    sender_id=sender_id,
+                    sender_name=sender_name or "",
+                    message=locked_message,
+                    now=message_ts,
+                )
+                try:
+                    event._wave_memory_sender_bot_tag = tag
+                except Exception:
+                    pass
+            except Exception as exc:
+                logger.debug(f"[WaveMemory] bot discovery observe failed: {exc!r}")
 
         if runtime_scope.visibility == "group" and getattr(self.plugin, "lifecycle", None):
             hour = int(time.strftime("%H", time.localtime()))

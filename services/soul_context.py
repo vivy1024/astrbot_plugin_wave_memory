@@ -69,8 +69,11 @@ def normalize_soul_context(value: Mapping[str, Any], *, captured_at: float | Non
     source = value.get("source") or value.get("provider")
     if source is not None and (not isinstance(source, str) or not source.strip()):
         raise ValueError("source_invalid")
+    mind_state = value.get("mind_state")
+    if mind_state is not None and not isinstance(mind_state, Mapping):
+        mind_state = None
 
-    has_value = any(item is not None for item in (timezone, circadian, energy, sleepiness))
+    has_value = any(item is not None for item in (timezone, circadian, energy, sleepiness, mind_state))
     if not has_value:
         return unavailable_soul_context("soul_context_empty")
     result: dict[str, Any] = {
@@ -81,6 +84,8 @@ def normalize_soul_context(value: Mapping[str, Any], *, captured_at: float | Non
         "energy": energy,
         "sleepiness": sleepiness,
     }
+    if mind_state is not None:
+        result["mind_state"] = dict(mind_state)
     if source:
         result["source"] = source.strip()
     if captured_at is not None:

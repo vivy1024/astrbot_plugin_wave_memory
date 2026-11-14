@@ -1,13 +1,13 @@
 import { useHidePageScopeSelectors } from '@/app/global-scope'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ActivityIcon, AlertCircleIcon, Clock3Icon, CompassIcon, Globe2Icon, RefreshCwIcon, TargetIcon, UsersIcon } from 'lucide-react'
+import { ActivityIcon, AlertCircleIcon, Clock3Icon, CompassIcon, Globe2Icon, HeartPulseIcon, RefreshCwIcon, TargetIcon, UsersIcon } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 
 import { isRequestCancelled } from '@/api/client'
 import { getScopeOptions, groupSessionOptions, scopeOptionsFor } from '@/api/options'
 import { getRelationships, type RelationshipItem } from '@/api/people'
-import { getSoulState, refreshSoulState, type RelationshipHistoryItem, type SoulScopeSelection, type SoulStatePayload } from '@/api/soul'
+import { getBodySnapshot, getSoulState, refreshSoulState, type BodySnapshot, type RelationshipHistoryItem, type SoulScopeSelection, type SoulStatePayload } from '@/api/soul'
 import { GroupRelationshipRadarCard } from '@/components/relationship/GroupRelationshipRadarCard'
 import { type RelationshipRadarDimension } from '@/components/relationship/RelationshipRadarCard'
 import { EvidenceList, ObjectDeepLink, PaginationControls, QueryState, ScopeSelect } from '@/components/shared'
@@ -143,40 +143,191 @@ function SectionUnavailable({ reason }: { reason?: string | null }) {
   )
 }
 
-function SoulContextCard({ context }: { context: SoulStatePayload['soul_context'] | undefined }) {
-  const current = context ?? { status: 'unavailable', reason_code: 'formal_soul_context_unavailable', timezone: null, circadian: null, energy: null, sleepiness: null }
-  const available = current.status === 'available'
+const HORMONE_LABELS: Record<string, string> = {
+  dopamine: '多巴胺',
+  serotonin: '血清素',
+  oxytocin: '催产素',
+  cortisol: '皮质醇',
+  melatonin: '褪黑素',
+  boredom: '无聊',
+}
+
+const BODY_EVENT_LABELS: Record<string, string> = {
+  addressed: '被叫到',
+  praised: '被夸',
+  scolded: '被凶',
+  joked: '玩梗',
+  gift: '投喂',
+  apology: '被道歉',
+  deep_talk: '长谈',
+  boundary: '被越界',
+  reunion: '重逢',
+  snubbed: '开口没人理',
+  tool_error: '工具报错',
+  tool_error_streak: '连续报错',
+  late_night_call: '深夜被叫',
+}
+
+/** Bot 的身体（激素）：一个 Bot 一副，跨所有群、私聊与平台共用；数值只给管理员看，不进提示词。 */
+function BodyCard({ botId }: { botId: string }) {
+  const [body, setBody] = useState<BodySnapshot | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!botId) return
+    const controller = new AbortController()
+    getBodySnapshot(botId, controller.signal)
+      .then((data) => { setBody(data); setError(null) })
+      .catch((err) => { if (!isRequestCancelled(err)) setError(humanizeApiError(err, '读取身体状态失败')) })
+    return () => controller.abort()
+  }, [botId])
+
+  const hormones = body?.hormones
+  const recent = (body?.events ?? []).slice(-8).reverse()
   return (
     <Card>
       <CardHeader className="border-b bg-muted/10 py-4">
-        <div className="flex items-center gap-2">
-          <Globe2Icon className="size-4 text-primary" />
-          <CardTitle className="text-sm">作息与精力</CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <HeartPulseIcon className="size-4 text-primary" />
+            <CardTitle className="text-sm">身体（激素）</CardTitle>
+          </div>
+          {body?.enabled ? <Badge variant={body.asleep ? 'secondary' : 'outline'} className="text-xs font-normal">{body.asleep ? '睡眠中' : '清醒'}</Badge> : null}
         </div>
-        <CardDescription>时区、节律、精力与困倦只展示已记录的正式字段</CardDescription>
+        <CardDescription>一个 Bot 一副身体，所有群、私聊与平台共用；回落到昼夜基线，只由真人事件改变</CardDescription>
       </CardHeader>
-      <CardContent className="pt-5">
+      <CardContent className="space-y-4 pt-5">
+        {error ? (
+          <p className="text-xs text-destructive">{error}</p>
+        ) : !body ? (
+          <p className="text-xs text-muted-foreground">正在读取身体状态…</p>
+        ) : !body.enabled || !hormones ? (
+          <p className="text-xs text-muted-foreground">这个 Bot 没有开启身体系统（在 Bot 管理的 body.enabled 打开）。</p>
+        ) : (
+          <>
+            <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3" aria-label="激素水平">
+              {Object.entries(HORMONE_LABELS).map(([key, label]) => {
+                const value = Number((hormones as unknown as Record<string, number>)[key] ?? 0)
+                return (
+                  <li key={key} className="text-xs">
+                    <div className="mb-1 flex items-center justify-between">
+                      <span className="text-muted-foreground">{label}</span>
+                      <span className="font-mono">{value.toFixed(0)}</span>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded bg-muted" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(value)}>
+                      <div className="h-full rounded bg-primary/70" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+            <dl className="grid gap-3 text-xs sm:grid-cols-3">
+              <div>
+                <dt className="text-muted-foreground">给心情的偏置</dt>
+                <dd className="mt-1 font-mono">{formatDisplayNumber(body.mood_bias)} / {formatDisplayNumber(body.arousal_bias)}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">主动意愿</dt>
+                <dd className="mt-1 font-mono">{formatDisplayNumber(body.proactive_drive)}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">回复长度系数</dt>
+                <dd className="mt-1 font-mono">{formatDisplayNumber(body.reply_length_factor)}</dd>
+              </div>
+            </dl>
+            {recent.length ? (
+              <div>
+                <h4 className="mb-1.5 text-xs font-semibold text-foreground/80">最近的身体事件</h4>
+                <ol className="space-y-1 text-xs text-muted-foreground">
+                  {recent.map((event, index) => (
+                    <li key={`${event.at}-${index}`} className="flex flex-wrap items-center gap-1.5">
+                      <Badge variant="outline" className="text-xs font-normal">{BODY_EVENT_LABELS[event.kind] ?? event.kind}</Badge>
+                      <span className="font-mono">
+                        {Object.entries(event.deltas)
+                          .filter(([, v]) => Math.abs(Number(v)) >= 0.05)
+                          .map(([k, v]) => `${HORMONE_LABELS[k] ?? k}${Number(v) > 0 ? '+' : ''}${Number(v).toFixed(1)}`)
+                          .join(' ')}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            ) : null}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function SoulContextCard({ context }: { context: SoulStatePayload['soul_context'] | undefined }) {
+  const current = context ?? { status: 'unavailable', reason_code: 'formal_soul_context_unavailable', timezone: null, circadian: null, energy: null, sleepiness: null }
+  const available = current.status === 'available'
+  const mind = current.mind_state
+  const focus = mind?.group_focus
+  const circadianText = typeof current.circadian === 'string'
+    ? current.circadian
+    : current.circadian && typeof current.circadian === 'object'
+      ? `${String((current.circadian as Record<string, unknown>).label ?? '')}${typeof (current.circadian as Record<string, unknown>).phase === 'string' ? ` (${String((current.circadian as Record<string, unknown>).phase)})` : ''}`.trim() || JSON.stringify(current.circadian)
+      : '未知 / 未记录'
+  return (
+    <Card>
+      <CardHeader className="border-b bg-muted/10 py-4">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Globe2Icon className="size-4 text-primary" />
+            <CardTitle className="text-sm">立体心智与节律状态</CardTitle>
+          </div>
+          {mind?.stance_label ? <Badge variant="outline" className="text-xs font-normal">{mind.stance_label}</Badge> : null}
+        </div>
+        <CardDescription>时区昼夜节律、立体精力、心理余裕、社交驱动力与当前群心流焦点</CardDescription>
+      </CardHeader>
+      <CardContent className="pt-5 space-y-4">
         {!available ? (
           <SectionUnavailable reason={current.reason_code} />
         ) : (
-          <dl className="grid gap-3 text-sm sm:grid-cols-2">
-            <div>
-              <dt className="text-muted-foreground">时区</dt>
-              <dd className="mt-1 font-mono">{current.timezone ?? '未知 / 未记录'}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">精力</dt>
-              <dd className="mt-1 font-mono">{displayRelationshipValue(current.energy)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">困倦</dt>
-              <dd className="mt-1 font-mono">{displayRelationshipValue(current.sleepiness)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">节律</dt>
-              <dd className="mt-1 break-all font-mono">{typeof current.circadian === 'string' ? current.circadian : JSON.stringify(current.circadian ?? '未知 / 未记录')}</dd>
-            </div>
-          </dl>
+          <>
+            {mind?.narrative ? (
+              <div className="rounded-md border bg-muted/20 px-3 py-2 text-xs leading-relaxed text-foreground/90">
+                {mind.narrative}
+              </div>
+            ) : null}
+            <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+              <div>
+                <dt className="text-xs text-muted-foreground">时区与节律</dt>
+                <dd className="mt-1 font-mono text-xs">{current.timezone ?? '未知'} · {circadianText}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">立体精力 / 困倦</dt>
+                <dd className="mt-1 font-mono text-xs">
+                  {displayRelationshipValue(current.energy)} / {displayRelationshipValue(current.sleepiness)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">心理余裕</dt>
+                <dd className="mt-1 font-mono text-xs">{displayRelationshipValue(mind?.composure)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">社交驱动力</dt>
+                <dd className="mt-1 font-mono text-xs">{displayRelationshipValue(mind?.social_drive)}</dd>
+              </div>
+              {focus ? (
+                <>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">本群心流焦点</dt>
+                    <dd className="mt-1 text-xs">{focus.topic || '暂无明确话题'}{focus.last_speaker ? `（最近：${focus.last_speaker}）` : ''}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">群节奏与状态</dt>
+                    <dd className="mt-1 font-mono text-xs">
+                      {focus.msgs_per_minute ?? 0} 条/分 · {focus.engaged_active ? '正聊着' : focus.cooling_active ? '冷静期' : `已静听 ${focus.silence_messages ?? 0} 条`}
+                      {typeof focus.ignored_streak === 'number' && focus.ignored_streak > 0 ? ` · 无人接话×${focus.ignored_streak}` : ''}
+                    </dd>
+                  </div>
+                </>
+              ) : null}
+            </dl>
+          </>
         )}
       </CardContent>
     </Card>
@@ -466,6 +617,7 @@ export function SoulPage() {
                 </CardContent>
               </Card>
               <SoulContextCard context={payload.soul_context} />
+              {scope ? <BodyCard botId={scope.bot_id} /> : null}
             </div>
 
             <div className="grid gap-4 lg:grid-cols-2">

@@ -64,9 +64,10 @@ class SoulStateChannel:
     # build 里没有 await、全是同步读库：编排器放到工作线程跑，不占事件循环
     offload_to_thread = True
 
-    def __init__(self, *, repository: Any = None, mood_service: Any = None):
+    def __init__(self, *, repository: Any = None, mood_service: Any = None, body_service: Any = None):
         self.repository = repository
         self.mood_service = mood_service
+        self.body_service = body_service
 
     async def build(self, ctx: Any) -> InjectionResult:
         started = time.perf_counter()
@@ -107,6 +108,16 @@ class SoulStateChannel:
                     mood_lines = []
                 # 原因里可能引用群友原话：逐行过身份安全检查，只丢有问题的那一行。
                 lines.extend(line for line in mood_lines if not is_identity_contamination(line))
+            # 身体（激素）：只在状态刚越过阈值时说一句事实（≤80 字，40 分钟不重复），不给数值、不写指令。
+            body_service = self.body_service
+            if body_service is not None:
+                try:
+                    body_lines = body_service.render_lines(
+                        scope.bot_id, principal_id=str(getattr(scope, "subject_principal_id", "") or ""),
+                    )
+                except Exception:
+                    body_lines = []
+                lines.extend(line for line in body_lines if not is_identity_contamination(line))
             # 关切不再常驻注入：本轮是否惦记由 MetaThinking × 印象时间线线索决定。
             recent_timeline = []
             for item in timeline:

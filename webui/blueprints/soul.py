@@ -368,6 +368,29 @@ async def soul_state():
     return jsonify(_state_success_payload(state, scope, limit=limit, offset=offset))
 
 
+@soul_bp.route("/soul/body", methods=["GET"])
+@require_auth
+async def soul_body():
+    """Bot 的身体（激素）只读快照：当前激素、睡眠态、行为系数与最近 24 小时的身体事件。
+
+    身体是一个 Bot 一副、跨所有群/私聊/平台共用的，所以只按 ``bot_id`` 取，不要求会话范围；
+    事件只返回种类与增量，不带任何人的身份或聊天原文。
+    """
+    bot_id = str(request.args.get("bot_id") or "").strip()
+    if not bot_id:
+        return jsonify({"error": {"code": "bot_id_required"}}), 400
+    body = getattr(get_container(), "body_service", None)
+    if body is None:
+        return jsonify({"bot_id": bot_id, "enabled": False, "reason_code": "body_service_unavailable"})
+    try:
+        if not body.active_for(bot_id):
+            return jsonify({"bot_id": bot_id, "enabled": False, "reason_code": "body_disabled_for_bot"})
+        snapshot = body.snapshot(bot_id)
+    except Exception as exc:
+        return jsonify({"error": {"code": "body_snapshot_failed", "message": str(exc)[:200]}}), 503
+    return jsonify({"bot_id": bot_id, **snapshot})
+
+
 @soul_bp.route("/soul/state/refresh", methods=["POST"])
 @require_auth
 async def soul_state_refresh():

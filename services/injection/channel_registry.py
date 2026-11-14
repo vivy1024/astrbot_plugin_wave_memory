@@ -190,7 +190,7 @@ def builtin_channel_specs() -> list[ChannelSpec]:
             ),
         ),
         ChannelSpec("affinity", lambda d, b: RelationshipChannel(repository=d.db.soul_repository, db=d.db)),
-        ChannelSpec("soul_state", lambda d, b: SoulStateChannel(repository=d.db.soul_repository, mood_service=getattr(d, "mood_service", None))),
+        ChannelSpec("soul_state", lambda d, b: SoulStateChannel(repository=d.db.soul_repository, mood_service=getattr(d, "mood_service", None), body_service=getattr(d, "body_service", None))),
         # 游戏攻略参考：按请求里的 game.id 选游戏库（所有 Bot 共用）；不带 game 时不工作。
         ChannelSpec("game_knowledge", lambda d, b: GameKnowledgeChannel(service=getattr(d, "game_knowledge", None))),
         ChannelSpec(

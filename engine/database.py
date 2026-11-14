@@ -53,6 +53,7 @@ from .db.relationship_portrait_repo import RelationshipPortraitRepo
 from .db.person_identity_repo import PersonIdentityRepo
 from .db.bot_profile_repo import BotProfileRepo
 from .db.bot_mood_repo import BotMoodRepository
+from .db.bot_body_repo import BotBodyRepository
 from .db.bot_belief_repo import BotBeliefRepository
 from .db.character_experience_repo import CharacterExperienceRepo
 from .db.game_knowledge_repo import GameKnowledgeRepo
@@ -143,6 +144,8 @@ class WaveMemoryDB:
             self._bot_profiles = BotProfileRepo(self._cm)
             # 心情 v2：一个 Bot 一份心情（bot_mood_state / bot_mood_events，纯增量建表）
             self._bot_mood = BotMoodRepository(self._cm)
+            # 身体（激素）：一个 Bot 一副身体，所有群/私聊/平台共用（bot_body_* 纯增量建表）
+            self._bot_body = BotBodyRepository(self._cm)
             # 信念 v2：一个 Bot 自己的看法 + 状态变化历史 + 反思进度（纯增量建表）
             self._bot_beliefs = BotBeliefRepository(self._cm)
             # 角色经历：Bot 进群之前的第一人称经历、时间线阶段与任务场景记录（纯增量建表）
@@ -206,6 +209,11 @@ class WaveMemoryDB:
     def bot_mood(self) -> BotMoodRepository:
         """Bot 心情仓储：一个 Bot 一份心情 + 带来源的情绪事件流水。"""
         return self._bot_mood
+
+    @property
+    def bot_body(self) -> BotBodyRepository:
+        """Bot 身体仓储：一个 Bot 一副激素状态，不分群、不分平台。"""
+        return self._bot_body
 
     @property
     def bot_beliefs(self) -> BotBeliefRepository:

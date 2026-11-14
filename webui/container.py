@@ -57,6 +57,9 @@ class ServiceContainer:
         self.soul_repository: Any = None
         # 心情 v2（services.bot_mood.BotMoodService）：Bot 主页与 /api/health 读当前心情。
         self.mood_service: Any = None
+        self.body_service: Any = None
+        # Bot 自动发现与标签管理（services.bot_discovery.BotDiscoveryService）。
+        self.bot_discovery: Any = None
         self.relationship_calibration: Any = None
         self.fewshot_repository: Any = None
         # v6 Bot 注册表（services.bot_registry.BotRegistry）；Bot 管理页和 Runtime API 用它解析 Bot。

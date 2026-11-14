@@ -110,6 +110,28 @@ export interface SoulStatePayload {
     circadian: Record<string, unknown> | string | null
     energy: number | string | null
     sleepiness: number | string | null
+    source?: string
+    mind_state?: {
+      composure?: number
+      social_drive?: number
+      stance?: string
+      stance_label?: string
+      inner_drivers?: Record<string, number>
+      narrative?: string
+      group_focus?: {
+        topic?: string
+        last_speaker?: string
+        silence_messages?: number
+        msgs_per_minute?: number
+        engaged_active?: boolean
+        cooling_active?: boolean
+        ignored_streak?: number
+      }
+      word?: string
+      category?: string
+      causes?: Array<{ text?: string; source?: string }>
+      fatigue_reasons?: string[]
+    }
   }
   relationship: {
     affinity: number | null
@@ -169,4 +191,39 @@ export async function refreshSoulState(
     method: 'POST',
     signal,
   })
+}
+
+export interface BodyHormones {
+  dopamine: number
+  serotonin: number
+  oxytocin: number
+  cortisol: number
+  melatonin: number
+  boredom: number
+}
+
+export interface BodyEventSample {
+  kind: string
+  at: number
+  deltas: Partial<Record<keyof BodyHormones, number>>
+}
+
+export interface BodySnapshot {
+  bot_id: string
+  enabled: boolean
+  reason_code?: string
+  hormones?: BodyHormones
+  mood_bias?: number
+  arousal_bias?: number
+  sleepiness?: number
+  asleep?: boolean
+  proactive_drive?: number
+  reply_length_factor?: number
+  flags?: Record<string, boolean>
+  events?: BodyEventSample[]
+}
+
+/** Bot 的身体（激素）快照：一个 Bot 一副身体，跨所有群、私聊与平台共用。 */
+export function getBodySnapshot(botId: string, signal?: AbortSignal): Promise<BodySnapshot> {
+  return fetchJson<BodySnapshot>(`/api/soul/body?${new URLSearchParams({ bot_id: botId }).toString()}`, { signal })
 }

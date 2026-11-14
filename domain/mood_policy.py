@@ -559,10 +559,165 @@ def speaking_hint(settings: MoodSettings, word: str, category: str) -> str:
     return ""
 
 
+# ─── 心智深化模型（参考 DSH 内在动因 + MaiBot 精力/心流） ───────────────────
+
+
+@dataclass(frozen=True)
+class MindStateReading:
+    """Bot 此刻的立体心智读数（超越单一情绪词，涵盖精力、余裕、社交倾诉欲与对话姿态）。"""
+
+    energy: float
+    sleepiness: float
+    composure: float
+    social_drive: float
+    stance: str                     # observing | engaged | cooling | quiet
+    stance_label: str
+    circadian: dict[str, Any]
+    inner_drivers: dict[str, float]
+    narrative: str
+
+
+def circadian_phase(hour: int, settings: MoodSettings | None = None) -> dict[str, Any]:
+    """根据本机小时判断昼夜节律阶段与夜间休眠信号。"""
+    h = max(0, min(23, int(hour)))
+    night_quiet = False
+    if settings is not None:
+        night_quiet = night_active(h, settings.night_start_hour, settings.night_end_hour)
+    if 6 <= h < 12:
+        phase, label = "morning", "清晨清醒期"
+    elif 12 <= h < 18:
+        phase, label = "afternoon", "午后平稳期"
+    elif 18 <= h < 23:
+        phase, label = "evening", "晚间活跃期"
+    else:
+        phase, label = "late_night", "深夜静默期"
+    return {
+        "phase": phase,
+        "label": label,
+        "hour": h,
+        "night_quiet": bool(night_quiet),
+    }
+
+
+def compute_mind_state(
+    *,
+    valence: float,
+    arousal: float,
+    fatigue: float,
+    settings: MoodSettings | None = None,
+    hour: int = 12,
+    recent_replies: int = 0,
+    seconds_since_last_reply: float | None = None,
+    engaged_active: bool = False,
+    cooling_active: bool = False,
+    ignored_streak: int = 0,
+    silence_messages: int = 0,
+    open_concerns: int = 0,
+    focus_topic: str = "",
+) -> MindStateReading:
+    """合成 Bot 此刻的能量、困倦、余裕度、社交倾诉欲与对话姿态。"""
+    cfg = settings or MoodSettings()
+    val = max(-1.0, min(1.0, float(valence)))
+    aro = max(0.0, min(1.0, float(arousal)))
+    fat = max(0.0, min(1.0, float(fatigue)))
+    circ = circadian_phase(hour, cfg)
+
+    # 1. 社交精力与困倦（吸收 MaiBot 精力消耗 + 静默自然恢复）
+    reply_load = min(1.0, max(0, int(recent_replies)) / max(1.0, float(cfg.fatigue_reply_threshold)))
+    recovery_bonus = 0.0
+    if seconds_since_last_reply is not None and seconds_since_last_reply > 0:
+        # 静默 10~45 分钟逐步恢复些微社交精力
+        recovery_bonus = min(0.22, (float(seconds_since_last_reply) / 2700.0) * 0.22)
+    night_penalty = 0.28 if circ["night_quiet"] else 0.0
+    raw_energy = 0.88 - 0.50 * fat - 0.22 * reply_load - night_penalty + recovery_bonus + 0.10 * max(0.0, val)
+    energy = round(max(0.05, min(1.0, raw_energy)), 4)
+
+    sleepiness = round(
+        max(0.0, min(1.0, (0.52 if circ["night_quiet"] else 0.08) + 0.45 * fat + 0.15 * max(0.0, 0.35 - aro))),
+        4,
+    )
+
+    # 2. 心理余裕 / 冷静度（负面高激活如被骂/紧绷会压低余裕）
+    stress = max(0.0, -val) * (0.45 + 0.55 * aro)
+    composure = round(max(0.05, min(1.0, 0.82 - 0.65 * stress - 0.20 * fat + 0.10 * max(0.0, val))), 4)
+
+    # 3. 社交倾诉欲（DSH 沉默蓄能 + 被冷落自动降频 + 心事/精力调节）
+    silence_urge = min(0.25, max(0, int(silence_messages)) * 0.025)
+    concern_urge = min(0.15, max(0, int(open_concerns)) * 0.06)
+    ignored_penalty = min(0.45, max(0, int(ignored_streak)) * 0.16)
+    raw_drive = (
+        0.36
+        + 0.26 * aro
+        + 0.14 * max(-0.4, val)
+        + 0.22 * (energy - 0.45)
+        + silence_urge
+        + concern_urge
+        - ignored_penalty
+        - 0.30 * sleepiness
+        - (0.20 if cooling_active else 0.0)
+    )
+    social_drive = round(max(0.0, min(1.0, raw_drive)), 4)
+
+    # 4. 三态 + 休眠节律姿态
+    if circ["night_quiet"] and energy < 0.42:
+        stance, stance_label = "quiet", "夜间收敛"
+    elif energy < 0.26 or sleepiness >= 0.72:
+        stance, stance_label = "quiet", "精力偏低·少插话"
+    elif cooling_active:
+        stance, stance_label = "cooling", "刚收口·观望中"
+    elif engaged_active or (social_drive >= 0.62 and aro >= 0.45):
+        stance, stance_label = "engaged", "在线活跃"
+    else:
+        stance, stance_label = "observing", "潜水旁观"
+
+    inner_drivers = {
+        "energy": energy,
+        "sleepiness": sleepiness,
+        "composure": composure,
+        "social_drive": social_drive,
+        "valence_tone": round((val + 1.0) / 2.0, 4),
+        "arousal_tone": round(aro, 4),
+        "silence_buildup": round(min(1.0, max(0, int(silence_messages)) / 12.0), 4),
+        "cold_shoulder_backoff": round(min(1.0, max(0, int(ignored_streak)) / 3.0), 4),
+    }
+
+    parts: list[str] = []
+    if stance == "quiet":
+        parts.append("这会儿精力偏低，只想安静待着，不主动凑热闹")
+    elif stance == "cooling":
+        parts.append("刚说过话或刚收过口，眼下先听别人聊，不急着抢话")
+    elif stance == "engaged":
+        parts.append("此刻精神在线、愿意顺着话头多接两句")
+    else:
+        parts.append("眼下在群里安静看着，有合适的话头再顺手接一句")
+
+    if focus_topic:
+        parts.append(f"注意力正落在「{focus_topic[:24]}」")
+    if ignored_streak >= 2:
+        parts.append("前两次插话没人接着往下聊，心里收着点分寸")
+    elif composure <= 0.4:
+        parts.append("心里有点紧绷或毛躁，说话会更简短、守边界")
+    elif social_drive >= 0.65 and energy >= 0.6:
+        parts.append("心里有几分想搭话的兴致")
+
+    return MindStateReading(
+        energy=energy,
+        sleepiness=sleepiness,
+        composure=composure,
+        social_drive=social_drive,
+        stance=stance,
+        stance_label=stance_label,
+        circadian=circ,
+        inner_drivers=inner_drivers,
+        narrative="；".join(parts),
+    )
+
+
 __all__ = [
     "EXTREME_ATTACK",
     "INSULT_WORDS",
     "MessageImpact",
+    "MindStateReading",
     "MoodContribution",
     "MoodEventView",
     "MoodReading",
@@ -571,7 +726,9 @@ __all__ = [
     "PRAISE_WORDS",
     "RELATIONSHIP_EVENT_IMPULSES",
     "TEASE_WORDS",
+    "circadian_phase",
     "compose_mood",
+    "compute_mind_state",
     "decay_factor",
     "describe_age",
     "effect_phrase",
