@@ -68,40 +68,6 @@ class InboundMessagePipeline:
         bot_id: str,
     ) -> None:
         sender_name = sanitize_display_name(sender_name)
-        # ─── 抢词被打断检测 (Hesitation Memory Capture) ───
-        if (
-            runtime_scope.visibility == "group"
-            and hasattr(self.plugin, "_pending_proactive_plans")
-            and self.plugin._pending_proactive_plans.get(group_id)
-        ):
-            active_plan = self.plugin._pending_proactive_plans[group_id]
-            self.plugin._pending_proactive_plans[group_id] = None
-            try:
-                bot_prof_temp = self.plugin._get_bot(bot_id)
-                pe_bot_id_temp = bot_prof_temp.db_id if bot_prof_temp else "bot"
-                user_prof_row = self.plugin.db.conn.execute(
-                    "SELECT metadata FROM user_profiles WHERE user_id = ? AND group_id = ? AND bot_id = ?",
-                    (sender_id, group_id, pe_bot_id_temp)
-                ).fetchone()
-                meta_to_write = {}
-                if user_prof_row and user_prof_row[0]:
-                    meta_to_write = json.loads(user_prof_row[0])
-                hesitations_list = meta_to_write.setdefault("recent_hesitations", [])
-                hesitations_list.append({
-                    "ts": time.time(),
-                    "topic": active_plan.get("topic", "闲聊"),
-                    "motive": active_plan.get("motive", "想和你交谈"),
-                })
-                del hesitations_list[:-5]
-                self.plugin.db.conn.execute(
-                    "UPDATE user_profiles SET metadata = ? WHERE user_id = ? AND group_id = ? AND bot_id = ?",
-                    (json.dumps(meta_to_write, ensure_ascii=False), sender_id, group_id, pe_bot_id_temp)
-                )
-                self.plugin.db.conn.commit()
-                logger.info(f"[MetaThinking] 抢词咽回成功：用户 {sender_id} 在群组 {group_id} 抢答，原计划的主动插话“{active_plan.get('topic', '闲聊')}”已被咽回，写为犹豫记忆。")
-            except Exception as e:
-                logger.debug(f"[MetaThinking] 咽回犹豫记忆写入失败: {e}")
-
         scope_key = f"{runtime_scope.bot_id}:{runtime_scope.visibility}:{runtime_scope.session.id}"
         group_lock = self.group_concurrency_locks.setdefault(scope_key, asyncio.Lock())
 

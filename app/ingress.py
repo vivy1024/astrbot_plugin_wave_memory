@@ -835,16 +835,9 @@ class IngressMixin:
                             quote=evidence_quote,
                         )
                     if sender_id and group_id and sender_id != "bot" and runtime_scope.visibility == "group":
-                        exists = self.db.conn.execute(
-                            "SELECT 1 FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
-                            (sender_id, group_id, bot_db_id),
-                        ).fetchone()
-                        if exists is None:
-                            self.db.conn.execute(
-                                "INSERT INTO user_profiles (user_id, group_id, bot_id, metadata, interaction_count, last_seen) VALUES (?, ?, ?, ?, 1, ?)",
-                                (sender_id, group_id, bot_db_id, "{}", time.time()),
-                            )
-                            self.db.conn.commit()
+                        stats = getattr(self.db, "person_scene_stats", None)
+                        if stats is not None and hasattr(stats, "touch"):
+                            stats.touch(bot_id=bot_db_id, group_id=group_id, user_id=sender_id, seen_at=time.time())
             except Exception as _e:
                 logger.debug(f"[WaveMemory] impression update in on_decorating_result failed: {_e}")
 
@@ -974,17 +967,12 @@ class IngressMixin:
             if len(self._reply_tracker) > 200:
                 self._reply_tracker = {k: v for k, v in self._reply_tracker.items() if now - v < 60}
 
-        # 用户画像仍以 (user_id, group_id, bot_id) 建模，只能由群聊更新。
+        # 群聊互动活跃计数登记到 person_scene_stats（替代 user_profiles）。
         if runtime_scope.visibility == "group" and sender_id and sender_id != "bot":
             try:
-                self.db.conn.execute(
-                    """UPDATE user_profiles 
-                       SET interaction_count = COALESCE(interaction_count, 0) + 1,
-                           last_seen = ?
-                       WHERE user_id = ? AND group_id = ? AND bot_id = ?""",
-                    (time.time(), sender_id, group_id, bot_db_id),
-                )
-                self.db.conn.commit()
+                stats = getattr(self.db, "person_scene_stats", None)
+                if stats is not None and hasattr(stats, "touch"):
+                    stats.touch(bot_id=bot_db_id, group_id=group_id, user_id=sender_id, increment=1, seen_at=time.time())
             except Exception:
                 pass
 

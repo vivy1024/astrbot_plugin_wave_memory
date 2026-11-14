@@ -63,14 +63,15 @@ def _user_present_in_scope(conn: Any, scope: RuntimeScope, user_id: str, *, curr
     bot_id = scope.bot_id
     if scope.session and scope.visibility == "group":
         group_id = scope.session.conversation_id
-        if _table_exists(conn, "user_profiles"):
-            row = conn.execute(
-                """SELECT 1 FROM user_profiles
-                   WHERE user_id=? AND group_id=? AND bot_id=? LIMIT 1""",
-                (user_id, group_id, bot_id),
-            ).fetchone()
-            if row:
-                return True
+        for table in ("person_scene_stats", "user_profiles"):
+            if _table_exists(conn, table):
+                row = conn.execute(
+                    f"""SELECT 1 FROM {table}
+                       WHERE user_id=? AND group_id=? AND bot_id=? LIMIT 1""",
+                    (user_id, group_id, bot_id),
+                ).fetchone()
+                if row:
+                    return True
         if _table_exists(conn, "memories"):
             row = conn.execute(
                 """SELECT 1 FROM memories
@@ -83,13 +84,14 @@ def _user_present_in_scope(conn: Any, scope: RuntimeScope, user_id: str, *, curr
         return False
 
     # 回退到当前 Bot 全局检查
-    if _table_exists(conn, "user_profiles"):
-        row = conn.execute(
-            """SELECT 1 FROM user_profiles WHERE user_id=? AND bot_id=? LIMIT 1""",
-            (user_id, bot_id),
-        ).fetchone()
-        if row:
-            return True
+    for table in ("person_scene_stats", "user_profiles"):
+        if _table_exists(conn, table):
+            row = conn.execute(
+                f"""SELECT 1 FROM {table} WHERE user_id=? AND bot_id=? LIMIT 1""",
+                (user_id, bot_id),
+            ).fetchone()
+            if row:
+                return True
     if _table_exists(conn, "memories"):
         row = conn.execute(
             """SELECT 1 FROM memories WHERE sender_id=? AND bot_id=? LIMIT 1""",
@@ -302,11 +304,13 @@ def _resolve_user_id_uncached(db: Any, target: str | None, scope: RuntimeScope, 
             if row and row[0]:
                 return str(row[0])
 
-    # 3. user_profiles (first current group, then Bot-wide)
-    if _table_exists(conn, "user_profiles"):
+    # 3. person_scene_stats / user_profiles (first current group, then Bot-wide)
+    for table in ("person_scene_stats", "user_profiles"):
+        if not _table_exists(conn, table):
+            continue
         if group_id:
             row = conn.execute(
-                """SELECT user_id FROM user_profiles
+                f"""SELECT user_id FROM {table}
                    WHERE group_id=? AND bot_id=? AND nickname = ?
                    ORDER BY COALESCE(last_seen, 0) DESC LIMIT 1""",
                 (group_id, bot_id, text),
@@ -316,7 +320,7 @@ def _resolve_user_id_uncached(db: Any, target: str | None, scope: RuntimeScope, 
 
         if not current_group_only:
             row = conn.execute(
-                """SELECT user_id FROM user_profiles
+                f"""SELECT user_id FROM {table}
                    WHERE bot_id=? AND nickname = ?
                    ORDER BY COALESCE(last_seen, 0) DESC LIMIT 1""",
                 (bot_id, text),
@@ -325,7 +329,7 @@ def _resolve_user_id_uncached(db: Any, target: str | None, scope: RuntimeScope, 
                 return str(row[0])
 
             row = conn.execute(
-                """SELECT user_id FROM user_profiles
+                f"""SELECT user_id FROM {table}
                    WHERE bot_id=? AND nickname LIKE ?
                    ORDER BY COALESCE(last_seen, 0) DESC LIMIT 1""",
                 (bot_id, f"%{text}%"),
@@ -357,14 +361,15 @@ def display_name_for_user(db: Any, user_id: str, scope: RuntimeScope) -> str:
         if row and str(row[0] or "").strip():
             return str(row[0]).strip()
 
-    if _table_exists(conn, "user_profiles"):
-        row = conn.execute(
-            """SELECT nickname FROM user_profiles
-               WHERE user_id=? AND group_id=? AND bot_id=? LIMIT 1""",
-            (user_id, group_id, bot_id),
-        ).fetchone()
-        if row and str(row[0] or "").strip():
-            return str(row[0]).strip()
+    for table in ("person_scene_stats", "user_profiles"):
+        if _table_exists(conn, table):
+            row = conn.execute(
+                f"""SELECT nickname FROM {table}
+                   WHERE user_id=? AND group_id=? AND bot_id=? LIMIT 1""",
+                (user_id, group_id, bot_id),
+            ).fetchone()
+            if row and str(row[0] or "").strip():
+                return str(row[0]).strip()
 
     if _table_exists(conn, "memories"):
         row = conn.execute(

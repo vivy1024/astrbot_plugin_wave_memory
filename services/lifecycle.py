@@ -202,97 +202,95 @@ class AffinityEngine:
         now = time.time()
         updated = 0
 
-        for (user_id, group_id), deltas in self._buffer.items():
-            # 读取当前维度
-            row = self.db.conn.execute(
-                "SELECT affection, metadata, last_seen FROM user_profiles WHERE user_id = ? AND group_id = ? AND bot_id = ?",
-                (user_id, group_id, self.bot_db_id),
-            ).fetchone()
+        stats_repo = getattr(self.db, "person_scene_stats", None)
+        if stats_repo is not None and hasattr(stats_repo, "touch"):
+            for (user_id, group_id), _deltas in self._buffer.items():
+                stats_repo.touch(
+                    bot_id=self.bot_db_id,
+                    group_id=group_id,
+                    user_id=user_id,
+                    increment=1,
+                    seen_at=now,
+                )
+                updated += 1
+        else:
+            for (user_id, group_id), deltas in self._buffer.items():
+                # 读取当前维度（仅兼容未挂载 person_scene_stats 的旧隔离测试）
+                row = self.db.conn.execute(
+                    "SELECT affection, metadata, last_seen FROM user_profiles WHERE user_id = ? AND group_id = ? AND bot_id = ?",
+                    (user_id, group_id, self.bot_db_id),
+                ).fetchone()
 
-            if not row:
-                # 新用户，创建 profile
-                dims = {"familiarity": 0, "trust": 0, "fun": 0, "hostility": 0, "depth": 0}
-                last_seen = now
-            else:
-                meta = json.loads(row[1]) if row[1] else {}
-                dims = meta.get("dimensions", {"familiarity": 0, "trust": 0, "fun": 0, "hostility": 0, "depth": 0})
-                last_seen = row[2] or now
-
-            # 执行时间衰减（分段：intimate 阶段衰减更慢，neutral 更快）
-            days_silent = (now - last_seen) / 86400.0
-            if days_silent > 3:
-                effective_days = days_silent - 3
-                # 根据当前态度阶段调整衰减速度
-                current_attitude = meta.get("attitude_level", "neutral") if row else "neutral"
-                if current_attitude == "intimate":
-                    decay_factor = INTIMATE_DECAY_SLOWDOWN
-                elif current_attitude == "friendly":
-                    decay_factor = FRIENDLY_DECAY_SLOWDOWN
+                if not row:
+                    dims = {"familiarity": 0, "trust": 0, "fun": 0, "hostility": 0, "depth": 0}
+                    last_seen = now
                 else:
-                    decay_factor = 1.0
-                for dim_name in dims:
-                    decay = DAILY_DECAY[dim_name]
-                    adjusted_decay = 1.0 - (1.0 - decay) * decay_factor
-                    if days_silent > 14:
-                        normal_decay = adjusted_decay ** 11
-                        extra_decay = (adjusted_decay * 0.995) ** (effective_days - 11)
-                        dims[dim_name] *= normal_decay * extra_decay
+                    meta = json.loads(row[1]) if row[1] else {}
+                    dims = meta.get("dimensions", {"familiarity": 0, "trust": 0, "fun": 0, "hostility": 0, "depth": 0})
+                    last_seen = row[2] or now
+
+                days_silent = (now - last_seen) / 86400.0
+                if days_silent > 3:
+                    effective_days = days_silent - 3
+                    current_attitude = meta.get("attitude_level", "neutral") if row else "neutral"
+                    if current_attitude == "intimate":
+                        decay_factor = INTIMATE_DECAY_SLOWDOWN
+                    elif current_attitude == "friendly":
+                        decay_factor = FRIENDLY_DECAY_SLOWDOWN
                     else:
-                        dims[dim_name] *= adjusted_decay ** effective_days
+                        decay_factor = 1.0
+                    for dim_name in dims:
+                        decay = DAILY_DECAY[dim_name]
+                        adjusted_decay = 1.0 - (1.0 - decay) * decay_factor
+                        if days_silent > 14:
+                            normal_decay = adjusted_decay ** 11
+                            extra_decay = (adjusted_decay * 0.995) ** (effective_days - 11)
+                            dims[dim_name] *= normal_decay * extra_decay
+                        else:
+                            dims[dim_name] *= adjusted_decay ** effective_days
 
-            # 关键词增量不再并入正式五维；flush 只做时间衰减与档案触达。
+                for dim_name in dims:
+                    lo, hi = -100, 100
+                    dims[dim_name] = _clamp(dims[dim_name], lo, hi)
 
-            # 钳位
-            for dim_name in dims:
-                lo, hi = DIM_RANGES.get(dim_name, (-100, 100))
-                dims[dim_name] = _clamp(dims[dim_name], lo, hi)
+                existing_meta = {}
+                current_affection = 0
+                existing_row = self.db.conn.execute(
+                    "SELECT metadata, affection FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
+                    (user_id, group_id, self.bot_db_id),
+                ).fetchone()
+                if existing_row:
+                    if existing_row[0]:
+                        try:
+                            existing_meta = json.loads(existing_row[0])
+                        except Exception:
+                            pass
+                    if existing_row[1] is not None:
+                        current_affection = existing_row[1]
 
-            # 读取现有用户档案
-            existing_meta = {}
-            current_affection = 0
-            existing_row = self.db.conn.execute(
-                "SELECT metadata, affection FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
-                (user_id, group_id, self.bot_db_id),
-            ).fetchone()
-            if existing_row:
-                if existing_row[0]:
-                    try:
-                        existing_meta = json.loads(existing_row[0])
-                    except Exception:
-                        pass
-                if existing_row[1] is not None:
-                    current_affection = existing_row[1]
+                attitude = _get_attitude_level(current_affection)
+                existing_meta["dimensions"] = {k: round(v, 2) for k, v in dims.items()}
+                existing_meta["last_decay_at"] = now
+                existing_meta["attitude_level"] = attitude
+                target_profile = self.target_profiles.get(user_id)
+                if target_profile:
+                    existing_meta["target_type"] = "bot"
+                    existing_meta["target_bot_id"] = target_profile.get("db_id") or user_id
+                    existing_meta["target_name"] = target_profile.get("name") or target_profile.get("db_id") or user_id
+                else:
+                    existing_meta.setdefault("target_type", "user")
+                meta = existing_meta
 
-            # 态度等级与综合好感度：
-            # 严格废黜纯代码私自修改 affection 的旧逻辑。
-            # affection 只能由 LLM 显式调用 wave_memory_record_social_impression 工具裁决；
-            # lifecycle 仅维护 dimensions 特征蓄水池和衰减，绝对不私自覆盖 affection！
-            attitude = _get_attitude_level(current_affection)
-
-            # 只更新 dimensions 相关字段，保留 MetaThinking/LLM 的 impression/tags/ledger
-            existing_meta["dimensions"] = {k: round(v, 2) for k, v in dims.items()}
-            existing_meta["last_decay_at"] = now
-            existing_meta["attitude_level"] = attitude
-            target_profile = self.target_profiles.get(user_id)
-            if target_profile:
-                existing_meta["target_type"] = "bot"
-                existing_meta["target_bot_id"] = target_profile.get("db_id") or user_id
-                existing_meta["target_name"] = target_profile.get("name") or target_profile.get("db_id") or user_id
-            else:
-                existing_meta.setdefault("target_type", "user")
-            meta = existing_meta
-
-            # 写入：affection 绝不在 ON CONFLICT 中被粗暴覆盖，保持当前 LLM 设定的正式分值
-            self.db.conn.execute(
-                """INSERT INTO user_profiles (user_id, group_id, nickname, affection, interaction_count, first_seen, last_seen, personality_tags, notes, metadata, bot_id)
-                   VALUES (?, ?, ?, ?, 0, ?, ?, '', '', ?, ?)
-                   ON CONFLICT(user_id, group_id, bot_id) DO UPDATE SET
-                   last_seen = excluded.last_seen,
-                   metadata = excluded.metadata,
-                   interaction_count = interaction_count + 1""",
-                (user_id, group_id, "", current_affection, now, now, json.dumps(meta, ensure_ascii=False), self.bot_db_id),
-            )
-            updated += 1
+                self.db.conn.execute(
+                    """INSERT INTO user_profiles (user_id, group_id, nickname, affection, interaction_count, first_seen, last_seen, personality_tags, notes, metadata, bot_id)
+                       VALUES (?, ?, ?, ?, 0, ?, ?, '', '', ?, ?)
+                       ON CONFLICT(user_id, group_id, bot_id) DO UPDATE SET
+                       last_seen = excluded.last_seen,
+                       metadata = excluded.metadata,
+                       interaction_count = interaction_count + 1""",
+                    (user_id, group_id, "", current_affection, now, now, json.dumps(meta, ensure_ascii=False), self.bot_db_id),
+                )
+                updated += 1
 
         # 顺便更新 person_registry（别名自动发现）
         for (user_id, group_id) in list(self._buffer.keys())[:50]:
@@ -625,6 +623,11 @@ class LifecycleService:
         self._decay_formal_relationships(now)
 
         try:
+            has_legacy = self.db.conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='user_profiles'"
+            ).fetchone()
+            if not has_legacy:
+                return archived_count
             rows = self.db.conn.execute(
                 "SELECT user_id, group_id, bot_id, affection, metadata, last_seen FROM user_profiles"
             ).fetchall()

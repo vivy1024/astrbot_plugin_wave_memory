@@ -170,40 +170,19 @@ class WaveMemoryNoteSocialAnchorTool(FunctionTool[AstrAgentContext]):
             except Exception:
                 pass
 
-        # 3. 写入 user_profiles metadata 中的 social_anchors 列表
-        try:
-            row = self.db.conn.execute(
-                "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
-                (user_id, profile_scene, runtime_scope.bot_id),
-            ).fetchone()
-            metadata: dict[str, Any] = {}
-            if row and row[0]:
-                try:
-                    loaded = json.loads(row[0])
-                    if isinstance(loaded, dict):
-                        metadata = loaded
-                except Exception:
-                    metadata = {}
-            anchors = metadata.get("social_anchors")
-            if not isinstance(anchors, list):
-                anchors = []
-            anchors.append({
-                "anchor_type": anchor_type,
-                "summary": summary,
-                "is_active_concern": is_active_concern,
-                "created_at": now,
-            })
-            metadata["social_anchors"] = anchors[-10:]
-            self.db.conn.execute(
-                """INSERT INTO user_profiles (user_id, group_id, bot_id, metadata, interaction_count, last_seen)
-                   VALUES (?, ?, ?, ?, 1, ?)
-                   ON CONFLICT(user_id, group_id, bot_id) DO UPDATE SET
-                   metadata=excluded.metadata, last_seen=excluded.last_seen""",
-                (user_id, profile_scene, runtime_scope.bot_id, json.dumps(metadata, ensure_ascii=False), now),
-            )
-            self.db.conn.commit()
-        except Exception as e:
-            return f"人情备忘保存失败: {e}"
+        # 3. 活跃登记到 person_scene_stats（人情锚点已全部在 scoped_soul_timeline，不再写 user_profiles）
+        stats = getattr(self.db, "person_scene_stats", None)
+        if stats is not None and hasattr(stats, "touch"):
+            try:
+                stats.touch(
+                    bot_id=runtime_scope.bot_id,
+                    group_id=profile_scene,
+                    user_id=user_id,
+                    nickname=display,
+                    seen_at=now,
+                )
+            except Exception:
+                pass
 
         concern_msg = "（已挂载为活跃关切，下次互动时将主动跟进）" if is_active_concern else ""
         return f"已记录与「{display}」的人情备忘：[{anchor_type}] {summary}{concern_msg}"

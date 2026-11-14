@@ -236,12 +236,19 @@ class _Context:
             )
             name = sanitize_display_name(row[0]) if row else ""
             if not name:
-                row = self.fetchone(
-                    "SELECT nickname FROM user_profiles WHERE user_id=? AND bot_id=? "
-                    "AND COALESCE(nickname,'')!='' ORDER BY last_seen DESC LIMIT 1",
-                    (uid, self.bot_id),
-                )
-                name = sanitize_display_name(row[0]) if row else ""
+                for table in ("person_scene_stats", "user_profiles"):
+                    try:
+                        row = self.fetchone(
+                            f"SELECT nickname FROM {table} WHERE user_id=? AND bot_id=? "
+                            "AND COALESCE(nickname,'')!='' ORDER BY last_seen DESC LIMIT 1",
+                            (uid, self.bot_id),
+                        )
+                    except Exception:
+                        row = None
+                    if row and row[0]:
+                        name = sanitize_display_name(row[0])
+                        if name:
+                            break
         except Exception:
             name = ""
         self.names_by_sender[uid] = name or uid

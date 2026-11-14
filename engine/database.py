@@ -49,6 +49,7 @@ from .db.bot_jargon_repo import BotJargonRepository
 from .db.scoped_knowledge_repo import ScopedKnowledgeRepo
 from .db.scoped_learning_projection_repo import ScopedFewShotRepository
 from .db.person_timeline_repo import PersonTimelineRepo
+from .db.person_scene_stats_repo import PersonSceneStatsRepository
 from .db.relationship_portrait_repo import RelationshipPortraitRepo
 from .db.person_identity_repo import PersonIdentityRepo
 from .db.bot_profile_repo import BotProfileRepo
@@ -138,6 +139,7 @@ class WaveMemoryDB:
                 soul_context_provider=self._soul_context_provider,
             )
             self._person_timeline = PersonTimelineRepo(self._cm)
+            self._person_scene_stats = PersonSceneStatsRepository(self._cm)
             # 关系小传：Bot 为每个人写的一段小传与历史版本（纯增量建表）
             self._relationship_portraits = RelationshipPortraitRepo(self._cm)
             self._person_identity = PersonIdentityRepo(self._cm)
@@ -209,6 +211,11 @@ class WaveMemoryDB:
     def bot_mood(self) -> BotMoodRepository:
         """Bot 心情仓储：一个 Bot 一份心情 + 带来源的情绪事件流水。"""
         return self._bot_mood
+
+    @property
+    def person_scene_stats(self) -> PersonSceneStatsRepository:
+        """群友分场景活跃统计仓储（替代 user_profiles 的花名册/互动计数/昵称角色）。"""
+        return self._person_scene_stats
 
     @property
     def bot_body(self) -> BotBodyRepository:

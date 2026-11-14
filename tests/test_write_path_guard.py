@@ -65,7 +65,6 @@ SELF_COMMIT_ALLOWLIST = WRITE_ENTRY_ALLOWLIST | {
     "scope_recovery.py",
     "tag_auditor.py",  # 遗留：治理作业自管事务
     "approved_scope_recovery_indexes.py",  # 遗留：索引恢复作业
-    "inbound_message_handler.py",  # 遗留：入口自提交
     "lifecycle.py",  # 遗留：好感/画像自提交，含已无调用者的 legacy 事件写入
     "meta_thinking.py",  # 遗留：现场思考自提交
     "tag_job.py",  # 遗留：标签作业
@@ -76,6 +75,7 @@ SELF_COMMIT_ALLOWLIST = WRITE_ENTRY_ALLOWLIST | {
 MUST_STAY_CLEAN = (
     "reflection_trigger.py",
     "experience_episodes.py",
+    "inbound_message_handler.py",
 )
 
 _WRITE_PATTERN = re.compile(

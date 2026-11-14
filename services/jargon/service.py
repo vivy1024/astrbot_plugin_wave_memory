@@ -686,17 +686,18 @@ class JargonService:
                 names |= {str(row[0]) for row in rows if row[0]}
             except Exception:
                 pass
-            try:
-                if bot_id:
-                    rows = conn.execute(
-                        "SELECT DISTINCT nickname FROM user_profiles WHERE group_id = ? AND bot_id = ?",
-                        (group_id, bot_id),
-                    )
-                else:
-                    rows = conn.execute("SELECT DISTINCT nickname FROM user_profiles WHERE group_id = ?", (group_id,))
-                names |= {str(row[0]) for row in rows if row[0]}
-            except Exception:
-                pass
+            for table in ("person_scene_stats", "user_profiles"):
+                try:
+                    if bot_id:
+                        rows = conn.execute(
+                            f"SELECT DISTINCT nickname FROM {table} WHERE group_id = ? AND bot_id = ?",
+                            (group_id, bot_id),
+                        )
+                    else:
+                        rows = conn.execute(f"SELECT DISTINCT nickname FROM {table} WHERE group_id = ?", (group_id,))
+                    names |= {str(row[0]) for row in rows if row[0]}
+                except Exception:
+                    continue
         frozen = frozenset(names)
         self._person_alias_cache[key] = (now, frozen)
         return frozen

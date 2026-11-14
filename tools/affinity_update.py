@@ -397,23 +397,32 @@ class WaveMemoryAffinityTool(FunctionTool[AstrAgentContext]):
     def _people_by_id(self, scope: RuntimeScope) -> dict[str, dict[str, Any]]:
         """Read identity helpers only inside the already verified Bot + group Scope."""
         assert scope.session is not None
-        rows = self.db.conn.execute(
-            """SELECT user_id, nickname, interaction_count
-                 FROM user_profiles
-                WHERE bot_id=? AND group_id=?""",
-            (scope.bot_id, scope.session.conversation_id),
-        ).fetchall()
         people: dict[str, dict[str, Any]] = {}
-        for user_id, nickname, interaction_count in rows:
-            if user_id is None:
+        for table in ("user_profiles", "person_scene_stats"):
+            try:
+                rows = self.db.conn.execute(
+                    f"""SELECT user_id, nickname, interaction_count
+                         FROM {table}
+                        WHERE bot_id=? AND group_id=?""",
+                    (scope.bot_id, scope.session.conversation_id),
+                ).fetchall()
+            except Exception:
                 continue
-            uid = str(user_id)
-            people[uid] = {
-                "user_id": uid,
-                # Resolve historical names only for the selected ranking rows.
-                "display_name": str(nickname or uid),
-                "interaction_count": int(interaction_count or 0),
-            }
+            for user_id, nickname, interaction_count in rows:
+                if user_id is None:
+                    continue
+                uid = str(user_id)
+                cur = people.get(uid)
+                if cur is None:
+                    people[uid] = {
+                        "user_id": uid,
+                        "display_name": str(nickname or uid),
+                        "interaction_count": int(interaction_count or 0),
+                    }
+                else:
+                    if str(nickname or "").strip():
+                        cur["display_name"] = str(nickname)
+                    cur["interaction_count"] = max(cur["interaction_count"], int(interaction_count or 0))
         return people
 
     @staticmethod

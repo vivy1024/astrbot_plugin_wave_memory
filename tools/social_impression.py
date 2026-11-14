@@ -360,31 +360,10 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
                     impact=1.5,
                     now=now,
                 )
-            row = None
-            try:
-                row = self.db.conn.execute(
-                    "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
-                    (user_id, group_id, runtime_scope.bot_id),
-                ).fetchone()
-            except Exception:
-                row = None
-            leftover: dict[str, Any] = {}
-            if row and row[0]:
-                try:
-                    loaded = json.loads(row[0])
-                    if isinstance(loaded, dict):
-                        leftover = strip_timeline_json(loaded)
-                except Exception:
-                    leftover = {}
-            self.db.conn.execute(
-                """INSERT INTO user_profiles (user_id, group_id, bot_id, metadata, interaction_count, last_seen)
-                   VALUES (?, ?, ?, ?, 1, ?)
-                   ON CONFLICT(user_id, group_id, bot_id) DO UPDATE SET
-                   metadata=excluded.metadata,
-                   last_seen=excluded.last_seen""",
-                (user_id, group_id, runtime_scope.bot_id, json.dumps(leftover, ensure_ascii=False), now),
-            )
-            self.db.conn.commit()
+            # 活跃时间记录到 person_scene_stats（印象与好感已全在正式表，不再双写 user_profiles）
+            stats = getattr(self.db, "person_scene_stats", None)
+            if stats is not None and hasattr(stats, "touch"):
+                stats.touch(bot_id=runtime_scope.bot_id, group_id=group_id, user_id=user_id, seen_at=now)
         except Exception as e:
             return f"印象持久化失败: {e}"
 

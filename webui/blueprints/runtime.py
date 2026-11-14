@@ -876,11 +876,30 @@ async def user_profile(raw_uid: str):
         return jsonify({"ok": False, "error": {"code": "invalid_scope", "message": str(exc)}}), 400
     bot_id = profile.db_id if profile is not None else str(request.args.get("bot_id") or body.get("bot_id")).strip()
 
+    stats_repo = getattr(db, "person_scene_stats", None)
     if request.method == "GET":
-        row = db.conn.execute(
-            "SELECT user_id, nickname, affection, interaction_count, last_seen, metadata FROM user_profiles WHERE user_id = ? AND bot_id = ? LIMIT 1",
-            (uid, bot_id),
-        ).fetchone()
+        if stats_repo is not None:
+            st = stats_repo.get(bot_id=bot_id, group_id="live_room", user_id=uid)
+            if st:
+                return jsonify({
+                    "ok": True,
+                    "data": {
+                        "uid": uid,
+                        "exists": True,
+                        "nickname": st["nickname"],
+                        "affection": 0,
+                        "interaction_count": st["interaction_count"],
+                        "last_seen": st["last_seen"],
+                        "dimensions": {},
+                    },
+                })
+        try:
+            row = db.conn.execute(
+                "SELECT user_id, nickname, affection, interaction_count, last_seen, metadata FROM user_profiles WHERE user_id = ? AND bot_id = ? LIMIT 1",
+                (uid, bot_id),
+            ).fetchone()
+        except Exception:
+            row = None
         if not row:
             return jsonify({
                 "ok": True,
@@ -904,8 +923,12 @@ async def user_profile(raw_uid: str):
             }
         })
 
-    # POST 更新画像
+    # POST 更新画像：优先登记 person_scene_stats（正式好感经 /commands 写入，不再写 user_profiles）
     nickname = sanitize_display_name(body.get("nickname"))
+    if stats_repo is not None:
+        stats_repo.touch(bot_id=bot_id, group_id="live_room", user_id=uid, nickname=nickname or uid, increment=1)
+        return jsonify({"ok": True, "data": {"uid": uid, "status": "updated"}})
+
     dimensions = body.get("dimensions")
     affection_delta = int(body.get("affection_delta") or 0)
 

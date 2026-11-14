@@ -391,13 +391,21 @@ class WaveMemoryPersonSearchTool(FunctionTool[AstrAgentContext]):
                      LIMIT 12""",
                 (qq_id, *params),
             ).fetchall()
-        interaction = conn.execute(
-            """SELECT interaction_count, nickname, last_seen
-                 FROM user_profiles
-                WHERE user_id=? AND group_id=? AND bot_id=?
-                LIMIT 1""",
-            (qq_id, scope.session.conversation_id, scope.bot_id),
-        ).fetchone()
+        interaction = None
+        for table in ("person_scene_stats", "user_profiles"):
+            try:
+                row = conn.execute(
+                    f"""SELECT interaction_count, nickname, last_seen
+                         FROM {table}
+                        WHERE user_id=? AND group_id=? AND bot_id=?
+                        LIMIT 1""",
+                    (qq_id, scope.session.conversation_id, scope.bot_id),
+                ).fetchone()
+                if row is not None:
+                    interaction = row
+                    break
+            except Exception:
+                continue
         reg_cols = {str(c[1]) for c in conn.execute("PRAGMA table_info(person_registry)").fetchall()} if "person_registry" in {str(r[0]) for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()} else set()
         if "aliases" in reg_cols:
             where_reg = "qq_id=?" if "qq_id" in reg_cols else "user_id=?"

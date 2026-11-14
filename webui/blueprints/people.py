@@ -762,14 +762,9 @@ async def list_relationships():
         ).strip().lower() in {"1", "true", "yes", "on"}
         profiles = []
         conn = _connection()
-        if conn is not None and _table_exists(conn, "user_profiles"):
+        if conn is not None:
             registry = _registry_by_principal(conn)
-            for profile in _table_rows(
-                conn,
-                "user_profiles",
-                "bot_id=? AND group_id=?",
-                (scope.bot_id, scope.session.conversation_id),
-            ):
+            for profile in _roster_rows(conn, scope.bot_id, scope.session.conversation_id):
                 item = _profile_item(profile, registry, scope)
                 if item is not None:
                     profiles.append(item)
@@ -952,17 +947,27 @@ def _clear_impression_on_connection(conn: Any, *, scope: RuntimeScope, user_id: 
         raise ValueError("user_id_required")
     if len(reason) < 4:
         raise ValueError("impression_clear_reason_required")
-    if not _table_exists(conn, "user_profiles"):
+    metadata: dict[str, Any] = {}
+    has_row = False
+    if _table_exists(conn, "person_scene_stats"):
+        r2 = conn.execute(
+            "SELECT 1 FROM person_scene_stats WHERE user_id=? AND group_id=? AND bot_id=?",
+            (user_id, scope.session.conversation_id, scope.bot_id),
+        ).fetchone()
+        if r2 is not None:
+            has_row = True
+    if _table_exists(conn, "user_profiles"):
+        row = conn.execute(
+            "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
+            (user_id, scope.session.conversation_id, scope.bot_id),
+        ).fetchone()
+        if row is not None:
+            has_row = True
+            loaded = _json(row[0], {})
+            if isinstance(loaded, dict):
+                metadata = loaded
+    if not has_row:
         raise LookupError("person_not_found")
-    row = conn.execute(
-        "SELECT metadata FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
-        (user_id, scope.session.conversation_id, scope.bot_id),
-    ).fetchone()
-    if row is None:
-        raise LookupError("person_not_found")
-    metadata = _json(row[0], {})
-    if not isinstance(metadata, dict):
-        metadata = {}
     now = time.time()
     try:
         from ...services.impression_timeline import (
@@ -1612,6 +1617,32 @@ async def keep_relationship_portrait():
     return _portrait_mutation("people.portrait.keep", db, scope, user_id)
 
 
+def _roster_rows(conn: Any, bot_id: str, group_id: str) -> list[dict[str, Any]]:
+    """按 (bot_id, group_id) 获取花名册：合并 person_scene_stats 与遗留 user_profiles。"""
+    merged: dict[str, dict[str, Any]] = {}
+    if _table_exists(conn, "user_profiles"):
+        for profile in _table_rows(conn, "user_profiles", "bot_id=? AND group_id=?", (bot_id, group_id)):
+            uid = str(profile.get("user_id") or "").strip()
+            if uid:
+                merged[uid] = dict(profile)
+    if _table_exists(conn, "person_scene_stats"):
+        for stats in _table_rows(conn, "person_scene_stats", "bot_id=? AND group_id=?", (bot_id, group_id)):
+            uid = str(stats.get("user_id") or "").strip()
+            if not uid:
+                continue
+            cur = merged.get(uid)
+            if cur is None:
+                merged[uid] = {**stats, "metadata": "{}"}
+            else:
+                if str(stats.get("nickname") or "").strip():
+                    cur["nickname"] = stats["nickname"]
+                cur["interaction_count"] = max(int(cur.get("interaction_count") or 0), int(stats.get("interaction_count") or 0))
+                cur["last_seen"] = max(float(cur.get("last_seen") or 0.0), float(stats.get("last_seen") or 0.0))
+                if not cur.get("first_seen") and stats.get("first_seen"):
+                    cur["first_seen"] = stats["first_seen"]
+    return list(merged.values())
+
+
 @people_bp.route("/people", methods=["GET"])
 @require_auth
 async def list_people():
@@ -1620,7 +1651,7 @@ async def list_people():
         conn = _connection()
         if conn is None:
             return jsonify(error_payload("service_unavailable", "People store is unavailable", retryable=True)), 503
-        if not _table_exists(conn, "user_profiles"):
+        if not _table_exists(conn, "person_scene_stats") and not _table_exists(conn, "user_profiles"):
             return jsonify(page_response([], total=0, limit=limit, offset=offset))
 
         scope = _request_scope()
@@ -1629,12 +1660,7 @@ async def list_people():
         registry = _registry_by_principal(conn)
         items = [
             item
-            for profile in _table_rows(
-                conn,
-                "user_profiles",
-                "bot_id=? AND group_id=?",
-                (scope.bot_id, scope.session.conversation_id),
-            )
+            for profile in _roster_rows(conn, scope.bot_id, scope.session.conversation_id)
             if (item := _profile_item(profile, registry, scope)) is not None
         ]
         relationship_lookup: dict[str, Mapping[str, Any]] = {}

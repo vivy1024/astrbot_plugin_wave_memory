@@ -238,11 +238,8 @@ def test_note_social_anchor_tool_records_anchor_and_concern(tmp_path):
         assert "已记录与「u1」的人情备忘" in result
         assert "已挂载为活跃关切" in result
 
-        row = db.conn.execute("SELECT metadata FROM user_profiles WHERE user_id='u1'").fetchone()
-        meta = json.loads(row[0])
-        assert len(meta["social_anchors"]) == 1
-        assert meta["social_anchors"][0]["anchor_type"] == "bot_helped_user"
-        assert meta["social_anchors"][0]["is_active_concern"] is True
+        tl = repo.get_state(scope, limit=25, offset=0)["timeline"]["items"]
+        assert any("人情备忘（bot_helped_user）：通宵帮他排查了毕业设计代码死锁问题" in str(it.get("event_summary") or "") for it in tl)
 
         # 关切必须经正式写入链挂接，tracker 不再自写
         assert len(gateway.calls) == 1
@@ -538,8 +535,6 @@ def test_private_social_anchor_stays_in_that_private_chat(tmp_path):
             target_user="u1", anchor_type="user_helped_bot", summary="私下借给我一本绝版书",
         ))
         assert "已记录与" in result
-        rows = db.conn.execute("SELECT group_id FROM user_profiles WHERE user_id='u1' AND metadata LIKE '%绝版书%'").fetchall()
-        assert rows == [("private:u1",)]
         assert "绝版书" in str(repo.get_state(_private_scope(), limit=25, offset=0)["timeline"]["items"])
         assert "绝版书" not in str(repo.get_state(_scope(), limit=25, offset=0)["timeline"]["items"])
 

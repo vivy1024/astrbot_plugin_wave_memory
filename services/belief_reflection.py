@@ -228,6 +228,7 @@ class PersonNameGuard:
             names.add(folded)
 
         for sql, params in (
+            ("SELECT user_id, nickname FROM person_scene_stats WHERE bot_id=? LIMIT 20000", (bot_id,)),
             ("SELECT user_id, nickname FROM user_profiles WHERE bot_id=? LIMIT 20000", (bot_id,)),
             ("SELECT qq_id, display_name, aliases FROM person_registry LIMIT 20000", ()),
         ):

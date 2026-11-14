@@ -281,16 +281,19 @@ def non_private_stats(db: Any, *, bot_id: str, user_ids: Sequence[str], after_ev
 
 
 def _interaction_count(conn: Any, bot_id: str, user_ids: Sequence[str]) -> int | None:
-    """非私聊场合的互动次数合计（私聊的档案不计入：小传只用公开场合的信息）。"""
-    try:
-        row = conn.execute(
-            f"""SELECT SUM(interaction_count) FROM user_profiles
-                 WHERE bot_id=? AND user_id IN ({_marks(user_ids)}) AND COALESCE(group_id, '') NOT LIKE ?""",
-            (str(bot_id or ""), *user_ids, _PRIVATE_LIKE),
-        ).fetchone()
-    except Exception:
-        return None
-    return int(row[0]) if row and row[0] is not None else None
+    """非私聊场合的互动次数合计（优先读 person_scene_stats，旧库回退 user_profiles）。"""
+    for table in ("person_scene_stats", "user_profiles"):
+        try:
+            row = conn.execute(
+                f"""SELECT SUM(interaction_count) FROM {table}
+                     WHERE bot_id=? AND user_id IN ({_marks(user_ids)}) AND COALESCE(group_id, '') NOT LIKE ?""",
+                (str(bot_id or ""), *user_ids, _PRIVATE_LIKE),
+            ).fetchone()
+            if row and row[0] is not None:
+                return int(row[0])
+        except Exception:
+            continue
+    return None
 
 
 def _person_name(conn: Any, bot_id: str, user_ids: Sequence[str]) -> str:
@@ -303,18 +306,19 @@ def _person_name(conn: Any, bot_id: str, user_ids: Sequence[str]) -> str:
             row = None
         if row and str(row[0] or "").strip():
             return str(row[0]).strip()
-    try:
-        row = conn.execute(
-            f"""SELECT nickname FROM user_profiles
-                 WHERE bot_id=? AND user_id IN ({_marks(user_ids)}) AND COALESCE(group_id, '') NOT LIKE ?
-                   AND COALESCE(nickname, '') <> ''
-                 ORDER BY COALESCE(last_seen, 0) DESC LIMIT 1""",
-            (str(bot_id or ""), *user_ids, _PRIVATE_LIKE),
-        ).fetchone()
-    except Exception:
-        row = None
-    if row and str(row[0] or "").strip():
-        return str(row[0]).strip()
+    for table in ("person_scene_stats", "user_profiles"):
+        try:
+            row = conn.execute(
+                f"""SELECT nickname FROM {table}
+                     WHERE bot_id=? AND user_id IN ({_marks(user_ids)}) AND COALESCE(group_id, '') NOT LIKE ?
+                       AND COALESCE(nickname, '') <> ''
+                     ORDER BY COALESCE(last_seen, 0) DESC LIMIT 1""",
+                (str(bot_id or ""), *user_ids, _PRIVATE_LIKE),
+            ).fetchone()
+        except Exception:
+            row = None
+        if row and str(row[0] or "").strip():
+            return str(row[0]).strip()
     return str(user_ids[0]) if user_ids else ""
 
 
