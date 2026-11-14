@@ -99,6 +99,25 @@ class TestAttributionTags:
 
         assert "[你的历史回复]" in text
 
+    def test_cross_bot_legacy_literal_with_other_bot_name_is_not_self_reply(self):
+        """白真真读到历史错标成 sender_id='bot', sender_name='羽书' 时，不能标成[你的历史回复]。"""
+        text = _EngineStub().format_injection(
+            [
+                _memory("bot", "账本我记着呢", sender_name="羽书"),
+                _memory("bot", "灵币要省着用", sender_name="白真真"),
+            ],
+            speaker_id=SPEAKER,
+            bot_ids={"1336495069", "baizz"},
+            bot_names={"白真真", "阿真"},
+        )
+
+        lines = text.splitlines()
+        yushu_line = next(line for line in lines if "账本我记着呢" in line)
+        baizz_line = next(line for line in lines if "灵币要省着用" in line)
+        assert "[其他群友历史]" in yushu_line
+        assert "[你的历史回复]" not in yushu_line
+        assert "[你的历史回复]" in baizz_line
+
     def test_all_three_kinds_are_distinguished_together(self):
         text = _render([
             _memory(SPEAKER, "我下个月就回国"),

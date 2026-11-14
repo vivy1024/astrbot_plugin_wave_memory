@@ -17,7 +17,9 @@ def _build_legacy_like_db(db_path: Path) -> None:
             db_id TEXT PRIMARY KEY,
             payload TEXT NOT NULL
         );
-        INSERT INTO bot_profiles(db_id, payload) VALUES ('yushu', '{"session_prefix": "羽书"}');
+        INSERT INTO bot_profiles(db_id, payload) VALUES
+            ('yushu', '{"name": "羽书", "aliases": ["羽书bot"], "qq_id": "2715127743", "session_prefix": "羽书"}'),
+            ('baizz', '{"name": "白真真", "aliases": ["阿真"], "qq_id": "1336495069", "session_prefix": "白真真"}');
 
         CREATE TABLE memories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,7 +155,7 @@ def _build_legacy_like_db(db_path: Path) -> None:
            ('yushu', 'u1', 'g1', 0.5, 3, '[{"quote":"帮大忙","ts":20}]', 20.0)"""
     )
 
-    # 3. memories: 早期 chat/core (bot_id NULL) + bzz_experience/oni_lore/noise/empty group
+    # 3. memories: 早期 chat/core (bot_id NULL) + bzz_experience/oni_lore/noise/empty group + 跨 Bot 错标 sender_id='bot'
     conn.execute(
         """INSERT INTO memories(id, content, sender_id, sender_name, group_id, session_id, visibility, bot_id, source)
            VALUES
@@ -162,7 +164,10 @@ def _build_legacy_like_db(db_path: Path) -> None:
            (3, '白真真旧经验冗余', 'bzz', '白真真', 'g1', NULL, NULL, NULL, 'bzz_experience'),
            (4, '缺氧旧语料冗余', 'oni', 'ONI', 'g1', NULL, NULL, NULL, 'oni_lore'),
            (5, '无意义噪声', 'u2', '李四', 'g1', NULL, NULL, NULL, 'noise'),
-           (6, 'ONI测试空群', 'bot_remember', '主动记忆', '', NULL, NULL, NULL, 'chat')"""
+           (6, 'ONI测试空群', 'bot_remember', '主动记忆', '', NULL, NULL, NULL, 'chat'),
+           (7, '羽书发言被错存入baizz且标成bot', 'bot', '羽书', 'g1', '白真真:group:g1', 'group', 'baizz', 'chat'),
+           (8, '白真真发言被错存入yushu且标成bot', 'bot', '白真真', 'g1', '羽书:group:g1', 'group', 'yushu', 'chat'),
+           (9, '白真真自己的发言保持bot', 'bot', '白真真', 'g1', '白真真:group:g1', 'group', 'baizz', 'core')"""
     )
     conn.execute("INSERT INTO tags(id, name, created_at) VALUES (1, '灵石', 1000.0), (2, '熬夜', 1000.0)")
     conn.execute("INSERT INTO memory_tags(memory_id, tag_id, position, relevance) VALUES (1, 1, 0, 1.0), (2, 2, 0, 0.9), (3, 1, 0, 1.0)")
@@ -181,7 +186,9 @@ def test_dry_run_does_not_mutate_and_reports_exact_counts(tmp_path):
     assert report["null_bot_memories"]["deleted_obsolete"] == 4
     assert report["null_bot_memories"]["aligned_yushu"] == 2
     assert report["null_bot_memories"]["migrated_scoped_tags"] == 2
-    assert report["fts_cjk"]["missing_rows"] == 2
+    assert report["cross_bot_sender_repairs"]["mismatched_rows"] == 2
+    assert report["cross_bot_sender_repairs"]["repaired_rows"] == 0
+    assert report["fts_cjk"]["missing_rows"] == 5
     assert report["auxiliary"]["cleared_v51_backup_rows"] == 1
     assert report["auxiliary"]["cleared_scoped_beliefs"] == 1
     assert report["auxiliary"]["pruned_job_runs"] == 1
@@ -220,12 +227,16 @@ def test_apply_migrates_all_data_aligns_tags_and_fts_and_vacuums(tmp_path):
     assert unsettled[0][2] == 5
     assert len(json.loads(unsettled[0][3])) == 2
 
-    # 3. memories: 4 条废弃清理，2 条完整归属 yushu + session_id + visibility
-    rows = conn.execute("SELECT id, bot_id, session_id, visibility FROM memories ORDER BY id").fetchall()
+    # 3. memories: 4 条废弃清理，2 条完整归属 yushu + session_id + visibility，跨 Bot sender_id 还原为真实 QQ 号
+    rows = conn.execute("SELECT id, bot_id, session_id, visibility, sender_id FROM memories ORDER BY id").fetchall()
     assert rows == [
-        (1, "yushu", "羽书:group:g1", "group"),
-        (2, "yushu", "羽书:group:g1", "group"),
+        (1, "yushu", "羽书:group:g1", "group", "u1"),
+        (2, "yushu", "羽书:group:g1", "group", "u1"),
+        (7, "baizz", "白真真:group:g1", "group", "2715127743"),
+        (8, "yushu", "羽书:group:g1", "group", "1336495069"),
+        (9, "baizz", "白真真:group:g1", "group", "bot"),
     ]
+    assert report["cross_bot_sender_repairs"] == {"mismatched_rows": 2, "repaired_rows": 2}
 
     # 4. scoped_tags / scoped_memory_tags 补全，memory_tags 删除冗余记忆关联
     smt = conn.execute(

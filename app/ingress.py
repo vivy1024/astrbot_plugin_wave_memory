@@ -179,17 +179,19 @@ class IngressMixin:
             return
 
         # 平台会把 bot 自己发出的文本/图片回推成普通消息事件。
-        # ignore_bot_messages=true 时必须在这里也截断；after_message_sent 不是唯一入口。
+        # 只把「当前 Bot 自己」的回推截断并标记为 sender_id="bot"；
+        # 群里另一只己方 Bot 发来的消息保留其真实 sender_id，绝不能冒写成 "bot"。
         if sender_id and (sender_id == bot_id or sender_id in self._bot_qq_ids):
             event.should_call_llm(False)
             if self.ignore_bot_messages:
                 return
             if images:
+                is_self_bot = (sender_id == bot_id) if bot_id else True
                 await self.writer.enqueue({
                     "scope": runtime_scope,
                     "group_id": group_id,
-                    "sender_id": "bot",
-                    "sender_name": self._get_bot_name(sender_id if sender_id in self._bot_qq_ids else bot_id),
+                    "sender_id": "bot" if is_self_bot else sender_id,
+                    "sender_name": self._get_bot_name(bot_id if is_self_bot else sender_id),
                     "content": message,
                     "timestamp": time.time(),
                     "event_id": getattr(event, "message_id", None),
@@ -486,14 +488,15 @@ class IngressMixin:
                     if scope.visibility == "group" and sender_id:
                         in_duo_pingpong = service.observe_group_speaker(scope.session.id, sender_id)
 
-                    # 接话窗口：刚回复过此人且未转向他人
+                    # 接话窗口：刚回复过此人且未转向他人（允许顺着把话说完）
                     tracker = getattr(self, "_reply_tracker", None) or {}
-                    last_reply_ts = tracker.get(reply_tracker_key(scope.bot_id, scope.session.conversation_id, sender_id), 0)
+                    tracker_key = f"{scope.bot_id}:{scope.session.conversation_id}:{sender_id}"
+                    last_reply_ts = tracker.get(tracker_key, 0)
                     followup_win = float(getattr(proactive_cfg, "followup_window_seconds", 120.0) if proactive_cfg else 120.0)
-                    if last_reply_ts and 0 < service.clock() - last_reply_ts <= followup_win and not addressed_other:
+                    if last_reply_ts and 0 <= service.clock() - last_reply_ts <= followup_win and not addressed_other:
                         followup_eligible = True
 
-                    # 话题分工打分
+                    # 话题分工打分：即使全局 meta_thinking 返回 0.0，Bot 自己的擅长词仍应顶替/补足 relevance
                     pref_topics = getattr(proactive_cfg, "preferred_topics", ()) if proactive_cfg else ()
                     avoid_topics = getattr(proactive_cfg, "avoid_topics", ()) if proactive_cfg else ()
                     interest_kws = getattr(profile, "interest_keywords", ()) if profile else ()
@@ -503,8 +506,8 @@ class IngressMixin:
                         interest_keywords=interest_kws,
                         avoid_topics=avoid_topics,
                     )
-                    if relevance is None and topic_match > 0:
-                        relevance = topic_match
+                    if topic_match > 0:
+                        relevance = max(float(relevance or 0.0), float(topic_match))
 
                     # 心智读数与群心流节奏
                     mood_service = getattr(self, "mood_service", None)
@@ -960,12 +963,12 @@ class IngressMixin:
         bot_db_id = runtime_scope.bot_id
 
         # reply tracker 使用完整 Scope，避免群聊/私聊兼容 conversation id 相撞。
+        # 保留时长需覆盖主动接话窗口（最长可达 1800s），不能 60s 就误删导致接话窗口断档。
         if sender_id and group_id:
-            self._reply_tracker[reply_tracker_key(runtime_scope.bot_id, group_id, sender_id)] = time.time()
-            # 清理 60s 前的旧记录（防止内存泄漏）
             now = time.time()
+            self._reply_tracker[reply_tracker_key(runtime_scope.bot_id, group_id, sender_id)] = now
             if len(self._reply_tracker) > 200:
-                self._reply_tracker = {k: v for k, v in self._reply_tracker.items() if now - v < 60}
+                self._reply_tracker = {k: v for k, v in self._reply_tracker.items() if now - v < 1800}
 
         # 群聊互动活跃计数登记到 person_scene_stats（替代 user_profiles）。
         if runtime_scope.visibility == "group" and sender_id and sender_id != "bot":

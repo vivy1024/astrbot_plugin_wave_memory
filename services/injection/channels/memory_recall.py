@@ -238,17 +238,33 @@ class MemoryRecallChannel:
             )
             if str(value or "").strip()
         }
+        profile = getattr(ctx, "bot_profile", None)
+        bot_names: set[str] = set()
+        if profile is not None:
+            for candidate in (getattr(profile, "name", None), *(getattr(profile, "aliases", ()) or ())):
+                text = str(candidate or "").strip()
+                if text:
+                    bot_names.add(text)
         try:
             return self.query_engine.format_injection(
                 memories,
                 current_group_id=group_id,
                 speaker_id=str(getattr(ctx, "sender_id", "") or ""),
                 bot_ids=bot_ids,
+                bot_names=bot_names,
             )
         except TypeError:
-            return self.query_engine.format_injection(
-                memories, current_group_id=group_id
-            )
+            try:
+                return self.query_engine.format_injection(
+                    memories,
+                    current_group_id=group_id,
+                    speaker_id=str(getattr(ctx, "sender_id", "") or ""),
+                    bot_ids=bot_ids,
+                )
+            except TypeError:
+                return self.query_engine.format_injection(
+                    memories, current_group_id=group_id
+                )
 
     async def _query(self, ctx: Any, *, top_k: int, recall_cfg: Mapping[str, Any]) -> list[dict[str, Any]]:
         enable_shotgun = _as_bool(recall_cfg.get("enable_shotgun"), False)

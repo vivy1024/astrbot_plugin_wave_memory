@@ -635,6 +635,43 @@ class ScopeMessageIngressTest(unittest.TestCase):
         self.assertEqual(plugin._scope_resolution_failed_total, {"unknown_bot_self_id": 1})
         self.assertEqual(recorded_errors, [("BotSentScopeResolution", "unknown_bot_self_id")])
 
+    def test_peer_bot_image_echo_keeps_peer_sender_id_instead_of_bot_literal(self):
+        """友军 Bot 发出的图片回推到当前 Bot 收件箱时，不能写成 sender_id='bot'。"""
+        from pathlib import Path
+        import ast
+        from domain.scope import RuntimeScope
+
+        source_path = Path(__file__).resolve().parents[1] / "app" / "ingress.py"
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        method = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_handle_message")
+
+        class _DropRelImports(ast.NodeTransformer):
+            def visit_ImportFrom(self, node):
+                if node.level and node.module and "astrbot" not in node.module:
+                    node.level = 0
+                return node
+
+        module = ast.fix_missing_locations(ast.Module(body=[_DropRelImports().visit(method)], type_ignores=[]))
+        env = {"RuntimeScope": RuntimeScope, "time": _FakeClock(), "asyncio": asyncio, "logger": _FakeLogger(), "sanitize_display_name": lambda v: v}
+        exec(compile(module, str(source_path), "exec"), env)
+        handle_message = env["_handle_message"]
+
+        plugin = _IngressPlugin(self._resolver(self_id="1336495069"))
+        plugin._bot_qq_ids = ["2715127743", "1336495069"]
+        plugin._get_bot_name = lambda bid: {"2715127743": "羽书", "1336495069": "白真真"}.get(bid, bid)
+
+        peer_img_event = _FakeEvent(message="", sender_id="2715127743", group_id="150727649", self_id="1336495069")
+        ImageCls = type("Image", (), {})
+        peer_img_event.message_obj.message = [ImageCls()]
+
+        asyncio.run(handle_message(plugin, peer_img_event))
+
+        self.assertEqual(len(plugin.writer.items), 1)
+        item = plugin.writer.items[0]
+        self.assertEqual(item["sender_id"], "2715127743")
+        self.assertEqual(item["sender_name"], "羽书")
+        self.assertIn(False, peer_img_event.llm_calls)
+
 
 if __name__ == "__main__":
     unittest.main()

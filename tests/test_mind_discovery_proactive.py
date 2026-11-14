@@ -87,7 +87,7 @@ class TestMindStateAndSoulContext:
         g_scope = _group("g1", "u1", "yushu")
         svc.observe_message(g_scope, content="缺氧的液氧冷凝器又过热了", sender_name="阿明", directed=False)
         svc.observe_message(g_scope, content="感觉管道布置有问题", sender_name="阿明", directed=False)
-        svc.note_bot_reply("yushu", session_id="qq:group:g1")
+        svc.note_bot_reply("yushu", session_id="qq:group:g1", proactive=True)
 
         ctx = svc.get_soul_context(scope=g_scope)
         assert ctx["status"] == "available"
@@ -97,6 +97,7 @@ class TestMindStateAndSoulContext:
         assert ctx["circadian"]["phase"]
         assert ctx["mind_state"]["group_focus"]["last_speaker"] == "阿明"
         assert ctx["mind_state"]["group_focus"]["engaged_active"] is True
+        assert ctx["mind_state"]["group_focus"]["cooling_active"] is False
         assert ctx["mind_state"]["group_focus"]["topic"]
 
         # 群友发消息之后无人回复 → 若记一次冷场(ignored)，ignored_streak 上升且冷却激活
@@ -287,3 +288,52 @@ class TestMultiFeatureAirReadingAndArbiter:
         # 90 秒后共享冷却解除
         clock[0] += 95.0
         assert arbiter.shared_cooldown_remaining(bot_id="baizz", session_id="qq:group:g1", cooldown_seconds=90.0) == 0.0
+
+    def test_engaged_followup_exempts_min_gap_hourly_limit_and_skips_chat_backoff(self):
+        clock = [1_800_000_000.0]
+        svc = ReplyDecisionService(
+            {"bots": {"baizz": {"mode": "enforce", "score_threshold": 55}}},
+            clock=lambda: clock[0],
+        )
+
+        # 1. 普通不相关群聊被压制后，不能污染后续接话的 suppression_backoff
+        d_unrelated = svc.decide(ReplySignals(
+            bot_id="baizz", session_id="qq:group:g1", visibility="group",
+            message="今天中午吃面", direct=False, proactive_enabled=True,
+        ))
+        assert d_unrelated["allow"] is False
+        assert svc._state(("baizz", "visibility_unused", "x")).streak == 0  # sanity
+        assert svc._state(("baizz", "group", "qq:group:g1")).streak == 0
+
+        # 2. 刚主动开口后仍在 min_gap=300s 与小时上限内，但同人 120s 内继续接话 → engaged 豁免放行
+        d_followup = svc.decide(ReplySignals(
+            bot_id="baizz", session_id="qq:group:g1", visibility="group",
+            message="我在上班，你忙你的去", direct=False, proactive_enabled=True,
+            followup_eligible=True, cooldown_remaining=240.0,
+            proactive_hourly_limit_hit=True,
+        ))
+        assert d_followup["allow"] is True
+        assert d_followup["proactive_wake"] is True
+        assert "followup_window" in d_followup["reasons"]
+
+        # 3. 无 followup_eligible 且未到 min_gap / 超小时上限 → 正常拦截
+        d_blocked = svc.decide(ReplySignals(
+            bot_id="baizz", session_id="qq:group:g1", visibility="group",
+            message="另一个路人随便说句", direct=False, proactive_enabled=True,
+            followup_eligible=False, cooldown_remaining=240.0,
+        ))
+        assert d_blocked["allow"] is False
+        assert "cooldown" in d_blocked["reasons"]
+
+        # 4. 连续主动发言达上限后，只要真人在会话里接了话，consecutive_proactive 清零
+        svc.note_reply("baizz", "qq:group:g1", "group", proactive=True)
+        svc.note_reply("baizz", "qq:group:g1", "group", proactive=True)
+        assert svc.proactive_quota_status(
+            bot_id="baizz", session_id="qq:group:g1", visibility="group",
+            min_gap_seconds=300.0, max_per_hour=3, max_consecutive_turns=2,
+        )["consecutive_hit"] is True
+        svc.note_human_activity("qq:group:g1")
+        assert svc.proactive_quota_status(
+            bot_id="baizz", session_id="qq:group:g1", visibility="group",
+            min_gap_seconds=300.0, max_per_hour=3, max_consecutive_turns=2,
+        )["consecutive_hit"] is False

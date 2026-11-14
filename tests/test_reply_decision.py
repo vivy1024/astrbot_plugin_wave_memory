@@ -440,3 +440,55 @@ def test_candidate_feedback_uses_only_explicit_recent_reaction(followup, counts,
     apply(p, event)
     assert calls == [(scope(), 8, p.reply_decision.clock() - 86400)]
     assert event._wave_memory_reply_decision["factors"]["feedback"] == expected
+
+
+def test_proactive_topic_match_beats_global_zero_and_followup_continues(followup):
+    from domain.bot_profile import BotProfile, ProactiveSettings
+
+    followup.enabled = False
+    clock = followup.clock
+    p = plugin(followup, "enforce")
+    p.meta_thinking = SimpleNamespace(is_interesting=lambda _: False)
+    profile = BotProfile(
+        db_id="baizz",
+        name="白真真",
+        qq_id="1336495069",
+        interest_keywords=["灵币", "打工"],
+        proactive=ProactiveSettings(
+            enabled=True,
+            mode="enforce",
+            min_gap_seconds=300.0,
+            followup_window_seconds=120.0,
+            max_per_hour=3,
+            score_threshold=55.0,
+            preferred_topics=["上班", "打工"],
+        ),
+    )
+    p.bot_registry = SimpleNamespace(get=lambda bid: profile if bid == "baizz" else None)
+    p._reply_tracker = {}
+    baizz_scope = RuntimeScope(
+        bot_id="baizz",
+        visibility="group",
+        subject_principal_id="testnet:user:visitor",
+        session=SessionRef(id="testnet:group:room-a", platform_id="testnet", kind="group", conversation_id="room-a"),
+    )
+
+    # 1. 全局 meta_thinking 返回 False(0.0)，但命中白真真擅长话题「打工」+「上班」→ topic_match 顶起 relevance
+    e1 = Event("打工上班太苦了")
+    e1._wave_memory_runtime_scope = baizz_scope
+    method = mixin_method("ingress.py", "_apply_reply_decision")
+    method(p, e1, baizz_scope, "visitor", "访客甲", e1.message_str)
+    assert e1._wave_memory_reply_decision["factors"]["relevance"] > 0
+    assert e1._wave_memory_reply_decision["allow"] is True
+    assert e1._wave_memory_reply_decision["proactive_wake"] is True
+
+    # 2. 白真真回复后 56s，同一群友继续回一句不带关键词的话：虽在 min_gap=300s 内，但命中 120s 接话窗口仍放行
+    p.reply_decision.note_reply("baizz", "testnet:group:room-a", "group", proactive=True)
+    p._reply_tracker["baizz:room-a:visitor"] = clock()
+    clock.now += 56.0
+    e2 = Event("今天真有点顶不住")
+    e2._wave_memory_runtime_scope = baizz_scope
+    method(p, e2, baizz_scope, "visitor", "访客甲", e2.message_str)
+    assert e2._wave_memory_reply_decision["allow"] is True
+    assert e2._wave_memory_reply_decision["proactive_wake"] is True
+    assert "followup_window" in e2._wave_memory_reply_decision["reasons"]

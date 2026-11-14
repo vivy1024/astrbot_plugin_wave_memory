@@ -1441,6 +1441,7 @@ class QueryEngine:
         current_group_id: str = "",
         speaker_id: str = "",
         bot_ids: "set[str] | frozenset[str] | tuple[str, ...] | list[str] | None" = None,
+        bot_names: "set[str] | frozenset[str] | tuple[str, ...] | list[str] | None" = None,
     ) -> str:
         """将记忆列表格式化为注入文本，按 source 类型分段。
 
@@ -1485,6 +1486,7 @@ class QueryEngine:
         if chat_memories:
             speaker = str(speaker_id or "").strip()
             bot_id_set = {str(b).strip() for b in (bot_ids or ()) if str(b or "").strip()}
+            bot_name_set = {str(n).strip().casefold() for n in (bot_names or ()) if str(n or "").strip()}
             annotate = bool(speaker or bot_id_set)
             lines = ["<wave_memory>"]
             for mem in chat_memories:
@@ -1499,7 +1501,7 @@ class QueryEngine:
                 owner_tag = ""
                 if annotate:
                     owner_tag = self._attribution_tag(
-                        mem, speaker_id=speaker, bot_id_set=bot_id_set
+                        mem, speaker_id=speaker, bot_id_set=bot_id_set, bot_names=bot_name_set,
                     )
                 line = template.replace("{sender}", sender).replace("{time}", ts).replace("{content}", content)
                 lines.append(f"{group_tag}{owner_tag}{line} (relevance: {score:.2f})")
@@ -1523,6 +1525,7 @@ class QueryEngine:
         *,
         speaker_id: str,
         bot_id_set: set[str],
+        bot_names: "set[str] | frozenset[str] | tuple[str, ...] | list[str] | None" = None,
     ) -> str:
         """Return an ownership prefix so the model cannot misattribute a memory.
 
@@ -1531,11 +1534,18 @@ class QueryEngine:
         produced on the first reply.
         """
         sender_id = str(memory.get("sender_id") or "").strip()
+        sender_name = str(memory.get("sender_name") or "").strip()
         if str(memory.get("source") or "") == "game_event":
             return "[你的游戏经历] "
         if sender_id and sender_id in bot_id_set:
             return "[你的历史回复] "
         if str(memory.get("source") or "") == "bot" or sender_id == "bot":
+            # 历史数据库里可能存在别的 Bot 被误存为 sender_id='bot' 的记录：
+            # 当已知当前 Bot 的显示名集合（bot_names）且该记录 sender_name 明确属于别人时，不冒认作自己的回复。
+            if bot_names and sender_name:
+                known_names = {str(n).strip().casefold() for n in bot_names if str(n or "").strip()}
+                if known_names and sender_name.casefold() not in known_names:
+                    return "[其他群友历史] "
             return "[你的历史回复] "
         if speaker_id and sender_id == speaker_id:
             return "[对话者本人历史] "

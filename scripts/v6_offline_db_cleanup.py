@@ -351,6 +351,85 @@ def _align_null_bot_memories(conn: sqlite3.Connection, *, apply: bool) -> dict[s
     }
 
 
+def _repair_cross_bot_sender_ids(conn: sqlite3.Connection, *, apply: bool) -> dict[str, int]:
+    """还原跨 Bot 误标为 ``sender_id='bot'`` 的记录为对应 Bot 的真实 QQ 号。
+
+    历史写入逻辑在 ``sender_id in self._bot_qq_ids`` 时统一写成 ``sender_id='bot'``，
+    导致 ``bot_id='baizz'`` 下面混入大量 ``sender_name='羽书'`` 且 ``sender_id='bot'`` 的发言，
+    注入时被错贴成 ``[你的历史回复]``。本函数根据 ``bot_profiles`` 的 ``db_id -> name / qq_id``
+    映射，找出「记忆所属 ``bot_id`` 的名字集合不包含该记录 ``sender_name``，而恰好属于另一只己方
+    Bot 的名字」的错标行，将其 ``sender_id`` 恢复为那只发言 Bot 的主 ``qq_id``。
+    """
+    if not _table_exists(conn, "memories") or not _table_exists(conn, "bot_profiles"):
+        return {"mismatched_rows": 0, "repaired_rows": 0}
+
+    profiles_rows = conn.execute("SELECT db_id, payload FROM bot_profiles").fetchall()
+    bot_names: dict[str, set[str]] = {}
+    name_to_qq: dict[str, str] = {}
+    for db_id, payload_raw in profiles_rows:
+        db_key = str(db_id or "").strip()
+        if not db_key or not payload_raw:
+            continue
+        try:
+            payload = json.loads(payload_raw)
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        qq_id = str(payload.get("qq_id") or "").strip()
+        if not qq_id:
+            for b in payload.get("bindings") or []:
+                if isinstance(b, dict) and b.get("host") == "astrbot" and str(b.get("self_id") or "").strip():
+                    qq_id = str(b.get("self_id")).strip()
+                    break
+        names: set[str] = set()
+        raw_name = str(payload.get("name") or "").strip()
+        if raw_name:
+            names.add(raw_name.casefold())
+        for alias in payload.get("aliases") or []:
+            text = str(alias or "").strip()
+            if text:
+                names.add(text.casefold())
+        bot_names[db_key] = names
+        if raw_name and qq_id:
+            name_to_qq.setdefault(raw_name.casefold(), qq_id)
+        for alias in payload.get("aliases") or []:
+            text = str(alias or "").strip()
+            if text and qq_id:
+                name_to_qq.setdefault(text.casefold(), qq_id)
+
+    if len(bot_names) < 2 or not name_to_qq:
+        return {"mismatched_rows": 0, "repaired_rows": 0}
+
+    candidates = conn.execute(
+        """
+        SELECT id, COALESCE(bot_id, ''), COALESCE(sender_name, '')
+        FROM memories
+        WHERE sender_id = 'bot'
+          AND COALESCE(TRIM(sender_name), '') != ''
+        """
+    ).fetchall()
+
+    repairs: list[tuple[str, int]] = []
+    for mid, mem_bot_id, s_name in candidates:
+        s_key = str(s_name or "").strip().casefold()
+        if not s_key:
+            continue
+        target_qq = name_to_qq.get(s_key)
+        if not target_qq:
+            continue
+        own_names = bot_names.get(str(mem_bot_id or "").strip(), set())
+        if s_key in own_names:
+            continue
+        repairs.append((target_qq, int(mid)))
+
+    if not apply or not repairs:
+        return {"mismatched_rows": len(repairs), "repaired_rows": 0}
+
+    conn.executemany("UPDATE memories SET sender_id = ? WHERE id = ?", repairs)
+    return {"mismatched_rows": len(repairs), "repaired_rows": len(repairs)}
+
+
 def _backfill_fts_cjk(conn: sqlite3.Connection, *, apply: bool) -> dict[str, int]:
     if not _table_exists(conn, "memories") or not _table_exists(conn, "fts_memories_cjk"):
         return {"missing_rows": 0, "indexed_rows": 0}
@@ -524,6 +603,7 @@ def cleanup_database(
             "user_profiles": _migrate_user_profiles(conn, apply=apply),
             "unsettled_state": _merge_unsettled_state(conn, apply=apply),
             "null_bot_memories": _align_null_bot_memories(conn, apply=apply),
+            "cross_bot_sender_repairs": _repair_cross_bot_sender_ids(conn, apply=apply),
             "fts_cjk": _backfill_fts_cjk(conn, apply=apply),
             "auxiliary": _prune_auxiliary_tables(
                 conn,

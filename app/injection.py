@@ -624,6 +624,7 @@ class InjectionMixin:
             if effective_config is None:
                 return False
             bot_profile_id = runtime_scope.bot_id
+            profile = self.bot_registry.get(bot_profile_id) if getattr(self, "bot_registry", None) else None
             trace_id = f"active-{time.time_ns()}"
             ctx = InjectionContext(
                 event=event,
@@ -648,6 +649,7 @@ class InjectionMixin:
                 ),
                 now=time.time(),
                 trace_id=trace_id,
+                bot_profile=profile,
             )
             result = await run_injection_active(
                 ctx=ctx,

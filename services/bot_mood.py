@@ -562,7 +562,6 @@ class BotMoodService:
             entry["engaged_until"] = max(float(entry.get("engaged_until") or 0.0), timestamp + 300.0)
             if proactive:
                 entry["last_bot_proactive_at"] = timestamp
-                entry["cooling_until"] = timestamp + 90.0
 
     def note_silence_or_ignored(self, bot_id: str, session_id: str, *, reason: str = "hold_peace", now: float | None = None) -> None:
         """Bot 主动选择沉默或被群聊冷场后进入短暂收敛态。"""

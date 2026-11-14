@@ -42,3 +42,5 @@ class InjectionContext:
     # 游戏直播时 Runtime API 请求里的 game（domain.game_knowledge.GameContext）；不带时为 None，
     # 只有 game_knowledge 通道读它，其他通道行为不变。
     game: Any = None
+    # 可选传入当前 BotProfile，供记忆归属标注区分同名历史里的友军 Bot。
+    bot_profile: Any = None

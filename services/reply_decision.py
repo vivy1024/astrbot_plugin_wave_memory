@@ -385,7 +385,7 @@ class ReplyDecisionService:
             state.pending_proactive_at = 0.0
 
     def note_human_activity(self, session_id: str, *, now: float | None = None) -> None:
-        """真人在该会话说话：所有 Bot 在此会话的主动冷落计数清零。"""
+        """真人在该会话说话：所有 Bot 在此会话的主动冷落计数与连续主动计数清零。"""
         if not session_id:
             return
         stamp = float(self.clock() if now is None else now)
@@ -397,6 +397,7 @@ class ReplyDecisionService:
             else:
                 self._settle_unanswered(state, stamp)
             state.unanswered_proactive = 0
+            state.consecutive_proactive = 0
 
     def proactive_backoff_seconds(
         self,
@@ -535,8 +536,12 @@ class ReplyDecisionService:
             state.replies.popleft()
         recent = sum(0 <= stamp - t < cfg["reply_window_seconds"] for t in state.replies)
         result["recent_replies"] = recent
-        factors["recent_replies"] = -min(48.0, recent * 12.0)
-        if recent:
+        engaged_followup = bool(proactive_wake_candidate and signals.followup_eligible)
+        # 刚主动搭话后对方 60 秒内顺着接话（recent=1 是自己刚才那句触发的），不应被自己那 1 条反扣 -12 分卡死；
+        # 超过 1 条仍逐步降权，且 recent >= max_recent_replies 硬上限不变。
+        penalized_recent = max(0, recent - 1) if engaged_followup else recent
+        factors["recent_replies"] = -min(48.0, penalized_recent * 12.0)
+        if penalized_recent:
             reasons.append("recent_bot_replies")
 
         # ─── 扩展读空气 / 话题分工 / 心智调节因子（仅在相关信号启用或命中时写入） ───
@@ -556,7 +561,9 @@ class ReplyDecisionService:
             factors["topic_match"] = round(38.0 * _number(signals.topic_match, 0, 0, 1), 2)
             reasons.append("topic_match")
         if signals.followup_eligible:
-            factors["followup_window"] = 26.0
+            # 刚主动搭话后对方顺着回话（engaged 窗口），即使消息本身不带关键词、也不带问号，
+            # 也应稳稳跨过默认 balanced 门槛（55），让对话自然接完；如命中避让词/指令/告别/点名他人仍会压住。
+            factors["followup_window"] = 58.0 if proactive_wake_candidate else 26.0
             reasons.append("followup_window")
         if signals.mind_drive is not None or signals.mind_energy is not None:
             drive = _number(signals.mind_drive, 0.5, 0.0, 1.0)
@@ -590,8 +597,9 @@ class ReplyDecisionService:
             reasons.append("ignored_backoff")
 
         score = sum(factors.values())
+        effective_cooldown = 0.0 if engaged_followup else _number(signals.cooldown_remaining, 0, 0, 86400)
         retry_after = max(
-            _number(signals.cooldown_remaining, 0, 0, 86400),
+            effective_cooldown,
             _number(signals.shared_cooldown_remaining, 0, 0, 86400),
         )
         if signals.shared_cooldown_remaining > 0:
@@ -601,7 +609,7 @@ class ReplyDecisionService:
         if signals.quiet_hours_active and proactive_wake_candidate:
             reasons.append("proactive_quiet_hours")
             return finish(False)
-        if signals.proactive_hourly_limit_hit and proactive_wake_candidate:
+        if signals.proactive_hourly_limit_hit and proactive_wake_candidate and not engaged_followup:
             reasons.append("proactive_hourly_limit")
             return finish(False)
         if signals.consecutive_proactive_hit and proactive_wake_candidate and not signals.followup_eligible:
@@ -614,11 +622,12 @@ class ReplyDecisionService:
             state.streak = 0
             state.suppressed_until = 0
         state.last_evaluated = stamp
-        retry_after = max(retry_after, state.suppressed_until - stamp)
+        if not proactive_wake_candidate:
+            retry_after = max(retry_after, state.suppressed_until - stamp)
         if retry_after:
             reasons.append(
                 "shared_bot_cooldown" if signals.shared_cooldown_remaining > 0 and retry_after == signals.shared_cooldown_remaining
-                else "cooldown" if signals.cooldown_remaining > 0
+                else "cooldown" if effective_cooldown > 0
                 else "suppression_backoff"
             )
             return finish(False)
@@ -638,7 +647,7 @@ class ReplyDecisionService:
         if allow:
             state.streak = 0
             state.suppressed_until = 0
-        else:
+        elif not proactive_wake_candidate:
             state.streak = min(16, state.streak + 1)
             retry_after = min(cfg["backoff_max_seconds"], cfg["backoff_base_seconds"] * 2 ** (state.streak - 1))
             state.suppressed_until = stamp + retry_after
