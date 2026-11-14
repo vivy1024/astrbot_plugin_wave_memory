@@ -9,9 +9,9 @@
 
 **给长期群 Bot 用的记忆层：记住这个群说过什么、谁是谁、关系好不好；回复时把相关记忆和其他通道一起注入。**
 
-v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现场提审或从正式 Bot 回复里带证据沉淀，经人工或自动审核后注入；v5.1.1 起信念改为每日日记之后由 Bot 反思经历形成。v5.1.3 起风格样例有了跨群稳定的喜恶预设，回复时会带着她心里搁着的事和犹豫。日常检索仍只依赖 Embedding，本地 SQLite 毫秒级召回。
+v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现场提审或从正式 Bot 回复里带证据沉淀；v5.1.1 起信念改为每日日记之后由 Bot 反思经历形成。v5.2 起**一个生命**把对同一个人的好感跨群、私聊、关联账号合并成唯一一份，跃迁附带证据卷宗；激素身体、模型服务静默窗口与合并工具形态（6 个「一个工具 + mode」，每次请求少约 32% 工具说明）也随 v5.2.0 落地。日常检索仍只依赖 Embedding，本地 SQLite 毫秒级召回。
 
-[快速开始](#快速开始) · [使用教程](docs/使用教程.md) · [设计哲学](docs/设计哲学.md) · [为什么选我们](#为什么选我们) · [适合谁](#适合谁不适合谁) · [检索引擎](#-检索引擎) · [灵魂系统](#-灵魂系统) · [WebUI](#-webui-管理面板) · [Releases](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
+[快速开始](#快速开始) · [使用教程](docs/使用教程.md) · [设计哲学](docs/设计哲学.md) · [为什么选我们](#为什么选我们) · [适合谁](#适合谁不适合谁) · [检索引擎](#-检索引擎) · [灵魂系统](#-灵魂系统) · [WebUI](#-webui-管理面板) · [工具与适配](#-agent-工具与-astrbot-适配指南) · [Releases](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
 
 </div>
 
@@ -19,38 +19,38 @@ v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现�
 
 ### 能做什么
 
-- **记住群聊**：把对话写成长期记忆，按当前 Bot 和群检索，注入到下一次回复；意图门禁自动识别追忆意向。
-- **记住群友**：昵称、别名、好感度与事实；同一用户在不同群累加的情感和事实自动合并（不跨 Bot），记忆检索受跨群开关控制。
+- **记住群聊**：把对话写成长期记忆，按当前 Bot 和群检索，注入到下一次回复；意图门禁自动识别追忆意向，**3 秒注入总截止**与常驻工作循环防止上游 Embedding 偶发慢拖垮回复。
+- **一个生命，跨场合认识一个人**：昵称、别名、五维好感与未结算观感全部按「这个人 + 关联账号」唯一合并（群聊、私聊、直播同一口径，日上限按人跨场合正负分开计），私聊内容本身仍只在该私聊可见；关系跃迁时把这段时间的全部观感与原话作为**证据卷宗**交给模型整体定性。
 - **像群友一样说话**：本群黑话和 Bot 回复风格由现场提审或后台带证据沉淀，经人工或自动审核后注入；跨群的喜恶预设让她有稳定的喜欢与不喜欢，而不是只学某一种口癖。
-- **有心情和关系**：印象时间线、五维好感（跨群累加）；人情账可写备忘但不注入账单。关切是人味临场发挥，不再按字数截句入库；考虑要不要开口时，她心里搁着的未了事、对方最近的反应和此刻的疲累会合成一小段内心活动，可以犹豫、可以不说。
-- **事实要原话，看法从经历里来**：提事实必须带群友原话；黑话只用来听懂原话，反串不升格为认真事实。信念（Bot 自己的看法）只来自她对自己日记与回复效果的反思，要在不同日子里被印证才形成。
-- **能看见一次回复用了什么**：注入观测台按通道列出命中、跳过、错误和最终文本；反过来，每条记忆也能查到被哪些回复用过。
-- **说完话会自己记账**：对话停下后回看这段，交给正式工具记印象与好感、事实、黑话、人情、关切；每晚写一篇当天的日记。
-- **中文管理台 + 关系图谱**：Bot 主页、记忆、人物、标签、事实、黑话、心智都在 9876 端口；关系图谱有平面分析和 3D「记忆星空 / 回忆回放」，另有给直播用的舞台页。
+- **有心情、有身体、有静默作息**：快层心情跨群共享，按半衰期回落；可选开启**激素身体**（六种激素按昼夜基线与真人事件推动，越过阈值给一句边沿事实，轻推心情、读空气意愿与回复长短；睡着被叫按概率醒来）；还可配独立于身体的**模型服务静默窗口**（停服时段不调模型、按人冷却回自定义静默话术）。
+- **事实要原话，看法从经历里来**：提事实必须带群友原话；黑话只用来听懂原话，反串不升格为认真事实。信念（Bot 自己的看法）只来自她对自己日记与回复效果的反思，要在不同日子里被印证才形成；对话里觉得对方像机器人时由 Bot 自己调用 `bot_check` 顺手标一笔，不写死正则。
+- **能看见一次回复用了什么**：注入观测台按通道列出命中、跳过、排队/事件循环延迟探针、错误和最终文本；反过来，每条记忆也能查到被哪些回复用过。
+- **说完话会自己记账**：对话停下后回看这段，由内部工具记印象与好感、事实、黑话、人情、关切；每晚写一篇当天的日记。
+- **中文管理台 + 关系图谱**：Bot 主页、记忆、人物、标签、事实、黑话、心智、身体曲线与全局待审徽标都在 9876 端口；关系图谱有平面分析和 3D「记忆星空 / 回忆回放」，另有给直播用的舞台页。
 
-三种模式：`full` 完整人格；`memory_only` 只要记忆注入；`compat_only` 给 SelfLearning / ChatPlus 当记忆后端，避免两套记忆一起注入。
+三种运行模式：`full` 完整人格（6 个合并工具）；`memory_only` 只要记忆注入（3 个合并工具）；`compat_only` 给 SelfLearning / ChatPlus 当记忆后端，避免两套记忆一起注入。
 
 ### 设计哲学
 
 这套系统的每个决定，背后都是一次线上事故、一次评测，或一次被证明行不通的方案。
 
-**Bot 是一个人。** 群聊 Bot 最容易犯错的抽象是「一群一份记忆」——那样 Bot 在 A 群被气到，到 B 群照样开心，在一个群答应的事换个群就忘了。所以记忆的边界是「Bot + 群 + 私聊」的组合作用域：心情、信念、关切、关系只有一份，跨群延续；她只记得自己亲历的事，同部署里别的 Bot 见过的东西不会被召回；换 QQ 号、换平台，记忆不断线。推论是：**人格不是一套 prompt，而是记忆的累积**——prompt 只写性格底色，她今天是谁，由她经历过什么决定。
+**Bot 是一个人。** 群聊 Bot 最容易犯错的抽象是「一群一份记忆」——那样 Bot 在 A 群被气到，到 B 群照样开心，在一个群答应的事换个群就忘了。所以记忆与人格的边界以 Bot 为单位：心情、身体、信念、关切、对某个人的好感与未结算观感只有一份，跨群与私聊延续（私聊原文仍在群里隔离）；她只记得自己亲历的事，同部署里别的 Bot 见过的东西不会被召回；换 QQ 号、换平台，记忆不断线。推论是：**人格不是一套 prompt，而是记忆的累积**——prompt 只写性格底色，她今天是谁，由她经历过什么决定。
 
 **记住一切，想起来再筛选。** 按「记忆只增不删」设计：所有消息入库，写入不设价值门槛——一句当时无聊的「我下周三考科目三」，一周后正是该被想起的那句。代价由后端扛：热/冷两层索引、语义召回与原词检索双路兜底，噪声记忆只标记不删除、只是不参与召回与注入。「想起来」可以慢慢变好，「没记住」永远补不回来。
 
-**没有证据不进人格。** LLM 会一本正经地编，v5 之前的后台盲抽攒下过 27782 条没人用的噪声事实。现在的规则：事实必须挂群友原话，反串不升格为客观事实；黑话必须指出处，可追溯原始上下文；信念只能由每天写完日记后反思形成、在不同日子里被印证才算数。人工批准仍是默认路径；自动审核只放行证据齐全、无冲突，且达到频次门槛的候选。
+**没有证据不进人格。** LLM 会一本正经地编，v5 之前的后台盲抽攒下过 27782 条没人用的噪声事实。现在的规则：事实必须挂群友原话，反串不升格为客观事实；黑话必须指出处，可追溯原始上下文；关系跃迁必须依据全部未结算观感与原话证据整体定性；信念只能由每天写完日记后反思形成、在不同日子里被印证才算数。人工批准仍是默认路径；自动审核只放行证据齐全、无冲突，且达到频次门槛的候选。
 
-**回复当下零 LLM，模型只做事后功。** 检索路径不调用聊天模型：一次 embedding 查询加本地纯算法，几百毫秒。大模型只在事后记账（对话停下后回看记账）、每晚日记、日记后的信念反思、后台打标签、风格样例提取、关系小传、角色经历与游戏经验等后台任务里出现。每个后台任务用什么模型可以单独配置，便宜的 flash 足够应付大部分。
+**回复当下零 LLM，模型只做事后功。** 检索路径不调用聊天模型：一次 embedding 查询加本地纯算法，几百毫秒；谁是 Bot 也由模型在对话中顺手标记，系统不写硬编码正则。大模型只在事后记账（对话停下后回看记账）、每晚日记、日记后的信念反思、后台打标签、风格样例提取、关系小传、角色经历与游戏经验等后台任务里出现。每个后台任务用什么模型可以单独配置，便宜的 flash 足够应付大部分。
 
-**每一步都可观测。** 注入观测台回放每次回复「用了什么、为什么跳过」；任何一条记忆能反查被哪些回复用过；`/api/health` 显示线上实际运行的提交号；消息静默丢失（比如换号没绑定）会标红报警——这一条来自一次真实的 20 小时静默丢消息事故。
+**每一步都可观测。** 注入观测台回放每次回复「用了什么、为什么跳过、排队与事件循环延迟」；任何一条记忆能反查被哪些回复用过；`/api/health` 显示线上实际运行的提交号；消息静默丢失（比如换号没绑定）会标红报警——这一条来自一次真实的 20 小时静默丢消息事故。
 
-**零外部基础设施。** SQLite + Embedding，没有 Neo4j / ES / 独立向量库。一个个人能长期单机跑住的记忆系统，比架构正确但没人维护得起的系统有价值。SQLite 不擅长的事自己解决：单一写入口串行化、事务发件箱、幂等键、在线备份一致快照。
+**零外部基础设施。** SQLite + Embedding，没有 Neo4j / ES / 独立向量库。一个个人能长期单机跑住的记忆系统，比架构正确但没人维护得起的系统有价值。SQLite 不擅长的事自己解决：单一写入口串行化、事务发件箱、幂等键、流式压缩直传在线备份（云端不落盘）。
 
-**渐进信任：危险的新能力默认关。** 主动开口、开口规则、表达学习、信念反思默认关闭；事实与黑话的自动审核也默认关闭。风格样例与表达候选的自动转正默认开启，但只处理来源可核、标签完整、达到频次门槛的条目，关掉即回到纯手动。带判断力的新机制先跑观察模式（shadow），只记录不行动，你看过记录合适再启用。「选择性不回复」也一样：主动开口时 Bot 可以正式调用 `wave_memory_hold_peace` 让回复不发送——克制是一等公民的行为，带着理由被记录。
+**渐进信任：危险的新能力默认关。** 主动开口（`proactive`）、开口规则、表达学习、信念反思、激素身体（`body.enabled`）默认关闭；事实与黑话的自动审核也默认关闭。风格样例与表达候选的自动转正默认开启，但只处理来源可核、标签完整、达到频次门槛的条目，关掉即回到纯手动。带判断力的新机制先跑观察模式（shadow），只记录不行动，你看过记录合适再启用。「选择性不回复」也一样：主动开口时 Bot 可以正式调用 `wave_memory_hold_peace` 让回复不发送——克制是一等公民的行为，带着理由被记录。
 
 **本地优先，数据是你的。** 记忆、索引、配置、Bot 资料全在这台机器上；换机器 = 拷目录，备份 = 拷文件，想看数据 = sqlite3 打开。没有云端依赖，意味着没有别人能改她的记忆。
 
-**试过但不采用的**：检索重排模型（延迟不抵收益）、上游 TagMemo V9.1 共现传播核作默认（两次线上 A/B 均变差，数据形态不符，保留为可选开关）、记忆定期合并摘要化（与「记忆只增不删」冲突）、云端共享记忆后端（超出单机边界）。原因和对比数据都在 CHANGELOG 里。
+**试过但不采用的**：检索重排模型（延迟不抵收益）、上游 TagMemo V9.1 共现传播核作默认（两次线上 A/B 均变差，数据形态不符，保留为可选开关）、记忆定期合并摘要化（与「记忆只增不删」冲突）、云端共享记忆后端（超出单机边界）、按昵称/报错词正则硬编码判别 Bot（易误标讨论 AI 工具的真人）。原因和对比数据都在 CHANGELOG 里。
 
 详见 [docs/设计哲学.md](docs/设计哲学.md)。
 
@@ -60,16 +60,16 @@ v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现�
 
 在 **v5.0.0** 之前，系统依赖定时后台脚本（Consolidation / Jargon Mine / Belief Emerge）去全表扫描聊天记录，截取碎屑拼凑事实与信念。这容易产生大量复读机垃圾、把群友反串当成严肃事实，还容易锁表引发死锁。
 
-**v5.0.0 起，认知沉淀全面转向由大模型在现场对话与事后反思中自主感知并调用工具提审**：
+**v5.0.0 起，认知沉淀全面转向由大模型在现场对话与事后反思中自主感知并调用工具提审（v5.2.0 起合并为按族路由的 `mode` 工具）**：
 
 ```
 真实群聊互动 / 纠正信号 / 夜间定时回顾
      ↓
 大模型现场感知并触发自主提审工具 (Function Calling)
-     ├─ 提审事实 (wave_memory_propose_fact)：必须附带群友原话 (source_quote)，反串不升格为客观事实
-     ├─ 提审黑话 (wave_memory_mark_cultural_moment)：沉淀本群真实高频梗，配合 Holyman 词典只读理解
-     ├─ 亲笔日记 (wave_memory_record_diary_episode)：Bot 记录成长大事件，自动钉入经历时间线
-     └─ 人情与好感 (wave_memory_note_social_anchor / record_social_impression)：动态结算群友账本
+     ├─ 提审事实：wave_memory_note(mode=fact)，必须附带群友原话 (source_quote)，反串不升格为客观事实
+     ├─ 提审黑话：wave_memory_note(mode=cultural)，沉淀本群真实高频梗，配合 Holyman 词典只读理解
+     ├─ 社交与 Bot 标记：wave_memory_social(mode=impression / anchor / concern / bot_check)，动态结算群友账本与标记机器人
+     └─ 互动经历：wave_memory_episode(mode=group)（夜间亲笔日记由系统内部调用 diary 自动钉入时间线）
      ↓
 统一进入 WebUI「审查登记表 (review_candidates)」
      ↓
@@ -77,7 +77,7 @@ v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现�
 ```
 
 - **大模型什么时候会主动提审？**
-  1. **日常对话反思触发**：当群聊经历一段密集交互或出现群友纠正信号时，底层反思引导向大模型精准下发 7 个专用提审工具的调用指令；
+  1. **日常对话反思触发**：当群聊经历一段密集交互或出现群友纠正信号时，底层反思引导向大模型精准下发对应形态的工具调用提示（随 `tool_surface` 自动切换合并写法或旧写法）；
   2. **夜间日记与后台沉淀**：每日日记服务直接读取当天的群聊流水、Bot 自己的发言、游戏经历、印象与关切，写成第一人称日记；风格样例与表达候选由后台维护任务按来源证据和频次门槛自动筛一遍，不满足条件的留在待审。
 
 ---
@@ -85,28 +85,29 @@ v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现�
 ### 为什么选我们
 
 1. **日常检索只依赖向量模型**  
-   写入和召回用 Embedding + 本地 HNSW / 全文检索。回复当下的记忆搜索不再调聊天大模型。实测十万级记忆本地查询 < 50ms；加上远程 Embedding 大约 850ms。不装 Neo4j、Elasticsearch、独立向量库。
+   写入和召回用 Embedding + 本地 HNSW / 全文检索。回复当下的记忆搜索不再调聊天大模型。十万级压测基线本地查询 < 50ms；加上远程 Embedding 约 850ms，受 3 秒注入总截止兜底。不装 Neo4j、Elasticsearch、独立向量库。
 
 2. **记忆注入不是单独塞几条**  
-   一次回复可以同时带上：相关记忆、人名精确命中、时间线、事实、人物画像/好感、已审核信念、本群黑话、风格样例、书设定。安全通道会去掉刚聊过的重复内容和身份污染。各通道超时互不影响，总预算可裁。
+   一次回复可以同时带上：相关记忆、人名精确命中、时间线、事实、人物画像/好感、已审核信念、本群黑话、风格样例、书设定、身体边沿状态。安全通道会去掉刚聊过的重复内容、身份污染与纯图片占位噪声。各通道超时互不影响，总预算可裁。
 
 3. **配置自由度高，能关也能细调**  
    - 整机模式：`full` / `memory_only` / `compat_only`  
+   - 工具形态与 Bot 权限：`tool_surface`（`merged` 6+1 个 / `legacy` 18 个）+ 按 Bot 的 `tools_allow` / `tools_deny`（支持细到 `工具:mode`）
    - 每个注入通道可单独开关、调优先级、条数、token 预算、超时、最低分  
-   - 检索算法（脉冲/残差金字塔/EPA/测地线）可关；跨群权重、黑话频率、风格评分、好感衰减都能改  
+   - 检索算法（脉冲/残差金字塔/EPA/测地线）可关；跨群权重、黑话频率、风格评分、好感衰减、静默时段都能改  
    - 不想要人格时只开记忆注入；已有人格插件时可以只当记忆后端
 
 4. **按 Bot 和群隔离，能审计**  
-   A 群的梗和好感不会当成 B 群的。管理台能看见「这句话用了哪些通道、为什么跳过」，黑话/风格要过审核才进人格，看法可以在管理台一键否决。
+   A 群的梗不会当成 B 群的，不同 Bot 记忆隔离。管理台能看见「这句话用了哪些通道、为什么跳过、排队多久」，黑话/风格要过审核才进人格，看法可以在管理台一键否决，关系跃迁可展开全部原话依据。
 
 ### 限制
 
-- **不是轻量插件**：要比「只塞最近 N 条」更占磁盘和内存；十万级记忆大约 1.7GB SQLite + 几百 MB 索引。
+- **不是轻量插件**：要比「只塞最近 N 条」更占磁盘和内存；十万级记忆约 1.7GB SQLite，六十万级记忆（现网持续积累后）约 4.2GB SQLite + 数百 MB HNSW 索引。
 - **必须配 Embedding**；学黑话、打标签、风格范例还要配 Tag LLM。没有这两个，完整能力起不来。
 - **单机本地库**：数据在这台 AstrBot 上，不能开箱多机共享一份云端记忆。
-- **主要面向 QQ 群**（aiocqhttp）。私聊可以记录印象、人情备忘、关切、经历和提审事实，但具体内容只在该私聊可见；群文化、黑话提审仍只在群里进行，信念反思只读群聊日记；未绑定 Bot 身份的会话只能看。
+- **主要面向 QQ 群**（aiocqhttp）。私聊可以记录印象、人情备忘、关切、经历、提审事实与唯一好感，但私聊原文只在该私聊可见；群文化、黑话提审与 Bot 标记仍只在群里进行，信念反思只读群聊日记；未绑定 Bot 身份的会话只能看。
 - **管理台是独立 9876 端口**，不是 AstrBot 自带设置页。
-- **不会替你写完整人设**，也不会自动改其他插件的配置。
+- **不会替你写完整人设**，也不会自动改其他插件或 AstrBot 控制台人设配置（需自行在 AstrBot 人设里对齐所选模式与 `tool_surface` 的工具写法）。
 
 ### 适合谁 / 不适合谁
 
@@ -121,7 +122,7 @@ v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现�
 
 | 版本 | 日期 | 重点 |
 |------|------|------|
-| **v5.2.0** | 2026-11-14 | 一个生命：对同一个人的好感只有一份（群聊、私聊、关联账号合并，注入/查询/排行/管理台同一口径）；日上限按人跨场合且正负分开计；私聊关系也会随时间变淡；未结算观感一人一池、带方向与原话，攒满后以证据卷宗交给模型整体定性，跃迁点可在管理台展开依据；激素身体（多巴胺 / 血清素 / 催产素 / 皮质醇 / 褪黑素 / 无聊，昼夜基线 + 习惯化，零 LLM，默认关）与睡眠态（睡着被叫只回固定短语）；注入提速（常驻工作循环、书设与散弹枪检索移出事件循环）；工具合并（模型看到的 17 个工具合成 6 个「一个工具 + mode」，每次请求少约三成工具说明，`tool_surface=legacy` 可回滚，`tools_allow/deny` 支持写到 mode）；主动发言无人接话时指数退避 |
+| **v5.2.0** | 2026-11-14 | 一个生命：对同一个人的好感只有一份（群聊、私聊、关联账号合并，注入/查询/排行/管理台同一口径）；日上限按人跨场合且正负分开计；私聊关系也会随时间变淡；未结算观感一人一池、带方向与原话，攒满后以证据卷宗交给模型整体定性，跃迁点可在管理台展开依据；激素身体（多巴胺/血清素/催产素/皮质醇/褪黑素/无聊，昼夜基线+习惯化，零 LLM，默认关；`proactive_drive` 轻推读空气、`reply_length_factor` 边沿提示）与睡眠态、独立**模型服务静默窗口**（`service_quiet_start/end` + 6 句可自定义话术不调模型不唤醒）；注入提速（常驻工作循环、书设与散弹枪检索移出事件循环）；工具合并（模型看到的 18 个工具合成 6 个「一个工具 + mode」，每次请求少约 32% 工具说明，`tool_surface=legacy` 可回滚，`tools_allow/deny` 支持写到 mode）；Bot 对话中顺手标记（`bot_check`，无硬编码正则）与多 Bot 读空气仲裁；主动发言无人接话时指数退避 |
 | **v5.1.7** | 2026-11-05 | 审核效率：审核后列表就地更新不再整表重拉；侧栏与仪表盘显示全局待审数（新接口 `/api/review/summary`）；软超时排查测量：注入 trace 记录线程池排队与事件循环晚醒 |
 | **v5.1.6** | 2026-11-01 | 加固：注入总截止 3 秒（上游 embedding 偶发慢时不再拖住回复）；说话人场景标签防身份污染；关系小传污染改按句剥离；告警 24 小时过期且拦截生效只记警告；数据库直连拦截不再误伤注释；纯图片消息不再召回无关事实与书设；管理台破坏性操作加确认、未保存离开提示、配置密钥打码 |
 | **v5.1.5** | 2026-10-28 | 拟人修整：信念双向词法匹配并让稳固看法低频自然流露（不调用模型）；正式关系随时间冷却（只改自动层、留 time_decay 审计）；soul_state 注入提速（快照 + 原因窗口，结果不变）；表达学习加人设检查、待审过期与按人限流；纯图片消息不再召回占位噪声；删除 desire、主观时间、旧主动发言、ConcernTracker 等空转模块 |
@@ -149,11 +150,11 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 
 ### 运行模式
 
-| 模式 | 自动注入 | 默认能力 | 适用场景 |
-|------|----------|----------|----------|
-| `full` | 开 | 基础记忆 + 高级通道 + WebUI + Agent 反馈 | WaveMemory 独立承担记忆与人格增强 |
-| `memory_only` | 开 | 消息采集、writer、向量检索、基础记忆注入、trace、搜索/记住工具、兼容 facade | 只要记忆，不要人格/黑话/BookLore/few-shot/mood 等高级能力 |
-| `compat_only` | 关 | writer、query、LivingMemory-compatible facade、可选工具别名、最小 trace | 给 SelfLearning/ChatPlus 等外部插件当记忆后端，避免重复注入 |
+| 模式 | 自动注入 | 默认能力 | 模型看到的内置工具（`merged` / `legacy`） | 适用场景 |
+|------|----------|----------|------------------------------------------|----------|
+| `full` | 开 | 基础记忆 + 高级检索 + 灵魂/好感/书设/梗/游戏 + 事后记账 | **6 个合并工具**（打开调试组 7 个）/ **18 个独立工具** | WaveMemory 独立承担记忆与人格增强 |
+| `memory_only` | 开 | 消息采集、writer、向量/FTS5 检索、基础记忆注入、trace、搜索/记住/沉默工具 | **3 个合并工具**（`recall[search,facts,person]`、`note[memory]`、`hold_peace`）/ **5 个独立工具** | 只要记忆，不要人格/好感/黑话/书设/few-shot/心情等高级能力 |
+| `compat_only` | 关 | writer、query、LivingMemory 兼容 facade、可选别名工具、最小 trace | **0 个**原生工具（开启 `livingmemory_alias_tools_enabled` 后暴露 2 个兼容别名） | 给 SelfLearning/ChatPlus 等外部插件当记忆后端，避免重复注入 |
 
 ---
 
@@ -205,7 +206,7 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 
 ### 并行注入通道
 
-`InjectionOrchestrator` 并发运行 **14** 条通道；每通道独立 `timeout_ms`，单通道 timeout/error 不阻塞整体注入。总耗时超过 2000ms 打慢注入警告。
+`InjectionOrchestrator` 并发运行 **14** 条通道，线程化通道运行在常驻工作循环池上（不再每次 `asyncio.run` 新建事件循环），并设 **3 秒注入总截止**；单通道 timeout/error 不阻塞整体注入，总耗时超过 2000ms 打慢注入警告。
 
 ```
 ├─ safety（近期上下文去重 · 身份污染过滤）
@@ -216,28 +217,28 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 ├─ belief（她从经历里反思形成的看法：已形成/稳固，话题相关时浮现 1–2 条）
 ├─ jargon（已确认黑话）
 ├─ fewshot（已批准健康风格样本）
-├─ book_lore（世界观知识）
+├─ book_lore（世界观知识，检索在工作线程执行）
 ├─ game_knowledge（游戏知识：Runtime 请求带 game 时按游戏选库，注入她自己的经验卡与命中的攻略卡、词条）
 ├─ character_experience（角色经历：书中角色 / OC 进群之前的第一人称过去，按 Bot 启用，只召回当前时间点之前的阶段）
-├─ affinity（关系小传或印象时间线摘要为主 · 共同交往锚点 · 末尾一行好感分数仅供参考）
+├─ affinity（跨场合唯一好感与关系小传 / 印象时间线，未结算观感满额时附跃迁证据卷宗）
 ├─ meme_hint（用梗提示：话题相关时提示 1–2 个可以用的梗，默认关闭）
-└─ soul_state（Bot 本人此刻的心情：情绪词 + 1–2 条最近原因 + 可选说话倾向；近期时间线，不含群日记）
+└─ soul_state（此刻的心情：情绪词 + 最近原因 + 可选说话倾向；身体边沿事实含长短倾向；近期时间线）
 ```
 
 通道配置在 9876 WebUI「通道配置」热更新：`enabled`、`priority`、`top_k/max_items`、`token_budget`、`timeout_ms`、`min_score`。
 
-### Benchmark
+### 历史压测基线与规模参考
 
-5 个 QQ 群，持续运行 80+ 天：
+早期 5 个 QQ 群持续运行 80+ 天压测样本（后续版本持续减负，仅作本地计算开销参考）：
 
-| 指标 | 数值 |
-|------|------|
-| 记忆规模 | 126,000+ 条 |
-| 共现图 | 133,000 节点 / 447,000 有向边 |
-| 查询延迟（本地计算） | < 50ms |
-| 端到端延迟（含远程 Embedding） | ~850ms |
-| 存储 | 1.7GB SQLite + 592MB HNSW |
-| 外部依赖 | 零（仅需 Embedding API） |
+| 指标 | 压测基线（80+ 天） | 当前现网实况示例 |
+|------|-------------------|------------------|
+| 记忆规模 | 126,000+ 条 | 640,000+ 条（持续只增不删） |
+| 共现图 | 133,000 节点 / 447,000 有向边 | — |
+| 本地检索计算耗时 | < 50ms | < 50ms（工作线程内执行） |
+| 端到端延迟（含远程 Embedding） | ~850ms | 受 3 秒注入总截止兜底 |
+| 磁盘占用 | 1.7GB SQLite + 592MB HNSW | ~4.2GB SQLite + ~580MB HNSW |
+| 外部依赖 | 零（仅需 Embedding API） | 零（仅需 Embedding API） |
 
 ---
 
@@ -251,21 +252,21 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 |------|------|
 | PersonaComposer | 编排自我人格与精选自我经历；不塞虚假的群友刻板画像 |
 | BeliefEngine / BeliefReflection | 每日日记之后按 Bot 反思经历，形成、印证、动摇、淡出看法；只在话题相关时注入已形成/稳固的看法 |
-| 现场提审工具 | 印象 / 人情 / 黑话 / 事实由主对话 LLM 按需调用，进入 pending 审核 |
-| BotMoodService | 心情 v2：一个 Bot 一份心情，跨群/私聊共享。冲她来的话（按情绪词 + 关系加权）、关系事件、事后记账顺带给出的心情影响、群氛围（小权重）作为带来源的情绪事件，按半衰期向画像基线回落，可选疲劳；`soul_state` 通道注入情绪词与原因，不输出裸数字，私聊来源的原因在别处只说「私下有件事」。画像见下方「Bot 心情画像」 |
+| 现场提审工具 | 印象 / 人情 / 黑话 / 事实 / Bot 判断由主对话 LLM 按需调用，进入 pending 审核或即时登记 |
+| BotMoodService | 心情 v2：一个 Bot 一份心情，跨群/私聊共享。冲她来的话、关系事件、事后记账情绪影响、群氛围、身体偏置合成当前情绪；`soul_state` 注入情绪词与原因，私聊来源在别处只说「私下有件事」 |
+| BotBodyService | 激素身体 v1（默认关）与服务静默窗口（独立开关）：六种激素向昼夜基线回落，只由真人事件推动；越界时注入边沿事实（含长度倾向 `terse`/`chatty`），`proactive_drive` 轻推读空气；作息/褪黑素睡眠可按次唤醒，静默窗口直接回自定义话术不调模型 |
 
 ### 社交认知
 
 | 功能 | 说明 |
 |------|------|
-| 跨群好感累加 | 同一人在所有群的好感维度与情感积累自动合并为一份统一态度（模拟真人认识你不分场合） |
+| 一个生命（好感唯一口径） | 同一人在群聊、私聊、直播与关联账号下的好感合并为一个分数；日上限按人跨场合且正负分开计，时间冷却覆盖私聊；私聊内容本身仍不在群里复述 |
+| 跃迁证据卷宗 | 观感带正负方向与原话，一人一池攒满后按时间整理成证据卷宗交给模型整体定性；跃迁点记录结算过的观感并在管理台展开依据（保留 30 天） |
 | 广域客观事实 | 注入已审核事实，本群与全群皆可见；提审必须带原话，反串黑话不得当认真事实 |
 | 跨群记忆检索 | `cross_group_enabled` 控制记忆语义召回能否看到其他群；`shared_memory_grants_enabled` 支持共享记忆只读授权 |
-| 别名识别 | `person_registry` 维护群友真实别名，支持多群同人识别 |
-| 多 Bot 隔离 | 2+ Bot 共存时互动与认知数据严格隔离，`bot_id` 使用 `BotProfile.db_id` 区分 |
-| 防骚扰机制 | 辱骂累计到阈值后冷却静默（时间翻倍，上限 1 小时） |
-| 身份安全防线 | 拦截认爹/认主/契约/猫娘/RP 等身份污染，不写入长期人格 |
-| 攻击反制边界 | 针对 Bot 的恶意攻击由安全通道与反思机制联合设防，达到阈值后冷却不回 |
+| 别名与 Bot 标签 | `person_registry` 维护别名与四级 Bot 标签（`human` / `verified_human` / `suspected_bot` / `confirmed_bot`）；系统不设硬编码正则，由 Bot 在对话里调用 `bot_check` 顺手标记或改回，被标为 Bot 后触发协同轮数熔断且不刺激激素身体 |
+| 多 Bot 隔离与读空气仲裁 | 2+ Bot 共存时互动与认知数据按 `BotProfile.db_id` 隔离；开启 `proactive` 后可配话题分工、每小时上限与同群共享冷却锁 |
+| 防骚扰与身份防线 | 辱骂累计冷却静默（上限 1 小时）；拦截认爹/认主/契约/猫娘/RP 污染；每轮附带「说话人场景标签」防止群友自称混入 Bot 人格 |
 
 ### 自主学习
 
@@ -279,7 +280,7 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 
 | 模块 | 功能 |
 |------|------|
-| 黑话系统 | 入站只记账；新梗由 `mark_cultural_moment` 提审；Holyman 广域词典只读理解 |
+| 黑话系统 | 入站只记账；新梗由 `wave_memory_note(mode=cultural)` 提审；Holyman 广域词典只读理解 |
 | Holyman 知识库 | 精选词条 / 文化概念 / 语录证据 / 原始语料 / 候选 / 屏蔽项分层管理 |
 | Few-Shot 风格 | 喜恶预设是跨群稳定的喜欢 / 不喜欢 / 典型反应；本群风格样例从正式 Bot 回复里带证据沉淀，人工或自动审核后只注入健康范例 |
 | 关切 / 人味 | 不入库截词。注入提供人情账与已审事实；考虑开口时把另外挂着的未了事、对方近期反应与疲累合成心情活动，模型自己决定问不问、要不要沉默 |
@@ -297,17 +298,17 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 ## 📊 WebUI 管理面板
 
 管理台在 **9876** 端口，中文界面，支持浅色 / 深色主题。运行时由 Python 托管已构建的前端，不需要在生产环境装 Node.js。
-顶栏统一选择当前 Bot 与群，所有需要作用域的页面共用这一处（写在网址参数里，可以直接分享链接）。
+顶栏统一选择当前 Bot 与群，所有需要作用域的页面共用这一处（写在网址参数里，可以直接分享链接）；侧栏与仪表盘显示跨会话全局待审数字徽标。
 
 | 分组 | 页面 | 功能 |
 |------|------|------|
-| 概览 | Bot 主页 / 系统总览 | 她今天记住了什么、心情、关系变化与新学到的；健康状态、待办、近期异常 |
-| 回复溯源 | 注入观测台 / 检索实验室 | 一次回复用了哪些记忆通道、命中与跳过原因，可跳到对应记忆；同一句查询对比不同检索算法 |
+| 概览 | Bot 主页 / 系统总览 | 她今天记住了什么、心情、身体（激素）卡片、关系变化与新学到的；健康状态、全局待审待办、24 小时告警 |
+| 回复溯源 | 注入观测台 / 检索实验室 | 一次回复用了哪些记忆通道、命中与跳过原因、排队与事件循环延迟探针，可跳到对应记忆；同一句查询对比不同检索算法 |
 | 记忆库 | 记忆 / 标签 / 导入 | 按 Bot 和群查看、编辑记忆（详情里能看到被哪些回复用过）；标签覆盖与质量；从来源预检导入 |
 | 记忆库 | 关系图谱 | 知识图谱与标签两个数据层；「最强关系 / 新出现 / 当前话题 / 全部」四种视图，搜索、两点找路径；**3D 展示**：记忆星空（越亮 = 最近越常被想起）与回忆回放（逐条重放真实回复想起了什么） |
 | 记忆库 | 书设定 / 书设工作台 | 书设语料只读浏览；新章节导入、笔记编辑、检索索引补齐 |
-| 认知 | 人物与关系 / 事实 / 看法 / 黑话与口癖 / 经历片段 / 风格样例 / 心智状态 | 群友画像与好感、印象时间线与关系小传；事实必须带原话；模型提审与自动沉淀的候选经人工或自动审核后入库；风格样例页含跨群「喜恶预设」 |
-| 系统 | 配置中心 / Bot 管理 / 服务与扩展 / 维护任务 / 索引诊断 / 生态兼容 | 按功能查找配置与各层来源；外部接入可查看与修改 Runtime API 令牌；Bot 新增编辑保存即热生效；后台服务启停；可恢复任务；索引探针诊断 |
+| 认知 | 人物与关系 / 事实 / 看法 / 黑话与口癖 / 经历片段 / 风格样例 / 心智状态 | 群友画像与唯一好感（附本场合原始值）、跃迁点展开证据卷宗、Bot 标签标定、关系小传；事实与黑话审核后就地更新；风格样例页含跨群「喜恶预设」 |
+| 系统 | 配置中心 / Bot 管理 / 服务与扩展 / 维护任务 / 索引诊断 / 生态兼容 | 按功能查找配置与各层来源；外部接入可查看与修改 Runtime API 令牌；Bot 管理含「身体与睡眠」「主动对话」「通道与工具（allow/deny）」热生效编辑；后台服务启停；索引探针诊断 |
 | — | 登录 | 管理台访问鉴权（`webui_password`） |
 
 ### 直播舞台页
@@ -337,35 +338,66 @@ cd webui/frontend && npm run build
 
 ---
 
-## 🔧 Agent 工具
+## 🔧 Agent 工具与 AstrBot 适配指南
 
-工具注册受运行模式门控；`compat_only` 默认只保留 LivingMemory-compatible 别名（开启时）。
+### 1. 合并工具矩阵（`tool_surface=merged`，默认）
 
-### 🔧 精简高效的 LLM 工具矩阵 (Function Calling)
+同族工具合成「一个工具 + `mode` 参数」，默认向模型暴露 **6 个**工具（打开调试组 `agent_feedback_tools` 时 **7 个**），每次请求的工具说明从 10,763 字符降到 7,324（**省 32.0%**）。合并工具只是薄路由，所有子工具仍按旧名登记供事后记账、每日日记、反思触发等内部服务调用（`llm_visible=False`）。
 
-v5.0.0 彻底收敛了历史堆叠的工具集，常驻工具数量减半，释放上千 Token Schema 空间，消除大模型选择瘫痪：
+| 合并工具名 | `mode` 可选值 | 对应独立工具 (`legacy`) | 功能与关键参数 | 开放条件 |
+|---|---|---|---|---|
+| **`wave_memory_recall`** | `search` | `wave_memory_search` | 语义+FTS5+上下文窗口记忆搜索（`query` 必填） | `full` / `memory_only` |
+| | `facts` | `wave_memory_facts` | 查已确认事实三元组（`query` 必填） | `full` / `memory_only` |
+| | `person` | `wave_memory_person_search` | 按人查发言、常互动对象、画像、时间线（`person` 必填，`query_type` 选视图） | `full` / `memory_only` |
+| | `relation` | `wave_memory_affinity` | 查对某人好感与排行（原 `mode` 参数在此改名 `view=single/ranking/blacklist/active`） | 仅 `full` |
+| **`wave_memory_lookup`** | `lore` | `wave_memory_book_lore_search` | 查书设与世界观（`query` 必填） | 仅 `full` |
+| | `novel` | `wave_memory_novel_source` | 按关键词或章节号查原著原文（`keyword` 或 `chapter`） | 仅 `full` |
+| | `meme` | `wave_memory_meme_lookup` | 查梗百科释义与例句（`query` 必填） | `full` 且黑话开 |
+| | `game` | `wave_memory_game_knowledge` | 查游戏攻略与机制常识（`game` 与 `query` 必填） | `full` 且游戏开 |
+| **`wave_memory_social`** | `impression` | `wave_memory_record_social_impression` | 形成/更新看法与阶段性好感结算（`target_user` 必填，支持 `event_type`） | 仅 `full` |
+| | `anchor` | `wave_memory_note_social_anchor` | 记人情借还、承诺、越界（`target_user`、`anchor_type`、`summary` 必填） | 仅 `full` |
+| | `concern` | `wave_memory_note_concern` | 记录/跟进/了结挂念的事（`action` 必填） | 仅 `full` |
+| | `bot_check` | `wave_memory_note_bot_tag` | 对话中觉得对方是机器人或误判改回真人（`target_user`、`verdict=bot\|human`、`reason` 必填；仅群聊） | 仅 `full` |
+| **`wave_memory_note`** | `fact` | `wave_memory_propose_fact` | 提交新事实待审（须带 `source_quote` 原话） | 仅 `full` |
+| | `cultural` | `wave_memory_mark_cultural_moment` | 提审黑话或高光回复（`moment_type`、`target_phrase_or_snippet`、`context_note`） | 仅 `full` |
+| | `memory` | `wave_memory_remember` | 即时把一句话写进长期记忆（`content` 必填） | `full` / `memory_only` |
+| **`wave_memory_episode`** | `group` | `wave_memory_note_episode` | 记录互动经历片段（`diary` 模式只给每日日记内部服务调用，不对模型暴露） | 仅 `full` |
+| **`wave_memory_hold_peace`** | — | `wave_memory_hold_peace` | 决定这次不回复，清空消息链不发出（`reason` 必填） | `full` / `memory_only` |
+| *`wave_memory_debug`*（默认关） | `explain` / `feedback` / `suggest` / `candidate` | 4 个调试反馈工具 | 解释注入、打记忆反馈、提配置建议、提审候选 | 需显式开调试组 |
 
-| 工具名称 | 功能说明与定位 | 作用域与权限 |
-|----------|---------------|-------------|
-| **`wave_memory_search`** | **统一记忆搜索**：融合向量相似度、FTS5 精准词项兜底与**前后对话切片窗口展开**（支持严格 Scope 隔离） | allowed |
-| **`wave_memory_person_search`** | **人物全景出口**：回溯交往全貌、好感档案、人际关系与跨群因果时间线唯一法定出口 | full/memory_only |
-| **`wave_memory_record_social_impression`** | **社交动力学单出口**：统一记录阶段性主观定性并变迁好感五维、累加未决能量、触发定向跃迁并自动溯源原话 | full，群 Scope |
-| **`wave_memory_note_social_anchor`** | **人际纽带备忘**：记录重要人情借还、双向承诺与底线越界备忘，可挂入未了关切 | full，群 Scope |
-| **`wave_memory_note_concern`** | **灵魂关切管理**：记录并推进 Bot 挂在心上的未决事件（群友生病/考试/约定等） | full，群 Scope |
-| **`wave_memory_hold_peace`** | **保有沉默**：主动开口由关切触发时，Bot 自己决定不接这句，整条回复不发送，理由记入统计 | 主动开口场合 |
-| **`wave_memory_mark_cultural_moment`** | **文化时刻标记**：现场提审本群特色黑话梗（jargon）或高光风骨回复（style），进入审核工作台 | full，群 Scope |
-| **`wave_memory_propose_fact`** | **客观事实提审**：发现群友新事实，自动反查当轮真实消息 ID 并绑定 `source_quote` 证据入库 | full，群 Scope |
-| **`wave_memory_game_knowledge`** | **游戏知识查询**：按游戏查攻略卡、词条（机制、打法、坑）与自己玩出来的经验；想查以前玩过的具体经过用记忆搜索 | 群聊 / 私聊 |
-| **`wave_memory_meme_lookup`** | **梗百科**：看不懂梗或想接梗时查释义与例句（含神言语料），敏感条目带分寸标注 | 随黑话能力开关 |
-| **`wave_memory_note_episode`** | **群经历大事件**：记录解决群体问题或关系转折的重大经历片段，自动锚定记忆 | full，群 Scope |
-| **`wave_memory_record_diary_episode`** | **Bot 亲笔日记**：记录今日生活随笔与心智历程，带 6 小时冷却并钉入经历时间线主干 | full，群 Scope |
-| **`wave_memory_facts`** | **事实库直查**：直接查验某人某事的确定性已知客观属性（三元组） | allowed |
-| **`wave_memory_affinity`** | **好感快速查询**：只读快速查看当前群友五维好感分值与关系等级 | full |
-| **`wave_memory_remember`** | **即时记忆存储**：对话中遇到明确叮嘱时，以最高优先级即时落盘记忆 | allowed |
-| **`wave_memory_book_lore_search`** | **书设百科检索**：专属世界观/游戏设定语义近邻检索 | full |
-| `wave_memory_explain_injection` 等 | *自愈调试类*：默认移出日常闲聊常驻列表，按需在开发与审查模式下开启 | debug/review |
+> 切换形态：在 6185 配置 `Compatibility_Settings.tool_surface` 选 `merged`（默认）或 `legacy`（回滚到 **18** 个独立工具，`wave_memory_record_diary_episode` 在 `legacy` 中也注册为可调用但建议只在日记/管理场景使用）。`wave_memory_propose_belief` 已退役不再注册。
 
----
+### 2. 如何适配 AstrBot 不同模式、人设提示词与 Bot 工具权限
+
+很多提示词错误源于「人设里写的工具名」与「当前 AstrBot 模式 / `tool_surface` / Bot 权限实际放行的工具」不一致。按下面三条规则对齐即可：
+
+#### ① 按 `Runtime_Settings.runtime_mode` 裁剪人设提示词
+
+| 运行模式 | 模型实际拿到的工具 | 人设提示词适配要点 |
+|---|---|---|
+| **`full`** | 全部 6 个合并工具（或 `legacy` 18 个） | 人设里写明合并写法，例如 `wave_memory_recall(mode=search)`、`wave_memory_social(mode=impression)`、`wave_memory_note(mode=fact)`、`wave_memory_hold_peace` |
+| **`memory_only`** | **`merged`**：`wave_memory_recall`（仅 `mode=search\|facts\|person`，无 `relation`）、`wave_memory_note`（仅 `mode=memory`）、`wave_memory_hold_peace`<br>**`legacy`**：`wave_memory_search`、`wave_memory_facts`、`wave_memory_person_search`、`wave_memory_remember`、`wave_memory_hold_peace` | **不要**在人设里要求模型记好感、提审事实、查书设/原著/攻略/黑话——这些工具与 mode 在此模式下不会注册，写了会诱导模型空调用 |
+| **`compat_only`** | 原生工具 **0 个**；仅当 `livingmemory_alias_tools_enabled=true` 时暴露 `recall_long_term_memory`、`memorize_long_term_memory` | 不要在人设里写 `wave_memory_*` 工具名；由宿主搭配的 SelfLearning / ChatPlus 提示词或 LivingMemory 别名接管 |
+
+#### ② 人设工具写法与 `tool_surface` 对齐
+
+- 当 `tool_surface=merged`（推荐、默认）：**人设里必须写「合并工具名 + `mode=...`」**（如 `wave_memory_lookup(mode=novel)`、`wave_memory_social(mode=bot_check)`），而**不要**保留 `wave_memory_search`、`wave_memory_propose_fact` 等旧工具名——合并模式下这些旧名根本不在模型的 tool list 里。
+- 当 `tool_surface=legacy`（回滚模式）：人设里写独立工具名（如 `wave_memory_search`、`wave_memory_note_bot_tag`）。
+- WaveMemory 自己运行时动态拼入上下文的提示句子（如结算提醒、时间线查看提示、关切跟进、游戏攻略页脚）会通过 `domain/tool_names.py` 的 `tool_ref()` 自动跟着 `tool_surface` 切换写法，无需手动改代码；只有你在 **AstrBot 控制台人设 (`system_prompt`)** 里手写的说明需要自己同步。可参考 `research/persona-drafts/`（如有）的写法模板。
+
+#### ③ 按 Bot 配置细粒度工具权限（9876「Bot 管理 → 通道与工具」）
+
+同一个 AstrBot 实例里所有 Bot 共用一份工具注册表，但可在 **9876「Bot 管理 → 通道与工具」** 填 `tools_allow`（白名单，留空表示全放行）和 `tools_deny`（黑名单，**优先于白名单**）。运行机制与写法如下：
+
+- **支持三种写法**（可混写，英文逗号分隔）：
+  1. 合并工具整族：`wave_memory_lookup`（开放或关闭该族全部 mode）
+  2. 细到单个 `mode`：**`wave_memory_social:concern`**、**`wave_memory_lookup:game`**（只开放或禁用这一个 mode）
+  3. 旧工具名自动映射：写 `wave_memory_note_concern` 会自动等价于 `wave_memory_social:concern`，旧配置不必重写
+- **双重生效**：
+  - 在 `merged` 模式下，**每次 LLM 调用时** 按当前消息所属的 `BotProfile` 判断该 mode 是否允许（不允许则返回「当前不可用」）；
+  - 通过 AstrBot 工具集钩子（`filter_request_tools`）在每次请求发给模型前把整组被禁的工具从该轮工具集里移除；
+  - 9876「服务与扩展」里的全局工具开关停用某个工具时，会直接让所有 Bot（含 `merged` 路由的对应 mode）失去它。
+- **常见多 Bot 分工举例**：比如主号「羽书」全开（`tools_allow` 留空），副号「白真真」若不允许生图/攻略或不想让她使用某项能力，只需在白真真的 `tools_deny` 里写 `wave_memory_lookup:game, wave_memory_note:cultural`（并在她自己的人设里删掉对应提示），无需改插件全局配置。
 
 ## 🚀 快速开始
 
@@ -635,6 +667,34 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | `mood.speaking_hints` | （空） | 各心情下的说话倾向：键为情绪词（开心/烦躁/委屈/疲惫…）或类别（正面/负面/平静/疲惫），空则不写 |
 | `mood.positive_words` / `mood.negative_words` | （空） | 叠加在通用词表上的额外正面 / 负面词，用于识别冲她来的话 |
 
+
+### Bot 身体与睡眠（9876「Bot 管理」→ 身体与睡眠，Bot Profile 的 `body` 段）
+
+每个 Bot 一副身体，所有群、私聊、平台共用，保存即热生效。其中「模型服务静默窗口」独立于 `body.enabled` 生效。
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `body.enabled` | false | 启用激素身体（多巴胺 / 血清素 / 催产素 / 皮质醇 / 褪黑素 / 无聊）与褪黑素睡眠 |
+| `body.service_quiet_start` / `service_quiet_end` | （空） | 模型服务静默窗口（小时 0~23，支持跨午夜）。窗口内模型本来就停服，直接回静默话术、不调用模型、不掷骰唤醒 |
+| `body.quiet_replies` | 6 句默认话术 | 静默话术（每行一句，最多 12 句，支持 `{end}` 占位替换成结束钟点如「6 点」） |
+| `body.sleep_start` / `sleep_end` | （空） | 作息睡眠区间（小时 0~23）；留空时只按褪黑素过高入睡，10 分钟内多次被叫按概率醒来（第 6 次必醒） |
+| `body.sleep_replies` | `["……zzz","（睡着了）","困……明天再说"]` | 作息 / 褪黑素入睡未醒时的固定短语（最多 8 句） |
+| `body.sleep_reply_cooldown_seconds` | 1800 | 同一个人收到静默或睡眠话术的最短间隔（秒）；两类冷却分开记 |
+| `body.hormone_gain` | 1.0 | 真人事件对激素的推动系数（0~3；0 = 仅剩昼夜节律） |
+
+### Bot 主动对话与读空气（9876「Bot 管理」→ 主动对话，Bot Profile 的 `proactive` 段）
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `proactive.enabled` / `proactive.mode` | false / `off` | 是否允许未 @ 主动接话；`off` / `shadow`（只打分不发言） / `enforce` |
+| `proactive.style_preset` | `balanced` | 活跃度预设：`quiet`（高门槛长冷却） / `balanced` / `active` |
+| `proactive.preferred_topics` / `avoid_topics` | （空） | 偏爱插话的话题词 / 刻意避让留给队友的话题词（逗号分隔） |
+| `proactive.score_threshold` / `min_gap_seconds` / `max_per_hour` | 55 / 300 / 3 | 接话分数门槛、同群最短间隔（秒）、每小时最多主动次数 |
+| `proactive.followup_window_seconds` / `max_consecutive_turns` | 120 / 2 | 刚搭过话的接话窗口（秒）/ 连续主动无人接茬上限 |
+| `proactive.mood_influence` | 1.0 | 心智状态与身体 `proactive_drive` 对打分的调节权重（0~2） |
+| `proactive.quiet_hours_start` / `quiet_hours_end` | 1 / 7 | 深夜免主动时段（本地小时）；相等表示不限制 |
+| `proactive.bot_collab_max_turns` | 2 | 对方被标记为 Bot 时，10 分钟内最多来回互动轮数，防互刷死循环 |
+| `proactive.shared_group_cooldown_seconds` | 90 | 任意己方 Bot 在本群刚主动开口后，其他己方 Bot 暂让不抢话的秒数 |
 ### 社交与关系 (Social_Settings)
 
 | 配置项 | 默认值 | 说明 |
@@ -691,7 +751,7 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | livingmemory_alias_tools_enabled | false | 启用 LivingMemory 别名工具映射 |
-| tool_surface | merged | 模型看到的工具形态：`merged`（默认）把同族工具合并成 7 个「一个工具 + mode」，每次请求少约三成工具说明；`legacy` 回到独立工具（18 个），用于回滚 |
+| tool_surface | merged | 模型看到的工具形态：`merged`（默认）把同族工具合并成 6 个「一个工具 + mode」（打开调试组时 7 个），每次请求少约三成工具说明；`legacy` 回到独立工具（18 个），用于回滚 |
 | compat_only_auto_inject_enabled | false | 兼容模式下强行启用原生注入 |
 
 ### 模型分工 (Model_Routing_Settings)
@@ -792,12 +852,12 @@ Runtime_Settings.runtime_mode = memory_only
 
 ### Agent 反馈安全边界
 
-| 工具 | 行为 |
-|------|------|
-| `wave_memory_explain_injection` | 只读 trace |
-| `wave_memory_feedback_memory` | 记录 useful/useless/misleading/duplicate；不删除记忆 |
-| `wave_memory_suggest_config` | 写入 pending 配置建议；不自动应用 |
-| `wave_memory_submit_review_candidate` | 写入 pending 候选；不自动提升 belief/style/jargon |
+| 工具（`merged` / `legacy`） | 行为 |
+|---|---|
+| `wave_memory_debug(mode=explain)` / `wave_memory_explain_injection` | 只读 trace |
+| `wave_memory_debug(mode=feedback)` / `wave_memory_feedback_memory` | 记录 useful/useless/misleading/duplicate；不删除记忆 |
+| `wave_memory_debug(mode=suggest)` / `wave_memory_suggest_config` | 写入 pending 配置建议；不自动应用 |
+| `wave_memory_debug(mode=candidate)` / `wave_memory_submit_review_candidate` | 写入 pending 候选；不自动提升 belief/style/jargon |
 
 禁止项：批量删除、关闭 safety、关闭 audit、改 Provider、改其他插件配置、改 AstrBot 人格、伪装插件身份。
 
@@ -837,42 +897,48 @@ Runtime_Settings.runtime_mode = memory_only
 
 | 子系统 | 启用条件 | 配置位置 |
 |--------|----------|----------|
-| 运行模式 | 自动 | 6185: Runtime_Settings.runtime_mode |
-| 向量索引 | Embedding Provider 已配置 | 6185: embedding_provider_id |
-| Tag 提取 | Tag LLM Provider 已配置 | 6185: tag_llm_provider_id |
+| 运行模式 | 自动 | 6185: `Runtime_Settings.runtime_mode` |
+| 向量索引 | Embedding Provider 已配置 | 6185: `embedding_provider_id` |
+| Tag 提取 | Tag LLM Provider 已配置 | 6185: `tag_llm_provider_id` |
 | 共现矩阵 | Tag 覆盖率 > 20% | 自动 |
-| 脉冲传播 | 共现矩阵就绪且 full 模式 | 6185: enable_spike_routing |
-| 残差金字塔 | Embedding + 共现矩阵且 full 模式 | 6185: enable_residual_pyramid |
-| EPA 分析 | Tag 覆盖率 > 20% 且 full 模式 | 6185: enable_epa |
-| 测地线重排 | 共现矩阵节点 > 1000 且 full 模式 | 6185: enable_geodesic_rerank |
-| FTS5 召回 | full/memory_only | 通道配置 |
-| 注入编排器 | enable_auto_inject 且非默认 compat_only | 9876: 通道配置 / 注入观察台 |
-| Trace Store | 自动 | 6185: Trace_Settings / 9876: 注入观察台 |
-| Agent 反馈 | full/memory_only | Agent 工具提交，管理台审核相关对象 |
-| LivingMemory-compatible facade | 自动 | 6185: Compatibility_Settings / 9876: 兼容模式 |
-| 共享记忆授权 | shared_memory_grants_enabled=true | 6185: Cross_Group_Settings |
-| PersonaComposer | full 模式 | 自动 |
+| 脉冲传播 | 共现矩阵就绪且 `full` 模式 | 6185: `enable_spike_routing` |
+| 残差金字塔 | Embedding + 共现矩阵且 `full` 模式 | 6185: `enable_residual_pyramid` |
+| EPA 分析 | Tag 覆盖率 > 20% 且 `full` 模式 | 6185: `enable_epa` |
+| 测地线重排 | 共现矩阵节点 > 1000 且 `full` 模式 | 6185: `enable_geodesic_rerank` |
+| FTS5 召回 | `full` / `memory_only` | 通道配置 |
+| 注入编排器 | `enable_auto_inject` 且非默认 `compat_only` | 9876: 通道配置 / 注入观察台（3 秒总截止 + 常驻工作循环） |
+| Trace Store | 自动 | 6185: `Trace_Settings` / 9876: 注入观察台 |
+| 工具合并与权限 | 自动 | 6185: `Compatibility_Settings.tool_surface` / 9876: Bot 管理 `tools_allow/deny` |
+| Agent 反馈 | `full` / `memory_only`（调试工具默认关） | Agent 工具提交，管理台审核相关对象 |
+| LivingMemory-compatible facade | 自动 | 6185: `Compatibility_Settings` / 9876: 兼容模式 |
+| 共享记忆授权 | `shared_memory_grants_enabled=true` | 6185: `Cross_Group_Settings` |
+| PersonaComposer | `full` 模式 | 自动 |
 | 喜恶预设 | Bot Profile 有 `persona.preferences` | 9876: Bot 管理 / 风格样例页 |
-| 信念反思 | 每日日记写完后 | 6185: Learning_Settings.belief_reflection_* |
-| 经历片段 | v2.2 schema 已迁移且 full 模式 | 自动 |
-| 黑话系统 | LLM + 聊天积累且 full 模式 | 6185: Jargon_Settings |
-| Holyman 知识库 | 内置 assets + WebUI 且 full 模式 | 9876: 黑话页 |
-| 风格学习 | LLM + Bot 回复积累且 full 模式 | 6185: FewShot_Settings |
+| 角色经历 | Bot Profile `character_experience.enabled=true` | 9876: Bot 管理「角色经历」/ 角色经历工作台 |
+| 信念反思 | 每日日记写完后 | 6185: `Learning_Settings.belief_reflection_*` |
+| 经历片段 | v2.2 schema 已迁移且 `full` 模式 | 自动 |
+| 激素身体与睡眠态 | Bot Profile `body.enabled=true` | 9876: Bot 管理「身体与睡眠」/ Bot 主页身体卡片 |
+| 模型服务静默窗口 | Bot Profile `body.service_quiet_start/end` 已填（不依赖 `body.enabled`） | 9876: Bot 管理「身体与睡眠」 |
+| Bot 对话标记与协同熔断 | 自动（零硬编码规则，模型调用 `bot_check` 标记） | 9876: 人物与关系页「标记 Bot/真人」/ Bot 管理「主动对话」 |
+| 多 Bot 读空气与抢答仲裁 | Bot Profile `proactive.enabled=true`（默认关） | 9876: Bot 管理「主动对话」 |
+| 黑话系统 | LLM + 聊天积累且 `full` 模式 | 6185: `Jargon_Settings` |
+| Holyman 知识库 | 内置 assets + WebUI 且 `full` 模式 | 9876: 黑话页 |
+| 风格学习 | LLM + Bot 回复积累且 `full` 模式 | 6185: `FewShot_Settings` |
 | 风格样例自动沉淀 | `FewShot_Settings.auto_learn` / `auto_approve` | 9876: 配置中心 / 风格样例页 |
 | 表达自动审核 | `Learning_Settings.expression_auto_approve_enabled` | 9876: 配置中心 |
 | 心事 v1 | 有未了关切且正在考虑对某人开口 | 自动，随关切与心情数据 |
-| 每日日记 | `daily_diary_enabled` | 6185: Learning_Settings |
-| 主动开口 | `proactive_reply_enabled` + 有未了关切 | 6185: Learning_Settings |
+| 每日日记 | `daily_diary_enabled` | 6185: `Learning_Settings` |
+| 主动开口 | `proactive_reply_enabled` + 有未了关切 | 6185: `Learning_Settings` |
 | 注入指标 | 自动 | 9876: 概览页 / 注入指标 |
 | 身份安全 | 自动 | 无需配置 |
-| 防骚扰 | 自动 | 6185/9876: Social_Settings |
-| 流水账清理 | 自动 | 6185: Eviction_Settings.interval_hours |
+| 防骚扰 | 自动 | 6185/9876: `Social_Settings` |
+| 流水账清理 | 自动 | 6185: `Eviction_Settings.interval_hours` |
 
 ---
 
 ## 项目结构
 
-> 规模：**214 个非测试 Python 模块**（`services/` 84、`engine/` 26、`engine/db/` 28、`tools/` 25、`webui/blueprints/` 31、`domain/` 13、`app/` 7）。
+> 规模：**376 个非测试 Python 文件**（不含 `scripts/`、`research/` 与 `tests/`：`services/` 148、`engine/` 87 含 `engine/db/` 59、`webui/` 48 含 `webui/blueprints/` 32、`tools/` 30、`domain/` 15、`app/` 7、`main.py` 1）。
 
 ```
 ├── engine/                      # 检索引擎（纯算法，零 LLM）
@@ -888,11 +954,14 @@ Runtime_Settings.runtime_mode = memory_only
 │   ├── recall_policy.py         # 召回策略统一层
 │   ├── memory_collapse.py       # 跨群同文折叠
 │   ├── shared_grant_recall.py   # 共享授权召回
-│   └── db/                      # 仓储层（memory / soul / knowledge / outbox / tag…）
+│   └── db/                      # 仓储层（memory / soul / knowledge / outbox / tag / bot_body…）
 ├── domain/                      # 领域契约（无 IO）
 │   ├── commands.py              # DomainCommand / EntityChange 写入契约
 │   ├── scope.py                 # RuntimeScope / CatalogScope 访问边界
 │   ├── relationship_policy.py   # 好感度公式与维度的唯一事实来源
+│   ├── mood_policy.py           # 快层心情与立体心智读数
+│   ├── body_policy.py           # 激素身体昼夜节律、习惯化、睡眠/静默门禁纯函数
+│   ├── tool_names.py            # 工具名与合并映射的唯一事实来源
 │   ├── evidence.py              # 证据引用
 │   └── quality.py               # 质量评分
 ├── services/                    # 灵魂系统 + 业务服务
@@ -900,13 +969,16 @@ Runtime_Settings.runtime_mode = memory_only
 │   ├── message_writer.py        # 消息统一写入
 │   ├── outbox_dispatcher.py     # 事务性发件箱派发
 │   ├── persona_composer.py      # 自我人格/信念/经历/风格编排
-│   ├── impression_timeline.py   # 群友印象时间线与指数衰减
+│   ├── impression_timeline.py   # 群友印象时间线、跃迁证据卷宗与指数衰减
 │   ├── relationship_narrative.py # 关系注入的自然语言渲染（档位依据/印象压缩/当下感受）
 │   ├── belief_engine.py         # 信念读取与注入选择
 │   ├── belief_reflection.py     # 每日日记后的信念反思
 │   ├── experience_episodes.py   # 经历片段
-│   ├── identity_safety.py       # 身份污染防线
+│   ├── identity_safety.py       # 身份污染防线与说话人场景标签
 │   ├── bot_mood.py              # Bot 心情 v2（一个 Bot 一份心情）
+│   ├── bot_body.py              # Bot 身体与模型服务静默窗口服务
+│   ├── bot_discovery.py         # Bot 标签读写与协同轮数熔断（无硬编码规则）
+│   ├── reply_decision.py        # 读空气主动插话与双 Bot 抢答仲裁
 │   ├── memory_budget_policy.py  # 内存预算档位
 │   ├── data_governance_jobs.py  # 数据治理作业
 │   ├── scope_recovery.py        # Scope 恢复
@@ -916,14 +988,13 @@ Runtime_Settings.runtime_mode = memory_only
 │   ├── preoccupation.py         # 心事 v1（未了事 / 反应 / 疲累的组合）
 │   ├── preference_recall.py     # 喜恶预设的话题相关性选择
 │   ├── review/                  # 审查队列（review_candidates）
-│   ├── injection/               # 注入编排 + 14 通道
+│   ├── injection/               # 注入编排 + 14 通道 + 常驻工作循环
 │   ├── jargon/                  # 黑话 / holyman 广域资产
 │   └── few_shot/                # 健康风格学习
-├── tools/                       # 25 个 Agent 工具模块；20 个内置工具按能力门控注册
-├── webui/                       # Web 管理面板（31 蓝图 + React 前端）
+├── tools/                       # 30 个 Agent 工具模块；22 个内置能力（merged 默认 6+1 个，legacy 18 个）
+├── webui/                       # Web 管理面板（32 蓝图 + React 前端）
 └── main.py                      # 插件入口
 ```
-
 ### 写路径与数据一致性
 
 正式对象（记忆、关系、情绪、关切、经历、标签治理）**只有一个写入入口**：`services/system_convergence_runtime.py` 的 `ProductionWriteGateway`。业务服务不直接改这些表，而是提交 `DomainCommand`（[domain/commands.py](domain/commands.py)）。
