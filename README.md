@@ -2,7 +2,7 @@
 
 # Wave Memory
 
-[![Version](https://img.shields.io/badge/version-v5.1.7-blue.svg)](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
+[![Version](https://img.shields.io/badge/version-v5.2.0-blue.svg)](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![AstrBot](https://img.shields.io/badge/AstrBot-≥4.14-green.svg)](https://github.com/AstrBotDevs/AstrBot)
@@ -121,6 +121,7 @@ v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现�
 
 | 版本 | 日期 | 重点 |
 |------|------|------|
+| **v5.2.0** | 2026-11-14 | 一个生命：对同一个人的好感只有一份（群聊、私聊、关联账号合并，注入/查询/排行/管理台同一口径）；日上限按人跨场合且正负分开计；私聊关系也会随时间变淡；未结算观感一人一池、带方向与原话，攒满后以证据卷宗交给模型整体定性，跃迁点可在管理台展开依据；激素身体（多巴胺 / 血清素 / 催产素 / 皮质醇 / 褪黑素 / 无聊，昼夜基线 + 习惯化，零 LLM，默认关）与睡眠态（睡着被叫只回固定短语）；注入提速（常驻工作循环、书设与散弹枪检索移出事件循环）；工具合并（模型看到的 17 个工具合成 6 个「一个工具 + mode」，每次请求少约三成工具说明，`tool_surface=legacy` 可回滚，`tools_allow/deny` 支持写到 mode）；主动发言无人接话时指数退避 |
 | **v5.1.7** | 2026-11-05 | 审核效率：审核后列表就地更新不再整表重拉；侧栏与仪表盘显示全局待审数（新接口 `/api/review/summary`）；软超时排查测量：注入 trace 记录线程池排队与事件循环晚醒 |
 | **v5.1.6** | 2026-11-01 | 加固：注入总截止 3 秒（上游 embedding 偶发慢时不再拖住回复）；说话人场景标签防身份污染；关系小传污染改按句剥离；告警 24 小时过期且拦截生效只记警告；数据库直连拦截不再误伤注释；纯图片消息不再召回无关事实与书设；管理台破坏性操作加确认、未保存离开提示、配置密钥打码 |
 | **v5.1.5** | 2026-10-28 | 拟人修整：信念双向词法匹配并让稳固看法低频自然流露（不调用模型）；正式关系随时间冷却（只改自动层、留 time_decay 审计）；soul_state 注入提速（快照 + 原因窗口，结果不变）；表达学习加人设检查、待审过期与按人限流；纯图片消息不再召回占位噪声；删除 desire、主观时间、旧主动发言、ConcernTracker 等空转模块 |
@@ -690,6 +691,7 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | livingmemory_alias_tools_enabled | false | 启用 LivingMemory 别名工具映射 |
+| tool_surface | merged | 模型看到的工具形态：`merged`（默认）把同族工具合并成 7 个「一个工具 + mode」，每次请求少约三成工具说明；`legacy` 回到原来的 17 个独立工具，用于回滚 |
 | compat_only_auto_inject_enabled | false | 兼容模式下强行启用原生注入 |
 
 ### 模型分工 (Model_Routing_Settings)

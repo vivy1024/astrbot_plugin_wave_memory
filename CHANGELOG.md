@@ -1,5 +1,89 @@
 # Changelog
 
+## v5.2.0（2026-11-14）
+
+一个生命：Bot 对同一个人的感受跨群、跨平台、私聊群聊只有一份。私聊里的**内容**仍不在群里复述，但**数值与感受**只有一份。同一版本里还包含跃迁证据卷宗、激素身体、注入提速与工具合并，下面按主题分节。
+
+### 一个生命（好感统一）
+
+- **好感唯一读口径**。新增 `ScopedSoulRepository.person_relationship(bot_id, subject)`：所有群、私聊、直播与管理员关联的账号合并为一个分数。关系注入、`wave_memory_affinity` 单人查询与排行、管理台人物与关系列表全部读它（管理台另附 `scene_affinity` 显示本场合原始行）。过去私聊攒的好感在群里不计分，排行只看本群、单人查询只看本会话，三处口径不一。
+- **日上限按人跨场合，正负分开计**。24 小时上限按「这个人 + 关联账号」统计，多个群不能叠加刷分；正向与负向各自累计，正负交替也绕不过。`cap_automatic_delta` 新增 `daily_positive` / `daily_negative`，旧的净值调用保持兼容。
+- **私聊关系也会变淡**。时间冷却覆盖群聊与私聊；闲置天数按这个人最后一次任何场合的互动计算（群里刚聊过，私聊那份关系不算冷落）。
+- **未结算观感一人一池**。日常 `<<impression>>` 观感一律写进这个人唯一的 `''` 池，场合记在 trace 里只用于可见性（私聊原文只在同一私聊显示）；A 群攒的观感在 B 群同样计入能量。旧版本按群号写下的行读取时并入、结算时一并清空。私聊与直播也开始攒观感。
+- **私聊也做事后记账**。事后回看与结算覆盖私聊，提示词按场合称呼「群里 / 私聊里」。
+- **事件类型不再被压扁**。记账与 `wave_memory_record_social_impression` 新增可选 `event_type`（被夸、被凶、玩梗、长谈、投喂、纠错、越界、坦白、日常）；未给出时负向信任推导为 `bot_attacked`、负向有趣/深度为 `ignored_boundary`，不再一律落到 `direct_reply`，心情系统能感受到「被伤到」。
+- **主动发言无人接话时指数退避**。主动开口后 30 分钟无人说话记一次冷落（每次主动只记一次），之后主动最小间隔按 2^n 放大、上限 24 小时；任何真人发言即清零。
+
+### 跃迁证据卷宗
+
+让每一次关系跃迁都有实材实料。
+
+- **观感带方向和原话**。`<<impression:观感 | impact:-3>>` 支持负向（能量仍按绝对值计）；每条观感记录发生的场合、该群友最近一条发言（id 与 ≤80 字原文）和短 id。
+- **结算时给全量卷宗**。未结算能量攒满后，注入提示与事后记账不再只给一个能量数字，而是把这段时间的全部观感按时间排好（正向几件、负向几件、每件的原话），请模型基于证据整体定性，升降由证据决定。私聊里的观感原文只在同一私聊展示，其他场合只提示条数。
+- **跃迁点记住消化了什么**。`person_timeline_events` 新增 `settled_trace_ids`、`is_leap` 两列（幂等 `ALTER TABLE ADD COLUMN`，不动旧数据）；跃迁结算不再清空观感，而是标为已结算并保留 30 天作证据，不再计入能量。里程碑文案带「源于 N 件事的积累」。
+- **管理台可展开依据**。印象时间线里的跃迁点带「关系跃迁」徽标，可展开查看这次跃迁的依据（正负计数与逐条观感、原话）；私聊原文在群视角下不展开；超过保留期的只显示数量。
+
+### 激素身体
+
+一个 Bot 一副身体，所有群、私聊、平台共用。纯规则、零 LLM。**默认关闭**，在 Bot Profile 的 `body.enabled` 单独开启。
+
+- **身体状态**。新表 `bot_body_state` / `bot_body_events` / `bot_body_person_seen`（纯增量、`IF NOT EXISTS`）。六个变量：多巴胺、血清素、催产素、皮质醇、褪黑素、无聊，各有半衰期，向**随钟点变化的昼夜基线**指数回落，不是固定值。
+- **只由真人事件改变**。被叫到、被夸、被凶、玩梗、投喂、长谈、越界、重逢、开口没人理；关系事件（`bot_praised` / `bot_attacked` / `gift_or_feed` …）按映射表作用到身体，按关系事件 id 幂等，跃迁事件分量翻倍。被识别为 Bot 的发言者不算，避免两个 Bot 互相刺激。
+- **像人的细节**。同一个人同一类事件 24 小时内按 0.8ⁿ 习惯化；血清素高时压力增量打 7 折；陌生人示好只算约 40%，亲近的人伤到更疼；皮质醇在多巴胺高时消得更快；皮质醇长期过高会拖累血清素；单次增量刻意取小，不会一两轮顶满。
+- **停机不算冷落**。关闭时记下离线起点，重启后的推进只算关闭之前的在线时间；一次推进封顶 48 小时。
+- **对外只说边沿事实**。状态刚越过阈值才注入一句（≤80 字，同一状态 40 分钟内不重复），接入 `soul_state` 通道；不给数值，不写「你很生气」这类指令。身体对快层心情只给一个夹在 ±0.2 内的小偏置。
+- **睡眠态**。Profile 的 `body.sleep_start` / `sleep_end` 或褪黑素过高即入睡。睡着时被叫到**不调用模型**：10 分钟窗口内第 1 次不醒，第 2 次起按概率醒来，第 6 次必醒（深睡 ×0.45）；没醒只回一句固定短语（`body.sleep_replies`），同一个人 30 分钟内不重复。醒了之后 10 分钟内保持清醒。
+- **管理台**。新增只读接口 `GET /api/soul/body?bot_id=…` 与 SoulPage「身体（激素）」卡片：六个激素条、睡眠状态、给心情的偏置、主动意愿、回复长度系数、最近的身体事件（不含任何人的身份或聊天原文）。
+- `BotProfile` 新增 `body` 段（`enabled` / `sleep_start` / `sleep_end` / `sleep_replies` / `sleep_reply_cooldown_seconds` / `hormone_gain`）。`hormone_gain=0` 表示事件不再影响身体，只剩昼夜节律。
+- 睡眠门禁只覆盖「她知道自己睡着了」的情况。服务商整体不可用时（例如 antigravity 夜间静默）AstrBot 自己会把「LLM 响应错误: …」发到群里，这需要在 AstrBot 人设里设置 `custom_error_message`，属于线上人设配置，不在本版本里自动修改。
+
+### 注入提速
+
+把还在占着事件循环的同步重活移走。起因是 v5.1.7 加的 `latency_probe` 测量：`safety`、`meme_hint` 这类不读库的通道 p95 也有 206ms，且和读库通道一起变慢，说明慢的是事件循环被同步代码占住，不是数据库锁。
+
+- **常驻工作循环**。`offload_to_thread` 的通道过去每次调用都 `asyncio.run`——新建事件循环、跑完再拆掉，12 个通道每条消息要付 6~7 次固定开销。现在是一组常驻工作线程，每个线程持有一个持久循环，通道经 `run_coroutine_threadsafe` 投递，主循环只 `await` 结果；排队耗时仍然记入 trace 的 `latency_probe`。插件卸载时停掉工作循环，之后再用会自动重建。
+- **书设通道**。HNSW 社区检索、取行、过滤整段放进工作线程（`book_lore` 过去直接在事件循环上同步搜索）；默认的 `ExternalBookLoreStore` 实例改为复用。
+- **书设库表结构缓存**。每次读取都新建连接再跑 `PRAGMA table_info`；现在按书库文件的 mtime/size 缓存列信息，文件变了立即失效。
+- **散弹枪检索**。`shotgun_query` 的热路 HNSW 搜索、冷路检索、取行、测地线重排、去重与 SVD 主题去重原本全在事件循环上，现在分两段放进工作线程。
+- 新增性能门禁测试：同步阻塞的通道不拖慢主循环（心跳间隔 <200ms）、一个慢通道不拖慢其他通道、12 次调用只用到池内有限的循环与线程。
+- 没有改动：`relationship` 通道里遗留的 `user_profiles` 画像迁移仍在注入路径里执行。它只在发现旧的 `impression_history` 等键时触发，搬完即清键、不再触发；把它挪出需要一个后台迁移作业，属于 v6.0 清理 `user_profiles` 的范围。
+- 验收方式：部署后对比 `latency_probe`，`loop_lag` 的 p95 与软超时日志频率应低于 v5.1.7 基线（`facts` 120ms+、总耗时约 2.6 秒）。目前只有本地测试证据，尚无线上数据。
+
+### 工具合并
+
+同族工具合成「一个工具 + mode 参数」，减少每次请求里工具说明占的提示词。
+
+- **模型看到的工具从 17 个变成 6 个**（调试组打开时 7 个）：
+  | 合并后 | mode | 原来的工具 |
+  |---|---|---|
+  | `wave_memory_recall` | `search` / `facts` / `person` / `relation` | search、facts、person_search、affinity |
+  | `wave_memory_lookup` | `lore` / `novel` / `meme` / `game` | book_lore_search、novel_source、meme_lookup、game_knowledge |
+  | `wave_memory_social` | `impression` / `anchor` / `concern` | record_social_impression、note_social_anchor、note_concern |
+  | `wave_memory_note` | `fact` / `cultural` / `memory` | propose_fact、mark_cultural_moment、remember |
+  | `wave_memory_episode` | `group`（`diary` 仅内部） | note_episode、record_diary_episode |
+  | `wave_memory_hold_peace` | — | 不变 |
+  | `wave_memory_debug`（默认关） | `explain` / `feedback` / `suggest` / `candidate` | 调试 4 个 |
+- **实测省 30.9%**：默认工具组每次请求的工具说明从 10,327 字符降到 7,135（含调试组 12,176 → 8,550，省 29.8%）。
+- **薄路由，逻辑不重复**。合并工具把调用原样转发给原来的工具类；schema 是各子工具参数的**并集**，保留每个参数的类型与枚举；转发前按子工具自己的必填项校验，缺哪个就说哪个；兼容别名参数（`user_id`、`shift_reason`、`affinity_delta`、`cross_group`）不再写进模型可见的 schema，传了仍会转发。`relation` 里原来的 `mode` 在合并工具里叫 `view`（避免和路由的 `mode` 冲突）。
+- **内部服务不受影响**。事后记账、每日日记、反思触发按旧名调用的子工具仍然实例化并登记在注册表里，只是 `llm_visible=False`，不交给模型。
+- **Bot 权限支持到 mode**。`tools_allow` / `tools_deny` 可以写合并工具名、`wave_memory_social:concern` 这种细到 mode 的写法，或旧工具名（自动解释成对应的合并工具与 mode）；deny 优先。权限在**每次调用时**按当前 Bot 判断，同一份工具清单继续服务羽书与白真真。
+- **提示词里的工具引用跟着形态走**。运行时写给模型的句子（结算提示、时间线提示、反思触发、关切跟进、游戏攻略页脚）不再写死旧名，按当前形态渲染成模型真正能调用的写法，例如 `wave_memory_recall(mode=person, query_type=timeline, …)`。
+- **可回滚**。新配置 `Compatibility_Settings.tool_surface`：`merged`（默认）/ `legacy`（回到原来的 17 个）。
+- **需要同步的线上人设**：线上羽书、白真真的人设提示词里写着旧工具名，**合并上线时要一起更新**，否则模型会去调用不存在的工具。草案与逐行差异在 `research/persona-drafts/`（羽书改 11 行、白真真改 2 行），顺带去掉了羽书提示词里已退役的 `wave_memory_propose_belief`。人设只通过 AstrBot 官方接口更新，更新前需要用户确认。
+
+### Bot 自动发现与读空气扩展
+
+- **人物 Bot 标签**。`person_registry` 幂等新增 4 列（`entity_kind` / `bot_tag_source` / `bot_tag_reason` / `bot_tag_updated_at`，`ALTER TABLE ADD COLUMN`，旧数据不动）。四级：`human`（默认）、`verified_human`（管理员确认真人，自动检测永不覆盖）、`suspected_bot`（自动发现）、`confirmed_bot`（管理员确认，或 Bot 注册表里登记的己方账号）。
+- **零 Token 启发式，只认强信号**。昵称以独立的 `bot` 结尾或带 `[Bot]` / `(AI)` / `【机器人】` 标记（Abbot、robot、Talkbot 这类真词不算）；发言带 AstrBot 外发的「LLM 响应错误」模板、「调用工具失败」、模型自称（讨论 astrbot / API Error / rate limit 的真人不算）；连续三条等间隔机械连发或近乎相同的话术（真人复读两次不算）；群友点破「是机器人」。`hold_peace` 的收口理由里出现独立的 ai / bot 单词也会留线索。
+- **协同防互聊**。读空气模式非 `off` 时，被标为 Bot 的发言者没 @ 就不主动回；被它 @ 时，10 分钟窗口内超过 `proactive.bot_collab_max_turns`（默认 2）轮即熔断。被识别为 Bot 的发言者不喂给激素身体。
+- **心智状态与多 Bot 读空气**。`compute_mind_state` / `circadian_phase` 把快层心情、昼夜与群节奏合成一份心智读数；`BotProfile.proactive`（默认关闭）提供话题偏好与回避、每小时上限、静默时段，`GroupProactiveArbiter` 在同一个群里给两个 Bot 加共享冷却与抢答仲裁。
+- **管理台**。`POST /api/people/commands/bot-tag`（标记 Bot / 标记真人 / 清除）、人物页 Bot 徽标与筛选、Bot 管理页「主动对话」页签。
+
+### 清理
+
+- 删除 3 个无人读取的热参数：`query.boost_alpha_base`、`geodesic.energy_weight`、`residual.boost_range`。
+- 删除 `tools/extra_tools.py` 里已退役、未注册的 `wave_memory_affinity` 占位与 `wave_memory_tag_graph`。
+
 ## v5.1.7（2026-11-05）
 
 ### 改进
