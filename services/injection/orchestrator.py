@@ -107,7 +107,10 @@ class _WorkerLoops:
     这里线程和循环都只建一次，通道的 build 通过 ``run_coroutine_threadsafe`` 投递。
     """
 
-    def __init__(self, size: int = 4) -> None:
+    # 线上 67 条 trace 实测：4 线程只能同时接住前 4 个 offload 通道，
+    # 第 5/6 个通道（soul_state / fewshot）排队 P50 分别达 82.7ms / 161.3ms（P90 394.7ms）。
+    # 提高到 8 个常驻线程，让单轮 6~8 个同步读库通道零排队并发，避免不必要等待。
+    def __init__(self, size: int = 8) -> None:
         self._size = max(1, int(size))
         self._lock = threading.Lock()
         self._loops: list[asyncio.AbstractEventLoop] = []
