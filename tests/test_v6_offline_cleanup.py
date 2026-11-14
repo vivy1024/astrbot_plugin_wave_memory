@@ -125,6 +125,18 @@ def _build_legacy_like_db(db_path: Path) -> None:
         INSERT INTO background_job_runs(run_id, status, created_at) VALUES
             ('old', 'succeeded', 100.0),
             ('recent', 'succeeded', 9999999999.0);
+
+        CREATE TABLE domain_outbox (event_id TEXT PRIMARY KEY, created_at REAL NOT NULL);
+        CREATE TABLE outbox_deliveries (event_id TEXT NOT NULL, consumer_name TEXT NOT NULL, state TEXT NOT NULL);
+        CREATE TABLE write_operations (operation_id TEXT PRIMARY KEY, status TEXT NOT NULL, created_at REAL NOT NULL, committed_at REAL);
+        INSERT INTO domain_outbox VALUES ('e1', 100.0), ('e2', 9999999999.0);
+        INSERT INTO outbox_deliveries VALUES ('e1', 'c1', 'completed'), ('e2', 'c1', 'completed');
+        INSERT INTO write_operations VALUES ('op1', 'committed', 100.0, 100.0), ('op2', 'committed', 9999999999.0, 9999999999.0);
+
+        CREATE TABLE injection_traces (trace_id TEXT PRIMARY KEY, timestamp REAL NOT NULL);
+        CREATE TABLE injection_trace_channels (id INTEGER PRIMARY KEY, trace_id TEXT NOT NULL);
+        INSERT INTO injection_traces VALUES ('t1', 100.0), ('t2', 9999999999.0);
+        INSERT INTO injection_trace_channels VALUES (1, 't1'), (2, 't2');
         """
     )
 
@@ -185,8 +197,10 @@ def test_apply_migrates_all_data_aligns_tags_and_fts_and_vacuums(tmp_path):
     db = tmp_path / "offline.db"
     _build_legacy_like_db(db)
 
-    report = cleanup_database(db, apply=True)
+    report = cleanup_database(db, apply=True, prune_outbox_days=7, prune_traces_days=3)
     assert report["quick_check"] == "ok"
+    assert report["auxiliary"]["pruned_outbox_rows"] == 2
+    assert report["auxiliary"]["pruned_trace_rows"] == 1
 
     conn = sqlite3.connect(str(db))
     # 1. user_profiles 迁入 person_scene_stats 并删除旧表
@@ -227,8 +241,11 @@ def test_apply_migrates_all_data_aligns_tags_and_fts_and_vacuums(tmp_path):
     ).fetchall()
     assert [h[0] for h in hits] == [1]
 
-    # 6. 哨兵表保留为空表结构、scoped_beliefs 清空、job_runs 只留最近记录
+    # 6. 哨兵表保留为空表结构、scoped_beliefs 清空、job_runs/outbox/traces 只留最近记录
     assert conn.execute("SELECT COUNT(*) FROM memory_importance_repair_v51").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM scoped_beliefs").fetchone()[0] == 0
     assert [r[0] for r in conn.execute("SELECT run_id FROM background_job_runs").fetchall()] == ["recent"]
+    assert [r[0] for r in conn.execute("SELECT event_id FROM domain_outbox").fetchall()] == ["e2"]
+    assert [r[0] for r in conn.execute("SELECT trace_id FROM injection_traces").fetchall()] == ["t2"]
+    assert [r[0] for r in conn.execute("SELECT trace_id FROM injection_trace_channels").fetchall()] == ["t2"]
     conn.close()

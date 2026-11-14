@@ -480,15 +480,15 @@ def _prune_auxiliary_tables(
 
     if prune_traces_days > 0 and _table_exists(conn, "injection_traces"):
         trace_cutoff = time.time() - prune_traces_days * 86400.0
-        t_cnt = int(conn.execute("SELECT COUNT(*) FROM injection_traces WHERE created_at < ?", (trace_cutoff,)).fetchone()[0])
+        t_cnt = int(conn.execute("SELECT COUNT(*) FROM injection_traces WHERE timestamp < ?", (trace_cutoff,)).fetchone()[0])
         stats["pruned_trace_rows"] = t_cnt
         if apply and t_cnt:
             if _table_exists(conn, "injection_trace_channels"):
                 conn.execute(
-                    "DELETE FROM injection_trace_channels WHERE trace_id IN (SELECT trace_id FROM injection_traces WHERE created_at < ?)",
+                    "DELETE FROM injection_trace_channels WHERE trace_id IN (SELECT trace_id FROM injection_traces WHERE timestamp < ?)",
                     (trace_cutoff,),
                 )
-            conn.execute("DELETE FROM injection_traces WHERE created_at < ?", (trace_cutoff,))
+            conn.execute("DELETE FROM injection_traces WHERE timestamp < ?", (trace_cutoff,))
 
     return stats
 
