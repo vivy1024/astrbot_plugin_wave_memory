@@ -69,6 +69,7 @@ SELF_COMMIT_ALLOWLIST = WRITE_ENTRY_ALLOWLIST | {
     "lifecycle.py",  # 遗留：好感/画像自提交，含已无调用者的 legacy 事件写入
     "meta_thinking.py",  # 遗留：现场思考自提交
     "tag_job.py",  # 遗留：标签作业
+    "bot_discovery.py",  # 非受保护领域表：仅维护 person_registry 上的 Bot 标定列与幂等迁移
 }
 
 # 本轮已收敛的文件：必须零裸提交、零受保护表直写。

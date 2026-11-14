@@ -16,7 +16,7 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from ..domain.display_name import sanitize_display_name
-from ..domain.scope import RuntimeScope
+from ..domain.scope import RuntimeScope, scene_key
 from ..engine.database import WaveMemoryDB
 from ..engine.vector_index import VectorIndex
 from ..engine.db.outbox_repo import OutboxRepository
@@ -61,7 +61,7 @@ from ..services.game_events import GameEventError, game_event_payload
 from ..services.backup_lifecycle import DatabaseBackupManager
 from ..services.runtime_mode import effective_native_injection_enabled, effective_query_feature, resolve_runtime_mode, runtime_capability_enabled, should_self_heal_advanced_query
 from ..services.compat import build_duplicate_memory_warnings, build_livingmemory_compat_surface, detect_memory_plugins
-from ..services.impression_timeline import configure_social_limits, parse_impression_mark, persist_unsettled_trace
+from ..services.impression_timeline import configure_social_limits, parse_impression_mark, parse_impression_polarity, persist_unsettled_trace
 from ..services.lifecycle import LifecycleService
 from ..tools.livingmemory_compat_tools import build_livingmemory_compat_tools
 from ..engine.book_lore_index import BookLoreIndex
@@ -352,15 +352,58 @@ class IngressMixin:
             apply_decision(event, runtime_scope, sender_id, sender_name, message)
 
     def _apply_reply_decision(self, event, scope, sender_id, sender_name, message) -> None:
+        from datetime import datetime
+        from ..domain.mood_policy import night_active
         from ..services.proactive_policy import proactive_event_allowed
-        from ..services.reply_decision import ReplySignals, attach_reply_decision, feedback_polarity
+        from ..services.reply_decision import (
+            ReplySignals,
+            attach_reply_decision,
+            detect_message_air_flags,
+            feedback_polarity,
+            score_topic_division,
+        )
 
         service = getattr(self, "reply_decision", None)
         followup = getattr(self, "concern_followup", None)
         direct = scope.visibility == "private" or bool(getattr(event, "is_at_or_wake_command", False))
+        # 真人发言即视为有人接话，清空本会话的主动冷落计数（Bot 发言不算，见下方 sender_is_bot）
+        _note_human = getattr(service, "note_human_activity", None)
         allowed = proactive_event_allowed(event)
         decision = None
         followup_gate = {}
+
+        # 读取 BotProfile.proactive 配置（每个 Bot 独立风格/话题分工/限流）
+        registry = getattr(self, "bot_registry", None)
+        profile = registry.get(scope.bot_id) if registry is not None else None
+        proactive_cfg = getattr(profile, "proactive", None)
+        proactive_enabled = bool(getattr(proactive_cfg, "enabled", False))
+        proactive_mode = str(getattr(proactive_cfg, "mode", "") or "").lower()
+
+        # 读取发消息者 Bot 标签与协同上限
+        discovery = getattr(self, "bot_discovery", None)
+        sender_tag = getattr(event, "_wave_memory_sender_bot_tag", None)
+        if sender_tag is None and discovery is not None and sender_id:
+            try:
+                sender_tag = discovery.get_tag(sender_id, display_name=sender_name)
+            except Exception:
+                sender_tag = None
+        sender_is_bot = bool(sender_tag and sender_tag.get("is_bot"))
+        if callable(_note_human) and not sender_is_bot and scope.session is not None:
+            try:
+                _note_human(scope.session.id)
+            except Exception:
+                pass
+        bot_collab_exceeded = False
+        if sender_is_bot and direct and discovery is not None and scope.visibility == "group":
+            max_collab = int(getattr(proactive_cfg, "bot_collab_max_turns", 2) if proactive_cfg else 2)
+            ok_collab, _ = discovery.check_and_record_collab_turn(
+                bot_id=scope.bot_id,
+                session_id=scope.session.id,
+                sender_id=sender_id,
+                max_turns=max_collab,
+                record=True,
+            )
+            bot_collab_exceeded = not ok_collab
 
         def skipped(reason, remaining):
             followup_gate.update(reason=reason, remaining=remaining)
@@ -369,11 +412,31 @@ class IngressMixin:
             nonlocal decision
             if service is None:
                 return True
-            # Read-only signals; absent feedback remains unknown. Affinity scores are not read here.
+            # 若 BotProfile 显式配了 proactive mode，优先应用到当前评估上下文
+            global_mode = service.settings(scope.bot_id, scope.session.id)["mode"]
+            effective_mode = proactive_mode if proactive_enabled and proactive_mode in {"off", "shadow", "enforce"} else global_mode
             relevance = None
             feedback = None
             backlog = 0
-            if service.settings(scope.bot_id, scope.session.id)["mode"] != "off" and not direct:
+            in_duo_pingpong = False
+            addressed_other = False
+            is_cmd_or_farewell = False
+            followup_eligible = False
+            topic_match = None
+            avoid_topic_hit = False
+            mind_drive = None
+            mind_energy = None
+            mind_stance = ""
+            silence_messages = 0
+            group_msgs_per_min = 0
+            ignored_streak = 0
+            quiet_hours_active = False
+            shared_cooldown_remaining = 0.0
+            proactive_hourly_limit_hit = False
+            consecutive_proactive_hit = False
+            mood_influence = float(getattr(proactive_cfg, "mood_influence", 1.0) if proactive_cfg else 1.0)
+
+            if (effective_mode != "off" or proactive_enabled) and not direct:
                 meta = getattr(self, "meta_thinking", None)
                 interesting = getattr(meta, "is_interesting", None)
                 if callable(interesting):
@@ -381,35 +444,186 @@ class IngressMixin:
                         relevance = 1.0 if interesting(message) else 0.0
                     except Exception:
                         pass
-                # Only this conversation's pending ingress buffers contribute.
                 prefix = f"{scope.bot_id}:{scope.visibility}:{scope.session.id}:"
                 backlog = sum(key.startswith(prefix) for key in getattr(self, "_semantic_message_buffers", {}))
-                # Query only after the existing followup gates admitted a candidate.
-                # Ordinary overheard messages and direct requests need no feedback IO.
                 feedback_service = getattr(self, "reply_feedback_service", None)
                 read_feedback = getattr(feedback_service, "decision_signals", None)
                 if concern is not None and getattr(feedback_service, "enabled", False) is True and callable(read_feedback):
                     try:
                         from inspect import signature
                         kwargs = {"limit": 8}
-                        # Support the staged rollout without retrying a failing query.
                         if "since_ts" in signature(read_feedback).parameters:
                             kwargs["since_ts"] = service.clock() - 86400
                         feedback = feedback_polarity(read_feedback(scope, **kwargs))
                     except Exception:
-                        pass  # unavailable feedback is unknown, never rejection
-            decision = service.decide(ReplySignals(
-                bot_id=scope.bot_id, session_id=scope.session.id, visibility=scope.visibility,
-                message=message, direct=direct, candidate=concern is not None,
-                # A proactive veto does not demote a direct/private request.
-                platform_allowed=allowed if not direct else not bool(getattr(event, "call_llm", False)),
-                stopped=bool((callable(getattr(event, "is_stopped", None)) and event.is_stopped())
-                             or getattr(event, "stopped", False) or getattr(event, "_force_stopped", False)),
-                relevance=relevance, backlog=backlog, feedback=feedback,
-                concern=concern is not None,
-                cooldown_remaining=followup_gate.get("remaining", 0.0),
-                candidate_gate=followup_gate.get("reason"),
-            ))
+                        pass
+
+                # 扩展：本地零 Token 语境红线、双人拉锯、接话窗口、话题分工、心智读数与共享锁
+                if proactive_enabled or getattr(profile, "interest_keywords", None):
+                    bot_terms = getattr(profile, "identity_terms", ()) or ()
+                    bot_qqs = getattr(profile, "self_ids", ()) or ()
+                    msg_obj = getattr(event, "message_obj", None)
+                    at_ids = []
+                    quote_sender = ""
+                    if msg_obj and getattr(msg_obj, "message", None):
+                        for comp in msg_obj.message:
+                            cname = comp.__class__.__name__
+                            if cname == "At" and getattr(comp, "qq", None):
+                                at_ids.append(str(comp.qq))
+                            elif cname == "Reply":
+                                quote_sender = str(getattr(comp, "sender_id", "") or "")
+                    flags = detect_message_air_flags(
+                        message,
+                        bot_terms=bot_terms,
+                        bot_qq_ids=bot_qqs,
+                        at_qq_ids=at_ids,
+                        quote_sender_id=quote_sender,
+                    )
+                    addressed_other = flags["addressed_other"]
+                    is_cmd_or_farewell = flags["is_command"] or flags["is_farewell"]
+
+                    if scope.visibility == "group" and sender_id:
+                        in_duo_pingpong = service.observe_group_speaker(scope.session.id, sender_id)
+
+                    # 接话窗口：刚回复过此人且未转向他人
+                    tracker = getattr(self, "_reply_tracker", None) or {}
+                    last_reply_ts = tracker.get(reply_tracker_key(scope.bot_id, scope.session.conversation_id, sender_id), 0)
+                    followup_win = float(getattr(proactive_cfg, "followup_window_seconds", 120.0) if proactive_cfg else 120.0)
+                    if last_reply_ts and 0 < service.clock() - last_reply_ts <= followup_win and not addressed_other:
+                        followup_eligible = True
+
+                    # 话题分工打分
+                    pref_topics = getattr(proactive_cfg, "preferred_topics", ()) if proactive_cfg else ()
+                    avoid_topics = getattr(proactive_cfg, "avoid_topics", ()) if proactive_cfg else ()
+                    interest_kws = getattr(profile, "interest_keywords", ()) if profile else ()
+                    topic_match, avoid_topic_hit, _ = score_topic_division(
+                        message,
+                        preferred_topics=pref_topics,
+                        interest_keywords=interest_kws,
+                        avoid_topics=avoid_topics,
+                    )
+                    if relevance is None and topic_match > 0:
+                        relevance = topic_match
+
+                    # 心智读数与群心流节奏
+                    mood_service = getattr(self, "mood_service", None)
+                    if mood_service is not None and hasattr(mood_service, "mind_state"):
+                        try:
+                            mind = mood_service.mind_state(scope.bot_id, viewer_scope=scope)
+                            if mind and mind.get("enabled"):
+                                mind_drive = mind.get("social_drive")
+                                mind_energy = mind.get("energy")
+                                mind_stance = str(mind.get("stance") or "")
+                                focus = mind.get("group_focus") or {}
+                                silence_messages = int(focus.get("silence_messages") or 0)
+                                group_msgs_per_min = int(focus.get("msgs_per_minute") or 0)
+                                ignored_streak = int(focus.get("ignored_streak") or 0)
+                        except Exception:
+                            pass
+
+                    # 夜间免打扰与单向滑动配额 + 双 Bot 群级互斥冷却
+                    if proactive_enabled and proactive_cfg is not None:
+                        hour = datetime.fromtimestamp(service.clock()).hour
+                        quiet_hours_active = night_active(hour, proactive_cfg.quiet_hours_start, proactive_cfg.quiet_hours_end)
+                        quota = service.proactive_quota_status(
+                            bot_id=scope.bot_id,
+                            session_id=scope.session.id,
+                            visibility=scope.visibility,
+                            min_gap_seconds=proactive_cfg.min_gap_seconds,
+                            max_per_hour=proactive_cfg.max_per_hour,
+                            max_consecutive_turns=proactive_cfg.max_consecutive_turns,
+                        )
+                        proactive_hourly_limit_hit = bool(quota["hourly_limit_hit"])
+                        consecutive_proactive_hit = bool(quota["consecutive_hit"])
+                        backoff_remaining = 0.0
+                        backoff = getattr(service, "proactive_backoff_seconds", None)
+                        if callable(backoff):
+                            backoff_remaining = float(backoff(
+                                bot_id=scope.bot_id,
+                                session_id=scope.session.id,
+                                visibility=scope.visibility,
+                                base_gap_seconds=proactive_cfg.min_gap_seconds,
+                            ) or 0.0)
+                        followup_gate["remaining"] = max(
+                            float(followup_gate.get("remaining") or 0.0),
+                            float(quota["gap_remaining"]),
+                            backoff_remaining,
+                        )
+                        arbiter = getattr(service, "arbiter", None)
+                        if arbiter is not None:
+                            shared_cooldown_remaining = arbiter.shared_cooldown_remaining(
+                                bot_id=scope.bot_id,
+                                session_id=scope.session.id,
+                                cooldown_seconds=proactive_cfg.shared_group_cooldown_seconds,
+                            )
+
+            # 若 BotProfile 单独启用了主动模式且未走旧 config override，注入临时 threshold/mode 视图
+            original_bots_cfg = service.config.get("bots")
+            injected_override = False
+            if proactive_enabled and proactive_cfg is not None:
+                bots_map = dict(original_bots_cfg) if isinstance(original_bots_cfg, dict) else {}
+                bot_entry = dict(bots_map.get(scope.bot_id) or {})
+                bot_entry.setdefault("mode", proactive_mode if proactive_mode in {"off", "shadow", "enforce"} else "enforce")
+                bot_entry.setdefault("score_threshold", proactive_cfg.score_threshold)
+                bots_map[scope.bot_id] = bot_entry
+                service.config["bots"] = bots_map
+                injected_override = True
+
+            try:
+                decision = service.decide(ReplySignals(
+                    bot_id=scope.bot_id, session_id=scope.session.id, visibility=scope.visibility,
+                    message=message, direct=direct, candidate=concern is not None,
+                    platform_allowed=allowed if not direct else not bool(getattr(event, "call_llm", False)),
+                    stopped=bool((callable(getattr(event, "is_stopped", None)) and event.is_stopped())
+                                 or getattr(event, "stopped", False) or getattr(event, "_force_stopped", False)),
+                    relevance=relevance, backlog=backlog, feedback=feedback,
+                    concern=concern is not None,
+                    cooldown_remaining=followup_gate.get("remaining", 0.0),
+                    candidate_gate=followup_gate.get("reason"),
+                    proactive_enabled=proactive_enabled,
+                    sender_is_bot=sender_is_bot,
+                    bot_collab_exceeded=bot_collab_exceeded,
+                    addressed_other=addressed_other,
+                    is_command_or_farewell=is_cmd_or_farewell,
+                    in_duo_pingpong=in_duo_pingpong,
+                    followup_eligible=followup_eligible,
+                    topic_match=topic_match,
+                    avoid_topic_hit=avoid_topic_hit,
+                    mind_drive=mind_drive,
+                    mind_energy=mind_energy,
+                    mind_stance=mind_stance,
+                    mood_influence=mood_influence,
+                    silence_messages=silence_messages,
+                    group_msgs_per_min=group_msgs_per_min,
+                    ignored_streak=ignored_streak,
+                    quiet_hours_active=quiet_hours_active,
+                    shared_cooldown_remaining=shared_cooldown_remaining,
+                    proactive_hourly_limit_hit=proactive_hourly_limit_hit,
+                    consecutive_proactive_hit=consecutive_proactive_hit,
+                ))
+            finally:
+                if injected_override:
+                    if original_bots_cfg is None:
+                        service.config.pop("bots", None)
+                    else:
+                        service.config["bots"] = original_bots_cfg
+
+            # 如果通过读空气主动唤醒，争抢本群同消息仲裁锁（防双 Bot 同条齐发）
+            if decision.get("proactive_wake") and decision.get("allow") and getattr(service, "arbiter", None) is not None:
+                msg_key = str(getattr(event, "message_id", None) or hash(message[:120]))
+                won = service.arbiter.try_claim_message(
+                    bot_id=scope.bot_id,
+                    session_id=scope.session.id,
+                    message_key=msg_key,
+                    score=float(decision.get("score") or 0.0),
+                )
+                if not won:
+                    decision["allow"] = False
+                    decision["would_reply"] = False
+                    decision["proactive_wake"] = False
+                    decision["decision"] = "suppress"
+                    decision["reasons"].append("arbiter_yielded_to_peer")
+
             attach_reply_decision(event, decision)
             return decision["allow"]
 
@@ -423,9 +637,11 @@ class IngressMixin:
         if concern is not None:
             event._wave_memory_concern_followup = {"concern": concern, "proactive": True}
             event.is_at_or_wake_command = True
+        elif decision and decision.get("proactive_wake") and decision.get("allow"):
+            # 读空气决定主动接话：唤醒事件并标记主动接话上下文（允许模型用 hold_peace 自主放弃）
+            event._wave_memory_air_proactive = {"score": decision.get("score"), "reasons": decision.get("reasons", [])}
+            event.is_at_or_wake_command = True
         elif decision and decision["enforced"]:
-            # The memory pipeline has completed. stop_event is the framework's
-            # authoritative cancellation path; never call continue_event here.
             event.stop_event()
 
     def _should_engage(self, event: AstrMessageEvent) -> str:
@@ -537,6 +753,35 @@ class IngressMixin:
             settle = getattr(self, "_settle_concern_claim", None)
             if callable(settle):
                 settle(event, spoke=False)
+            mood_service = getattr(self, "mood_service", None)
+            silence_scope = getattr(event, "_wave_memory_runtime_scope", None)
+            if mood_service is not None and isinstance(silence_scope, RuntimeScope) and silence_scope.session is not None:
+                try:
+                    mood_service.note_silence_or_ignored(silence_scope.bot_id, silence_scope.session.id, reason="hold_peace")
+                except Exception:
+                    pass
+            # 若模型调用 hold_peace 并明示对方是 AI/机器人互刷，记录可疑 Bot 线索
+            reason_text = str(hold_peace.get("reason") or "")
+            discovery = getattr(self, "bot_discovery", None)
+            # 英文 ai / bot 必须是独立单词（子串匹配会把 maintain、again、said 都算进去）
+            if (
+                discovery is not None
+                and isinstance(silence_scope, RuntimeScope)
+                and re.search(r"(?<![a-z])(?:ai|bot)(?![a-z])|机器人|互刷|人机", reason_text.lower())
+            ):
+                try:
+                    sender_id = str(getattr(event, "get_sender_id", lambda: "")() or "")
+                    if sender_id and sender_id != "bot":
+                        cur = discovery.get_tag(sender_id)
+                        if cur.get("entity_kind") == "human":
+                            discovery.set_tag(
+                                sender_id,
+                                entity_kind="suspected_bot",
+                                source="hold_peace",
+                                reason=f"模型主动沉默收口：{reason_text[:60]}",
+                            )
+                except Exception:
+                    pass
             followup = getattr(self, "concern_followup", None)
             if followup is not None:
                 followup._count("chose_silence_tool" if hold_peace else "chose_silence_text")
@@ -549,6 +794,7 @@ class IngressMixin:
         _IMPRESSION_RE = r'(?:<<\s*impression\s*[:：](.+?)>>|\[\s*impression\s*[:：](.+?)\])'
         extracted_impression = None
         extracted_impact = 1.0
+        extracted_polarity = 0
 
         # 遍历 Plain 组件，提取并移除标记
         for comp in result.chain:
@@ -561,6 +807,7 @@ class IngressMixin:
                         if body:
                             extracted_impression = body
                             extracted_impact = impact
+                            extracted_polarity = parse_impression_polarity(imp_val)
                     # 清除文本中所有 impression 标记（包括前置换行和多余空白）
                     cleaned_text = _re.sub(r'\s*' + _IMPRESSION_RE + r'\s*', '', comp.text, flags=_re.DOTALL)
                     comp.text = cleaned_text
@@ -575,14 +822,17 @@ class IngressMixin:
                         resolved_context = resolver.resolve_event(event)
                         runtime_scope = getattr(resolved_context, "scope", None)
 
-                if isinstance(runtime_scope, RuntimeScope) and runtime_scope.visibility == "group" and runtime_scope.session:
-                    group_id = runtime_scope.session.conversation_id
+                # 群聊、私聊、直播一视同仁：观感都攒进这个人唯一的未结算池，场合只用于可见性
+                if isinstance(runtime_scope, RuntimeScope) and runtime_scope.visibility in {"group", "private"} and runtime_scope.session:
+                    group_id = scene_key(runtime_scope)
                     principal = runtime_scope.subject_principal_id or ""
                     principal_prefix = f"{runtime_scope.session.platform_id}:user:"
                     sender_id = principal[len(principal_prefix):] if principal.startswith(principal_prefix) else ""
                     bot_db_id = runtime_scope.bot_id
 
                     if sender_id and group_id and sender_id != "bot":
+                        _finder = getattr(self, "_latest_sender_evidence", None)
+                        evidence_id, evidence_quote = _finder(runtime_scope, sender_id) if callable(_finder) else (None, "")
                         persist_unsettled_trace(
                             self.db,
                             bot_id=bot_db_id,
@@ -590,7 +840,11 @@ class IngressMixin:
                             group_id=group_id,
                             text=extracted_impression,
                             impact=extracted_impact,
+                            polarity=extracted_polarity,
+                            source_memory_id=evidence_id,
+                            quote=evidence_quote,
                         )
+                    if sender_id and group_id and sender_id != "bot" and runtime_scope.visibility == "group":
                         exists = self.db.conn.execute(
                             "SELECT 1 FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
                             (sender_id, group_id, bot_db_id),
@@ -618,10 +872,11 @@ class IngressMixin:
         # the reply is short/media-only. Never count at request/generation time.
         service = getattr(self, "reply_decision", None)
         reply_scope = getattr(event, "_wave_memory_runtime_scope", None)
+        is_proactive_sent = bool(getattr(event, "_wave_memory_concern_followup", None) or getattr(event, "_wave_memory_air_proactive", None))
         if service is not None and isinstance(reply_scope, RuntimeScope) and reply_scope.session is not None:
             sent_result = event.get_result()
             if sent_result and sent_result.chain and not getattr(event, "_wave_memory_reply_counted", False):
-                service.note_reply(reply_scope.bot_id, reply_scope.session.id, reply_scope.visibility)
+                service.note_reply(reply_scope.bot_id, reply_scope.session.id, reply_scope.visibility, proactive=is_proactive_sent)
                 event._wave_memory_reply_counted = True
         if self.ignore_bot_messages:
             return
@@ -763,16 +1018,22 @@ class IngressMixin:
         _impression_matches = list(_re.finditer(_IMPRESSION_RE, bot_text, _re.DOTALL))
         if _impression_matches and sender_id and group_id and sender_id != "bot":
             for _match in _impression_matches:
-                _body, _impact = parse_impression_mark((_match.group(1) or _match.group(2) or "").strip())
+                _raw_mark = (_match.group(1) or _match.group(2) or "").strip()
+                _body, _impact = parse_impression_mark(_raw_mark)
                 if _body:
                     try:
+                        _finder = getattr(self, "_latest_sender_evidence", None)
+                        _eid, _quote = _finder(runtime_scope, sender_id) if callable(_finder) else (None, "")
                         persist_unsettled_trace(
                             self.db,
                             bot_id=bot_db_id,
                             user_id=sender_id,
-                            group_id=group_id,
+                            group_id=scene_key(runtime_scope),
                             text=_body,
                             impact=_impact,
+                            polarity=parse_impression_polarity(_raw_mark),
+                            source_memory_id=_eid,
+                            quote=_quote,
                         )
                     except Exception as _e:
                         logger.debug(f"[WaveMemory] impression update fallback failed: {_e}")
@@ -787,21 +1048,43 @@ class IngressMixin:
                 message_id=message_id,
             )
 
-        # 心情 v2 的疲劳输入：一段时间内她说了多少话。
+        # 心情 v2 的疲劳输入：一段时间内她说了多少话 + 心流记录是否为主动接话。
         mood_service = getattr(self, "mood_service", None)
         if mood_service is not None:
             try:
-                mood_service.note_bot_reply(runtime_scope.bot_id)
+                try:
+                    mood_service.note_bot_reply(runtime_scope.bot_id, session_id=runtime_scope.session.id)
+                except TypeError:
+                    mood_service.note_bot_reply(runtime_scope.bot_id)
             except Exception as exc:
                 logger.debug(f"[WaveMemory] mood reply count failed: {exc!r}")
 
         # 事后记账：这段对话停下来之后单独回看一遍（见 services/post_reply_bookkeeping.py）
         bookkeeper = getattr(self, "post_reply_bookkeeper", None)
-        if bookkeeper is not None and runtime_scope.visibility == "group":
+        if bookkeeper is not None and runtime_scope.visibility in {"group", "private"}:
             try:
                 bookkeeper.schedule(replace(runtime_scope, subject_principal_id=None))
             except Exception as exc:
                 logger.debug(f"[WaveMemory] bookkeeping schedule failed: {exc!r}")
+
+    def _latest_sender_evidence(self, scope: RuntimeScope, sender_id: str) -> tuple[int | None, str]:
+        """观感的原话出处：该会话里此人最近一条未隔离发言（id 与 ≤80 字原文）。查不到返回 (None, "")。"""
+        conn = getattr(getattr(self, "db", None), "conn", None)
+        if conn is None or not isinstance(scope, RuntimeScope) or scope.session is None or not sender_id:
+            return None, ""
+        try:
+            row = conn.execute(
+                """SELECT id, content FROM memories
+                    WHERE bot_id=? AND session_id=? AND visibility=? AND sender_id=?
+                      AND COALESCE(quarantine, 0)=0 AND content IS NOT NULL
+                    ORDER BY id DESC LIMIT 1""",
+                (scope.bot_id, scope.session.id, scope.visibility, str(sender_id)),
+            ).fetchone()
+        except Exception:
+            return None, ""
+        if not row:
+            return None, ""
+        return int(row[0]), " ".join(str(row[1] or "").split())[:80]
 
     def _bot_display_name(self, db_id: str) -> str:
         profile = self.bot_registry.get(db_id) if getattr(self, "bot_registry", None) else None

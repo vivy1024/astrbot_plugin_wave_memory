@@ -244,6 +244,10 @@ class BootstrapMixin:
         self.injection_orchestrator_active_enabled = inject_cfg.get("orchestrator_active_enabled", True)
         self.injection_shadow_enabled = inject_cfg.get("orchestrator_shadow_enabled", not self.injection_orchestrator_active_enabled)
         self.livingmemory_alias_tools_enabled = bool(compat_cfg.get("livingmemory_alias_tools_enabled", False))
+        # 模型看到的工具形态：merged=7 个「工具+mode」（默认，省提示词）；legacy=原来的 17 个（回滚用）
+        self.tool_surface = str(compat_cfg.get("tool_surface", "merged") or "merged").strip().lower()
+        if self.tool_surface not in ("merged", "legacy"):
+            self.tool_surface = "merged"
 
         def _trace_int(key: str, default: int, minimum: int) -> int:
             try:
@@ -551,11 +555,9 @@ class BootstrapMixin:
         self.hot_config = HotConfig(initial_config={
             "spike": {"firing_threshold": 0.10, "base_decay": 0.25, "wormhole_decay": 0.70,
                       "tension_threshold": 1.0, "max_hops": 4},
-            "query": {"min_similarity": self.min_similarity, "boost_alpha_base": 0.3,
+            "query": {"min_similarity": self.min_similarity,
                       "group_weight_current": float(social_cfg.get("group_weight_current", 1.5)),
                       "group_weight_cross": float(social_cfg.get("group_weight_cross", 0.8))},
-            "geodesic": {"energy_weight": 0.3},
-            "residual": {"boost_range": 0.6},
             "social": {
                 "abuse_trigger_count": int(social_cfg.get("abuse_trigger_count", 3)),
                 "abuse_cooldown_base": int(social_cfg.get("abuse_cooldown_base", 600)),
@@ -778,6 +780,7 @@ class BootstrapMixin:
         self._belief_tag_refresh_delay_seconds = 0.4
         self._pending_belief_tag_refresh: dict[tuple[str, str, str, int], asyncio.Task] = {}
         self.mood_service = None
+        self.body_service = None
         self.lifecycle = None
         self.webui = None
         self.injection_trace_store = None
@@ -875,6 +878,12 @@ class BootstrapMixin:
         for tool in getattr(self, "_bot_aware_tools", ()):
             if hasattr(tool, "bot_db_ids"):
                 tool.bot_db_ids = {p.qq_id: p.db_id for p in self._bot_registry.values()}
+        discovery = getattr(self, "bot_discovery", None)
+        if discovery is not None and hasattr(discovery, "sync_system_bots"):
+            all_self_ids = []
+            for p in registry.all():
+                all_self_ids.extend(p.self_ids)
+            discovery.sync_system_bots(all_self_ids)
         logger.info(f"[WaveMemory] Bot 注册表已热重载: {len(registry.all())} 个启用的 Bot")
 
     def _setup_injection_shadow_pipeline(self) -> None:

@@ -157,11 +157,15 @@ class StartupMixin:
         )
         self.livingmemory_alias_tools_registered = bool(livingmemory_alias_tools)
 
+        from ..domain.tool_names import set_tool_surface
         from ..services.tool_registry import ToolRegistry
         from ..tools.builtin_registry import builtin_tool_specs
 
+        # 运行时写进提示词的工具引用要和模型实际看到的工具清单一致
+        set_tool_surface(getattr(self, "tool_surface", "merged"))
+
         self.tool_registry = ToolRegistry()
-        self.tool_registry.register_many(builtin_tool_specs())
+        self.tool_registry.register_many(builtin_tool_specs(getattr(self, "tool_surface", "merged")))
         self.tool_registry.load_extensions(
             os.path.join(self.data_dir, "extensions"),
             extra_registries={"channel_registry": self._channel_registry()},
@@ -452,10 +456,33 @@ class StartupMixin:
             self.mood_service = None
         if getattr(self, "lifecycle", None) is not None:
             self.lifecycle.mood_service = self.mood_service
-        if self.mood_service is not None:
+        if self.mood_service is not None and getattr(self.db, "soul_repository", None) is not None:
+            try:
+                self.db.soul_repository.set_soul_context_provider(self.mood_service.get_soul_context)
+            except Exception as exc:
+                logger.debug(f"[WaveMemory] SoulContextProvider attach skipped: {exc}")
+        # 身体（激素）：一个 Bot 一副身体，所有群/私聊/平台共用；每个 Bot 在 Profile 的 body.enabled 单独开启
+        self.body_service = None
+        try:
+            from ..services.bot_body import BotBodyService
+
+            if getattr(self.db, "bot_body", None) is not None:
+                self.body_service = BotBodyService(
+                    self.db,
+                    profile_for=lambda db_id: self.bot_registry.get(db_id),
+                    closeness_for=self._body_closeness,
+                )
+        except Exception as e:
+            logger.warning(f"[WaveMemory] BotBodyService init failed: {e}")
+            _record_err("BotBodyService", e)
+            self.body_service = None
+        if self.mood_service is not None and self.body_service is not None:
+            self.mood_service.body_service = self.body_service
+        if self.mood_service is not None or self.body_service is not None:
             self._spawn(self._mood_tick_loop(), name="wave-memory:mood-tick", owner="mood")
         from ..webui.container import get_container as _get_container
         _get_container().mood_service = self.mood_service
+        _get_container().body_service = self.body_service
         logger.info(
             f"[WaveMemory] 灵魂子系统就绪: belief={bool(self.belief_engine)} "
             f"mood={bool(self.mood_service)}"
@@ -563,6 +590,21 @@ class StartupMixin:
                 self.maintenance_job_runner.stop()
         except Exception as e:
             logger.debug(f"[WaveMemory] maintenance job runner stop error: {e}")
+
+        try:
+            # 身体：记下离线起点，下次启动推进时扣掉这段时间（停机不算「对方没理我」）
+            body = getattr(self, "body_service", None)
+            if body is not None:
+                body.mark_offline([p.db_id for p in self.bot_registry.all() if p.db_id])
+        except Exception as e:
+            logger.debug(f"[WaveMemory] body offline mark error: {e}")
+
+        try:
+            from ..services.injection.orchestrator import shutdown_worker_loops
+
+            shutdown_worker_loops()
+        except Exception as e:
+            logger.debug(f"[WaveMemory] injection worker loops shutdown error: {e}")
 
         try:
             from ..services.injection.loop_lag import stop_probe
@@ -768,7 +810,21 @@ class StartupMixin:
             set_fact_policy(FactPolicy())
             logger.warning("[WaveMemory] 事实策略配置无效，使用 UTC 与默认单值关系: %s", type(exc).__name__)
 
-        from ..services.reply_decision import ReplyDecisionService
+        from ..services.bot_discovery import BotDiscoveryService
+        all_system_bot_ids = []
+        reg = getattr(self, "bot_registry", None)
+        if reg is not None and hasattr(reg, "all"):
+            try:
+                profiles = reg.all(include_disabled=True)
+            except TypeError:
+                profiles = reg.all()
+            for prof in profiles:
+                all_system_bot_ids.extend(getattr(prof, "self_ids", ()) or ())
+        self.bot_discovery = BotDiscoveryService(self.db, system_bot_ids=all_system_bot_ids)
+        from ..webui.container import get_container as _get_container_bd
+        _get_container_bd().bot_discovery = self.bot_discovery
+
+        from ..services.reply_decision import GroupProactiveArbiter, ReplyDecisionService
         try:
             raw_rules = cfg.get("reply_rules_json") or "{}"
             rules = json.loads(raw_rules) if isinstance(raw_rules, str) else raw_rules
@@ -777,9 +833,11 @@ class StartupMixin:
             mode = str(cfg.get("reply_rules_mode") or "off")
             if mode not in {"off", "shadow", "enforce"}:
                 raise ValueError("invalid reply_rules_mode")
-            self.reply_decision = ReplyDecisionService({**rules, "mode": mode})
+            self.proactive_arbiter = GroupProactiveArbiter()
+            self.reply_decision = ReplyDecisionService({**rules, "mode": mode}, arbiter=self.proactive_arbiter)
         except (TypeError, ValueError):
-            self.reply_decision = ReplyDecisionService({"mode": "off"})
+            self.proactive_arbiter = GroupProactiveArbiter()
+            self.reply_decision = ReplyDecisionService({"mode": "off"}, arbiter=self.proactive_arbiter)
             logger.warning("[WaveMemory] 开口规则配置无效，已关闭规则并保持原行为")
 
         from ..services.expression_policy import ExpressionPolicy
@@ -1130,16 +1188,34 @@ class StartupMixin:
             _record_err("BeliefReflection", e)
             return None
 
+    def _body_closeness(self, bot_id: str, principal_id: str) -> float:
+        """身体用的关系温度 0..100：由对这个人的唯一好感分数（-100..100）线性映射，没有记录按一般熟。"""
+        repo = getattr(getattr(self, "db", None), "soul_repository", None)
+        reader = getattr(repo, "person_relationship", None)
+        if not callable(reader) or not principal_id:
+            return 50.0
+        try:
+            data = reader(bot_id, principal_id)
+        except Exception:
+            return 50.0
+        if not isinstance(data, dict) or not data.get("available"):
+            return 50.0
+        return max(0.0, min(100.0, 50.0 + float(data.get("affinity") or 0) / 2.0))
+
     async def _mood_tick_loop(self) -> None:
         """心情维护：每 10 分钟增量导入关系事件、清理过期情绪事件、刷新快照（在线程里跑，不占事件循环）。"""
         while True:
             try:
                 await asyncio.sleep(600)
                 service = getattr(self, "mood_service", None)
-                if service is None:
+                body = getattr(self, "body_service", None)
+                if service is None and body is None:
                     return
                 bot_ids = [p.db_id for p in self.bot_registry.all() if p.db_id]
-                await asyncio.to_thread(service.tick, bot_ids)
+                if service is not None:
+                    await asyncio.to_thread(service.tick, bot_ids)
+                if body is not None:
+                    await asyncio.to_thread(body.tick, bot_ids)
             except asyncio.CancelledError:
                 raise
             except Exception as e:

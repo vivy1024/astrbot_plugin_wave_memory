@@ -230,6 +230,118 @@ class PreferenceSettings:
         return not (self.likes or self.dislikes or self.reaction_examples)
 
 
+PROACTIVE_MODES = ("off", "shadow", "enforce")
+PROACTIVE_STYLE_PRESETS = ("quiet", "balanced", "active")
+
+
+def _float(value: Any, default: float, lo: float, hi: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if parsed != parsed or parsed in (float("inf"), float("-inf")):
+        return default
+    return max(lo, min(hi, parsed))
+
+
+@dataclass
+class BodySettings:
+    """Bot 的身体（激素）与睡眠设置（对应 Profile 的 ``body`` 段）。
+
+    身体默认关闭；开启后一个 Bot 一副身体，所有群、私聊、平台共用。睡眠区间内被叫到时，
+    按 10 分钟窗口内第 n 次起掷骰唤醒，没醒只回一句固定短语（不调用模型）。
+    """
+
+    enabled: bool = False
+    sleep_start: int | None = None             # 小时 0..23；与 sleep_end 都给出才启用睡眠区间
+    sleep_end: int | None = None
+    sleep_replies: list[str] = field(default_factory=lambda: ["……zzz", "（睡着了）", "困……明天再说"])
+    sleep_reply_cooldown_seconds: float = 1800.0
+    hormone_gain: float = 1.0                  # 事件增量总系数：0 = 事件不再影响身体，只剩昼夜节律
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "BodySettings":
+        data = data if isinstance(data, dict) else {}
+        defaults = cls()
+
+        def _hour(value: Any) -> int | None:
+            if value in (None, ""):
+                return None
+            try:
+                return max(0, min(23, int(value)))
+            except (TypeError, ValueError):
+                return None
+
+        replies = [r for r in _text_list(data.get("sleep_replies")) if r][:8]
+        return cls(
+            enabled=_bool(data.get("enabled"), defaults.enabled),
+            sleep_start=_hour(data.get("sleep_start")),
+            sleep_end=_hour(data.get("sleep_end")),
+            sleep_replies=replies or list(defaults.sleep_replies),
+            sleep_reply_cooldown_seconds=_float(
+                data.get("sleep_reply_cooldown_seconds"), defaults.sleep_reply_cooldown_seconds, 0.0, 86400.0,
+            ),
+            hormone_gain=_float(data.get("hormone_gain"), defaults.hormone_gain, 0.0, 3.0),
+        )
+
+
+@dataclass
+class ProactiveSettings:
+    """Bot 的读空气与主动对话配置（对应 Profile 的 ``proactive`` 段）。"""
+
+    enabled: bool = False
+    mode: str = "off"                          # off / shadow / enforce
+    style_preset: str = "balanced"             # quiet / balanced / active
+    preferred_topics: list[str] = field(default_factory=list)
+    avoid_topics: list[str] = field(default_factory=list)
+    score_threshold: float = 55.0
+    min_gap_seconds: float = 300.0
+    max_per_hour: int = 3
+    followup_window_seconds: float = 120.0
+    max_consecutive_turns: int = 2
+    mood_influence: float = 1.0
+    quiet_hours_start: int = 1
+    quiet_hours_end: int = 7
+    bot_collab_max_turns: int = 2
+    shared_group_cooldown_seconds: float = 90.0
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "ProactiveSettings":
+        data = data if isinstance(data, dict) else {}
+        defaults = cls()
+        mode = _text(data.get("mode")).lower()
+        if mode not in PROACTIVE_MODES:
+            mode = defaults.mode
+        preset = _text(data.get("style_preset")).lower()
+        if preset not in PROACTIVE_STYLE_PRESETS:
+            preset = defaults.style_preset
+        enabled = _bool(data.get("enabled"), defaults.enabled)
+        if enabled and mode == "off" and "mode" not in data:
+            mode = "enforce"
+        return cls(
+            enabled=enabled,
+            mode=mode,
+            style_preset=preset,
+            preferred_topics=_text_list(data.get("preferred_topics")),
+            avoid_topics=_text_list(data.get("avoid_topics")),
+            score_threshold=_float(data.get("score_threshold"), defaults.score_threshold, 10.0, 95.0),
+            min_gap_seconds=_float(data.get("min_gap_seconds"), defaults.min_gap_seconds, 10.0, 86400.0),
+            max_per_hour=max(1, min(60, _int(data.get("max_per_hour"), defaults.max_per_hour, minimum=1))),
+            followup_window_seconds=_float(data.get("followup_window_seconds"), defaults.followup_window_seconds, 0.0, 1800.0),
+            max_consecutive_turns=max(1, min(10, _int(data.get("max_consecutive_turns"), defaults.max_consecutive_turns, minimum=1))),
+            mood_influence=_float(data.get("mood_influence"), defaults.mood_influence, 0.0, 2.0),
+            quiet_hours_start=max(0, min(23, _int(data.get("quiet_hours_start"), defaults.quiet_hours_start, minimum=0))),
+            quiet_hours_end=max(0, min(23, _int(data.get("quiet_hours_end"), defaults.quiet_hours_end, minimum=0))),
+            bot_collab_max_turns=max(0, min(20, _int(data.get("bot_collab_max_turns"), defaults.bot_collab_max_turns, minimum=0))),
+            shared_group_cooldown_seconds=_float(
+                data.get("shared_group_cooldown_seconds"),
+                defaults.shared_group_cooldown_seconds,
+                0.0,
+                3600.0,
+            ),
+        )
+
+
 @dataclass
 class PersonaSettings:
     """人设里原本写死在代码中的部分。"""
@@ -324,6 +436,10 @@ class BotProfile:
     # 角色经历：进群之前「过去的人生」的召回设置（是否启用、当前时间点、召回条数、注入上限等）；
     # 没有这一段 = 关闭（见 domain/character_experience.py）。
     character_experience: CharacterExperienceSettings = field(default_factory=CharacterExperienceSettings)
+    # 读空气与主动对话设置（开关、模式、话题分工、冷却配额、心智影响、Bot 协同防互聊）。
+    proactive: ProactiveSettings = field(default_factory=ProactiveSettings)
+    # 身体（激素）与睡眠：一个 Bot 一副身体，默认关闭。
+    body: BodySettings = field(default_factory=BodySettings)
     # 注入通道覆盖：{通道名: {enabled/budget_tokens/...}}，叠加在全局通道配置之上。
     channels: dict[str, dict[str, Any]] = field(default_factory=dict)
     # 工具开关：allow 非空时只开放列出的工具；deny 里的工具总是关闭。
@@ -374,10 +490,44 @@ class BotProfile:
     def binding_for(self, host: str) -> list[BotBinding]:
         return [binding for binding in self.bindings if binding.host == host]
 
-    def tool_enabled(self, tool_name: str) -> bool:
-        if tool_name in self.tools_deny:
+    def tool_enabled(self, tool_name: str, mode: str | None = None) -> bool:
+        """这个 Bot 能不能用某个工具（可细到合并工具的某个 mode）。
+
+        ``tools_allow`` / ``tools_deny`` 里可以写：
+        - 合并工具名 ``wave_memory_social``：整个工具；
+        - ``wave_memory_social:concern``：只这一个 mode；
+        - 旧工具名 ``wave_memory_note_concern``：自动解释为对应合并工具的对应 mode。
+        deny 优先；allow 为空表示不限制。只给工具名不给 ``mode`` 时回答「这个工具至少还有一个 mode 可用吗」。
+        """
+        try:
+            from .tool_names import MERGED_TOOLS, merged_for, normalize_tool_ref
+        except ImportError:  # pragma: no cover
+            from tool_names import MERGED_TOOLS, merged_for, normalize_tool_ref  # type: ignore[no-redef]
+
+        target = str(tool_name or "")
+        legacy = merged_for(target)
+        if legacy is not None and mode is None:
+            target, mode = legacy
+        refs = [normalize_tool_ref(item) for item in self.tools_deny]
+        # 被 deny 命中：整个工具，或者正好是这个 mode
+        for name, ref_mode in refs:
+            if name == target and (ref_mode is None or (mode is not None and ref_mode == mode)):
+                return False
+        if not self.tools_allow:
+            return True
+        allow = [normalize_tool_ref(item) for item in self.tools_allow]
+        names_allowed = {name for name, _ in allow}
+        if target not in names_allowed:
             return False
-        return not self.tools_allow or tool_name in self.tools_allow
+        if mode is None:
+            return True
+        # 只写了某些 mode（没有裸的工具名）时，只放开这些 mode
+        bare = any(name == target and ref_mode is None for name, ref_mode in allow)
+        return bare or any(name == target and ref_mode == mode for name, ref_mode in allow)
+
+    def allowed_modes(self, tool_name: str, modes: list[str]) -> list[str]:
+        """合并工具里这个 Bot 可用的 mode 子集（按给定顺序）。"""
+        return [mode for mode in modes if self.tool_enabled(tool_name, mode)]
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -421,7 +571,9 @@ class BotProfile:
             bindings=bindings,
             persona=PersonaSettings.from_dict(data.get("persona")),
             mood=MoodSettings.from_dict(data.get("mood")),
+            body=BodySettings.from_dict(data.get("body")),
             character_experience=CharacterExperienceSettings.from_dict(data.get("character_experience")),
+            proactive=ProactiveSettings.from_dict(data.get("proactive")),
             channels={str(k): dict(v) for k, v in channels.items() if isinstance(v, dict)},
             tools_allow=_text_list(data.get("tools_allow")),
             tools_deny=_text_list(data.get("tools_deny")),
@@ -452,6 +604,9 @@ __all__ = [
     "PersonaSettings",
     "PreferenceItem",
     "PreferenceSettings",
+    "ProactiveSettings",
+    "PROACTIVE_MODES",
+    "PROACTIVE_STYLE_PRESETS",
     "ReactionExample",
     "bot_catalog_scope",
     "profile_from_legacy_config",

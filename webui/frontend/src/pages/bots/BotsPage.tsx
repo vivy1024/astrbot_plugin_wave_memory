@@ -8,6 +8,7 @@ import {
   emptyBot,
   emptyCharacterExperience,
   emptyMood,
+  emptyProactive,
   exportBots,
   getBot,
   importBots,
@@ -21,6 +22,9 @@ import {
   type BotProfileDto,
   type CharacterExperienceDto,
   type MoodDto,
+  type ProactiveDto,
+  type ProactiveMode,
+  type ProactiveStylePreset,
 } from '@/api/bots'
 import { DEFAULT_PRONOUN, PRONOUN_OPTIONS, type CharacterPronoun } from '@/api/characterExperience'
 import { isRequestCancelled } from '@/api/client'
@@ -206,6 +210,110 @@ function CharacterExperienceEditor({ value, onChange, dbId, isNew }: {
   )
 }
 
+const PROACTIVE_PRESETS: Record<ProactiveStylePreset, { label: string; desc: string; patch: Partial<ProactiveDto> }> = {
+  quiet: {
+    label: '克制观察（安静）',
+    desc: '高阈值(65)、长冷却(480s)、每小时最多2次，只对很对胃口的话题或接话窗口偶发插嘴。',
+    patch: { style_preset: 'quiet', score_threshold: 65, min_gap_seconds: 480, max_per_hour: 2, max_consecutive_turns: 1, mood_influence: 1.2 },
+  },
+  balanced: {
+    label: '自然伴聊（均衡）',
+    desc: '标准阈值(55)、适中冷却(300s)、每小时最多3次，有聊得来的话题自然搭腔。',
+    patch: { style_preset: 'balanced', score_threshold: 55, min_gap_seconds: 300, max_per_hour: 3, max_consecutive_turns: 2, mood_influence: 1.0 },
+  },
+  active: {
+    label: '活泼搭话（活跃）',
+    desc: '较低阈值(45)、短冷却(150s)、每小时最多6次，热聊时更容易跟进接话。',
+    patch: { style_preset: 'active', score_threshold: 45, min_gap_seconds: 150, max_per_hour: 6, max_consecutive_turns: 3, mood_influence: 0.8 },
+  },
+}
+
+/** 主动对话与读空气设置：决定 Bot 何时不经 @ 主动插话、擅长话题与多 Bot 协同边界。 */
+function ProactiveEditor({ value, onChange }: { value: ProactiveDto; onChange: (next: ProactiveDto) => void }) {
+  const set = <K extends keyof ProactiveDto>(key: K, next: ProactiveDto[K]) => onChange({ ...value, [key]: next })
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      <Field className="gap-1">
+        <FieldLabel htmlFor="bot-proactive-enabled">允许读空气主动插话</FieldLabel>
+        <Switch id="bot-proactive-enabled" checked={value.enabled} onCheckedChange={(next) => set('enabled', next)} />
+        <FieldDescription>开启后，即使群友没 @ 她，她也会结合心智状态、话题匹配度与群气氛打分决定是否接话（0 额外 Token 门槛）。</FieldDescription>
+      </Field>
+      <Field className="gap-1">
+        <FieldLabel htmlFor="bot-proactive-mode">生效模式</FieldLabel>
+        <select
+          id="bot-proactive-mode"
+          className="h-9 rounded-md border bg-background px-2 text-sm"
+          value={value.mode}
+          onChange={(event) => set('mode', event.target.value as ProactiveMode)}
+        >
+          <option value="off">关闭（仅响应 @ 或私聊）</option>
+          <option value="shadow">影子模式（只打分记录，不真正插嘴）</option>
+          <option value="enforce">正式生效（读空气打分够高时主动接话）</option>
+        </select>
+        <FieldDescription>新建或调整参数时可先用「影子模式」观察打分日志，再切到正式生效。</FieldDescription>
+      </Field>
+
+      <div className="md:col-span-2 rounded-lg border bg-muted/15 p-3">
+        <span className="mb-2 block text-xs font-semibold text-muted-foreground">性格活跃度预设（一键填充以下参数，可再微调）</span>
+        <div className="flex flex-wrap gap-2">
+          {(Object.keys(PROACTIVE_PRESETS) as ProactiveStylePreset[]).map((presetKey) => {
+            const preset = PROACTIVE_PRESETS[presetKey]
+            const active = value.style_preset === presetKey
+            return (
+              <Button
+                key={presetKey}
+                type="button"
+                size="sm"
+                variant={active ? 'default' : 'outline'}
+                onClick={() => onChange({ ...value, ...preset.patch })}
+              >
+                {preset.label}
+              </Button>
+            )
+          })}
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">{PROACTIVE_PRESETS[value.style_preset]?.desc ?? PROACTIVE_PRESETS.balanced.desc}</p>
+      </div>
+
+      <TextField id="bot-proactive-preferred" label="擅长 / 偏爱插话的话题词（逗号分隔）" value={csv(value.preferred_topics)}
+        onChange={(v) => set('preferred_topics', fromCsv(v))}
+        hint="如：缺氧, 自动化, 直播, 画画；多 Bot 同群时建议与队友错开擅长领域。" />
+      <TextField id="bot-proactive-avoid" label="刻意避让 / 留给队友的话题词（逗号分隔）" value={csv(value.avoid_topics)}
+        onChange={(v) => set('avoid_topics', fromCsv(v))}
+        hint="命中避让词时主动减分让给更合适的同伴（例如白真真避开普通闲聊、羽书避开宗门安监）。" />
+
+      <NumberField id="bot-proactive-threshold" label="接话分数门槛（0~100）" value={value.score_threshold} min={0} max={100}
+        onChange={(v) => set('score_threshold', Math.round(v))}
+        hint="默认 55。越高越矜持；接话窗口内会略降门槛。" />
+      <NumberField id="bot-proactive-gap" label="最小发言间隔（秒）" value={value.min_gap_seconds} min={0} max={86400}
+        onChange={(v) => set('min_gap_seconds', Math.round(v))}
+        hint="本 Bot 在同群两次主动插话的最短冷却时间。" />
+      <NumberField id="bot-proactive-hour" label="每小时主动次数上限" value={value.max_per_hour} min={0} max={60}
+        onChange={(v) => set('max_per_hour', Math.round(v))} />
+      <NumberField id="bot-proactive-followup" label="刚回复后的接话窗口（秒）" value={value.followup_window_seconds} min={0} max={1800}
+        onChange={(v) => set('followup_window_seconds', Math.round(v))}
+        hint="刚和某群友搭过话的这段时间内，对方继续发消息更容易顺势接下去。" />
+      <NumberField id="bot-proactive-consec" label="连续主动插话上限" value={value.max_consecutive_turns} min={1} max={10}
+        onChange={(v) => set('max_consecutive_turns', Math.round(v))}
+        hint="连续自发说了这么多句没人接茬后自动收口冷静，直到有人再提及或 @。" />
+      <NumberField id="bot-proactive-mood" label="心智状态调节权重（0~2）" value={value.mood_influence} min={0} max={2}
+        onChange={(v) => set('mood_influence', v)}
+        hint="0 = 不受心情/精力/社交驱动力影响；1 = 标准；>1 更看心情。" />
+      <NumberField id="bot-proactive-qstart" label="深夜免主动开始（时）" value={value.quiet_hours_start} min={0} max={23}
+        onChange={(v) => set('quiet_hours_start', Math.round(v))}
+        hint="服务器本地小时；与结束相同表示不限制夜间主动。" />
+      <NumberField id="bot-proactive-qend" label="深夜免主动结束（时）" value={value.quiet_hours_end} min={0} max={23}
+        onChange={(v) => set('quiet_hours_end', Math.round(v))} />
+      <NumberField id="bot-proactive-collab" label="与其它 Bot 连续交互上限（轮）" value={value.bot_collab_max_turns} min={0} max={10}
+        onChange={(v) => set('bot_collab_max_turns', Math.round(v))}
+        hint="检测到对方是其他 Bot 时，10 分钟内最多来回互动这么多轮，防互刷死循环。" />
+      <NumberField id="bot-proactive-shared" label="同群多 Bot 共享冷却（秒）" value={value.shared_group_cooldown_seconds} min={0} max={3600}
+        onChange={(v) => set('shared_group_cooldown_seconds', Math.round(v))}
+        hint="任意己方 Bot 刚在本群主动开口后，其他己方 Bot 在此秒数内暂让不抢话。" />
+    </div>
+  )
+}
+
 function withModel(models: Record<string, string> | undefined, task: string, value: string): Record<string, string> {
   const next = { ...(models ?? {}) }
   if (value) next[task] = value
@@ -316,6 +424,7 @@ function BotEditor({ draft, onChange, isNew, initialTab = 'identity' }: { draft:
         <TabsTrigger value="identity">身份与绑定</TabsTrigger>
         <TabsTrigger value="persona">人设</TabsTrigger>
         <TabsTrigger value="behavior">行为</TabsTrigger>
+        <TabsTrigger value="proactive">主动对话</TabsTrigger>
         <TabsTrigger value="mood">心情</TabsTrigger>
         <TabsTrigger value="character">角色经历</TabsTrigger>
         <TabsTrigger value="advanced">通道与工具</TabsTrigger>
@@ -369,6 +478,9 @@ function BotEditor({ draft, onChange, isNew, initialTab = 'identity' }: { draft:
           <AreaField id="bot-meta" label="MetaThinking 提示词" rows={6} value={draft.meta_prompt} onChange={(v) => set('meta_prompt', v)} hint="留空用默认模板。" />
         </div>
         <ModelFields draft={draft} onChange={onChange} />
+      </TabsContent>
+      <TabsContent value="proactive">
+        <ProactiveEditor value={draft.proactive ?? emptyProactive()} onChange={(next) => set('proactive', next)} />
       </TabsContent>
       <TabsContent value="mood">
         <MoodEditor mood={draft.mood ?? emptyMood()} onChange={(next) => set('mood', next)} />

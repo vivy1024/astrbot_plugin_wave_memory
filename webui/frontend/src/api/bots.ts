@@ -118,6 +118,48 @@ export function emptyCharacterExperience(): CharacterExperienceDto {
   return { enabled: false, current_stage: '', pronoun: DEFAULT_PRONOUN, top_k: 3, max_chars: 600, min_score: 0.35, legacy_sources: [], lore_categories: [] }
 }
 
+export type ProactiveMode = 'off' | 'shadow' | 'enforce'
+export type ProactiveStylePreset = 'quiet' | 'balanced' | 'active'
+
+/** Bot 的读空气与主动对话配置（Bot Profile 的 proactive 段） */
+export interface ProactiveDto {
+  enabled: boolean
+  mode: ProactiveMode
+  style_preset: ProactiveStylePreset
+  preferred_topics: string[]
+  avoid_topics: string[]
+  score_threshold: number
+  min_gap_seconds: number
+  max_per_hour: number
+  followup_window_seconds: number
+  max_consecutive_turns: number
+  mood_influence: number
+  quiet_hours_start: number
+  quiet_hours_end: number
+  bot_collab_max_turns: number
+  shared_group_cooldown_seconds: number
+}
+
+export function emptyProactive(): ProactiveDto {
+  return {
+    enabled: false,
+    mode: 'off',
+    style_preset: 'balanced',
+    preferred_topics: [],
+    avoid_topics: [],
+    score_threshold: 55,
+    min_gap_seconds: 300,
+    max_per_hour: 3,
+    followup_window_seconds: 120,
+    max_consecutive_turns: 2,
+    mood_influence: 1,
+    quiet_hours_start: 1,
+    quiet_hours_end: 7,
+    bot_collab_max_turns: 2,
+    shared_group_cooldown_seconds: 90,
+  }
+}
+
 export interface BotProfileDto {
   db_id: string
   name: string
@@ -138,6 +180,8 @@ export interface BotProfileDto {
   mood?: MoodDto
   /** 旧后端没有这一段；编辑器按 emptyCharacterExperience() 补齐 */
   character_experience?: CharacterExperienceDto
+  /** 旧后端没有这一段；编辑器按 emptyProactive() 补齐 */
+  proactive?: ProactiveDto
   channels: Record<string, Record<string, unknown>>
   tools_allow: string[]
   tools_deny: string[]
@@ -250,6 +294,7 @@ export function emptyBot(dbId = ''): BotProfileDto {
     },
     mood: emptyMood(),
     character_experience: emptyCharacterExperience(),
+    proactive: emptyProactive(),
     channels: {},
     tools_allow: [],
     tools_deny: [],
