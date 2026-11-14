@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import time
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -116,6 +118,42 @@ class BookLoreChannel:
         self.lore_store = lore_store
         self.projection_repository = projection_repository
         self.profile_lookup = profile_lookup
+        self._default_store: ExternalBookLoreStore | None = None
+
+    def _store(self) -> ExternalBookLoreStore:
+        """配置的 store；没有就按 lore_db_path 建一个并复用（让列信息缓存真正生效）。"""
+        if self.lore_store is not None:
+            return self.lore_store
+        if self._default_store is None:
+            self._default_store = ExternalBookLoreStore(self.lore_db_path)
+        return self._default_store
+
+    def _retrieve(self, vector: Any, top_k: int, min_score: float, catalog_scope: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """向量检索 + 取行 + 过滤：整段是同步 CPU/IO（HNSW 搜索、只读 SQLite），放到工作线程跑，不占事件循环。"""
+        hits = self.book_lore_index.search_communities(vector, k=top_k) or []
+        selected: list[dict[str, Any]] = []
+        filtered: list[dict[str, Any]] = []
+        if hits:
+            store = self._store()
+            rows = store.communities_by_ids([cid for cid, _ in hits], scope=catalog_scope)
+            by_id = {str(row.get("id")): row for row in rows}
+            for cid, score in hits:
+                score = float(score or 0.0)
+                if score < min_score:
+                    filtered.append({"community_id": cid, "score": score, "filter_reason": "min_score", "filter_channel": "book_lore"})
+                    continue
+                row = by_id.get(str(cid))
+                if not row:
+                    filtered.append({"community_id": cid, "score": score, "filter_reason": "missing_community", "filter_channel": "book_lore"})
+                    continue
+                item = {"community_id": cid, "score": score, "title": row.get("title") or "", "summary": row.get("summary") or ""}
+                if is_identity_contamination(f"{item['title']} {item['summary']}"):
+                    filtered.append({**item, "filter_reason": "identity_contamination", "filter_channel": "book_lore"})
+                    continue
+                selected.append(item)
+        if hasattr(self.book_lore_index, "search_notes"):
+            selected.extend(self._select_notes(vector, catalog_scope, min_score, filtered))
+        return selected, filtered
 
     async def build(self, ctx: Any) -> InjectionResult:
         started = time.perf_counter()
@@ -161,49 +199,7 @@ class BookLoreChannel:
                     latency_ms=self._latency_ms(started),
                     reason="embedding unavailable",
                 )
-            hits = self.book_lore_index.search_communities(vector, k=top_k) or []
-            selected: list[dict[str, Any]] = []
-            filtered: list[dict[str, Any]] = []
-            if hits:
-                store = self.lore_store or ExternalBookLoreStore(self.lore_db_path)
-                rows = store.communities_by_ids([cid for cid, _ in hits], scope=catalog_scope)
-                by_id = {str(row.get("id")): row for row in rows}
-                for cid, score in hits:
-                    score = float(score or 0.0)
-                    if score < min_score:
-                        filtered.append({
-                            "community_id": cid,
-                            "score": score,
-                            "filter_reason": "min_score",
-                            "filter_channel": "book_lore",
-                        })
-                        continue
-                    row = by_id.get(str(cid))
-                    if not row:
-                        filtered.append({
-                            "community_id": cid,
-                            "score": score,
-                            "filter_reason": "missing_community",
-                            "filter_channel": "book_lore",
-                        })
-                        continue
-                    item = {
-                        "community_id": cid,
-                        "score": score,
-                        "title": row.get("title") or "",
-                        "summary": row.get("summary") or "",
-                    }
-                    if is_identity_contamination(f"{item['title']} {item['summary']}"):
-                        filtered.append({
-                            **item,
-                            "filter_reason": "identity_contamination",
-                            "filter_channel": "book_lore",
-                        })
-                        continue
-                    selected.append(item)
-
-            if hasattr(self.book_lore_index, "search_notes"):
-                selected.extend(self._select_notes(vector, catalog_scope, min_score, filtered))
+            selected, filtered = await asyncio.to_thread(self._retrieve, vector, top_k, min_score, catalog_scope)
 
             if not selected:
                 result = InjectionResult.empty(
@@ -234,7 +230,7 @@ class BookLoreChannel:
         hits = self.book_lore_index.search_notes(vector, k=max(4, NOTES_TOP_K * 4)) or []
         if not hits:
             return []
-        store = self.lore_store or ExternalBookLoreStore(self.lore_db_path)
+        store = self._store()
         if not hasattr(store, "notes_by_ids"):
             return []
         rows = {str(row.get("id")): row for row in store.notes_by_ids([nid for nid, _ in hits], scope=catalog_scope)}

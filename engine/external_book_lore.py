@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import threading
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -48,6 +49,12 @@ class ExternalBookLoreStore:
         if not raw_path:
             raise ExternalBookLoreError("book_lore_db_path_required")
         self.db_path = Path(raw_path).expanduser().resolve()
+        # 表结构信息缓存：每次公开读取都新建连接再跑 PRAGMA table_info 是注入热路径上的固定开销。
+        # 书库文件变了（mtime/size）才失效重读；schema 在两次导入之间不会变。
+        self._columns_cache: dict[str, set[str]] = {}
+        self._tables_cache: set[str] | None = None
+        self._cache_stamp: tuple[int, int] | None = None
+        self._cache_lock = threading.Lock()
 
     def _require_scope(self, scope: CatalogScope | None) -> CatalogScope:
         if not isinstance(scope, CatalogScope):
@@ -235,11 +242,32 @@ class ExternalBookLoreStore:
     def _existing_tables(conn: sqlite3.Connection) -> set[str]:
         return {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
 
-    @staticmethod
-    def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
-        if table not in ExternalBookLoreStore._existing_tables(conn):
-            return set()
-        return {str(row[1]) for row in conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
+    def _file_stamp(self) -> tuple[int, int] | None:
+        try:
+            stat = self.db_path.stat()
+        except OSError:
+            return None
+        return int(stat.st_mtime_ns), int(stat.st_size)
+
+    def _columns(self, conn: sqlite3.Connection, table: str) -> set[str]:
+        """表的列名集合，按书库文件的 mtime/size 缓存：文件没变就不再跑 PRAGMA。"""
+        stamp = self._file_stamp()
+        with self._cache_lock:
+            if stamp is None or stamp != self._cache_stamp:
+                self._columns_cache.clear()
+                self._tables_cache = None
+                self._cache_stamp = stamp
+            cached = self._columns_cache.get(table)
+            if cached is not None:
+                return set(cached)
+        if table not in self._existing_tables(conn):
+            columns: set[str] = set()
+        else:
+            columns = {str(row[1]) for row in conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
+        with self._cache_lock:
+            if stamp == self._cache_stamp:
+                self._columns_cache[table] = set(columns)
+        return columns
 
     @staticmethod
     def _require_columns(table: str, columns: set[str], required: Sequence[str]) -> None:

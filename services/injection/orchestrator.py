@@ -6,9 +6,11 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import math
 import re
+import threading
 import time
 import unicodedata
 from dataclasses import dataclass, field, replace
@@ -97,11 +99,73 @@ def _latency_probe_metadata(results: list[InjectionResult], started: float) -> d
     return {"latency_probe": probe} if probe else {}
 
 
-def _run_in_thread(channel: Any, ctx: Any, submitted: float) -> tuple[Any, float]:
-    # 这类通道的 build 里没有 await（纯同步读库），在工作线程自己的事件循环里一次跑完。
-    # 顺带记下线程池排队了多久：所有通道成批变慢时，用它区分「排队」和「执行慢」。
+class _WorkerLoops:
+    """一组常驻工作线程，每个线程拥有一个**持久**的事件循环。
+
+    之前每次调用都 ``asyncio.run``：新建循环、跑完、再拆掉，每个线程化通道每轮都要付一次
+    创建/销毁的固定开销（含 selector、self-pipe），12 个通道每条消息就是 6~7 次。
+    这里线程和循环都只建一次，通道的 build 通过 ``run_coroutine_threadsafe`` 投递。
+    """
+
+    def __init__(self, size: int = 4) -> None:
+        self._size = max(1, int(size))
+        self._lock = threading.Lock()
+        self._loops: list[asyncio.AbstractEventLoop] = []
+        self._threads: list[threading.Thread] = []
+        self._cursor = 0
+
+    def _ensure(self) -> None:
+        with self._lock:
+            while len(self._loops) < self._size:
+                loop = asyncio.new_event_loop()
+                ready = threading.Event()
+
+                def _serve(target: asyncio.AbstractEventLoop = loop, flag: threading.Event = ready) -> None:
+                    asyncio.set_event_loop(target)
+                    flag.set()
+                    target.run_forever()
+
+                thread = threading.Thread(target=_serve, name=f"wave-inject-loop-{len(self._loops)}", daemon=True)
+                thread.start()
+                ready.wait(timeout=5.0)
+                self._loops.append(loop)
+                self._threads.append(thread)
+
+    def submit(self, coro: Any) -> "concurrent.futures.Future[Any]":
+        self._ensure()
+        with self._lock:
+            loop = self._loops[self._cursor % len(self._loops)]
+            self._cursor += 1
+        return asyncio.run_coroutine_threadsafe(coro, loop)
+
+    def shutdown(self) -> None:
+        with self._lock:
+            loops, threads = self._loops, self._threads
+            self._loops, self._threads = [], []
+        for loop in loops:
+            loop.call_soon_threadsafe(loop.stop)
+        for thread in threads:
+            thread.join(timeout=2.0)
+        for loop in loops:
+            try:
+                loop.close()
+            except Exception:
+                pass
+
+
+_WORKERS = _WorkerLoops()
+
+
+def shutdown_worker_loops() -> None:
+    """插件卸载时调用：停掉常驻工作循环。之后再有调用会自动重建。"""
+    _WORKERS.shutdown()
+
+
+async def _timed_build(channel: Any, ctx: Any, submitted: float) -> tuple[Any, float]:
+    # 在工作循环里真正开始执行的时刻 − 提交时刻 = 排队耗时；所有通道成批变慢时，
+    # 用它区分「排队」和「执行慢」。
     queue_ms = max(0.0, (time.perf_counter() - submitted) * 1000)
-    return asyncio.run(channel.build(ctx)), queue_ms
+    return await channel.build(ctx), queue_ms
 
 
 async def _build(channel: Any, ctx: Any) -> Any:
@@ -113,7 +177,9 @@ async def _build(channel: Any, ctx: Any) -> Any:
     ``check_same_thread=False`` 且库为串行化线程模式（threadsafety=3）。
     """
     if getattr(channel, "offload_to_thread", False):
-        result, queue_ms = await asyncio.to_thread(_run_in_thread, channel, ctx, time.perf_counter())
+        # 投递到常驻工作循环，主循环只 await 它的结果：不占默认线程池，也不每次新建/拆除事件循环。
+        future = _WORKERS.submit(_timed_build(channel, ctx, time.perf_counter()))
+        result, queue_ms = await asyncio.wrap_future(future)
         if isinstance(result, InjectionResult):
             result.queue_ms = round(queue_ms, 2)
         return result

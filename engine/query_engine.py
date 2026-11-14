@@ -1264,37 +1264,43 @@ class QueryEngine:
             return []
 
         _t_search = time.time()
-        if is_private:
-            search_vec, energy_field = query_vec, {}
-        else:
-            search_vec, energy_field = self._wave_boost(query_vec, scope=resolved_scope)
-        main_results = self.memory_index.search(search_vec, k=top_k * 3)
 
-        all_candidates = {}
-        for mem_id, dist in main_results:
-            all_candidates[int(mem_id)] = min(all_candidates.get(int(mem_id), 999), float(dist))
-        if is_private:
-            cold_candidates = []
-        else:
-            cold_candidates, _cold_details = self._search_scoped_cold_memories(
-                tag_query_vec=np.asarray(query_vec, dtype=np.float32),
-                score_query_vec=np.asarray(search_vec, dtype=np.float32),
-                policy=recall_policy,
-            )
+        def _search_sync() -> tuple[list[dict], dict[int, float], Any]:
+            """热路 HNSW + 冷路 + 取行 + 合并：全是同步 CPU/只读 SQLite，放进工作线程，不占事件循环。"""
+            if is_private:
+                search_vec, energy_field = query_vec, {}
+            else:
+                search_vec, energy_field = self._wave_boost(query_vec, scope=resolved_scope)
+            main_results = self.memory_index.search(search_vec, k=top_k * 3)
 
-        memory_ids = list(all_candidates)
-        memories = self._get_scoped_memories_by_ids(memory_ids, recall_policy)
-        known_ids = {int(memory["id"]) for memory in memories if memory.get("id") is not None}
-        for mem in memories:
-            mem["_retrieval_tier"] = "hot"
-        for cold_memory, cold_distance in cold_candidates:
-            memory_id = int(cold_memory["id"])
-            if memory_id in known_ids:
-                all_candidates[memory_id] = min(all_candidates.get(memory_id, float(cold_distance)), float(cold_distance))
-                continue
-            known_ids.add(memory_id)
-            all_candidates[memory_id] = float(cold_distance)
-            memories.append(cold_memory)
+            all_candidates: dict[int, float] = {}
+            for mem_id, dist in main_results:
+                all_candidates[int(mem_id)] = min(all_candidates.get(int(mem_id), 999), float(dist))
+            if is_private:
+                cold_candidates = []
+            else:
+                cold_candidates, _cold_details = self._search_scoped_cold_memories(
+                    tag_query_vec=np.asarray(query_vec, dtype=np.float32),
+                    score_query_vec=np.asarray(search_vec, dtype=np.float32),
+                    policy=recall_policy,
+                )
+
+            memory_ids = list(all_candidates)
+            memories = self._get_scoped_memories_by_ids(memory_ids, recall_policy)
+            known_ids = {int(memory["id"]) for memory in memories if memory.get("id") is not None}
+            for mem in memories:
+                mem["_retrieval_tier"] = "hot"
+            for cold_memory, cold_distance in cold_candidates:
+                memory_id = int(cold_memory["id"])
+                if memory_id in known_ids:
+                    all_candidates[memory_id] = min(all_candidates.get(memory_id, float(cold_distance)), float(cold_distance))
+                    continue
+                known_ids.add(memory_id)
+                all_candidates[memory_id] = float(cold_distance)
+                memories.append(cold_memory)
+            return memories, all_candidates, energy_field
+
+        memories, all_candidates, energy_field = await asyncio.to_thread(_search_sync)
 
         memories = self._drop_taken_over_sources(memories)
         if not memories:
@@ -1308,31 +1314,36 @@ class QueryEngine:
             mem["similarity"] = 1.0 - dist
             mem["score"] = mem["similarity"] * memory_score(1.0, mem.get("importance", 1.0), 1.0, 0)[1]
 
-        if self.enable_geodesic and self.geodesic and energy_field:
-            candidates_for_rerank = [
-                {"id": m["id"], "score": m["score"]}
-                for m in memories
-                if m.get("_tag_lane") != "legacy"
-            ]
-            reranked = self.geodesic.rerank(candidates_for_rerank, energy_field)
-            rerank_scores = {c["id"]: c["score"] for c in reranked}
-            for mem in memories:
-                if mem["id"] in rerank_scores:
-                    mem["score"] = rerank_scores[mem["id"]]
-
-        memories = [m for m in memories if m["similarity"] >= self.min_similarity]
         current_group_id = ""
         if resolved_scope is not None and resolved_scope.session is not None:
             current_group_id = resolved_scope.session.conversation_id
-        memories = self._prefer_current_group_and_dedupe(
-            memories,
-            current_group_id=current_group_id,
-        )
-        if len(memories) > top_k:
-            memories = self._svd_dedup(memories, query_vec, top_k)
-        else:
-            memories.sort(key=lambda m: m["score"], reverse=True)
-            memories = memories[:top_k]
+
+        def _rank_sync() -> list[dict]:
+            """测地线重排 + 去重 + SVD 主题去重（要读向量）：同样放进工作线程。"""
+            ranked = memories
+            if self.enable_geodesic and self.geodesic and energy_field:
+                candidates_for_rerank = [
+                    {"id": m["id"], "score": m["score"]}
+                    for m in ranked
+                    if m.get("_tag_lane") != "legacy"
+                ]
+                reranked = self.geodesic.rerank(candidates_for_rerank, energy_field)
+                rerank_scores = {c["id"]: c["score"] for c in reranked}
+                for mem in ranked:
+                    if mem["id"] in rerank_scores:
+                        mem["score"] = rerank_scores[mem["id"]]
+
+            ranked = [m for m in ranked if m["similarity"] >= self.min_similarity]
+            ranked = self._prefer_current_group_and_dedupe(
+                ranked,
+                current_group_id=current_group_id,
+            )
+            if len(ranked) > top_k:
+                return self._svd_dedup(ranked, query_vec, top_k)
+            ranked.sort(key=lambda m: m["score"], reverse=True)
+            return ranked[:top_k]
+
+        memories = await asyncio.to_thread(_rank_sync)
         _search_ms = (time.time() - _t_search) * 1000
         _t_touch = time.time()
 
