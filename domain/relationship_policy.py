@@ -107,14 +107,23 @@ def cap_automatic_delta(
     daily_total: float,
     single_delta_cap: float = SINGLE_DELTA_CAP,
     daily_delta_cap: float = DAILY_DELTA_CAP,
+    daily_positive: float | None = None,
+    daily_negative: float | None = None,
 ) -> float:
+    """单次与 24 小时上限。
+
+    ``daily_positive`` / ``daily_negative`` 给出时，正向与负向各自累计（取绝对值）：
+    正负交替不能抵消出无限额度。未给出时退回旧的净值口径 ``daily_total``。
+    """
     cap = HOSTILITY_DELTA_CAP if dimension == "hostility" and float(requested_delta) > 0 else single_delta_cap
     delta = max(-abs(cap), min(abs(cap), float(requested_delta)))
+    used_positive = max(float(daily_positive), 0.0) if daily_positive is not None else max(float(daily_total), 0.0)
+    used_negative = max(float(daily_negative), 0.0) if daily_negative is not None else max(-float(daily_total), 0.0)
     if delta > 0:
-        remaining = daily_delta_cap - max(float(daily_total), 0.0)
+        remaining = daily_delta_cap - used_positive
         return round(min(delta, max(0.0, remaining)), 2)
     if delta < 0:
-        remaining = daily_delta_cap - max(-float(daily_total), 0.0)
+        remaining = daily_delta_cap - used_negative
         return round(max(delta, -max(0.0, remaining)), 2)
     return 0.0
 

@@ -1,7 +1,6 @@
-"""Wave Memory 扩展工具。
+"""Wave Memory 扩展工具：scoped facts 三元组查询。
 
-事实查询已经迁移到 scoped repository。好感度与标签图谱仍依赖无
-canonical scope 的 legacy read-model，因此在完成数据面迁移前必须拒绝。
+好感查询见 ``affinity_update.WaveMemoryAffinityTool``；旧的 legacy 占位工具已移除。
 """
 
 from __future__ import annotations
@@ -19,30 +18,6 @@ try:
     from .scope_boundary import require_read_runtime_scope, scope_error_message
 except ImportError:  # pragma: no cover - direct tools imports in isolated tests
     from tools.scope_boundary import require_read_runtime_scope, scope_error_message
-
-
-@dataclass
-class WaveMemoryAffinityTool(FunctionTool[AstrAgentContext]):
-    """已隔离：legacy social read-model 不能证明 canonical RuntimeScope。"""
-
-    name: str = "wave_memory_affinity"
-    description: str = "互动关系查询正在进行 Scope 数据面迁移，当前不可用。"
-    parameters: dict = field(default_factory=lambda: {
-        "type": "object",
-        "properties": {
-            "user_id": {"type": "string", "description": "迁移完成后可查询的群友"},
-            "mode": {
-                "type": "string", "enum": ["single", "ranking", "active"]},
-        },
-        "required": [],
-    })
-
-    db: Any = field(default=None, repr=False)
-    bot_db_ids: dict[str, str] = field(default_factory=dict, repr=False)
-
-    async def call(self, ctx: ContextWrapper[AstrAgentContext], **kwargs) -> str:
-        # user_profiles/memories legacy read-model 不能完整表示 platform+bot+session。
-        return scope_error_message("互动关系查询", "scope_migration_required")
 
 
 @dataclass
@@ -123,29 +98,6 @@ class WaveMemoryFactsTool(FunctionTool[AstrAgentContext]):
         return "\n".join(lines)
 
 
-@dataclass
-class WaveMemoryTagGraphTool(FunctionTool[AstrAgentContext]):
-    """已隔离：legacy tag graph 不能证明 canonical RuntimeScope。"""
-
-    name: str = "wave_memory_tag_graph"
-    description: str = "标签关系图正在进行 Scope 数据面迁移，当前不可用。"
-    parameters: dict = field(default_factory=lambda: {
-        "type": "object",
-        "properties": {
-            "tag_name": {"type": "string", "description": "迁移完成后可查询的标签名"},
-        },
-        "required": ["tag_name"],
-    })
-
-    db: Any = field(default=None, repr=False)
-
-    async def call(self, ctx: ContextWrapper[AstrAgentContext], **kwargs) -> str:
-        # tags/memory_tags/tag_relations 均是无完整 scope 的 legacy 投影。
-        return scope_error_message("标签关系图查询", "scope_migration_required")
-
-
 __all__ = [
-    "WaveMemoryAffinityTool",
     "WaveMemoryFactsTool",
-    "WaveMemoryTagGraphTool",
 ]

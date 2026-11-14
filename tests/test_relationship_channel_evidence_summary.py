@@ -202,7 +202,7 @@ def test_channel_injects_settlement_hint_when_energy_full():
     result = asyncio.run(ch.build(ctx))
     assert result.status == "hit"
     assert "【该结算了】" in result.text
-    assert "wave_memory_record_social_impression" in result.text
+    assert "wave_memory_social(mode=impression)" in result.text
     assert "wave_memory_propose_fact" not in result.text
     assert "关系行为指导" not in result.text
     first, last = result.text.splitlines()

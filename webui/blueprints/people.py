@@ -211,10 +211,31 @@ def _alias_session_ids(conn: Any, scope) -> list[str]:
     return ids
 
 
+def _with_unified_affinity(repository: Any, bot_id: str, item: dict[str, Any]) -> dict[str, Any]:
+    """展示用的好感分数统一为跨场合唯一数值；本场合原始行另存 ``scene_affinity`` 供校准参考。"""
+    reader = getattr(repository, "person_relationship", None)
+    subject = str(item.get("subject_principal_id") or "")
+    if not callable(reader) or not subject:
+        return item
+    try:
+        unified = reader(bot_id, subject)
+    except Exception:
+        return item
+    if not isinstance(unified, Mapping) or not unified.get("available"):
+        return item
+    merged = dict(item)
+    merged["scene_affinity"] = item.get("affinity")
+    merged["affinity"] = unified.get("affinity")
+    merged["state"] = unified.get("state")
+    merged["unified_dimensions"] = dict(unified.get("dimensions") or {})
+    merged["scene_count"] = unified.get("scene_count")
+    return merged
+
+
 def _relationship_rows_for_scope(repository: Any, scope, alias_session_ids: list[str]) -> dict[str, Any]:
     rows: dict[str, Any] = {}
     for item in repository.list_relationships(scope):
-        rows[str(item["subject_principal_id"])] = item
+        rows[str(item["subject_principal_id"])] = _with_unified_affinity(repository, scope.bot_id, item)
     if scope.session is None:
         return rows
     for session_id in alias_session_ids:
@@ -234,7 +255,7 @@ def _relationship_rows_for_scope(repository: Any, scope, alias_session_ids: list
             current_subject = f"{scope.session.platform_id}:user:{subject.split(':user:')[-1]}" if ":user:" in subject else subject
             if current_subject in rows:
                 continue
-            alias_item = dict(item)
+            alias_item = _with_unified_affinity(repository, scope.bot_id, dict(item))
             alias_item["subject_principal_id"] = current_subject
             alias_item["calibration"] = {
                 "available": False,
@@ -266,9 +287,27 @@ def _profile_item(profile: dict[str, Any], registry: dict[str, dict[str, Any]], 
     item["metadata"] = _json(item.get("metadata"), {})
     item["person_registry"] = {
         key: person.get(key)
-        for key in ("qq_id", "display_name", "first_seen", "last_seen", "message_count", "groups", "tag_ids")
+        for key in (
+            "qq_id", "display_name", "first_seen", "last_seen", "message_count", "groups", "tag_ids",
+            "entity_kind", "bot_tag_source", "bot_tag_reason", "bot_tag_updated_at",
+        )
         if key in person
     }
+    discovery = getattr(get_container(), "bot_discovery", None)
+    if discovery is not None:
+        tag_info = discovery.get_tag(user_id, display_name=str(item.get("display_name") or ""))
+    else:
+        raw_kind = str(person.get("entity_kind") or "human").strip().lower()
+        if raw_kind not in {"human", "verified_human", "suspected_bot", "confirmed_bot"}:
+            raw_kind = "human"
+        tag_info = {
+            "is_bot": raw_kind in {"suspected_bot", "confirmed_bot"},
+            "entity_kind": raw_kind,
+            "source": str(person.get("bot_tag_source") or ""),
+            "reason": str(person.get("bot_tag_reason") or ""),
+            "updated_at": float(person.get("bot_tag_updated_at") or 0.0),
+        }
+    item["bot_tag"] = tag_info
     # 旧 affection 不是经复合 RuntimeScope 验证的 affinity projection，不得伪装为好感度。
     item["affinity"] = None
     item["affinity_status"] = "unavailable"
@@ -307,6 +346,7 @@ def _people_query_from_request() -> dict[str, Any]:
         "user_id": str(request.args.get("user_id") or "").strip(),
         "relationship_state": str(request.args.get("relationship_state") or "all").strip().lower() or "all",
         "alias_filter": str(request.args.get("alias_filter") or "all").strip().lower() or "all",
+        "bot_filter": str(request.args.get("bot_filter") or "all").strip().lower() or "all",
         "sort_by": str(request.args.get("sort_by") or "name").strip().lower() or "name",
         "sort_order": _normalized_sort_order(
             request.args.get("sort_order"),
@@ -351,6 +391,7 @@ def _filter_people_rows(
     user_filter = str(filters.get("user_id") or "").strip()
     relationship_state = str(filters.get("relationship_state") or "all").strip().lower() or "all"
     alias_filter = str(filters.get("alias_filter") or "all").strip().lower() or "all"
+    bot_filter = str(filters.get("bot_filter") or "all").strip().lower() or "all"
     sort_by = str(filters.get("sort_by") or "name").strip().lower() or "name"
     sort_order = _normalized_sort_order(filters.get("sort_order"), sort_by=sort_by)
     min_affinity = filters.get("min_affinity")
@@ -387,6 +428,15 @@ def _filter_people_rows(
         if alias_filter == "has" and aliases <= 0:
             continue
         if alias_filter == "none" and aliases > 0:
+            continue
+        bot_tag = person.get("bot_tag") if isinstance(person.get("bot_tag"), Mapping) else {}
+        is_bot = bool(bot_tag.get("is_bot"))
+        entity_kind = str(bot_tag.get("entity_kind") or "human")
+        if bot_filter == "bots_only" and not is_bot:
+            continue
+        if bot_filter == "humans_only" and is_bot:
+            continue
+        if bot_filter == "suspected" and entity_kind != "suspected_bot":
             continue
         if search:
             alias_text = " ".join(
@@ -962,6 +1012,64 @@ def _clear_impression_on_connection(conn: Any, *, scope: RuntimeScope, user_id: 
     }
 
 
+@people_bp.route("/people/commands/bot-tag", methods=["POST"])
+@require_auth
+async def set_person_bot_tag():
+    """管理员标定某人物是否为 Bot / 已确认真人白名单 / 清除标签。"""
+    scope = _request_scope()
+    if scope is None or scope.session is None or scope.visibility != "group":
+        return jsonify(error_payload("scope_required", "A complete group RuntimeScope is required")), 400
+    body = await request.get_json(silent=True) or {}
+    user_id = str(body.get("user_id") or "").strip()
+    if not user_id:
+        return jsonify(error_payload("user_id_required", "user_id is required")), 422
+    action = str(body.get("action") or "").strip().lower()
+    action_to_kind = {
+        "mark_bot": "confirmed_bot",
+        "confirmed_bot": "confirmed_bot",
+        "mark_human": "verified_human",
+        "verified_human": "verified_human",
+        "clear": "human",
+        "human": "human",
+    }
+    entity_kind = action_to_kind.get(action)
+    if not entity_kind:
+        return jsonify(error_payload("invalid_bot_tag_action", "action must be mark_bot / mark_human / clear")), 422
+    reason = str(body.get("reason") or "").strip()
+    if not reason:
+        reason = {
+            "confirmed_bot": "管理员后台标定为 Bot",
+            "verified_human": "管理员后台确认为真人",
+            "human": "管理员清除 Bot 标签",
+        }[entity_kind]
+    container = get_container()
+    discovery = getattr(container, "bot_discovery", None)
+    if discovery is None:
+        conn = _connection()
+        if conn is None:
+            return jsonify(error_payload("service_unavailable", "People store is unavailable", retryable=True)), 503
+        try:
+            from ...services.bot_discovery import BotDiscoveryService
+        except ImportError:  # pragma: no cover
+            from services.bot_discovery import BotDiscoveryService
+        discovery = BotDiscoveryService(conn)
+    tag = discovery.set_tag(
+        user_id,
+        entity_kind=entity_kind,
+        source="admin",
+        reason=reason,
+        display_name=str(body.get("display_name") or ""),
+    )
+    return jsonify(mutation_response(
+        operation_kind="people.bot_tag.set",
+        operation_id=f"{scope.bot_id}:{user_id}:{int(time.time() * 1000)}",
+        status="succeeded",
+        revision=int(tag.get("updated_at") or time.time()),
+        item={"user_id": user_id, "bot_tag": tag},
+        include_item=True,
+    ))
+
+
 @people_bp.route("/people/commands/clear-impression", methods=["POST"])
 @require_auth
 async def clear_impression():
@@ -1075,6 +1183,32 @@ async def unlink_identity():
     ))
 
 
+def _leap_dossier(item: Mapping[str, Any], *, conn: Any, scope: Any, user_id: str) -> dict[str, Any] | None:
+    """跃迁点消化了哪些观感：按 tid 从这个人的未结算池取证据；私聊原文只在同一私聊可见（这里是群视角）。"""
+    tids = [str(t) for t in (item.get("settled_trace_ids") or []) if t]
+    if not tids or scope is None or scope.session is None or not user_id:
+        return None
+    db = getattr(get_container(), "db", None)
+    repo = getattr(db, "person_timeline", None)
+    if repo is None:
+        return None
+    try:
+        from ...services.impression_timeline import summarize_settled_traces
+    except ImportError:  # pragma: no cover
+        from services.impression_timeline import summarize_settled_traces
+    try:
+        state = repo.get_unsettled_state(bot_id=scope.bot_id, user_id=user_id, group_id="")
+    except Exception:
+        return None
+    wanted = set(tids)
+    traces = [t for t in state.get("traces") or [] if isinstance(t, Mapping) and str(t.get("tid") or "") in wanted]
+    if not traces:
+        # 证据已被 30 天清理：只保留数量，页面如实显示「原始观感已清理」
+        return {"count": len(tids), "positive": 0, "negative": 0, "items": [], "expired": True}
+    traces.sort(key=lambda t: float(t.get("ts") or 0.0))
+    return {**summarize_settled_traces(traces, viewer_scene=scope.session.conversation_id), "expired": False}
+
+
 _TIMELINE_KINDS = frozenset({"impression", "affinity", "person_fact"})
 _QUOTE_IN_TEXT_RE = re.compile(r"原话(?:证据)?[:：]\s*[“\"'「](.*?)[”\"'」]")
 # 时间窗口反查：事件发生前 300 秒至后 15 秒内该群友的最后一条发言
@@ -1158,6 +1292,8 @@ def _serialize_timeline_event(
             source_mid, source_quote, quote_inferred = inferred_mid, inferred_quote, True
 
     return {
+        "is_leap": bool(item.get("is_leap")),
+        "settled": _leap_dossier(item, conn=conn, scope=scope, user_id=user_id),
         "id": item.get("id"),
         "user_id": user_id,
         "group_id": group_id,

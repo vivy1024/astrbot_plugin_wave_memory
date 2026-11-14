@@ -593,16 +593,25 @@ class ScopedSoulRepository:
             existing_values = self._ensure_formal_values(tx, scope, subject, now)
             current = existing_values.get(dimension)
             before_snapshot = dict(current) if current is not None else None
+            # 日上限按「这个人」跨所有场合与关联账号统计，正向与负向分别累计：
+            # 多个群不能叠加刷分，正负交替也绕不过上限。
+            linked = linked_principals_via(tx, scope.bot_id, subject)
+            linked_marks = ",".join("?" for _ in linked)
             daily_row = tx.execute(
-                """SELECT COALESCE(SUM(delta), 0) FROM scoped_soul_relationship_events
-                    WHERE bot_id=? AND session_id=? AND visibility=? AND subject_principal_id=?
-                      AND dimension=? AND created_at>=? AND event_type<>'time_decay'""",
-                (*_scope_params(scope), subject, dimension, now - 86400),
+                f"""SELECT COALESCE(SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END), 0),
+                           COALESCE(SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END), 0)
+                      FROM scoped_soul_relationship_events
+                     WHERE bot_id=? AND subject_principal_id IN ({linked_marks})
+                       AND dimension=? AND created_at>=? AND event_type<>'time_decay'
+                       AND value_layer='automatic'""",
+                (scope.bot_id, *linked, dimension, now - 86400),
             ).fetchone()
             applied_delta = cap_automatic_delta(
                 dimension=dimension,
                 requested_delta=requested_delta,
-                daily_total=float(daily_row[0] or 0.0),
+                daily_total=0.0,
+                daily_positive=float(daily_row[0] or 0.0),
+                daily_negative=float(daily_row[1] or 0.0),
             )
             if current is None:
                 automatic = clamp_dimension(dimension, applied_delta)
@@ -722,15 +731,16 @@ class ScopedSoulRepository:
             return max(0.0, value - value * factor - factor)
 
         def persist(tx):
+            # 闲置天数按「这个人」最后一次任何场合的真实互动计算：群里刚聊过，私聊那份关系也不算冷落；
+            # 群聊与私聊的关系行都参与衰减（过去只处理 group，私聊关系永不变淡）。
             subjects = tx.execute(
                 f"""SELECT v.bot_id, v.session_id, v.visibility, v.subject_principal_id,
                            (SELECT MAX(e.created_at) FROM scoped_soul_relationship_events e
-                             WHERE e.bot_id=v.bot_id AND e.session_id=v.session_id
-                               AND e.visibility=v.visibility AND e.subject_principal_id=v.subject_principal_id
+                             WHERE e.bot_id=v.bot_id AND e.subject_principal_id=v.subject_principal_id
                                AND e.event_type<>'time_decay') AS last_event_at,
                            MIN(v.updated_at)
                       FROM scoped_soul_relationship_values v
-                     WHERE v.visibility='group'{bot_filter}
+                     WHERE v.visibility IN ('group', 'private'){bot_filter}
                      GROUP BY v.bot_id, v.session_id, v.visibility, v.subject_principal_id
                      LIMIT ?""",
                 (*bot_params, max(1, int(limit))),
@@ -1020,6 +1030,65 @@ class ScopedSoulRepository:
             "merged_dimensions": total_dimensions,
             "updated_at": max((row[4] or 0) for row in rows),
             "total_events": total_events,
+            "linked_principals": subjects,
+        }
+
+    def person_relationship(self, bot_id: str, subject_principal_id: str) -> dict[str, Any]:
+        """Bot 对一个人的**唯一**好感数值：所有群、私聊、直播与关联账号合并。
+
+        这是一个生命对一个人的感受，任何场合（注入、查询工具、排行、群友查看、WebUI）都读这里，
+        数值只有一份。私聊里攒下的好感同样计入；只返回数值与档位，不返回任何场合的证据文本，
+        具体内容的可见性由各自的印象/时间线读取方按场合过滤。
+        """
+        bot = _exact_string(bot_id, "bot_id")
+        subject = _exact_string(subject_principal_id, "subject_principal_id")
+        empty = {"available": False, "affinity": None, "state": "unknown", "dimensions": {}, "scene_count": 0, "updated_at": None}
+        if self.cm is None:
+            return empty
+        subjects = linked_principals_via(self.cm, bot, subject)
+        marks = ",".join("?" for _ in subjects)
+        rows = self.cm.execute_read(
+            f"""SELECT session_id, dimensions, updated_at, affinity
+                  FROM scoped_soul_relationships
+                 WHERE bot_id=? AND visibility IN ('group', 'private') AND subject_principal_id IN ({marks})""",
+            (bot, *subjects),
+        ).fetchall()
+        if not rows:
+            return empty
+        totals: dict[str, float] = {}
+        # 只有综合值、没有维度明细的旧行（迁移或直接 upsert）：综合值是维度的线性组合，
+        # 直接计入总分，等价于把它的维度累加进来。
+        dimensionless_affinity = 0.0
+        for _session, raw, _updated, row_affinity in rows:
+            try:
+                parsed = json.loads(str(raw or "{}"))
+            except (TypeError, ValueError):
+                parsed = {}
+            if not isinstance(parsed, Mapping) or not any(str(k) in DIMENSION_RANGES for k in parsed):
+                try:
+                    dimensionless_affinity += float(row_affinity or 0)
+                except (TypeError, ValueError):
+                    pass
+                continue
+            for key, value in parsed.items():
+                name = str(key)
+                if name not in DIMENSION_RANGES:
+                    continue
+                try:
+                    totals[name] = totals.get(name, 0.0) + float(value)
+                except (TypeError, ValueError):
+                    continue
+        dimensions = {name: round(clamp_dimension(name, value), 2) for name, value in totals.items()}
+        affinity = compute_affinity(dimensions) if dimensions else 0
+        if dimensionless_affinity:
+            affinity = int(max(-100.0, min(100.0, affinity + dimensionless_affinity)))
+        return {
+            "available": True,
+            "affinity": affinity,
+            "state": attitude_level(affinity),
+            "dimensions": dimensions,
+            "scene_count": len(rows),
+            "updated_at": max(float(row[2] or 0) for row in rows),
             "linked_principals": subjects,
         }
 

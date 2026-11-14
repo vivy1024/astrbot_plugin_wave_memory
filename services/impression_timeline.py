@@ -8,8 +8,16 @@ from __future__ import annotations
 
 import re
 import time
+import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any
+
+try:
+    from ..domain.scope import is_visible_scene
+    from ..domain.tool_names import tool_ref
+except ImportError:  # pragma: no cover - 顶层导入（测试与独立脚本）
+    from domain.scope import is_visible_scene
+    from domain.tool_names import tool_ref
 
 
 AFFINITY_STEP_CAP = 2.0
@@ -21,6 +29,8 @@ UNSETTLED_HALF_LIFE_DAYS = 7.0
 UNSETTLED_ENERGY_CAP = 2 * UNSETTLED_ENERGY_FULL
 # 每行最多保留的观感轨迹条数（旧的只丢弃轨迹，已结算的影响不受影响）
 UNSETTLED_MAX_TRACES = 40
+# 结算后保留作跃迁点证据的观感条数（已结算的观感不计能量，30 天后清理）
+UNSETTLED_RETAINED_TRACES = 60
 # 关系处于极端区时，至少攒到这么多新能量才再次提示结算
 UNSETTLED_EXTREME_MIN_ENERGY = 3.0
 
@@ -209,11 +219,14 @@ def synthesize_milestone_phrase(
     dimension: str,
     delta: float,
     is_leap: bool = False,
+    settled_count: int = 0,
 ) -> str:
     """基于真实好感变动与事件因果，合成客观可信的交往里程碑短语。"""
     direction = "升至" if after_affinity > before_affinity else "降至" if after_affinity < before_affinity else "保持在"
     verb = "跃迁" if is_leap else ""
     diff_text = f"好感从 {before_affinity} {verb}{direction} {after_affinity}"
+    if settled_count > 0:
+        diff_text += f"（源于 {settled_count} 件事的积累）"
     normalized_reason = str(reason or "").strip().replace("\n", " ")[:60]
     prefix = "【关系跃迁】" if is_leap else ""
     if event_type == "bot_attacked":
@@ -257,6 +270,8 @@ def persist_timeline_event(
     detail: str = "",
     occurred_at: float | None = None,
     provenance: Mapping[str, Any] | None = None,
+    settled_trace_ids: Sequence[str] | None = None,
+    is_leap: bool = False,
     connection=None,
 ) -> None:
     repo = getattr(db, "person_timeline", None)
@@ -271,6 +286,8 @@ def persist_timeline_event(
         detail=detail or summary,
         occurred_at=occurred_at,
         provenance=provenance,
+        settled_trace_ids=list(settled_trace_ids or []),
+        is_leap=is_leap,
         connection=connection,
     )
 
@@ -514,15 +531,34 @@ def propose_affinity_shift(
     }
 
 
-def event_type_for_shift(dimension: str, delta: float) -> str:
+_SHIFT_EVENT_TYPES = frozenset({
+    "bot_praised", "bot_attacked", "joke", "deep_talk", "gift_or_feed",
+    "correction", "ignored_boundary", "confession", "direct_reply",
+})
+
+
+def event_type_for_shift(dimension: str, delta: float, requested: Any = None) -> str:
+    """这次好感变化属于哪一类事件。
+
+    模型明确给出类型时直接采用；否则按维度与方向推导。负向变化不再被压成 ``direct_reply``：
+    信任下降算被冒犯（bot_attacked），有趣/深度下降算越界（ignored_boundary），
+    让心情与身体系统能感受到「被伤到」。
+    """
+    chosen = str(requested or "").strip()
+    if chosen in _SHIFT_EVENT_TYPES:
+        return chosen
     if dimension == "hostility" and delta > 0:
+        return "ignored_boundary"
+    if delta < 0:
+        if dimension in {"trust", "familiarity"}:
+            return "bot_attacked"
         return "ignored_boundary"
     if dimension == "depth" and delta > 0:
         return "deep_talk"
     if dimension == "fun" and delta > 0:
         return "joke"
-    if delta < 0:
-        return "direct_reply"
+    if dimension == "trust" and delta > 0:
+        return "bot_praised"
     return "direct_reply"
 
 
@@ -533,7 +569,10 @@ def _item_summary(item: Mapping[str, Any], *, fallback_text: str = "") -> str:
 
 # 摘要里夹带的好感数值：结算里程碑结尾的「，好感从 15 升至 16」、旧账本迁移的「joke fun+1：…」、
 # 观感标签残留的「| impact: 3」。注入只去掉这些数值片段，其余文字保持记录原样。
-_AFFINITY_TAIL = re.compile(r"[，,]\s*好感从\s*-?\d+(?:\.\d+)?\s*(?:跃迁)?(?:升至|降至|保持在)\s*-?\d+(?:\.\d+)?\s*$")
+_AFFINITY_TAIL = re.compile(
+    r"[，,]\s*好感从\s*-?\d+(?:\.\d+)?\s*(?:跃迁)?(?:升至|降至|保持在)\s*-?\d+(?:\.\d+)?"
+    r"(?:\s*（源于\s*\d+\s*件事的积累）)?\s*$"
+)
 _LEDGER_DELTA = re.compile(r"^([A-Za-z_.]+)\s+(?:familiarity|trust|fun|depth|hostility)\s*[+-]?\d+(?:\.\d+)?(?=：|$)")
 _IMPACT_TAIL = re.compile(r"\s*[|｜]\s*impact\s*[:：]?\s*[\d.]+\s*$", re.I)
 
@@ -678,7 +717,7 @@ def impression_timeline_lines(
     picked = f"挑选最相关的 {len(selected)} 条，另有 {omitted} 条较早或次要" if omitted else "早→近"
     lines = [
         f"印象时间线（{picked}；时间权重每 {half_life:g} 天减半）：旧事仅作背景；"
-        "详情用 wave_memory_person_search(query_type=timeline, person=当前人物, event_id=编号) 查。",
+        f"详情用 {tool_ref('wave_memory_person_search', query_type='timeline', person='当前人物', event_id='编号')} 查。",
     ]
     # query 仅为旧调用兼容保留；自动注入不筛选历史，也不拼接详情。
     for item in selected:
@@ -745,7 +784,7 @@ def injection_lines(
 
     # 4. 查阅全貌的提示：时间线表头已含，没有时间线时才单独附带
     if lines and not timeline:
-        lines.append("（如需查阅交往全貌或历史借还，可自主调用 wave_memory_person_search(query_type='timeline', person=...) 查看）")
+        lines.append(f"（如需查阅交往全貌或历史借还，可自主调用 {tool_ref('wave_memory_person_search', query_type='timeline', person='...')} 查看）")
     return lines
 
 
@@ -864,13 +903,17 @@ def portrait_injection_lines(
                 lines.extend(cue.split("\n"))
 
     lines.append(
-        "更早的交往用 wave_memory_person_search(query_type=timeline, person=当前人物, query=关键词 或 event_id=编号) 查。"
+        f"更早的交往用 {tool_ref('wave_memory_person_search', query_type='timeline', person='当前人物', query='关键词 或 event_id=编号')} 查。"
     )
     return lines
 
 
 def parse_impression_mark(raw: str) -> tuple[str, float]:
-    """Parse `观感 | impact: 3` or a bare impression sentence. Empty/none marks are dropped."""
+    """Parse `观感 | impact: 3` or a bare impression sentence. Empty/none marks are dropped.
+
+    返回的 impact 是能量大小（非负）；方向用 :func:`parse_impression_polarity` 单独解析，
+    ``impact:-3`` 表示负向观感，能量仍按 3 计。
+    """
     text = str(raw or "").strip().replace("\n", " ")
     if not text:
         return "", 0.0
@@ -883,15 +926,34 @@ def parse_impression_mark(raw: str) -> tuple[str, float]:
         if separator in text:
             left, right = text.split(separator, 1)
             body = left.strip()
-            digits = "".join(ch for ch in right if ch.isdigit() or ch in ".-")
+            digits = "".join(ch for ch in right.split("|")[0].split("｜")[0] if ch.isdigit() or ch in ".-")
             parsed = _finite(digits)
             if parsed is not None:
-                impact = parsed
+                impact = abs(parsed)
             break
     if len(body) < 4:
         return "", 0.0
     impact_limit = get_social_limits()["impact_cap"]
     return body[:120], max(0.0, min(impact_limit, impact))
+
+
+def parse_impression_polarity(raw: str) -> int:
+    """观感方向：``impact:-3`` 或 ``polarity:-`` 为负向（-1），显式正数为正向（+1），未注明为 0。"""
+    text = str(raw or "").replace("｜", "|")
+    if "|" not in text:
+        return 0
+    tail = text.split("|", 1)[1].casefold()
+    if "polarity" in tail or "方向" in tail:
+        if any(mark in tail for mark in ("-", "负", "neg")):
+            return -1
+        if any(mark in tail for mark in ("+", "正", "pos")):
+            return 1
+    digits = "".join(ch for ch in tail.split("|")[0] if ch.isdigit() or ch in ".-+")
+    if digits.startswith("-"):
+        return -1
+    if digits.startswith("+"):
+        return 1
+    return 0
 
 
 def load_unsettled_state(
@@ -906,6 +968,27 @@ def load_unsettled_state(
     if repo is None or not hasattr(repo, "get_unsettled_state"):
         return {"energy": 0.0, "interaction_count": 0, "traces": []}
     return repo.get_unsettled_state(bot_id=bot_id, user_id=user_id, group_id=group_id, connection=connection)
+
+
+def _unsettled_row_keys(db: Any, *, bot_id: str, user_id: str, extra: str = "", connection=None) -> list[str]:
+    """这个人在未结算表里的全部行键：'' 池在前，其后是旧版本按场合写下的行。"""
+    keys = [""]
+    repo = getattr(db, "person_timeline", None)
+    cm = getattr(repo, "cm", None)
+    reader = connection.execute if connection is not None else getattr(cm, "execute_read", None)
+    if callable(reader):
+        try:
+            rows = reader(
+                "SELECT group_id FROM person_unsettled_state WHERE bot_id=? AND user_id=? AND group_id<>''",
+                (str(bot_id or ""), str(user_id or "")),
+            ).fetchall()
+            keys.extend(str(row[0]) for row in rows if row and row[0])
+        except Exception:
+            if extra:
+                keys.append(extra)
+    elif extra:
+        keys.append(extra)
+    return keys
 
 
 def effective_unsettled_state(
@@ -923,15 +1006,32 @@ def effective_unsettled_state(
     工具只允许 ±2，结算被拒，能量越积越多。
     """
     stamp = float(now if now is not None else time.time())
+    # 这个人只有一份未结算能量：读 '' 跨场合池；旧版本按群号/私聊写下的行一并计入（只读兼容，
+    # 新写入全部进 '' 行）。``scene`` 只用于调用方按场合过滤 trace 文本，不影响能量。
     rows = []
-    for key in dict.fromkeys(["", str(scene or "")]):
-        if key == "" and rows:
+    seen_keys: set[str] = set()
+    for key in _unsettled_row_keys(db, bot_id=bot_id, user_id=user_id, extra=str(scene or ""), connection=connection):
+        if key in seen_keys:
             continue
-        rows.append(load_unsettled_state(db, bot_id=bot_id, user_id=user_id, group_id=key, connection=connection))
+        seen_keys.add(key)
+        state = load_unsettled_state(db, bot_id=bot_id, user_id=user_id, group_id=key, connection=connection)
+        if key and not state.get("traces") and not state.get("energy"):
+            continue
+        if key:
+            # 旧行的 trace 没有场合字段：补上它所在的行键，保证私聊原文仍只在同一私聊可见
+            state = {**state, "traces": [
+                ({**item, "group_id": item.get("group_id") or key} if isinstance(item, Mapping) else item)
+                for item in (state.get("traces") or [])
+            ]}
+        rows.append(state)
     traces: list[Any] = []
     energy = 0.0
     for state in rows:
-        row_traces = [item for item in state.get("traces") or [] if isinstance(item, Mapping)]
+        # 已被跃迁结算的观感只留作证据，不再计入能量，也不再参与衰减折算
+        row_traces = [
+            item for item in state.get("traces") or []
+            if isinstance(item, Mapping) and not item.get("settled")
+        ]
         traces.extend(row_traces)
         stored = max(0.0, _finite(state.get("energy")) or 0.0)
         raw = decayed = 0.0
@@ -956,8 +1056,17 @@ def persist_unsettled_trace(
     text: str,
     impact: float | int | None = 1.0,
     now: float | None = None,
+    polarity: int = 0,
+    source_memory_id: int | None = None,
+    quote: str = "",
+    dim: str = "",
     connection=None,
 ) -> dict[str, Any]:
+    """日常观感攒进这个人的**唯一**未结算能量池（``group_id=''`` 行）。
+
+    ``group_id`` 是观感发生的场合（群号 / ``private:<会话>`` / 直播间），只写进 trace 的
+    ``group_id`` 字段用于可见性：A 群攒的观感在 B 群同样计入能量，私聊原文只在同一私聊显示。
+    """
     cleaned = str(text or "").strip().replace("\n", " ")[:120]
     amount = _finite(impact)
     if amount is None:
@@ -965,17 +1074,32 @@ def persist_unsettled_trace(
     impact_limit = get_social_limits()["impact_cap"]
     amount = max(0.0, min(impact_limit, amount))
     if not cleaned or amount <= 0:
-        return load_unsettled_state(db, bot_id=bot_id, user_id=user_id, group_id=group_id, connection=connection)
+        return load_unsettled_state(db, bot_id=bot_id, user_id=user_id, group_id="", connection=connection)
     repo = getattr(db, "person_timeline", None)
     if repo is None:
-        return {"energy": amount, "interaction_count": 1, "traces": [{"text": cleaned, "impact": amount}]}
+        return {"energy": amount, "interaction_count": 1, "traces": [{"text": cleaned, "impact": amount, "group_id": group_id}]}
+    evidence: dict[str, Any] = {}
+    if polarity:
+        evidence["polarity"] = 1 if int(polarity) > 0 else -1
+    if source_memory_id:
+        try:
+            evidence["source_memory_id"] = int(source_memory_id)
+        except (TypeError, ValueError):
+            pass
+    cleaned_quote = " ".join(str(quote or "").split())[:80]
+    if cleaned_quote:
+        evidence["quote"] = cleaned_quote
+    if dim:
+        evidence["dim"] = str(dim).strip().lower()
     return repo.add_unsettled_trace(
         bot_id=bot_id,
         user_id=user_id,
-        group_id=group_id,
+        group_id="",
         text=cleaned,
         impact=amount,
         now=now,
+        scene=str(group_id or ""),
+        evidence=evidence,
         connection=connection,
     )
 
@@ -1086,13 +1210,101 @@ def clear_unsettled_state(
     *,
     bot_id: str,
     user_id: str,
-    group_id: str,
+    group_id: str = "",
     connection=None,
 ) -> None:
+    """结算后清空这个人的未结算能量：'' 池与旧版本按场合写下的行一起清。"""
     repo = getattr(db, "person_timeline", None)
     if repo is None:
         return
-    repo.clear_unsettled_state(bot_id=bot_id, user_id=user_id, group_id=group_id, connection=connection)
+    for key in dict.fromkeys([*_unsettled_row_keys(db, bot_id=bot_id, user_id=user_id, connection=connection), str(group_id or "")]):
+        repo.clear_unsettled_state(bot_id=bot_id, user_id=user_id, group_id=key, connection=connection)
+
+
+SETTLED_TRACE_RETENTION_DAYS = 30.0
+
+
+def open_traces(traces: Any) -> list[dict[str, Any]]:
+    """还没被跃迁结算掉的观感（按时间先后）。"""
+    if not isinstance(traces, list):
+        return []
+    items = [dict(item) for item in traces if isinstance(item, Mapping) and not item.get("settled")]
+    return sorted(items, key=lambda item: float(_finite(item.get("ts")) or 0.0))
+
+
+def settle_unsettled_traces(
+    db: Any,
+    *,
+    bot_id: str,
+    user_id: str,
+    now: float | None = None,
+    connection=None,
+) -> list[dict[str, Any]]:
+    """跃迁结算：把这个人全部未结算观感标为已结算并清零能量，**保留**观感作为跃迁点的证据。
+
+    返回被结算的观感（含 tid、方向、原话、场合），调用方据此把证据写进跃迁点。
+    旧版本按场合写下的行同样并入后清空；已结算观感 30 天后清理。
+    """
+    repo = getattr(db, "person_timeline", None)
+    if repo is None:
+        return []
+    stamp = float(now if now is not None else time.time())
+    keys = _unsettled_row_keys(db, bot_id=bot_id, user_id=user_id, connection=connection)
+    pool: list[Any] = []
+    for key in dict.fromkeys(keys):
+        state = repo.get_unsettled_state(bot_id=bot_id, user_id=user_id, group_id=key, connection=connection)
+        for item in state.get("traces") or []:
+            if isinstance(item, Mapping):
+                entry = dict(item)
+                if key and not entry.get("group_id"):
+                    entry["group_id"] = key
+                pool.append(entry)
+        if key:
+            repo.clear_unsettled_state(bot_id=bot_id, user_id=user_id, group_id=key, connection=connection)
+    settled: list[dict[str, Any]] = []
+    kept: list[dict[str, Any]] = []
+    horizon = stamp - SETTLED_TRACE_RETENTION_DAYS * 86400.0
+    for entry in pool:
+        if entry.get("settled"):
+            if float(_finite(entry.get("settled_at")) or stamp) >= horizon:
+                kept.append(entry)
+            continue
+        if not entry.get("tid"):
+            entry["tid"] = uuid.uuid4().hex[:10]
+        entry["settled"] = True
+        entry["settled_at"] = stamp
+        settled.append(entry)
+        kept.append(entry)
+    repo.set_unsettled_state(
+        bot_id=bot_id,
+        user_id=user_id,
+        group_id="",
+        energy=0.0,
+        interaction_count=0,
+        traces=kept[-UNSETTLED_RETAINED_TRACES:],
+        connection=connection,
+    )
+    return settled
+
+
+def summarize_settled_traces(traces: Sequence[Mapping[str, Any]], *, viewer_scene: str | None = None) -> dict[str, Any]:
+    """跃迁点的证据摘要：正负计数、按时间的观感与原话（私聊原文按可见性过滤）。"""
+    positive = sum(1 for t in traces if int(_finite(t.get("polarity")) or 0) > 0)
+    negative = sum(1 for t in traces if int(_finite(t.get("polarity")) or 0) < 0)
+    items = []
+    for t in traces:
+        visible = viewer_scene is None or is_visible_scene(t.get("group_id"), viewer_scene)
+        items.append({
+            "tid": str(t.get("tid") or ""),
+            "ts": _finite(t.get("ts")),
+            "scene": str(t.get("group_id") or ""),
+            "polarity": int(_finite(t.get("polarity")) or 0),
+            "text": str(t.get("text") or "") if visible else "",
+            "quote": str(t.get("quote") or "") if visible else "",
+            "source_memory_id": t.get("source_memory_id") if visible else None,
+            "hidden": not visible,
+        })
+    return {"count": len(traces), "positive": positive, "negative": negative, "items": items}
 
 
 def unsettled_energy(metadata: Any, state: Mapping[str, Any] | None = None) -> float:
@@ -1111,6 +1323,42 @@ def unsettled_energy(metadata: Any, state: Mapping[str, Any] | None = None) -> f
             continue
         total += float(_finite(item.get("impact")) or 1.0)
     return total
+
+
+def render_unsettled_dossier(
+    traces: Sequence[Any],
+    *,
+    viewer_scene: str | None = None,
+    max_items: int = 12,
+    now: float | None = None,
+) -> str:
+    """结算时给模型看的「卷宗」：这段时间攒下的全部观感，按时间排好，带方向、场合与原话。
+
+    让阶段性定性基于实材实料：正向几件、负向几件、各自原话是什么，而不是只看一个能量数字。
+    私聊里的观感原文只在同一私聊展示，其他场合只计数不泄露内容。
+    """
+    items = open_traces(list(traces or []))
+    if not items:
+        return ""
+    stamp = float(now if now is not None else time.time())
+    summary = summarize_settled_traces(items, viewer_scene=viewer_scene)
+    lines = [f"这段时间攒下 {summary['count']} 条观感（正向 {summary['positive']}、负向 {summary['negative']}）："]
+    hidden = 0
+    for entry in summary["items"][-max_items:]:
+        if entry["hidden"]:
+            hidden += 1
+            continue
+        ts = entry.get("ts")
+        when = ""
+        if ts and ts > 1e9:
+            days = max(0.0, (stamp - float(ts)) / 86400.0)
+            when = "今天" if days < 1 else f"{int(days)}天前"
+        sign = {1: "＋", -1: "－"}.get(entry["polarity"], "·")
+        quote = f"（原话：{entry['quote']}）" if entry["quote"] else ""
+        lines.append(f"{sign} {when} {entry['text']}{quote}".replace("  ", " "))
+    if hidden:
+        lines.append(f"（另有 {hidden} 条发生在私聊里的观感，这里不展开）")
+    return "\n".join(lines)
 
 
 def unsettled_energy_line(
@@ -1134,10 +1382,13 @@ def unsettled_energy_line(
     line = (
         f"【感知】未结算能量 {amount:g}/{UNSETTLED_ENERGY_FULL:g}。"
         f"每轮在回复末尾写 <<impression:当下观感 | impact:1-5>>；无新看法不要写。"
-        f"若你认为该做阶段性定性，调用 wave_memory_record_social_impression，"
+        f"若你认为该做阶段性定性，调用 {tool_ref('wave_memory_record_social_impression')}，"
         f"本轮增量须在 [{bounds['min']}, {bounds['max']}]，无变动填 0。"
     )
-    if recent:
+    dossier = render_unsettled_dossier(source if isinstance(source, list) else [], max_items=8) if amount >= UNSETTLED_ENERGY_FULL else ""
+    if dossier:
+        line += f"\n{dossier}\n请基于以上经历整体定性：这段时间的变化是升还是降，由证据决定。"
+    elif recent:
         line += " 最近观感：" + " / ".join(recent)
     return line
 

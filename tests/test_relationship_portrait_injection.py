@@ -126,7 +126,7 @@ def test_portrait_injection_format(db):
     assert "帮忙核对了版本号" in text and "好感从" not in text, "摘要去掉好感数值"
     assert "印象时间线（" not in text and "你对这个人的印象：" not in text, "有小传时不再用规则摘要"
     assert "私聊里" not in text and "这段私聊里的记录" not in text, "群里不出现任何私聊记录"
-    assert "更早的交往用 wave_memory_person_search(query_type=timeline, person=当前人物" in text
+    assert "更早的交往用 wave_memory_recall(mode=person, query_type=timeline, person=当前人物" in text
     assert "最近关系线索：" not in text
 
     score = next(line for line in lines if line.startswith(SCORE_LINE_PREFIX))
@@ -186,7 +186,7 @@ def test_portrait_injection_lines_without_portrait_is_empty():
     assert portrait_injection_lines({"content": "   "}, events=[], now=NOW) == []
     lines = portrait_injection_lines({"content": "只有小传"}, events=[], now=NOW)
     assert lines[0] == "关系小传（你自己写的，正文里的「你」就是你）：" and lines[1] == "只有小传"
-    assert lines[-1].startswith("更早的交往用 wave_memory_person_search")
+    assert lines[-1].startswith("更早的交往用 wave_memory_recall(mode=person")
 
 
 # ─── wave_memory_person_search ───

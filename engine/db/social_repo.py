@@ -75,6 +75,24 @@ class SocialRepo:
                 self.cm.commit()
         except Exception:
             pass
+        # 迁移：person_registry 增量增加 Bot 标签列（entity_kind / bot_tag_*）
+        try:
+            pr_cols = {c[1] for c in self.cm.execute("PRAGMA table_info(person_registry)").fetchall()}
+            alters = (
+                ("entity_kind", "TEXT DEFAULT 'human'"),
+                ("bot_tag_source", "TEXT DEFAULT ''"),
+                ("bot_tag_reason", "TEXT DEFAULT ''"),
+                ("bot_tag_updated_at", "REAL DEFAULT 0"),
+            )
+            changed = False
+            for col_name, col_def in alters:
+                if col_name not in pr_cols:
+                    self.cm.execute(f"ALTER TABLE person_registry ADD COLUMN {col_name} {col_def}")
+                    changed = True
+            if changed:
+                self.cm.commit()
+        except Exception:
+            pass
         # 确保索引存在
         try:
             self.cm.execute("CREATE INDEX IF NOT EXISTS idx_user_profiles_bot ON user_profiles(bot_id)")

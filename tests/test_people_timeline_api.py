@@ -178,3 +178,41 @@ async def test_person_timeline_window_quote_is_scoped_and_marked_inferred(eviden
     assert items["窗口事件"]["source_quote_inferred"] is True
     assert items["窗口外事件"]["source_quote"] is None
     assert items["窗口外事件"]["source_quote_inferred"] is False
+
+
+@pytest.mark.asyncio
+async def test_leap_point_returns_settled_dossier_and_hides_private_originals(tmp_path):
+    from services.impression_timeline import persist_timeline_event, persist_unsettled_trace, settle_unsettled_traces
+
+    ServiceContainer.reset()
+    container = ServiceContainer()
+    cm = ConnectionManager(str(tmp_path / "wave_memory.sqlite3"))
+    repo = PersonTimelineRepo(cm)
+    db = SimpleNamespace(conn=cm, person_timeline=repo)
+    container.password = ""
+    container.db = db
+    try:
+        persist_unsettled_trace(db, bot_id="bot-a", user_id="u1", group_id="g1", text="替我解了围", impact=5,
+                                polarity=1, quote="没事我来处理", now=1000.0)
+        persist_unsettled_trace(db, bot_id="bot-a", user_id="u1", group_id="private:u1", text="私下聊到很难过的事",
+                                impact=5, polarity=-1, quote="我最近很不好", now=1100.0)
+        settled = settle_unsettled_traces(db, bot_id="bot-a", user_id="u1", now=1200.0)
+        persist_timeline_event(
+            db, bot_id="bot-a", user_id="u1", group_id="g1", kind="affinity", summary="【关系跃迁】好感从 10 跃迁升至 15",
+            occurred_at=1200.0, settled_trace_ids=[t["tid"] for t in settled], is_leap=True,
+        )
+        app = Quart(__name__)
+        app.register_blueprint(people_module.people_bp)
+        app.extensions["wave_api_contract"] = {"request_scope_provider": _RequestScopeProvider(_scope())}
+        payload = await (await app.test_client().get("/api/people/timeline?user_id=u1&kind=affinity")).get_json()
+        leap = payload["items"][0]
+        assert leap["is_leap"] is True
+        dossier = leap["settled"]
+        assert dossier["count"] == 2 and dossier["positive"] == 1 and dossier["negative"] == 1
+        visible = [i for i in dossier["items"] if not i["hidden"]]
+        hidden = [i for i in dossier["items"] if i["hidden"]]
+        assert [i["text"] for i in visible] == ["替我解了围"] and visible[0]["quote"] == "没事我来处理"
+        assert len(hidden) == 1 and hidden[0]["text"] == "" and hidden[0]["quote"] == ""
+    finally:
+        ServiceContainer.reset()
+        cm.close()

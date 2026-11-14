@@ -14,9 +14,11 @@ from .safety import is_channel_allowed_in_mode
 
 try:
     from ....domain.scope import RuntimeScope, is_visible_scene, scene_key
+    from ....domain.tool_names import tool_ref
     from ....engine.db.person_identity_repo import linked_principals_via, local_user_id
 except ImportError:  # pragma: no cover - focused repository tests
     from domain.scope import RuntimeScope, is_visible_scene, scene_key
+    from domain.tool_names import tool_ref
     from engine.db.person_identity_repo import linked_principals_via, local_user_id
 
 
@@ -279,7 +281,7 @@ class RelationshipChannel:
                 soul_items, subject_principal_id=scope.subject_principal_id,
                 limit=SHARED_ANCHOR_LIMIT, snippet_chars=SHARED_ANCHOR_CHARS,
             )
-            # 好感分数：当前场合可见的汇总（跨群合并、含关联账号；私聊只计同一私聊），
+            # 好感分数：对这个人的唯一数值（群聊、私聊、关联账号全部计入），
             # 汇总不可用时退回本场合的关系行
             trigger_dims: dict[str, Any] = {}
             for name in ("familiarity", "trust", "fun", "depth", "hostility"):
@@ -330,18 +332,18 @@ class RelationshipChannel:
                 if per_turn_tag:
                     transition_hint = (
                         "【该结算了】未结算能量已满或关系可能质变。"
-                        f"若做阶段性定性，调用 wave_memory_record_social_impression，"
+                        f"若做阶段性定性，调用 {tool_ref('wave_memory_record_social_impression')}，"
                         f"本轮增量须在 [{bounds['min']}, {bounds['max']}]，无变动填 0。"
                         "日常观感继续写 <<impression:当下观感 | impact:1-5>>，不要覆盖这句结算。"
                     )
-                elif not (prompting["bookkeeping_active"] and scope.visibility == "group"):
-                    # 事后记账只覆盖群聊；私聊或记账未启动时仍需在回复里结算
+                elif not (prompting["bookkeeping_active"] and scope.visibility in {"group", "private"}):
+                    # 事后记账覆盖群聊与私聊；记账未启动时仍需在回复里结算
                     transition_hint = (
                         "【该结算了】对对方攒了不少没定性的观感。若要做阶段性定性，"
-                        "调用 wave_memory_record_social_impression，"
+                        f"调用 {tool_ref('wave_memory_record_social_impression')}，"
                         f"增量须在 [{bounds['min']}, {bounds['max']}]，无变动填 0。"
                     )
-                # 群聊且事后记账已启动：记账回看时按未结算能量列出「需要结算的人」，这里不提示
+                # 事后记账已启动：记账回看时按未结算能量列出「需要结算的人」，这里不提示
             # 结算提示固定追加在末尾，保证裁决节点指令完整。
             if transition_hint:
                 parts.append(transition_hint)
@@ -383,14 +385,29 @@ class RelationshipChannel:
         return list(dict.fromkeys([sender_id, *(local_user_id(item) for item in linked if local_user_id(item))]))
 
     def _relationship_totals(self, scope: RuntimeScope) -> dict[str, Any]:
-        """当前场合可见的关系分数汇总；仓储不支持或无记录时返回空 dict（退回本场合的关系行）。"""
+        """对这个人的唯一好感数值（群聊、私聊、关联账号全部计入）；不可用时返回空 dict。
+
+        数值只有一份：私聊攒下的感受在群里同样算数，只是私聊的具体内容不在这里出现。
+        """
+        if not scope.subject_principal_id or scope.session is None:
+            return {}
+        unified = getattr(self.repository, "person_relationship", None)
+        if callable(unified):
+            try:
+                data = unified(scope.bot_id, scope.subject_principal_id)
+            except Exception:
+                data = None
+            if isinstance(data, Mapping) and data.get("available"):
+                return {
+                    **dict(data),
+                    "merged_affinity": data.get("affinity"),
+                    "merged_dimensions": dict(_mapping(data.get("dimensions"))),
+                }
         summarizer = getattr(self.repository, "summarize_cross_group_relationship", None)
-        if not callable(summarizer) or not scope.subject_principal_id or scope.session is None:
+        if not callable(summarizer):
             return {}
         try:
-            data = summarizer(
-                scope, subject_principal_id=scope.subject_principal_id, viewer_session_id=scope.session.id,
-            )
+            data = summarizer(scope, subject_principal_id=scope.subject_principal_id)
         except Exception:
             # 不支持按场合过滤的旧仓储：宁可只用本场合的行，也不混入其他私聊
             return {}

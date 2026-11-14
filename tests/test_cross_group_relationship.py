@@ -6,8 +6,8 @@
 存储仍按 `(bot_id, session_id, visibility, subject_principal_id)` 保留每群原始增量，
 聚合只在读取侧进行，不写库、不改主键。
 
-关系注入以印象时间线为主；好感分数只在印象之后附一行次要参考，取当前场合可见的汇总
-（群聊的行处处计入，私聊的行只在同一私聊计入）。
+关系注入以印象时间线为主；好感分数只在印象之后附一行次要参考，取对这个人的唯一数值
+（群聊、私聊、关联账号全部计入；私聊的具体内容不在群里出现）。
 """
 
 from __future__ import annotations
@@ -294,7 +294,7 @@ def test_injection_appends_cross_group_scores_as_secondary_line():
     for noise in ("综合值", "态度=", "familiarity", "trust", "neutral", "跨群关系"):
         assert noise not in result.text, noise
     assert repo.summarize_calls == 1
-    assert repo.viewer_session_ids == ["qq:group:g1"], "按当前场合可见性汇总"
+    assert repo.viewer_session_ids == [None], "数值是对这个人的唯一感受：不按场合过滤"
 
 
 def test_injection_with_scores_but_no_impression_injects_score_line_only():
@@ -373,7 +373,7 @@ def test_private_chat_injection_reads_private_state_and_scene_scores():
     assert result.text.index("一起聊到深夜") < result.text.index("好感分数（群友互动用的数值，仅供参考")
     assert "综合值" not in result.text and "familiarity" not in result.text
     assert repo.state_scopes == ["private"]
-    assert repo.viewer_session_ids == ["qq:private:1"], "私聊只计入同一私聊的行"
+    assert repo.viewer_session_ids == [None], "私聊与群聊共用同一份数值"
 
 
 def test_summary_with_viewer_session_counts_private_rows_only_in_same_chat(repo):

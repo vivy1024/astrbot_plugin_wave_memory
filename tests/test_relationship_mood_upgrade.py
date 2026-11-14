@@ -141,7 +141,7 @@ def test_relationship_full_history_reaches_provider_request(tmp_path):
         timeline_start = text.index("印象时间线")
         assert timeline_start < text.index("完整摘要22") < text.index("完整摘要29")
         assert text.index("完整摘要29") < text.index("你对这个人的印象：完整摘要29")
-        assert "时间权重每 21 天减半" in text and "wave_memory_person_search" in text
+        assert "时间权重每 21 天减半" in text and "wave_memory_recall(mode=person" in text
         # 每行只保留事件编号与日期：不带权重数值、来源群号
         assert "权重=" not in text and "来源群=" not in text
         # 好感分数只在印象之后附一行次要参考，不带态度或英文维度键

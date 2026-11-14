@@ -34,7 +34,9 @@ try:
         persist_timeline_event,
         propose_affinity_shift,
         record_dimensional_unsettled_energy,
+        settle_unsettled_traces,
         strip_timeline_json,
+        summarize_settled_traces,
         synthesize_milestone_phrase,
     )
     from .person_identity import display_name_for_user, resolve_user_id
@@ -53,7 +55,9 @@ except ImportError:  # pragma: no cover
         persist_timeline_event,
         propose_affinity_shift,
         record_dimensional_unsettled_energy,
+        settle_unsettled_traces,
         strip_timeline_json,
+        summarize_settled_traces,
         synthesize_milestone_phrase,
     )
     from tools.person_identity import display_name_for_user, resolve_user_id
@@ -69,6 +73,7 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
         "综合记录对特定群友的阶段性主观印象，并根据真实互动同步更新好感度/关系维度。"
         "当你对群友的看法改变、或者双方对话产生信任/幽默/深度长谈/冒犯情绪变动时调用。"
         "常规微调 trust，接梗幽默用 fun，深度长谈用 depth；hostility 只接受非负增量，数值越大表示越冒犯。"
+        "可附 event_type 说明这件事属于哪一类。"
     )
     parameters: dict = field(default_factory=lambda: {
         "type": "object",
@@ -109,6 +114,12 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
             "source_memory_id": {
                 "type": "integer",
                 "description": "可选。显式指定当轮对话记忆 ID",
+            },
+            "event_type": {
+                "type": "string",
+                "enum": ["bot_praised", "bot_attacked", "joke", "deep_talk", "gift_or_feed", "correction",
+                         "ignored_boundary", "confession", "direct_reply"],
+                "description": "可选。这件事属于哪一类：被夸、被凶、玩梗、长谈、投喂、纠错、越界、表白/坦白、日常",
             },
         },
         "required": ["target_user"],
@@ -235,7 +246,7 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
 
         requested = float(verdict["delta"])
         if requested != 0.0 and self.relationship_events is not None:
-            formal_type = event_type_for_shift(verdict["dimension"], requested)
+            formal_type = event_type_for_shift(verdict["dimension"], requested, kwargs.get("event_type"))
             try:
                 # 好感事件要能追到依据：理由写具体观感，挂上对方原话所在的记忆
                 event_reason = shift_reason or impression
@@ -262,6 +273,18 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
         # detail 优先附带群友原话证据，杜绝无据悬空
         event_detail = f"{impression}\n原话证据：“{source_quote}”" if source_quote else impression
 
+        # 跃迁：把这段时间攒下的全部观感一次结算，保留为跃迁点的证据（不再直接清空丢掉）
+        settled_traces: list[dict[str, Any]] = []
+        if is_leap or energy_val >= UNSETTLED_ENERGY_FULL:
+            try:
+                settled_traces = settle_unsettled_traces(
+                    self.db, bot_id=runtime_scope.bot_id, user_id=user_id, now=now,
+                )
+            except Exception:
+                settled_traces = []
+        settled_tids = [str(t.get("tid") or "") for t in settled_traces if t.get("tid")]
+        dossier = summarize_settled_traces(settled_traces) if settled_traces else None
+
         try:
             if event_id > 0 and before_aff != after_aff:
                 phrase = synthesize_milestone_phrase(
@@ -272,6 +295,7 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
                     dimension=verdict["dimension"],
                     delta=applied_delta,
                     is_leap=is_leap,
+                    settled_count=len(settled_traces),
                 )
                 persist_timeline_event(
                     self.db,
@@ -294,7 +318,10 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
                         "after_affinity": after_aff,
                         "event_id": event_id,
                         "is_leap": is_leap,
+                        "settled_dossier": dossier,
                     },
+                    settled_trace_ids=settled_tids,
+                    is_leap=bool(is_leap or settled_tids),
                 )
             else:
                 persist_timeline_event(
@@ -320,18 +347,8 @@ class WaveMemoryRecordSocialImpressionTool(FunctionTool[AstrAgentContext]):
             # 若触发了跃迁或达到结算线，清空该维度与本群的未决能量；
             # 若未发生跃迁，则将本轮评估产生的微观冲击持续累加至该维度的能量池中。
             if is_leap or energy_val >= UNSETTLED_ENERGY_FULL:
-                consume_dimensional_energy(
-                    self.db,
-                    bot_id=runtime_scope.bot_id,
-                    user_id=user_id,
-                    dimension=dimension,
-                )
-                clear_unsettled_state(
-                    self.db,
-                    bot_id=runtime_scope.bot_id,
-                    user_id=user_id,
-                    group_id=group_id,
-                )
+                # 观感已在上面被结算并保留为跃迁点证据；能量随之清零，无需再清空
+                pass
             else:
                 record_dimensional_unsettled_energy(
                     self.db,

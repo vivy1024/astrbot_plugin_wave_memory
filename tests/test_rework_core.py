@@ -970,22 +970,6 @@ class ReworkCoreTest(unittest.TestCase):
         self.assertEqual(tuple(row), ("quarantined_roleplay", 0.0))
         self.assertEqual(svc.last_bot_reply(bot_id="yushu", group_id="g1", user_id="u1"), "")
 
-    def test_affinity_tool_is_fail_closed_until_scoped_social_read_model_exists(self):
-        import asyncio
-        from tools.extra_tools import WaveMemoryAffinityTool
-
-        result = asyncio.run(
-            WaveMemoryAffinityTool().call(
-                None,
-                mode="ranking",
-                scope="global",
-                group_id="other-group",
-                bot_scope="all_bots",
-            )
-        )
-
-        self.assertIn("scope_migration_required", result)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,10 +15,13 @@ import {
   getPersonTimeline,
   getRelationshipHistoricalAudit,
   getRelationships,
+  setPersonBotTag,
   type HistoricalAuditPage,
   type IdentityPerson,
+  type PersonBotTag,
   type PersonItem,
   type PersonTimelineEventItem,
+  type SettledDossier,
   type RelationshipItem,
 } from '@/api/people'
 import { RelationshipCalibrationPanel } from '@/components/relationship/RelationshipCalibrationPanel'
@@ -47,6 +50,20 @@ function affinityClass(value: number): string {
   if (value > 0) return 'border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
   if (value < 0) return 'border-sky-500/30 text-sky-700 dark:text-sky-400'
   return 'text-muted-foreground'
+}
+
+function BotTagBadge({ tag }: { tag?: PersonBotTag | null }) {
+  if (!tag) return null
+  if (tag.entity_kind === 'confirmed_bot') {
+    return <Badge variant="outline" className="border-violet-500/40 bg-violet-500/10 text-xs text-violet-600 dark:text-violet-300">Bot</Badge>
+  }
+  if (tag.entity_kind === 'suspected_bot') {
+    return <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-xs text-amber-600 dark:text-amber-300">疑似 Bot</Badge>
+  }
+  if (tag.entity_kind === 'verified_human') {
+    return <Badge variant="outline" className="border-emerald-500/35 text-xs text-emerald-600 dark:text-emerald-400">已确认真人</Badge>
+  }
+  return null
 }
 
 function interactionCount(item: PersonItem): number | null {
@@ -196,6 +213,46 @@ function timelineEventLabel(eventType: string | null | undefined): string {
   return TIMELINE_EVENT_LABELS[key] ?? TIMELINE_EVENT_LABELS[key.toLowerCase()] ?? '其他事件'
 }
 
+/** 跃迁点消化了哪些观感：正负计数 + 按时间排好的观感与原话；私聊原文在群视角下不展开。 */
+function LeapDossier({ dossier }: { dossier: SettledDossier }) {
+  const [open, setOpen] = useState(false)
+  if (!dossier.count) return null
+  return (
+    <div className="mt-1.5 text-xs">
+      <button
+        type="button"
+        className="text-primary underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        {open ? '收起' : '展开'}这次跃迁的依据（{dossier.count} 件事：正向 {dossier.positive}、负向 {dossier.negative}）
+      </button>
+      {open ? (
+        dossier.expired ? (
+          <p className="mt-1 text-muted-foreground">原始观感已超过保留期被清理，只剩数量。</p>
+        ) : (
+          <ol className="mt-1 flex flex-col gap-1 border-l-2 border-primary/40 pl-2">
+            {dossier.items.map((item) => (
+              <li key={item.tid || `${item.ts}-${item.text}`}>
+                {item.hidden ? (
+                  <span className="text-muted-foreground">（发生在私聊里的一件事，这里不展开）</span>
+                ) : (
+                  <>
+                    <span className="mr-1 font-mono">{item.polarity > 0 ? '＋' : item.polarity < 0 ? '－' : '·'}</span>
+                    <span>{item.text}</span>
+                    {item.quote ? <span className="ml-1 text-muted-foreground">（原话：“{item.quote}”）</span> : null}
+                    <span className="ml-1 text-muted-foreground">{formatImpressionTime(item.ts)}</span>
+                  </>
+                )}
+              </li>
+            ))}
+          </ol>
+        )
+      ) : null}
+    </div>
+  )
+}
+
 function ImpressionTimelinePanel({ query, userId }: { query: { bot_id: string; session_id: string; visibility: 'group' }; userId: string }) {
   const { bot_id: botId, session_id: sessionId, visibility } = query
   const [kind, setKind] = useState<'' | 'impression' | 'affinity' | 'person_fact'>('')
@@ -270,7 +327,9 @@ function ImpressionTimelinePanel({ query, userId }: { query: { bot_id: string; s
                   <span className="font-semibold text-foreground/80">{entry.source_quote_inferred ? '推测原话（按时间窗口匹配）：' : '原话证据：'}</span>“{entry.source_quote}”
                 </div>
               ) : null}
+              {entry.settled ? <LeapDossier dossier={entry.settled} /> : null}
               <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                {entry.is_leap ? <Badge className="text-xs">关系跃迁</Badge> : null}
                 <Badge variant="outline" className="font-mono text-xs">{timelineKindLabel(entry.kind)}</Badge>
                 <span>{formatImpressionTime(entry.occurred_at) || '未记录时间'}</span>
                 {entry.dimension && entry.delta !== null && entry.delta !== undefined ? (
@@ -375,6 +434,25 @@ function PersonDetail({ item, relationship, relationshipError, query, onChanged 
   const impression = impressionOf(item)
   const [clearing, setClearing] = useState(false)
   const [clearError, setClearError] = useState('')
+  const [botTagBusy, setBotTagBusy] = useState(false)
+  const [botTagError, setBotTagError] = useState('')
+
+  async function handleSetBotTag(action: 'mark_bot' | 'mark_human' | 'clear') {
+    setBotTagBusy(true)
+    setBotTagError('')
+    try {
+      await setPersonBotTag(query, {
+        user_id: item.user_id,
+        action,
+        display_name: personDisplayName(item),
+      })
+      onChanged?.()
+    } catch (error) {
+      setBotTagError(humanizeApiError(error, '更新身份标签失败'))
+    } finally {
+      setBotTagBusy(false)
+    }
+  }
 
   async function handleClearImpression() {
     const reason = window.prompt('清除当前印象的原因（会写入审计，不会删除历史）')?.trim() ?? ''
@@ -395,7 +473,41 @@ function PersonDetail({ item, relationship, relationshipError, query, onChanged 
   }
 
   return     <div className="flex flex-col gap-5 text-sm">
-    <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">正式人物画像</Badge><Badge variant="secondary">当前群</Badge><Badge variant="outline">好感以本群记录为准</Badge></div>
+    <div className="flex flex-wrap items-center gap-2">
+      <Badge variant="outline">正式人物画像</Badge>
+      <Badge variant="secondary">当前群</Badge>
+      <Badge variant="outline">好感以本群记录为准</Badge>
+      <BotTagBadge tag={item.bot_tag} />
+    </div>
+
+    <div className="rounded-lg border bg-muted/10 p-3.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <span className="text-xs font-medium text-muted-foreground">身份判定（防 Bot 互刷与读空气保护）</span>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {item.bot_tag?.entity_kind === 'confirmed_bot'
+              ? `已标定为 Bot${item.bot_tag.reason ? `：${item.bot_tag.reason}` : ''}`
+              : item.bot_tag?.entity_kind === 'suspected_bot'
+                ? `系统自动识别为疑似 Bot${item.bot_tag.reason ? `：${item.bot_tag.reason}` : ''}（不降档，等待管理员确认）`
+                : item.bot_tag?.entity_kind === 'verified_human'
+                  ? '已确认为真人（白名单，不再被启发式规则误判）'
+                  : '普通人类成员（未标定）'}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {item.bot_tag?.entity_kind !== 'confirmed_bot' ? (
+            <Button type="button" size="sm" variant="outline" disabled={botTagBusy} onClick={() => void handleSetBotTag('mark_bot')}>标定为 Bot</Button>
+          ) : null}
+          {item.bot_tag?.entity_kind !== 'verified_human' ? (
+            <Button type="button" size="sm" variant="outline" disabled={botTagBusy} onClick={() => void handleSetBotTag('mark_human')}>确认为真人</Button>
+          ) : null}
+          {item.bot_tag && item.bot_tag.entity_kind !== 'human' ? (
+            <Button type="button" size="sm" variant="ghost" disabled={botTagBusy} onClick={() => void handleSetBotTag('clear')}>清除标定</Button>
+          ) : null}
+        </div>
+      </div>
+      {botTagError ? <p className="mt-2 text-xs text-destructive">{botTagError}</p> : null}
+    </div>
 
 
     <div className="grid gap-3 rounded-lg border bg-muted/10 p-3.5">
@@ -514,6 +626,7 @@ export function PeoplePage() {
   const maxAffinity = pagination.searchParams.get('max_affinity') ?? ''
   const minInteractions = pagination.searchParams.get('min_interactions') ?? ''
   const aliasFilter = (pagination.searchParams.get('alias_filter') as 'all' | 'has' | 'none' | null) ?? 'all'
+  const botFilter = (pagination.searchParams.get('bot_filter') as 'all' | 'humans_only' | 'bots_only' | 'suspected' | null) ?? 'all'
   // 默认按互动数从高到低：按名字排时，只有符号的昵称（「-」「.」）会全挤在最前面
   const sortBy = (pagination.searchParams.get('sort_by') as 'name' | 'interactions' | 'affinity' | null) ?? DEFAULT_SORT
   const sortOrder = (pagination.searchParams.get('sort_order') as 'asc' | 'desc' | null) ?? defaultSortOrder(sortBy)
@@ -531,14 +644,15 @@ export function PeoplePage() {
     max_affinity: maxAffinity || undefined,
     min_interactions: minInteractions || undefined,
     alias_filter: aliasFilter !== 'all' ? aliasFilter : undefined,
+    bot_filter: botFilter !== 'all' ? botFilter : undefined,
     // 后端缺省按名字排，所以默认的互动数排序也要显式带上
     sort_by: sortBy !== 'name' ? sortBy : undefined,
     // 数字排序必须显式带方向：旧后端缺省是升序，省略 desc 会把「高→低」排成低到高。
     sort_order: sortBy === 'name'
       ? (sortOrder !== 'asc' ? sortOrder : undefined)
       : sortOrder,
-  }), [aliasFilter, maxAffinity, minAffinity, minInteractions, relationshipState, search, sortBy, sortOrder])
-  const hasAdvancedFilters = Boolean(listFilters.relationship_state || listFilters.min_affinity || listFilters.max_affinity || listFilters.min_interactions || listFilters.alias_filter || sortBy !== DEFAULT_SORT || pagination.searchParams.get('sort_order'))
+  }), [aliasFilter, botFilter, maxAffinity, minAffinity, minInteractions, relationshipState, search, sortBy, sortOrder])
+  const hasAdvancedFilters = Boolean(listFilters.relationship_state || listFilters.min_affinity || listFilters.max_affinity || listFilters.min_interactions || listFilters.alias_filter || listFilters.bot_filter || sortBy !== DEFAULT_SORT || pagination.searchParams.get('sort_order'))
 
   const [searchDraft, setSearchDraft] = useState(search)
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(hasAdvancedFilters)
@@ -817,6 +931,16 @@ export function PeoplePage() {
                     </select>
                   </div>
 
+                  <div className="flex flex-col gap-1.5">
+                    <span className="font-semibold text-muted-foreground">身份 / Bot 标记</span>
+                    <select className="h-8 rounded-md border bg-background px-2 text-xs" value={botFilter} onChange={(e) => applyListFilters({ bot_filter: e.target.value === 'all' ? null : e.target.value })}>
+                      <option value="all">全部成员</option>
+                      <option value="humans_only">仅人类成员</option>
+                      <option value="bots_only">仅 Bot（已标定/疑似）</option>
+                      <option value="suspected">待确认疑似 Bot</option>
+                    </select>
+                  </div>
+
                   {/* 排序属性与方向 */}
                   <div className="flex flex-col gap-1.5">
                     <span className="font-semibold text-muted-foreground">列表排序</span>
@@ -877,7 +1001,7 @@ export function PeoplePage() {
               keyExtractor={(row) => row.scope_key}
               onRowClick={(row) => openDetail(row)}
               columns={[
-                { key: 'display_name', header: '群友', isTitle: true, className: 'max-w-44 truncate py-1 text-sm font-medium', render: (row) => personDisplayName(row) },
+                { key: 'display_name', header: '群友', isTitle: true, className: 'max-w-52 truncate py-1 text-sm font-medium', render: (row) => <span className="inline-flex items-center gap-1.5">{personDisplayName(row)}<BotTagBadge tag={row.bot_tag} /></span> },
                 { key: 'user_id', header: '用户 ID', className: 'max-w-36 truncate py-1 font-mono text-xs text-muted-foreground', render: (row) => row.user_id },
                 { key: 'aliases', header: '登记别名', className: 'max-w-48 truncate py-1 text-xs text-muted-foreground', render: (row) => { const aliases = aliasLabels(row.aliases); return aliases.length ? aliases.join('、') : '—' } },
                 { key: 'impression', header: 'Bot 印象', className: 'max-w-64 truncate py-1 text-xs text-muted-foreground', render: (row) => impressionOf(row) || '—' },

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from collections.abc import Mapping
 from typing import Any
 
@@ -50,6 +51,8 @@ class PersonTimelineRepo:
         occurred_at: float | None = None,
         provenance: Mapping[str, Any] | None = None,
         legacy_fact_id: int | None = None,
+        settled_trace_ids: list[str] | None = None,
+        is_leap: bool = False,
         connection=None,
     ) -> int:
         stamp = float(occurred_at if occurred_at is not None else time.time())
@@ -68,11 +71,14 @@ class PersonTimelineRepo:
             legacy_fact_id,
             _json_dumps(dict(provenance or {})),
             time.time(),
+            _json_dumps(list(settled_trace_ids or [])),
+            1 if is_leap else 0,
         )
         sql = """INSERT INTO person_timeline_events (
                     bot_id, user_id, group_id, kind, summary, detail, subject, predicate, object,
-                    confidence, occurred_at, legacy_fact_id, provenance, created_at
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+                    confidence, occurred_at, legacy_fact_id, provenance, created_at,
+                    settled_trace_ids, is_leap
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
         if connection is not None:
             cur = connection.execute(sql, payload)
             commit = getattr(connection, "commit", None)
@@ -143,7 +149,17 @@ class PersonTimelineRepo:
                     provenance = loaded
             except Exception:
                 provenance = {}
+        settled_ids: list[str] = []
+        if len(row) > 14 and isinstance(row[14], str) and row[14].strip():
+            try:
+                loaded_ids = json.loads(row[14])
+                if isinstance(loaded_ids, list):
+                    settled_ids = [str(item) for item in loaded_ids]
+            except Exception:
+                settled_ids = []
         return {
+            "settled_trace_ids": settled_ids,
+            "is_leap": bool(row[15]) if len(row) > 15 else False,
             "id": row[0],
             "bot_id": row[1],
             "user_id": row[2],
@@ -198,7 +214,7 @@ class PersonTimelineRepo:
             params.append(max(0, int(offset or 0)))
             tail = " LIMIT -1 OFFSET ?"
         sql = f"""SELECT id, bot_id, user_id, group_id, kind, summary, detail, subject, predicate, object,
-                         confidence, occurred_at, provenance, created_at
+                         confidence, occurred_at, provenance, created_at, settled_trace_ids, is_leap
                     FROM person_timeline_events
                    WHERE {' AND '.join(clauses)}
                    ORDER BY occurred_at DESC, id DESC{tail}"""
@@ -479,13 +495,28 @@ class PersonTimelineRepo:
         text: str,
         impact: float,
         now: float | None = None,
+        scene: str = "",
+        evidence: dict[str, Any] | None = None,
         connection=None,
     ) -> dict[str, Any]:
         state = self.get_unsettled_state(bot_id=bot_id, user_id=user_id, group_id=group_id, connection=connection)
         stamp = float(now if now is not None else time.time())
         traces = list(state.get("traces") or [])
-        traces.append({"text": text, "summary": text, "detail": text, "impact": impact, "ts": stamp})
-        traces = traces[-40:]  # 与 impression_timeline.UNSETTLED_MAX_TRACES 一致
+        trace: dict[str, Any] = {"text": text, "summary": text, "detail": text, "impact": impact, "ts": stamp}
+        # 观感发生的场合，用于可见性过滤（私聊原文只在同一私聊显示）；能量本身不分场合
+        trace["group_id"] = str(scene or group_id or "")
+        # 证据字段：方向、原话出处、短 id（跃迁点据此记录消化了哪些观感）
+        trace["tid"] = uuid.uuid4().hex[:10]
+        for key, value in dict(evidence or {}).items():
+            if value not in (None, ""):
+                trace[key] = value
+        traces.append(trace)
+        # 未结算的观感优先保留；已结算的只留作跃迁点证据，超出上限时先丢最早已结算的
+        limit = 60
+        if len(traces) > limit:
+            settled = [i for i, item in enumerate(traces) if isinstance(item, dict) and item.get("settled")]
+            drop = set(settled[: len(traces) - limit])
+            traces = [item for i, item in enumerate(traces) if i not in drop][-limit:]
         energy = round(min(20.0, float(state.get("energy") or 0.0) + float(impact or 0.0)), 2)
         count = int(state.get("interaction_count") or 0) + 1
         self.set_unsettled_state(

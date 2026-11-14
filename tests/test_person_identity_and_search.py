@@ -58,8 +58,9 @@ def _scope() -> RuntimeScope:
     )
 
 
-def _db() -> SimpleNamespace:
-    conn = sqlite3.connect(":memory:")
+def _db(conn=None) -> SimpleNamespace:
+    if conn is None:
+        conn = sqlite3.connect(":memory:")
     conn.executescript(
         """
         CREATE TABLE user_profiles(
@@ -200,19 +201,25 @@ def test_person_search_works_in_private_chat():
     assert "别群发言" in recent_result
 
 
-def test_affinity_query_works_in_private_chat():
-    """私聊下查询好感度，必须正常返回，绝不能报 scope_required。"""
-    db = _db()
-    private_scope = RuntimeScope(
-        "yushu",
-        "private",
-        SessionRef("qq:private:111", "qq", "private", "111"),
-        subject_principal_id="qq:user:111",
-    )
-    tool = WaveMemoryAffinityTool(db=db)
-    result = asyncio.run(tool.call(_ctx(private_scope), mode="single", target_user="诸葛匹夫"))
-    assert "关系对象：诸葛匹夫（2696534623）" in result
-    assert "好感度：12" in result
+def test_affinity_query_works_in_private_chat(tmp_path):
+    """私聊好感查询复用正式封装的线程本地只读连接。"""
+    from engine.db.connection import ConnectionManager
+
+    cm = ConnectionManager(str(tmp_path / "private-affinity.db"))
+    try:
+        db = _db(conn=cm.conn)
+        private_scope = RuntimeScope(
+            "yushu",
+            "private",
+            SessionRef("qq:private:111", "qq", "private", "111"),
+            subject_principal_id="qq:user:111",
+        )
+        tool = WaveMemoryAffinityTool(db=db)
+        result = asyncio.run(tool.call(_ctx(private_scope), mode="single", target_user="诸葛匹夫"))
+        assert "关系对象：诸葛匹夫（2696534623）" in result
+        assert "好感度：12" in result
+    finally:
+        cm.close()
 
 
 

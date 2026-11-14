@@ -7,10 +7,10 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from domain.scope import RuntimeScope, SessionRef
+from domain.scope import RuntimeScope, scene_key, SessionRef
 from engine.db.connection import ConnectionManager
 from engine.db.person_timeline_repo import PersonTimelineRepo
-from services.impression_timeline import parse_impression_mark, persist_unsettled_trace
+from services.impression_timeline import parse_impression_mark, parse_impression_polarity, persist_unsettled_trace
 
 
 class _FakePlain:
@@ -91,6 +91,8 @@ def _load_method(method_name: str):
         "time": SimpleNamespace(time=lambda: 1700000000.0),
         "persist_unsettled_trace": persist_unsettled_trace,
         "parse_impression_mark": parse_impression_mark,
+        "parse_impression_polarity": parse_impression_polarity,
+        "scene_key": scene_key,
     }
     exec(compile(module, str(source_path), "exec"), namespace)
     return namespace[method_name]
@@ -142,7 +144,7 @@ class ImpressionHookTest(unittest.TestCase):
         # 验证文本中的 impression 标记被完全清洗
         self.assertEqual(chain[0].text, "你好呀，今天天气真不错！")
 
-        state = self.timeline.get_unsettled_state(bot_id="b1", user_id="u1", group_id="g1")
+        state = self.timeline.get_unsettled_state(bot_id="b1", user_id="u1", group_id="")
         self.assertEqual(state["traces"][0]["text"], "活泼开朗的朋友")
         self.assertEqual(state["energy"], 1.0)
 
@@ -158,7 +160,7 @@ class ImpressionHookTest(unittest.TestCase):
         # 验证文本清洗干净
         self.assertEqual(chain[0].text, "这是正文内容。")
 
-        state = self.timeline.get_unsettled_state(bot_id="b1", user_id="u2", group_id="g1")
+        state = self.timeline.get_unsettled_state(bot_id="b1", user_id="u2", group_id="")
         self.assertEqual(state["traces"][0]["text"], "喜欢钻研技术的小伙伴")
 
     def test_no_impression_tag_leaves_chain_untouched(self):
@@ -184,7 +186,7 @@ class ImpressionHookTest(unittest.TestCase):
         asyncio.run(self.on_decorating_result(self.plugin, event))
 
         self.assertEqual(chain[0].text, "收到！稍后我会详细为你解答。")
-        state = self.timeline.get_unsettled_state(bot_id="b1", user_id="u4", group_id="g1")
+        state = self.timeline.get_unsettled_state(bot_id="b1", user_id="u4", group_id="")
         self.assertEqual(state["traces"][0]["text"], "很有礼貌的提问者")
 
     def test_existing_profile_updated_safely(self):
@@ -209,7 +211,7 @@ class ImpressionHookTest(unittest.TestCase):
         meta = json.loads(row[0])
         self.assertEqual(meta.get("impression"), "旧印象")
         self.assertEqual(meta.get("tags"), {"geek": 1})
-        state = self.timeline.get_unsettled_state(bot_id="b1", user_id="u5", group_id="g1")
+        state = self.timeline.get_unsettled_state(bot_id="b1", user_id="u5", group_id="")
         self.assertEqual(state["traces"][0]["text"], "最新深入讨论的新印象")
 
     def test_impression_persistence_uses_package_relative_import(self):

@@ -67,11 +67,14 @@ def test_unsettled_state_lives_in_table_not_metadata(tmp_path):
         db = type("DB", (), {"person_timeline": repo})()
         persist_unsettled_trace(db, bot_id="bot-a", user_id="u1", group_id="g1", text="文史功底扎实", impact=4)
         persist_unsettled_trace(db, bot_id="bot-a", user_id="u1", group_id="g1", text="又补了一轮考据", impact=5)
-        state = repo.get_unsettled_state(bot_id="bot-a", user_id="u1", group_id="g1")
+        # 这个人只有一份未结算池（'' 行）；观感发生的场合记在 trace 里
+        state = repo.get_unsettled_state(bot_id="bot-a", user_id="u1", group_id="")
         assert state["energy"] == 9.0
         assert [item["text"] for item in state["traces"]] == ["文史功底扎实", "又补了一轮考据"]
+        assert {item["group_id"] for item in state["traces"]} == {"g1"}
+        assert repo.get_unsettled_state(bot_id="bot-a", user_id="u1", group_id="g1")["energy"] == 0.0
         clear_unsettled_state(db, bot_id="bot-a", user_id="u1", group_id="g1")
-        cleared = repo.get_unsettled_state(bot_id="bot-a", user_id="u1", group_id="g1")
+        cleared = repo.get_unsettled_state(bot_id="bot-a", user_id="u1", group_id="")
         assert cleared["energy"] == 0.0
         assert cleared["traces"] == []
     finally:

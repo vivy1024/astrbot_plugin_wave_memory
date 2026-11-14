@@ -31,21 +31,31 @@ except ImportError:  # pragma: no cover
     logger = logging.getLogger(__name__)
 
 try:
-    from ..domain.scope import RuntimeScope
+    from ..domain.scope import RuntimeScope, scene_key
     from .identity_safety import prepend_identity_safety_system_prompt
-    from .impression_timeline import UNSETTLED_ENERGY_FULL, affinity_shift_range, effective_unsettled_state
+    from .impression_timeline import (
+        UNSETTLED_ENERGY_FULL,
+        affinity_shift_range,
+        effective_unsettled_state,
+        render_unsettled_dossier,
+    )
     from .tool_registry import runtime_tool_context
     from .reply_feedback import BOOKKEEPING_LEARNING_PROMPT
     from ..tools.person_identity import resolve_user_id
 except ImportError:  # pragma: no cover
-    from domain.scope import RuntimeScope
+    from domain.scope import RuntimeScope, scene_key
     from services.identity_safety import prepend_identity_safety_system_prompt
-    from services.impression_timeline import UNSETTLED_ENERGY_FULL, affinity_shift_range, effective_unsettled_state
+    from services.impression_timeline import (
+        UNSETTLED_ENERGY_FULL,
+        affinity_shift_range,
+        effective_unsettled_state,
+        render_unsettled_dossier,
+    )
     from services.tool_registry import runtime_tool_context
     from services.reply_feedback import BOOKKEEPING_LEARNING_PROMPT
     from tools.person_identity import resolve_user_id
 
-PROMPT = """你是{bot_name}。下面是你刚在群里参与的一段对话（「{bot_name}」是你自己说的话）。
+PROMPT = """你是{bot_name}。下面是你刚在{scene_label}参与的一段对话（「{bot_name}」是你自己说的话）。
 现在对话告一段落，请以你自己的视角回看，把值得记下来的事整理出来。宁缺毋滥：没有就留空数组，
 不要编造，所有内容都必须能在对话原文里找到依据。
 
@@ -56,7 +66,8 @@ PROMPT = """你是{bot_name}。下面是你刚在群里参与的一段对话（�
 {{
   "impressions": [  // 对某位群友形成或更新了看法；需要结算的人请务必给出一条
     {{"user": "群友名字", "impression": "一句话观感", "dimension": "trust|fun|depth|hostility|familiarity",
-      "delta": 数字（本轮好感变化，范围见上，无变化填 0）, "source_quote": "对方的原话"}}
+      "delta": 数字（本轮好感变化，范围见上，无变化填 0）, "source_quote": "对方的原话",
+      "event_type": "bot_praised|bot_attacked|joke|deep_talk|gift_or_feed|correction|ignored_boundary|confession|direct_reply（这件事属于哪一类）"}}
   ],
   "facts": [  // 群友关于自己或他人的客观事实（生日、职业、在玩的游戏、养的宠物……）
     {{"subject": "谁", "predicate": "是/喜欢/在做…",
@@ -179,8 +190,11 @@ class PostReplyBookkeeper:
     # ─── 调度 ───
 
     def schedule(self, scope: RuntimeScope) -> None:
-        """Bot 在群里说了一句话：重置该 Bot/群的记账计时器。"""
-        if not self.enabled or not isinstance(scope, RuntimeScope) or scope.visibility != "group" or scope.session is None:
+        """Bot 说了一句话（群聊或私聊）：重置该 Bot/会话的记账计时器。
+
+        一个生命在哪里都在经历：私聊里发生的事同样要回看、结算，否则私聊关系永远不演化。
+        """
+        if not self.enabled or not isinstance(scope, RuntimeScope) or scope.visibility not in {"group", "private"} or scope.session is None:
             return
         key = self._scope_key(scope)
         timer = self._timers.get(key)
@@ -252,7 +266,12 @@ class PostReplyBookkeeper:
             energy = float(state.get("energy") or 0.0)
             if energy >= UNSETTLED_ENERGY_FULL:
                 bounds = affinity_shift_range({}, energy=energy)
-                lines.append(f"- {name}：未结算能量 {energy:g}，本轮好感变化可在 [{bounds['min']}, {bounds['max']}]")
+                head = f"- {name}：未结算能量 {energy:g}，本轮好感变化可在 [{bounds['min']}, {bounds['max']}]"
+                dossier = render_unsettled_dossier(
+                    state.get("traces") or [], viewer_scene=scene_key(scope), max_items=10,
+                )
+                indented = [f"  {row}" for row in dossier.splitlines()]
+                lines.append("\n".join([head, *indented]))
         if not lines:
             return ""
         return "【需要结算的人】你对他们攒了很多没定性的观感，请在 impressions 里各给一条阶段性定性：\n" + "\n".join(lines[:8]) + "\n\n"
@@ -315,7 +334,7 @@ class PostReplyBookkeeper:
         return text
 
     async def run(self, scope: RuntimeScope) -> dict[str, int]:
-        if not self.enabled or not isinstance(scope, RuntimeScope) or scope.visibility != "group" or scope.session is None:
+        if not self.enabled or not isinstance(scope, RuntimeScope) or scope.visibility not in {"group", "private"} or scope.session is None:
             return {}
         bot_name = self.bot_name_for(scope.bot_id) or scope.bot_id
         rows, transcript = self._transcript(scope, bot_name)
@@ -324,6 +343,7 @@ class PostReplyBookkeeper:
             return {}
         prompt = PROMPT.format(
             bot_name=bot_name,
+            scene_label="私聊里" if scope.visibility == "private" else "群里",
             transcript=transcript,
             settle_block=self._settle_block(scope, rows),
             concern_block=self._concern_block(scope),
@@ -373,13 +393,14 @@ class PostReplyBookkeeper:
                     target_user=str(item["user"]), impression=str(item["impression"]),
                     dimension=str(item.get("dimension") or "trust"), delta=item.get("delta", 0) or 0,
                     source_quote=str(item.get("source_quote") or ""), shift_reason="事后回看这段对话",
+                    event_type=str(item.get("event_type") or ""),
                 )
         for item in _items(payload, "facts", 6):
             if all(item.get(k) for k in ("subject", "predicate", "object", "source_quote")):
                 done += await self._call_action(
                     "wave_memory_propose_fact", scope,
                     subject=str(item["subject"]), predicate=str(item["predicate"]), object=str(item["object"]),
-                    source_quote=str(item["source_quote"]), context_evidence="事后回看群聊时记下",
+                    source_quote=str(item["source_quote"]), context_evidence="事后回看对话时记下",
                     importance=item.get("importance"),
                 )
         for item in _items(payload, "jargon", 4):

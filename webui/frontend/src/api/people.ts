@@ -15,8 +15,19 @@ export interface PeopleQuery {
   max_affinity?: number | string
   min_interactions?: number | string
   alias_filter?: 'all' | 'has' | 'none'
+  bot_filter?: 'all' | 'humans_only' | 'bots_only' | 'suspected'
   sort_by?: 'name' | 'interactions' | 'affinity'
   sort_order?: 'asc' | 'desc'
+}
+
+export type BotEntityKind = 'human' | 'verified_human' | 'suspected_bot' | 'confirmed_bot'
+
+export interface PersonBotTag {
+  is_bot: boolean
+  entity_kind: BotEntityKind
+  source: string
+  reason: string
+  updated_at?: number
 }
 
 export interface PersonScope {
@@ -42,6 +53,7 @@ export interface PersonItem {
   affinity: number | null
   affinity_status: 'unavailable' | 'available' | string
   affinity_reason_code: string
+  bot_tag?: PersonBotTag
 }
 
 export interface RelationshipValue {
@@ -218,6 +230,27 @@ export interface PersonTimelineEventItem {
   delta: number | string | null
   readonly: true
   timeline: 'impression'
+  is_leap?: boolean
+  settled?: SettledDossier | null
+}
+
+export interface SettledDossierItem {
+  tid: string
+  ts: number | null
+  scene: string
+  polarity: number
+  text: string
+  quote: string
+  source_memory_id: number | null
+  hidden: boolean
+}
+
+export interface SettledDossier {
+  count: number
+  positive: number
+  negative: number
+  items: SettledDossierItem[]
+  expired?: boolean
 }
 
 export interface PersonTimelinePage extends PageResponse<PersonTimelineEventItem> {
@@ -375,4 +408,14 @@ export function linkIdentities(query: PeopleQuery, payload: { principals: string
 
 export function unlinkIdentity(query: PeopleQuery, principal: string): Promise<unknown> {
   return fetchJson<unknown>(`/api/people/identity-links/unlink${queryString(query)}`, { method: 'POST', body: JSON.stringify({ principal }) })
+}
+
+export function setPersonBotTag(
+  query: Pick<PeopleQuery, 'bot_id' | 'session_id' | 'visibility'>,
+  payload: { user_id: string; action: 'mark_bot' | 'mark_human' | 'clear'; reason?: string; display_name?: string },
+): Promise<{ ok: boolean; item: { user_id: string; bot_tag: PersonBotTag } }> {
+  return fetchJson(`/api/people/commands/bot-tag${queryString(query)}`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }

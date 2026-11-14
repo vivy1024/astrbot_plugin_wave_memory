@@ -45,6 +45,13 @@ CREATE TABLE IF NOT EXISTS person_unsettled_state (
 """
 
 
+# v5.2 增量列（幂等）：跃迁点记录它结算了哪些观感；kind 的 CHECK 约束保持不动。
+_ADDED_COLUMNS = (
+    ("settled_trace_ids", "TEXT NOT NULL DEFAULT '[]'"),
+    ("is_leap", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
 def ensure_person_timeline_schema(cm: ConnectionManager) -> None:
     if not hasattr(cm, "migration_transaction"):
         raise TypeError("cm must provide migration_transaction")
@@ -52,6 +59,10 @@ def ensure_person_timeline_schema(cm: ConnectionManager) -> None:
         for statement in _SCHEMA.split(";"):
             if statement.strip():
                 tx.execute(statement)
+        existing = {str(row[1]) for row in tx.execute("PRAGMA table_info(person_timeline_events)").fetchall()}
+        for name, ddl in _ADDED_COLUMNS:
+            if name not in existing:
+                tx.execute(f"ALTER TABLE person_timeline_events ADD COLUMN {name} {ddl}")
 
 
 __all__ = ["ensure_person_timeline_schema"]

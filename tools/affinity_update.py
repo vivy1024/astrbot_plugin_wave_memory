@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import field
 from typing import Any
 
@@ -204,10 +205,17 @@ class WaveMemoryAffinityTool(FunctionTool[AstrAgentContext]):
             limit = max(1, min(int(kwargs.get("limit", 10)), 50))
         except (TypeError, ValueError):
             return "limit 必须是 1 到 50 的整数"
+        target = str(kwargs.get("target_user") or kwargs.get("user_id") or "").strip()
+        # Scope/arguments are verified before leaving the event loop. Only immutable
+        # values cross the thread boundary, never the live event/context or a cursor.
+        # ConnectionManager routes these reads to the worker's query-only connection.
+        return await asyncio.to_thread(self._query_sync, runtime_scope, mode, limit, target)
+
+    def _query_sync(self, runtime_scope: RuntimeScope, mode: str, limit: int, target: str) -> str:
+        """Keep identity, relationship and audit reads off the heartbeat event loop."""
         if mode != "single":
             return self._rank(mode, runtime_scope, limit)
 
-        target = str(kwargs.get("target_user") or kwargs.get("user_id") or "").strip()
         user_id = self._resolve_user(target, runtime_scope) if target else self._current_user(runtime_scope)
         if not user_id:
             return f"未找到目标用户「{target}」"
@@ -217,19 +225,29 @@ class WaveMemoryAffinityTool(FunctionTool[AstrAgentContext]):
         except Exception as exc:
             return f"关系查询失败：{exc}"
         relationship = state.get("relationship") if isinstance(state, dict) else None
-        if not isinstance(relationship, dict) or relationship.get("affinity") is None:
+        unified = self._unified(runtime_scope.bot_id, target_scope.subject_principal_id)
+        if not unified and (not isinstance(relationship, dict) or relationship.get("affinity") is None):
             return f"当前 Scope 尚无「{target or user_id}」的正式关系记录（状态未知）"
-        dimensions = relationship.get("dimensions") or {}
-        values = relationship.get("values") or {}
-        display = self._people_by_id(runtime_scope).get(user_id, {}).get("display_name") or target or user_id
+        if not isinstance(relationship, dict):
+            relationship = {}
+        display = display_name_for_user(self.db, user_id, runtime_scope) or target or user_id
+        if unified:
+            # 唯一数值：所有群、私聊与关联账号合并（与注入、排行、WebUI 同一口径）
+            affinity, state_name, dimensions = unified["affinity"], unified["state"], unified.get("dimensions") or {}
+        else:
+            affinity, state_name = relationship.get("affinity"), relationship.get("state") or "unknown"
+            values = relationship.get("values") or {}
+            dimensions = {
+                name: (values.get(name) or {}).get("effective_value", (relationship.get("dimensions") or {}).get(name, 0))
+                if isinstance(values.get(name), dict) else (relationship.get("dimensions") or {}).get(name, 0)
+                for name in ("familiarity", "trust", "fun", "hostility", "depth")
+            }
         lines = [
             f"关系对象：{display}（{user_id}）",
-            f"好感度：{relationship.get('affinity')}（{relationship.get('state') or 'unknown'}）",
+            f"好感度：{affinity}（{state_name}）",
         ]
         for name in ("familiarity", "trust", "fun", "hostility", "depth"):
-            item = values.get(name) if isinstance(values, dict) else None
-            value = item.get("effective_value") if isinstance(item, dict) else dimensions.get(name, 0)
-            lines.append(f"- {name}: {value}")
+            lines.append(f"- {name}: {dimensions.get(name, 0)}")
         # Durable evidence summary on formal row (if migrated); read-only.
         try:
             from services.relationship_evidence_display import format_evidence_summary_lines
@@ -243,6 +261,18 @@ class WaveMemoryAffinityTool(FunctionTool[AstrAgentContext]):
         )
         lines.extend(self._legacy_audit_lines(target_scope))
         return "\n".join(lines)
+
+    def _unified(self, bot_id: str, subject_principal_id: str | None) -> dict[str, Any] | None:
+        """对这个人的唯一好感数值；仓储不支持或无记录时返回 None。"""
+        repo = getattr(self.db, "soul_repository", None)
+        reader = getattr(repo, "person_relationship", None)
+        if not callable(reader) or not subject_principal_id:
+            return None
+        try:
+            data = reader(bot_id, subject_principal_id)
+        except Exception:
+            return None
+        return dict(data) if isinstance(data, dict) and data.get("available") else None
 
     def _legacy_audit_lines(self, scope: RuntimeScope) -> list[str]:
         """Append historical audit summary; never affects affinity calculation."""
@@ -308,6 +338,14 @@ class WaveMemoryAffinityTool(FunctionTool[AstrAgentContext]):
             value = str(subject or "")
             return value[len(prefix):] if value.startswith(prefix) else ""
 
+        # 候选人限本群出现过的人，分数一律用跨场合唯一数值（与注入一致）
+        unified_relationships = []
+        for item in relationships:
+            unified = self._unified(scope.bot_id, str(item.get("subject_principal_id") or ""))
+            if unified:
+                item = {**item, "affinity": unified["affinity"], "state": unified["state"]}
+            unified_relationships.append(item)
+        relationships = unified_relationships
         relationship_by_user = {
             user_id: item
             for item in relationships
@@ -328,7 +366,8 @@ class WaveMemoryAffinityTool(FunctionTool[AstrAgentContext]):
                 relation = relationship_by_user.get(user_id)
                 affinity = relation.get("affinity") if isinstance(relation, dict) else None
                 affinity_text = "未激活" if affinity is None else f"{int(affinity):+d}"
-                lines.append(f"{index}. {person['display_name']}（{user_id}） · 互动 {int(person.get('interaction_count') or 0)} · Affinity {affinity_text}")
+                display = display_name_for_user(self.db, user_id, scope) or person["display_name"]
+                lines.append(f"{index}. {display}（{user_id}） · 互动 {int(person.get('interaction_count') or 0)} · Affinity {affinity_text}")
             return "\n".join(lines)
 
         ranked = [item for item in relationships if item.get("affinity") is not None]
@@ -346,9 +385,13 @@ class WaveMemoryAffinityTool(FunctionTool[AstrAgentContext]):
         for index, relation in enumerate(ranked, 1):
             user_id = user_id_from_subject(relation.get("subject_principal_id"))
             person = people.get(user_id, {"display_name": user_id, "interaction_count": 0})
+            display = (
+                display_name_for_user(self.db, user_id, scope) or person["display_name"]
+                if user_id in people else user_id
+            )
             affinity = int(relation.get("affinity") or 0)
             state = str(relation.get("state") or "unknown")
-            lines.append(f"{index}. {person['display_name']}（{user_id}） · {affinity:+d} · {state} · 互动 {int(person.get('interaction_count') or 0)}")
+            lines.append(f"{index}. {display}（{user_id}） · {affinity:+d} · {state} · 互动 {int(person.get('interaction_count') or 0)}")
         return "\n".join(lines)
 
     def _people_by_id(self, scope: RuntimeScope) -> dict[str, dict[str, Any]]:
@@ -367,7 +410,8 @@ class WaveMemoryAffinityTool(FunctionTool[AstrAgentContext]):
             uid = str(user_id)
             people[uid] = {
                 "user_id": uid,
-                "display_name": display_name_for_user(self.db, uid, scope) or str(nickname or uid),
+                # Resolve historical names only for the selected ranking rows.
+                "display_name": str(nickname or uid),
                 "interaction_count": int(interaction_count or 0),
             }
         return people

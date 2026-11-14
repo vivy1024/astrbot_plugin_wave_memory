@@ -132,7 +132,7 @@ def test_channel_injects_timeline_summary_then_secondary_score_line(db):
     text = result.text
     assert result.status == "hit"
     assert text.startswith("印象时间线（挑选最相关的 8 条，另有 7 条较早或次要；时间权重每 21 天减半）")
-    assert "wave_memory_person_search(query_type=timeline, person=当前人物, event_id=编号)" in text
+    assert "wave_memory_recall(mode=person, query_type=timeline, person=当前人物, event_id=编号)" in text
 
     rows = _timeline_rows(text)
     assert len(rows) == 8, "最多注入 8 条"
@@ -185,23 +185,27 @@ def _private(conversation: str = USER) -> RuntimeScope:
                         subject_principal_id=QQ)
 
 
-def test_score_line_counts_private_rows_only_in_the_same_private_chat(db):
+def test_score_line_is_one_number_everywhere_but_private_content_stays_private(db):
+    """一个生命对一个人只有一份好感：私聊攒下的数值在群里同样计入；私聊的具体印象不在群里出现。"""
     soul = db.soul_repository
     db.person_timeline.add_event(bot_id="yushu", user_id=USER, group_id=GROUP, kind="impression",
                                  summary="会接冷笑话的阿木", occurred_at=NOW - DAY)
+    db.person_timeline.add_event(bot_id="yushu", user_id=USER, group_id=f"private:qq:private:{USER}",
+                                 kind="impression", summary="私下说起家里的事", occurred_at=NOW - DAY)
     soul.upsert_relationship(_group(), subject_principal_id=QQ, affinity=10, state="neutral",
                              dimensions={"familiarity": 30.0, "trust": 5.0})
     soul.upsert_relationship(_private(), subject_principal_id=QQ, affinity=10, state="neutral",
                              dimensions={"familiarity": 20.0, "trust": 10.0, "depth": 12.5})
     channel = RelationshipChannel(repository=soul, db=db)
 
-    in_group = _score_line(asyncio.run(channel.build(_ctx(_group()))).text)
-    assert in_group.endswith("熟悉 30、信任 5"), "群里不计入私聊的关系行"
+    group_text = asyncio.run(channel.build(_ctx(_group()))).text
+    assert _score_line(group_text).endswith("熟悉 50、信任 15、深度 12.5"), "群里计入私聊攒下的数值"
+    assert "私下说起家里的事" not in group_text, "私聊内容不在群里出现"
 
     ctx = _ctx(_private())
     ctx.group_id = USER
     in_private = _score_line(asyncio.run(channel.build(ctx)).text)
-    assert in_private.endswith("熟悉 50、信任 15、深度 12.5"), "同一私聊里计入本私聊的行"
+    assert in_private.endswith("熟悉 50、信任 15、深度 12.5"), "私聊里看到的是同一份数值"
 
 
 def test_score_line_format():
@@ -226,7 +230,7 @@ def test_channel_settle_hint_follows_prompting_switch(db):
 
     configure_impression_prompting(per_turn_tag=False, bookkeeping_active=False)
     no_bookkeeping = asyncio.run(channel.build(_ctx(_group()))).text
-    assert "【该结算了】" in no_bookkeeping and "wave_memory_record_social_impression" in no_bookkeeping
+    assert "【该结算了】" in no_bookkeeping and "wave_memory_social(mode=impression)" in no_bookkeeping
     assert "<<impression" not in no_bookkeeping
 
     configure_impression_prompting(per_turn_tag=False, bookkeeping_active=True)
