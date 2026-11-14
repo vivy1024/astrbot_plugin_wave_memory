@@ -53,29 +53,30 @@
 
 同族工具合成「一个工具 + mode 参数」，减少每次请求里工具说明占的提示词。
 
-- **模型看到的工具从 17 个变成 6 个**（调试组打开时 7 个）：
+- **模型看到的工具从 18 个变成 6 个**（调试组打开时 22 个变成 7 个；18 = v5.1.7 的 17 个 + `wave_memory_note_bot_tag`）：
   | 合并后 | mode | 原来的工具 |
   |---|---|---|
   | `wave_memory_recall` | `search` / `facts` / `person` / `relation` | search、facts、person_search、affinity |
   | `wave_memory_lookup` | `lore` / `novel` / `meme` / `game` | book_lore_search、novel_source、meme_lookup、game_knowledge |
-  | `wave_memory_social` | `impression` / `anchor` / `concern` | record_social_impression、note_social_anchor、note_concern |
+  | `wave_memory_social` | `impression` / `anchor` / `concern` / `bot_check` | record_social_impression、note_social_anchor、note_concern、note_bot_tag |
   | `wave_memory_note` | `fact` / `cultural` / `memory` | propose_fact、mark_cultural_moment、remember |
   | `wave_memory_episode` | `group`（`diary` 仅内部） | note_episode、record_diary_episode |
   | `wave_memory_hold_peace` | — | 不变 |
   | `wave_memory_debug`（默认关） | `explain` / `feedback` / `suggest` / `candidate` | 调试 4 个 |
-- **实测省 30.9%**：默认工具组每次请求的工具说明从 10,327 字符降到 7,135（含调试组 12,176 → 8,550，省 29.8%）。
+- **实测省 32.0%**：默认工具组每次请求的工具说明从 10,763 字符降到 7,324（含调试组 12,612 → 8,739，省 30.7%）。
 - **薄路由，逻辑不重复**。合并工具把调用原样转发给原来的工具类；schema 是各子工具参数的**并集**，保留每个参数的类型与枚举；转发前按子工具自己的必填项校验，缺哪个就说哪个；兼容别名参数（`user_id`、`shift_reason`、`affinity_delta`、`cross_group`）不再写进模型可见的 schema，传了仍会转发。`relation` 里原来的 `mode` 在合并工具里叫 `view`（避免和路由的 `mode` 冲突）。
 - **内部服务不受影响**。事后记账、每日日记、反思触发按旧名调用的子工具仍然实例化并登记在注册表里，只是 `llm_visible=False`，不交给模型。
 - **Bot 权限支持到 mode**。`tools_allow` / `tools_deny` 可以写合并工具名、`wave_memory_social:concern` 这种细到 mode 的写法，或旧工具名（自动解释成对应的合并工具与 mode）；deny 优先。权限在**每次调用时**按当前 Bot 判断，同一份工具清单继续服务羽书与白真真。
 - **提示词里的工具引用跟着形态走**。运行时写给模型的句子（结算提示、时间线提示、反思触发、关切跟进、游戏攻略页脚）不再写死旧名，按当前形态渲染成模型真正能调用的写法，例如 `wave_memory_recall(mode=person, query_type=timeline, …)`。
-- **可回滚**。新配置 `Compatibility_Settings.tool_surface`：`merged`（默认）/ `legacy`（回到原来的 17 个）。
+- **可回滚**。新配置 `Compatibility_Settings.tool_surface`：`merged`（默认）/ `legacy`（回到独立工具，共 18 个）。
 - **需要同步的线上人设**：线上羽书、白真真的人设提示词里写着旧工具名，**合并上线时要一起更新**，否则模型会去调用不存在的工具。草案与逐行差异在 `research/persona-drafts/`（羽书改 11 行、白真真改 2 行），顺带去掉了羽书提示词里已退役的 `wave_memory_propose_belief`。人设只通过 AstrBot 官方接口更新，更新前需要用户确认。
 
-### Bot 自动发现与读空气扩展
+### Bot 标记与读空气扩展
 
-- **人物 Bot 标签**。`person_registry` 幂等新增 4 列（`entity_kind` / `bot_tag_source` / `bot_tag_reason` / `bot_tag_updated_at`，`ALTER TABLE ADD COLUMN`，旧数据不动）。四级：`human`（默认）、`verified_human`（管理员确认真人，自动检测永不覆盖）、`suspected_bot`（自动发现）、`confirmed_bot`（管理员确认，或 Bot 注册表里登记的己方账号）。
-- **零 Token 启发式，只认强信号**。昵称以独立的 `bot` 结尾或带 `[Bot]` / `(AI)` / `【机器人】` 标记（Abbot、robot、Talkbot 这类真词不算）；发言带 AstrBot 外发的「LLM 响应错误」模板、「调用工具失败」、模型自称（讨论 astrbot / API Error / rate limit 的真人不算）；连续三条等间隔机械连发或近乎相同的话术（真人复读两次不算）；群友点破「是机器人」。`hold_peace` 的收口理由里出现独立的 ai / bot 单词也会留线索。
-- **协同防互聊**。读空气模式非 `off` 时，被标为 Bot 的发言者没 @ 就不主动回；被它 @ 时，10 分钟窗口内超过 `proactive.bot_collab_max_turns`（默认 2）轮即熔断。被识别为 Bot 的发言者不喂给激素身体。
+- **谁是 Bot 由羽书在对话里自己判断，系统里没有任何关键词、正则或行为统计规则**。聊着觉得某位发言者像机器人（或之前看走眼、其实是真人）时，她顺手调用 `wave_memory_social(mode=bot_check, target_user, verdict=bot|human, reason)` 记一笔，legacy 形态对应独立工具 `wave_memory_note_bot_tag`。不按昵称、报错词、复读、节奏或群友点破自动标记；`hold_peace` 的收口理由也不再触发标记。
+- **人物 Bot 标签**。`person_registry` 幂等新增 4 列（`entity_kind` / `bot_tag_source` / `bot_tag_reason` / `bot_tag_updated_at`，`ALTER TABLE ADD COLUMN`，旧数据不动）。四级：`human`（默认）、`verified_human`（管理员确认真人）、`suspected_bot`（羽书在对话里标的，来源 `bot_check`，附一句理由）、`confirmed_bot`（管理员确认，或 Bot 注册表里登记的己方账号）。
+- **边界**。羽书的判断改写不了管理员标定（`verified_human` / `confirmed_bot`）与本系统自己的 Bot 账号；只在群里使用，私聊里对象是谁没有疑问；标错了可以再用 `verdict=human` 改回。合并形态下它不是新工具，只是 `wave_memory_social` 多一个 mode，该工具族说明约 2.4K 字符。
+- **协同防互聊**。读空气模式非 `off` 时，被标为 Bot 的发言者没 @ 就不主动回；被它 @ 时，10 分钟窗口内超过 `proactive.bot_collab_max_turns`（默认 2）轮即熔断。被标为 Bot 的发言者不喂给激素身体。
 - **心智状态与多 Bot 读空气**。`compute_mind_state` / `circadian_phase` 把快层心情、昼夜与群节奏合成一份心智读数；`BotProfile.proactive`（默认关闭）提供话题偏好与回避、每小时上限、静默时段，`GroupProactiveArbiter` 在同一个群里给两个 Bot 加共享冷却与抢答仲裁。
 - **管理台**。`POST /api/people/commands/bot-tag`（标记 Bot / 标记真人 / 清除）、人物页 Bot 徽标与筛选、Bot 管理页「主动对话」页签。
 

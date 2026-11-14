@@ -30,6 +30,7 @@ GAME_KNOWLEDGE = "wave_memory_game_knowledge"
 RECORD_SOCIAL_IMPRESSION = "wave_memory_record_social_impression"
 NOTE_SOCIAL_ANCHOR = "wave_memory_note_social_anchor"
 NOTE_CONCERN = "wave_memory_note_concern"
+NOTE_BOT_TAG = "wave_memory_note_bot_tag"
 PROPOSE_FACT = "wave_memory_propose_fact"
 MARK_CULTURAL_MOMENT = "wave_memory_mark_cultural_moment"
 REMEMBER = "wave_memory_remember"
@@ -53,6 +54,7 @@ LEGACY_TO_MERGED: Mapping[str, tuple[str, str]] = {
     RECORD_SOCIAL_IMPRESSION: (SOCIAL, "impression"),
     NOTE_SOCIAL_ANCHOR: (SOCIAL, "anchor"),
     NOTE_CONCERN: (SOCIAL, "concern"),
+    NOTE_BOT_TAG: (SOCIAL, "bot_check"),
     PROPOSE_FACT: (NOTE, "fact"),
     MARK_CULTURAL_MOMENT: (NOTE, "cultural"),
     REMEMBER: (NOTE, "memory"),

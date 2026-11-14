@@ -143,26 +143,18 @@ class TestBotDiscoveryService:
         assert tag_peer["is_bot"] is True
         assert tag_peer["entity_kind"] == "confirmed_bot"
 
-        # 2. 昵称命中机器人特征 → suspected_bot
-        tag_sus = svc.observe_group_message(
-            session_id="qq:group:g1",
-            sender_id="999001",
-            sender_name="小冰Bot",
-            message="大家好",
-        )
-        assert tag_sus["entity_kind"] == "suspected_bot"
-        assert tag_sus["is_bot"] is True
+        # 2. 没有按昵称的自动判定：像 Bot 的昵称在羽书标记之前仍是 human
+        assert svc.get_tag("999001", display_name="小冰Bot")["entity_kind"] == "human"
 
-        # 3. 管理员标记为 verified_human（白名单保护）后不再被自动改回 suspected_bot
+        # 3. 羽书在对话里标成疑似 Bot（source=bot_check）
+        tag_sus = svc.set_tag("999001", entity_kind="suspected_bot", source="bot_check", reason="三次回得一字不差")
+        assert tag_sus["entity_kind"] == "suspected_bot" and tag_sus["is_bot"] is True
+        assert svc.get_tag("999001")["reason"] == "三次回得一字不差"
+
+        # 管理员标为 verified_human 后，羽书之后的判断不能改写
         tag_human = svc.set_tag("999001", entity_kind="verified_human", source="admin", reason="真人朋友玩梗昵称")
-        assert tag_human["entity_kind"] == "verified_human"
-        assert tag_human["is_bot"] is False
-        tag_recheck = svc.observe_group_message(
-            session_id="qq:group:g1",
-            sender_id="999001",
-            sender_name="小冰Bot",
-            message="大家好",
-        )
+        assert tag_human["entity_kind"] == "verified_human" and tag_human["is_bot"] is False
+        tag_recheck = svc.set_tag("999001", entity_kind="suspected_bot", source="bot_check", reason="又觉得像")
         assert tag_recheck["entity_kind"] == "verified_human"
 
         # 4. 防互刷协同上限：2 轮后熔断
@@ -175,47 +167,29 @@ class TestBotDiscoveryService:
         conn.close()
 
 
-class TestBotDiscoveryFalsePositives:
-    """自动发现不能把讨论 AI / 插件的真人和名字里带 bot 的真词误标成 Bot。"""
+class TestBotTagIsJudgedByTheModel:
+    """谁是 Bot 由羽书在对话里自己判断：系统里没有任何按昵称、报错词、复读或节奏的规则。"""
 
-    def test_real_words_ending_in_bot_are_not_flagged(self):
-        from services.bot_discovery import _BOT_NAME_RE
+    def test_no_rule_based_detection_is_left(self):
+        import services.bot_discovery as mod
 
-        for name in ("Abbot", "robot", "Talkbot", "Mr.Abbot", "Cannabot", "羽书", "Robot猫猫"):
-            assert not _BOT_NAME_RE.search(name), name
-        for name in ("小冰Bot", "bot", "xx_bot", "[Bot]小助手", "李明 (AI)", "【机器人】客服"):
-            assert _BOT_NAME_RE.search(name), name
+        assert not hasattr(mod, "_BOT_NAME_RE")
+        assert not hasattr(mod, "_BOT_ERROR_LEAK_RE")
+        assert not hasattr(mod, "_CROWD_BOT_CALLOUT_RE")
+        assert not hasattr(mod.BotDiscoveryService, "observe_group_message")
 
-    def test_talking_about_ai_tools_is_not_a_leak(self):
-        from services.bot_discovery import _BOT_ERROR_LEAK_RE
-
-        for text in ("我也在用 astrbot", "astrbot 好难装", "API Error 怎么解决", "这个 rate limit 太烦了",
-                     "token exceeded 了", "429 Too Many Requests", "LLM timeout 了怎么办", "你是不是 bot"):
-            assert not _BOT_ERROR_LEAK_RE.search(text), text
-        for text in ("LLM 响应错误: 503 Service Unavailable", "调用工具失败", "[系统提示] 已达上限",
-                     "作为一个人工智能，我无法…", "我只是一个语言模型"):
-            assert _BOT_ERROR_LEAK_RE.search(text), text
-
-
-    def test_human_repeating_twice_is_not_flagged_but_three_times_is(self, tmp_path):
-        conn = sqlite3.connect(str(tmp_path / "rep.db"))
+    def test_names_that_look_like_bots_stay_human_until_the_model_decides(self, tmp_path):
+        conn = sqlite3.connect(str(tmp_path / "names.db"))
         conn.row_factory = sqlite3.Row
         conn.execute("CREATE TABLE person_registry (qq_id TEXT PRIMARY KEY, display_name TEXT)")
+        conn.execute("INSERT INTO person_registry (qq_id, display_name) VALUES ('1', '小冰Bot'), ('2', 'Abbot'), ('3', '[Bot]客服')")
         conn.commit()
-        svc = BotDiscoveryService(conn, system_bot_ids=set(), clock=lambda: 1_800_000_000.0)
-        text = "哈哈哈哈哈哈哈哈哈哈哈哈"
+        svc = BotDiscoveryService(conn, system_bot_ids=set())
 
-        def say(at):
-            return svc.observe_group_message(
-                session_id="qq:group:g1", sender_id="42", sender_name="群友", message=text, now=1_800_000_000.0 + at
-            )
-
-        assert say(0)["entity_kind"] == "human"
-        assert say(30)["entity_kind"] == "human"      # 复读第二次，真人常见
-        assert say(60)["entity_kind"] == "suspected_bot"  # 连续第三次近乎相同才算模板话术
+        for uid, name in ("1", "小冰Bot"), ("2", "Abbot"), ("3", "[Bot]客服"):
+            tag = svc.get_tag(uid, display_name=name)
+            assert tag["entity_kind"] == "human" and tag["is_bot"] is False, name
         conn.close()
-
-
 class TestMultiFeatureAirReadingAndArbiter:
     def test_proactive_settings_round_trip(self):
         p = BotProfile(

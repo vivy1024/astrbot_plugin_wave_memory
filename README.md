@@ -691,7 +691,7 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | livingmemory_alias_tools_enabled | false | 启用 LivingMemory 别名工具映射 |
-| tool_surface | merged | 模型看到的工具形态：`merged`（默认）把同族工具合并成 7 个「一个工具 + mode」，每次请求少约三成工具说明；`legacy` 回到原来的 17 个独立工具，用于回滚 |
+| tool_surface | merged | 模型看到的工具形态：`merged`（默认）把同族工具合并成 7 个「一个工具 + mode」，每次请求少约三成工具说明；`legacy` 回到独立工具（18 个），用于回滚 |
 | compat_only_auto_inject_enabled | false | 兼容模式下强行启用原生注入 |
 
 ### 模型分工 (Model_Routing_Settings)

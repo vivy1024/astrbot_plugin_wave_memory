@@ -760,28 +760,6 @@ class IngressMixin:
                     mood_service.note_silence_or_ignored(silence_scope.bot_id, silence_scope.session.id, reason="hold_peace")
                 except Exception:
                     pass
-            # 若模型调用 hold_peace 并明示对方是 AI/机器人互刷，记录可疑 Bot 线索
-            reason_text = str(hold_peace.get("reason") or "")
-            discovery = getattr(self, "bot_discovery", None)
-            # 英文 ai / bot 必须是独立单词（子串匹配会把 maintain、again、said 都算进去）
-            if (
-                discovery is not None
-                and isinstance(silence_scope, RuntimeScope)
-                and re.search(r"(?<![a-z])(?:ai|bot)(?![a-z])|机器人|互刷|人机", reason_text.lower())
-            ):
-                try:
-                    sender_id = str(getattr(event, "get_sender_id", lambda: "")() or "")
-                    if sender_id and sender_id != "bot":
-                        cur = discovery.get_tag(sender_id)
-                        if cur.get("entity_kind") == "human":
-                            discovery.set_tag(
-                                sender_id,
-                                entity_kind="suspected_bot",
-                                source="hold_peace",
-                                reason=f"模型主动沉默收口：{reason_text[:60]}",
-                            )
-                except Exception:
-                    pass
             followup = getattr(self, "concern_followup", None)
             if followup is not None:
                 followup._count("chose_silence_tool" if hold_peace else "chose_silence_text")

@@ -136,8 +136,8 @@ def test_builtin_specs_build_all_tools_with_unique_names():
     assert registry.status()["build_errors"] == {}
     # wave_memory_propose_belief 已退役（信念只来自反思）；新增查梗工具 wave_memory_meme_lookup、
     # 游戏攻略查询 wave_memory_game_knowledge、保有沉默 wave_memory_hold_peace、
-    # 原著原文检索 wave_memory_novel_source：内置工具 21 个
-    assert len(built) == len(names) == len(set(names)) == 21
+    # 原著原文检索 wave_memory_novel_source、Bot 标记 wave_memory_note_bot_tag：内置工具 22 个
+    assert len(built) == len(names) == len(set(names)) == 22
     assert "wave_memory_propose_belief" not in names
     assert "wave_memory_record_social_impression" in names
     assert "wave_memory_search" in names
@@ -277,7 +277,8 @@ def test_merged_surface_is_much_smaller_than_legacy_for_the_default_tool_set():
     _, legacy = _build_surface("legacy", default_caps)
     _, merged = _build_surface("merged", default_caps)
     legacy_chars, merged_chars = _schema_chars(legacy), _schema_chars(merged)
-    assert len(legacy) == 17 and len(merged) == 6
+    # legacy 比 v5.1.7 的 17 个多一个 wave_memory_note_bot_tag；merged 里它并进 social 的 mode=bot_check
+    assert len(legacy) == 18 and len(merged) == 6
     # 目标：每次请求的工具说明至少省 30%
     assert merged_chars <= legacy_chars * 0.70, (legacy_chars, merged_chars)
 
@@ -286,7 +287,8 @@ def test_merged_tool_schema_is_a_real_union_with_modes():
     registry, built = _build_surface("merged")
     by_name = {t.name: t for t in built}
     social = by_name["wave_memory_social"].parameters
-    assert social["properties"]["mode"]["enum"] == ["impression", "anchor", "concern"]
+    assert social["properties"]["mode"]["enum"] == ["impression", "anchor", "concern", "bot_check"]
+    assert {"verdict", "reason"} <= set(social["properties"])  # bot_check 的参数并进了并集
     assert {"target_user", "dimension", "anchor_type", "action", "topic"} <= set(social["properties"])
     assert social["properties"]["dimension"]["enum"] == ["trust", "fun", "depth", "hostility", "familiarity"]
     assert "diary" not in by_name["wave_memory_episode"].parameters["properties"]["mode"]["enum"]

@@ -292,23 +292,13 @@ class InboundMessagePipeline:
                 except Exception as exc:
                     logger.debug(f"[WaveMemory] body observe failed: {exc!r}")
 
-        # 人物 Bot 自动发现（零 Token 启发式：昵称标记 / 框架报错泄密 / 机械等间隔 / 复读对刷 / 群友点破）
+        # 发言者是不是 Bot：只读已存的标签（本系统账号、管理员标定、羽书在对话里标过的），这里不做任何判断。
         discovery = getattr(self.plugin, "bot_discovery", None)
         if runtime_scope.visibility == "group" and discovery is not None and sender_id and sender_id != "bot":
             try:
-                tag = discovery.observe_group_message(
-                    session_id=runtime_scope.session.id,
-                    sender_id=sender_id,
-                    sender_name=sender_name or "",
-                    message=locked_message,
-                    now=message_ts,
-                )
-                try:
-                    event._wave_memory_sender_bot_tag = tag
-                except Exception:
-                    pass
+                event._wave_memory_sender_bot_tag = discovery.get_tag(sender_id)
             except Exception as exc:
-                logger.debug(f"[WaveMemory] bot discovery observe failed: {exc!r}")
+                logger.debug(f"[WaveMemory] bot tag read failed: {exc!r}")
 
         if runtime_scope.visibility == "group" and getattr(self.plugin, "lifecycle", None):
             hour = int(time.strftime("%H", time.localtime()))

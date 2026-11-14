@@ -38,6 +38,7 @@ SOCIAL_MODES = [
              hide=frozenset({"shift_reason", "affinity_delta"})),
     ModeSpec("anchor", N.NOTE_SOCIAL_ANCHOR, "记下一件值得记住的交往：帮过忙、受过帮助、许过诺、被冒犯（target_user、anchor_type、summary 必填）"),
     ModeSpec("concern", N.NOTE_CONCERN, "记录/跟进/了结一件挂念的事（action 必填）"),
+    ModeSpec("bot_check", N.NOTE_BOT_TAG, "聊着觉得某位发言者是机器人、或之前看走眼其实是真人时，顺手记一笔（target_user、verdict、reason 必填）"),
 ]
 
 NOTE_MODES = [

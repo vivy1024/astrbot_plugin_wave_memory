@@ -442,6 +442,8 @@ COMMAND_SCOPE_MATRIX: Mapping[str, ScopeRequirement] = MappingProxyType({
     # 私聊里同样会形成对当前私聊对象的印象与好感；具体内容只在该私聊可见。
     "social_impression.record": ScopeRequirement(("runtime",), ("group", "private"), subject_required=True),
     "social_anchor.note": ScopeRequirement(("runtime",), ("group", "private"), subject_required=True),
+    # Bot 标签是「这个账号是不是机器人」的事实，不是场合内的内容；只在群里判断（私聊对象是谁没有疑问）。
+    "bot_tag.note": ScopeRequirement(("runtime",), ("group",)),
     "cultural_moment.mark": ScopeRequirement(("runtime",), ("group",)),
     "fact_proposal.propose": ScopeRequirement(("runtime",), ("group", "private")),
     "belief_proposal.propose": ScopeRequirement(("runtime",), ("group",)),

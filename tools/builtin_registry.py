@@ -62,6 +62,7 @@ def _social_tools() -> list[ToolSpec]:
     # 注意：生效的是 affinity_update 里的版本；extra_tools 里同名类是已退役的占位。
     from .affinity_update import WaveMemoryAffinityTool
     from .fact_proposal import WaveMemoryProposeFactTool
+    from .bot_tag import WaveMemoryNoteBotTagTool
     from .social_anchor import WaveMemoryNoteSocialAnchorTool
     from .social_impression import WaveMemoryRecordSocialImpressionTool
 
@@ -115,6 +116,12 @@ def _social_tools() -> list[ToolSpec]:
             "wave_memory_hold_peace",
             lambda d: _hold_peace(),
             group="memory", capability="memory_tools", description="决定这次不回复（调用后这条回复不发送）",
+        ),
+        ToolSpec(
+            "wave_memory_note_bot_tag",
+            lambda d: WaveMemoryNoteBotTagTool(db=d.db, discovery_provider=lambda: getattr(d, "bot_discovery", None)),
+            writes=True,
+            **common,
         ),
         ToolSpec(
             "wave_memory_note_concern",
