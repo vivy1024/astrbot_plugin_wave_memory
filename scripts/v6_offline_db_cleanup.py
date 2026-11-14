@@ -386,12 +386,16 @@ def _prune_auxiliary_tables(
     *,
     apply: bool,
     retention_days: int,
+    prune_outbox_days: int = 0,
+    prune_traces_days: int = 0,
 ) -> dict[str, int]:
     stats: dict[str, int] = {
         "cleared_v51_backup_rows": 0,
         "cleared_scoped_beliefs": 0,
         "pruned_job_runs": 0,
         "pruned_orphan_memory_tags": 0,
+        "pruned_outbox_rows": 0,
+        "pruned_trace_rows": 0,
     }
     cutoff = time.time() - max(1, retention_days) * 86400.0
 
@@ -435,6 +439,57 @@ def _prune_auxiliary_tables(
                 "DELETE FROM memory_tags WHERE NOT EXISTS (SELECT 1 FROM memories m WHERE m.id = memory_tags.memory_id)"
             )
 
+    if prune_outbox_days > 0:
+        outbox_cutoff = time.time() - prune_outbox_days * 86400.0
+        if _table_exists(conn, "domain_outbox") and _table_exists(conn, "outbox_deliveries"):
+            old_eids = [
+                r[0]
+                for r in conn.execute(
+                    """
+                    SELECT d.event_id FROM domain_outbox d
+                    WHERE d.created_at < ?
+                      AND NOT EXISTS (
+                          SELECT 1 FROM outbox_deliveries od
+                          WHERE od.event_id = d.event_id AND od.state != 'completed'
+                      )
+                    """,
+                    (outbox_cutoff,),
+                ).fetchall()
+            ]
+            stats["pruned_outbox_rows"] += len(old_eids)
+            if apply and old_eids:
+                conn.execute("DROP TABLE IF EXISTS temp._v6_old_events")
+                conn.execute("CREATE TEMP TABLE _v6_old_events (event_id TEXT PRIMARY KEY)")
+                conn.executemany("INSERT INTO _v6_old_events(event_id) VALUES (?)", ((e,) for e in old_eids))
+                conn.execute("DELETE FROM outbox_deliveries WHERE event_id IN (SELECT event_id FROM _v6_old_events)")
+                conn.execute("DELETE FROM domain_outbox WHERE event_id IN (SELECT event_id FROM _v6_old_events)")
+                conn.execute("DROP TABLE IF EXISTS temp._v6_old_events")
+        if _table_exists(conn, "write_operations"):
+            wo_cnt = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM write_operations WHERE status = 'committed' AND COALESCE(committed_at, created_at) < ?",
+                    (outbox_cutoff,),
+                ).fetchone()[0]
+            )
+            stats["pruned_outbox_rows"] += wo_cnt
+            if apply and wo_cnt:
+                conn.execute(
+                    "DELETE FROM write_operations WHERE status = 'committed' AND COALESCE(committed_at, created_at) < ?",
+                    (outbox_cutoff,),
+                )
+
+    if prune_traces_days > 0 and _table_exists(conn, "injection_traces"):
+        trace_cutoff = time.time() - prune_traces_days * 86400.0
+        t_cnt = int(conn.execute("SELECT COUNT(*) FROM injection_traces WHERE created_at < ?", (trace_cutoff,)).fetchone()[0])
+        stats["pruned_trace_rows"] = t_cnt
+        if apply and t_cnt:
+            if _table_exists(conn, "injection_trace_channels"):
+                conn.execute(
+                    "DELETE FROM injection_trace_channels WHERE trace_id IN (SELECT trace_id FROM injection_traces WHERE created_at < ?)",
+                    (trace_cutoff,),
+                )
+            conn.execute("DELETE FROM injection_traces WHERE created_at < ?", (trace_cutoff,))
+
     return stats
 
 
@@ -443,6 +498,8 @@ def cleanup_database(
     *,
     apply: bool = False,
     retention_days: int = 14,
+    prune_outbox_days: int = 0,
+    prune_traces_days: int = 0,
     vacuum: bool = True,
 ) -> dict[str, Any]:
     path = Path(db_path).resolve()
@@ -468,7 +525,13 @@ def cleanup_database(
             "unsettled_state": _merge_unsettled_state(conn, apply=apply),
             "null_bot_memories": _align_null_bot_memories(conn, apply=apply),
             "fts_cjk": _backfill_fts_cjk(conn, apply=apply),
-            "auxiliary": _prune_auxiliary_tables(conn, apply=apply, retention_days=retention_days),
+            "auxiliary": _prune_auxiliary_tables(
+                conn,
+                apply=apply,
+                retention_days=retention_days,
+                prune_outbox_days=prune_outbox_days,
+                prune_traces_days=prune_traces_days,
+            ),
         }
 
         if apply:
@@ -499,6 +562,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--db", required=True, help="离线副本 wave_memory.db 路径")
     parser.add_argument("--apply", action="store_true", help="执行实际写入与 VACUUM（默认仅 dry-run 报告）")
     parser.add_argument("--retention-days", type=int, default=14, help="background_job_runs 保留天数（默认 14）")
+    parser.add_argument("--prune-outbox-days", type=int, default=0, help="可选：清理 N 天前已完成的 domain_outbox/outbox_deliveries/write_operations（0=不清理）")
+    parser.add_argument("--prune-traces-days", type=int, default=0, help="可选：清理 N 天前的 injection_traces/channels（0=不清理）")
     parser.add_argument("--no-vacuum", action="store_true", help="执行写入后跳过 VACUUM")
     args = parser.parse_args(argv)
 
@@ -506,6 +571,8 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.db),
         apply=args.apply,
         retention_days=args.retention_days,
+        prune_outbox_days=args.prune_outbox_days,
+        prune_traces_days=args.prune_traces_days,
         vacuum=not args.no_vacuum,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
