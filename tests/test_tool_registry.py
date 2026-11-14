@@ -130,20 +130,22 @@ def test_builtin_specs_build_all_tools_with_unique_names():
         book_lore_catalog_scope=None,
     )
     registry = ToolRegistry()
-    registry.register_many(builtin_tool_specs("legacy"))
+    deps.tool_registry = registry
+    registry.register_many(builtin_tool_specs())
     built = registry.build(deps, capability_enabled=lambda capability, default: True)
     names = [record.name for record in registry.records()]
     assert registry.status()["build_errors"] == {}
-    # wave_memory_propose_belief 已退役（信念只来自反思）；新增查梗工具 wave_memory_meme_lookup、
-    # 游戏攻略查询 wave_memory_game_knowledge、保有沉默 wave_memory_hold_peace、
-    # 原著原文检索 wave_memory_novel_source、Bot 标记 wave_memory_note_bot_tag：内置工具 22 个
-    assert len(built) == len(names) == len(set(names)) == 22
+    # 22 个内部子工具/保留工具 + 6 个合并工具 = 28；对模型可见 7 个（6 个合并 + hold_peace）
+    assert len(names) == len(set(names)) == 28
+    assert len(built) == 7
     assert "wave_memory_propose_belief" not in names
     assert "wave_memory_record_social_impression" in names
     assert "wave_memory_search" in names
     assert "wave_memory_meme_lookup" in names
     assert "wave_memory_game_knowledge" in names
     assert "wave_memory_hold_peace" in names
+    assert "wave_memory_recall" in names
+    assert "wave_memory_social" in names
 
 
 def test_extensions_register_tools(tmp_path):
@@ -238,13 +240,13 @@ def _builtin_deps():
     )
 
 
-def _build_surface(surface: str, capability=lambda capability, default: True):
+def _build_surface(capability=lambda capability, default: True):
     from tools.builtin_registry import builtin_tool_specs
 
     deps = _builtin_deps()
     registry = ToolRegistry()
     deps.tool_registry = registry
-    registry.register_many(builtin_tool_specs(surface))
+    registry.register_many(builtin_tool_specs())
     built = registry.build(deps, capability_enabled=capability)
     return registry, built
 
@@ -259,32 +261,29 @@ def _schema_chars(tools) -> int:
 
 
 def test_merged_surface_gives_the_model_seven_tools_and_keeps_children_internal():
-    registry, built = _build_surface("merged")
+    registry, built = _build_surface()
     assert registry.status()["build_errors"] == {}
     model_names = sorted(t.name for t in built)
     assert model_names == sorted([
         "wave_memory_recall", "wave_memory_lookup", "wave_memory_social", "wave_memory_note",
         "wave_memory_episode", "wave_memory_hold_peace", "wave_memory_debug",
     ])
-    # 内部服务按旧名调用的子工具仍然登记在注册表里
+    # 内部服务按子名调用的子工具仍然登记在注册表里
     for internal in ("wave_memory_record_social_impression", "wave_memory_record_diary_episode",
                      "wave_memory_note_concern", "wave_memory_propose_fact"):
         assert registry.get(internal) is not None, internal
 
 
-def test_merged_surface_is_much_smaller_than_legacy_for_the_default_tool_set():
+def test_merged_surface_is_six_tools_by_default_and_compact():
     default_caps = lambda capability, default: capability != "agent_feedback_tools"  # 默认不含调试组
-    _, legacy = _build_surface("legacy", default_caps)
-    _, merged = _build_surface("merged", default_caps)
-    legacy_chars, merged_chars = _schema_chars(legacy), _schema_chars(merged)
-    # legacy 比 v5.1.7 的 17 个多一个 wave_memory_note_bot_tag；merged 里它并进 social 的 mode=bot_check
-    assert len(legacy) == 18 and len(merged) == 6
-    # 目标：每次请求的工具说明至少省 30%
-    assert merged_chars <= legacy_chars * 0.70, (legacy_chars, merged_chars)
+    _, merged = _build_surface(default_caps)
+    merged_chars = _schema_chars(merged)
+    assert len(merged) == 6
+    assert merged_chars < 8000, merged_chars
 
 
 def test_merged_tool_schema_is_a_real_union_with_modes():
-    registry, built = _build_surface("merged")
+    registry, built = _build_surface()
     by_name = {t.name: t for t in built}
     social = by_name["wave_memory_social"].parameters
     assert social["properties"]["mode"]["enum"] == ["impression", "anchor", "concern", "bot_check"]
@@ -295,7 +294,7 @@ def test_merged_tool_schema_is_a_real_union_with_modes():
 
 
 def test_merged_dispatch_reaches_the_real_child_tool():
-    registry, built = _build_surface("merged")
+    registry, built = _build_surface()
     recall = {t.name: t for t in built}["wave_memory_recall"]
     reply = asyncio.run(recall.call(None, mode="search"))
     assert "缺少必填参数" in reply and "query" in reply, "转发前先按子工具的 required 校验"

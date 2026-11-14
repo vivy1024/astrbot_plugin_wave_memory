@@ -154,13 +154,12 @@ def test_merged_social_family_exposes_bot_check_mode():
     assert "bot_check" in schema["properties"]["mode"]["enum"]
 
 
-def test_tool_is_registered_in_both_surfaces():
+def test_tool_is_registered_in_merged_surface():
     from tools.builtin_registry import builtin_tool_specs
 
-    legacy_keys = {spec.key for spec in builtin_tool_specs("legacy")}
-    merged = builtin_tool_specs("merged")
+    merged = builtin_tool_specs()
     merged_keys = {spec.key for spec in merged}
-    assert "wave_memory_note_bot_tag" in legacy_keys
     # 合并形态下它是内部子工具（不直接给模型），模型通过 wave_memory_social 的 bot_check 调用
     hidden = {spec.key for spec in merged if not spec.llm_visible}
     assert "wave_memory_note_bot_tag" in merged_keys and "wave_memory_note_bot_tag" in hidden
+    assert "wave_memory_social" in merged_keys

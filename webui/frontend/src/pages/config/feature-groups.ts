@@ -132,7 +132,6 @@ export const SECTION_FEATURE: Record<string, FeatureId> = {
   Performance_Settings: 'index',
   WebUI_Settings: 'security',
   Runtime_Settings: 'security',
-  Compatibility_Settings: 'security',
   backup_max_count: 'maintenance',
   Eviction_Settings: 'maintenance',
   Trace_Settings: 'maintenance',

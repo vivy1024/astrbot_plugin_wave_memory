@@ -63,14 +63,11 @@ class CompatibilityPageTest(unittest.TestCase):
         self.assertIs(container.livingmemory_facade, facade)
         self.assertTrue(container.livingmemory_facade_enabled)
 
-    def test_schema_exposes_livingmemory_alias_tool_gate(self):
+    def test_schema_removed_legacy_compatibility_section(self):
         import json
 
         schema = json.loads(Path("_conf_schema.json").read_text(encoding="utf-8"))
-        compat_items = schema["Compatibility_Settings"]["items"]
-
-        self.assertIn("livingmemory_alias_tools_enabled", compat_items)
-        self.assertFalse(compat_items["livingmemory_alias_tools_enabled"]["default"])
+        self.assertNotIn("Compatibility_Settings", schema)
 
 
 if __name__ == "__main__":

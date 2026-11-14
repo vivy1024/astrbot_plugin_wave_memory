@@ -177,12 +177,11 @@ class LivingMemoryCompatToolsTest(unittest.TestCase):
         self.assertIn("未初始化", asyncio.run(recall.call(None, query="苹果派")))
         self.assertIn("未初始化", asyncio.run(memorize.call(None, content="用户喜欢苹果派")))
 
-    def test_main_source_registers_alias_tools_without_default_spoofing(self):
+    def test_main_source_does_not_register_livingmemory_alias_tools(self):
         source = plugin_source_text()
 
-        self.assertIn("build_livingmemory_compat_tools", source)
-        self.assertIn("self.livingmemory_alias_tools_registered", source)
-        self.assertIn("*livingmemory_alias_tools", source)
+        self.assertIn("self.livingmemory_alias_tools_registered = False", source)
+        self.assertNotIn("*livingmemory_alias_tools", source)
 
 
 if __name__ == "__main__":

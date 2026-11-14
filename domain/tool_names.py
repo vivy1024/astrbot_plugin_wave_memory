@@ -89,28 +89,15 @@ def normalize_tool_ref(ref: str) -> tuple[str, str | None]:
     return text, None
 
 
-# ── 提示词里的工具引用：按当前形态渲染 ──
-# 运行时拼进提示词、让模型去调用的句子不能写死旧名：合并形态下模型根本没有 ``wave_memory_person_search``。
-# 启动时由插件按配置设置一次；默认合并形态。
-_SURFACE = "merged"
-
-
-def set_tool_surface(surface: str) -> None:
-    global _SURFACE
-    _SURFACE = "legacy" if str(surface or "").strip().lower() == "legacy" else "merged"
-
-
+# ── 提示词里的工具引用：统一输出合并工具写法 ──
 def tool_surface() -> str:
-    return _SURFACE
+    return "merged"
 
 
 def tool_ref(legacy_name: str, **args: str) -> str:
-    """模型该怎么调用这个能力：合并形态写 ``wave_memory_recall(mode=person, …)``，旧形态保持原名。
-
-    ``args`` 按给定顺序写在括号里；旧形态下 ``mode`` 之外的参数原样保留，合并形态再前置 ``mode``。
-    """
+    """模型该怎么调用这个能力：统一渲染为 ``wave_memory_*(mode=..., ...)``。"""
     mapped = LEGACY_TO_MERGED.get(str(legacy_name or ""))
-    if _SURFACE == "legacy" or mapped is None:
+    if mapped is None:
         inner = ", ".join(f"{k}={v}" for k, v in args.items())
         return f"{legacy_name}({inner})" if inner else str(legacy_name)
     merged, mode = mapped
@@ -120,5 +107,5 @@ def tool_ref(legacy_name: str, **args: str) -> str:
 
 __all__ = [
     "DEBUG", "EPISODE", "HOLD_PEACE", "LEGACY_TO_MERGED", "LOOKUP", "MERGED_TOOLS", "NOTE", "RECALL", "SOCIAL",
-    "merged_for", "normalize_tool_ref", "set_tool_surface", "tool_ref", "tool_surface",
+    "merged_for", "normalize_tool_ref", "tool_ref", "tool_surface",
 ] + [name for name in dir() if name.isupper() and name not in {"LEGACY_TO_MERGED", "MERGED_TOOLS"}]

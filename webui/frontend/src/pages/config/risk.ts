@@ -161,16 +161,6 @@ export const RISK_RULES: RiskRule[] = [
     affectsData: false,
   },
   {
-    key: 'Compatibility_Settings.compat_only_auto_inject_enabled',
-    reason: '兼容模式下强行启用原生注入。',
-    impact: '与 SelfLearning / ChatPlus 等同类插件共存时，同一轮聊天可能被重复注入记忆。',
-    restart: true,
-    affectsData: false,
-    check: (value, lookup) => value === true && lookup('Runtime_Settings.runtime_mode') === 'compat_only'
-      ? { status: 'warn', message: '兼容模式下已强行开启原生注入，请确认没有其他记忆插件在同时注入。' }
-      : null,
-  },
-  {
     key: 'backup_max_count',
     reason: '自动整库备份保留份数，0 表示关闭。',
     impact: '份数越少回滚余地越小；份数越多占用磁盘越多（整库体积较大）。设为 0 时插件不再自己备份，必须另有备份去处。',

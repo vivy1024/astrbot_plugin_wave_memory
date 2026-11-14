@@ -57,11 +57,7 @@ describe('系统配置页：分组与折叠', () => {
     expect(SECTION_GROUPS.Query_Settings.defaultOpen).toBe(true)
     expect(SECTION_GROUPS.Tag_Settings.defaultOpen).toBe(true)
     expect(SECTION_GROUPS.Lifecycle_Settings.defaultOpen).toBe(false)
-    expect(SECTION_GROUPS.MetaThinking_Bot1.defaultOpen).toBe(false)
-  })
-
-  it('两个 Bot 的配置是各自独立分组，不会混在一起', () => {
-    expect(SECTION_GROUPS.MetaThinking_Bot1.title).not.toBe(SECTION_GROUPS.MetaThinking_Bot2.title)
+    expect(SECTION_GROUPS.Runtime_Settings.defaultOpen).toBe(false)
   })
 
   it('页面用可折叠容器渲染分组，并显示该组字段数', () => {
@@ -99,8 +95,8 @@ describe('系统配置页：分组与折叠', () => {
     const sections = Object.entries(schema)
       .filter(([, value]) => value && typeof value === 'object' && 'items' in value)
       .map(([key]) => key)
-    // 27 + 模型分工 Model_Routing_Settings
-    expect(sections.length).toBe(28)
+    // v6 移除 3 个废弃章节（Compatibility_Settings、MetaThinking_Bot1、MetaThinking_Bot2）：28 → 25
+    expect(sections.length).toBe(25)
     // 顶层标量字段（Embedding 模型、备份数量等）也要有分组，否则会挤进「其他设置」
     const scalars = Object.entries(schema)
       .filter(([, value]) => value && typeof value === 'object' && !('items' in value) && 'type' in value)
@@ -146,7 +142,8 @@ describe('配置文案不暴露实现术语', () => {
   it('schema 结构未被文案改动破坏', () => {
     const schema = JSON.parse(read('../../_conf_schema.json')) as Record<string, { items?: Record<string, { type?: string }> }>
     const sections = Object.entries(schema).filter(([, v]) => v && typeof v === 'object' && 'items' in v)
-    expect(sections.length).toBe(28)
+    // v6 移除 Compatibility_Settings、MetaThinking_Bot1/2、Inject_Settings 废弃项与工具形态开关：28 → 25 节，176 → 155 项
+    expect(sections.length).toBe(25)
     const noType: string[] = []
     let total = 0
     for (const [section, group] of sections) {
@@ -155,24 +152,8 @@ describe('配置文案不暴露实现术语', () => {
         if (!meta.type) noType.push(`${section}.${field}`)
       }
     }
-    // 129 + 共现传播核新增的 cooccurrence_kernel / cooccurrence_min_support（41e0ece8、2277b1e6）
-    // + Learning_Settings 15 项，以及事实策略、回复反馈、表达学习、开口规则 6 项；
-    // 撤掉关系档位后移除 Affinity_Settings.relationship_tiers_json（-1）；
-    // 关系小传新增 Learning_Settings 7 项（relationship_portrait_enabled 与 portrait_* 六项）；
-    // 模型分工 10 项（每个后台大模型任务一项）；
-    // Jargon_Settings 用梗提示的群聊/私聊/直播三个场合开关（+3）；
-    // 信念反思 5 项（belief_reflection_enabled / _every_n_days、belief_form_min_days、belief_decay_days、belief_max_active）；
-    // 角色经历的模型分工 1 项（Model_Routing_Settings.character_experience）；
-    // 游戏经验 5 项（Learning_Settings.game_lesson_enabled / _delay_seconds / _daily_limit / _max_active，Model_Routing_Settings.game_lesson）。
-    // v5.1.2 删除做梦（6 项）、噪声删除（2 项）、记忆总量软上限（3 项）：184 → 173
-    // 3f8b0889 新增 Learning_Settings.daily_diary_backfill_days（日记补写漏记天数）：173 → 174
-    // 自动审核与自动风格学习 3 项（expression_auto_approve_enabled、FewShot_Settings.auto_learn / auto_approve）：174 → 177
-    // Learning_Settings 新增 6 项（belief_ambient_probability / _cooldown_minutes、expression_auto_min_occurrence、
-    // expression_pending_ttl_days、expression_max_per_speaker、expression_persona_blocklist）：177 → 183
-    // 删除旧主动发言配置 8 项（MetaThinking_Settings.silent_hours_start / _end，MetaThinking_Bot1/Bot2 的
-    // proactive_enabled / proactive_interval_seconds / proactive_max_per_hour）：183 → 175
-    // v5.2.0 新增 Compatibility_Settings.tool_surface（模型看到的工具形态 merged / legacy）：175 → 176
-    expect(total).toBe(176)
+    // 176 - Compatibility_Settings(3) - Inject_Settings(enable_holyman_persona, timeline_days)(2) - MetaThinking_Bot1/2(16) = 155
+    expect(total).toBe(155)
     expect(noType).toEqual([])
   })
 

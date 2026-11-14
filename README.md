@@ -77,7 +77,7 @@ v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现�
 ```
 
 - **大模型什么时候会主动提审？**
-  1. **日常对话反思触发**：当群聊经历一段密集交互或出现群友纠正信号时，底层反思引导向大模型精准下发对应形态的工具调用提示（随 `tool_surface` 自动切换合并写法或旧写法）；
+  1. **日常对话反思触发**：当群聊经历一段密集交互或出现群友纠正信号时，底层反思引导向大模型精准下发合并形态的工具调用提示；
   2. **夜间日记与后台沉淀**：每日日记服务直接读取当天的群聊流水、Bot 自己的发言、游戏经历、印象与关切，写成第一人称日记；风格样例与表达候选由后台维护任务按来源证据和频次门槛自动筛一遍，不满足条件的留在待审。
 
 ---
@@ -92,7 +92,7 @@ v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现�
 
 3. **配置自由度高，能关也能细调**  
    - 整机模式：`full` / `memory_only` / `compat_only`  
-   - 工具形态与 Bot 权限：`tool_surface`（`merged` 6+1 个 / `legacy` 18 个）+ 按 Bot 的 `tools_allow` / `tools_deny`（支持细到 `工具:mode`）
+   - Bot 工具权限：默认暴露 6+1 个合并工具 + 按 Bot 的 `tools_allow` / `tools_deny`（支持细到 `工具:mode`）
    - 每个注入通道可单独开关、调优先级、条数、token 预算、超时、最低分  
    - 检索算法（脉冲/残差金字塔/EPA/测地线）可关；跨群权重、黑话频率、风格评分、好感衰减、静默时段都能改  
    - 不想要人格时只开记忆注入；已有人格插件时可以只当记忆后端
@@ -107,7 +107,7 @@ v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现�
 - **单机本地库**：数据在这台 AstrBot 上，不能开箱多机共享一份云端记忆。
 - **主要面向 QQ 群**（aiocqhttp）。私聊可以记录印象、人情备忘、关切、经历、提审事实与唯一好感，但私聊原文只在该私聊可见；群文化、黑话提审与 Bot 标记仍只在群里进行，信念反思只读群聊日记；未绑定 Bot 身份的会话只能看。
 - **管理台是独立 9876 端口**，不是 AstrBot 自带设置页。
-- **不会替你写完整人设**，也不会自动改其他插件或 AstrBot 控制台人设配置（需自行在 AstrBot 人设里对齐所选模式与 `tool_surface` 的工具写法）。
+- **不会替你写完整人设**，也不会自动改其他插件或 AstrBot 控制台人设配置（需自行在 AstrBot 人设里对齐合并形态的工具写法）。
 
 ### 适合谁 / 不适合谁
 
@@ -154,7 +154,7 @@ WaveMemory 是 AstrBot 记忆插件：负责记录、整理、检索、注入、
 |------|----------|----------|------------------------------------------|----------|
 | `full` | 开 | 基础记忆 + 高级检索 + 灵魂/好感/书设/梗/游戏 + 事后记账 | **6 个合并工具**（打开调试组 7 个）/ **18 个独立工具** | WaveMemory 独立承担记忆与人格增强 |
 | `memory_only` | 开 | 消息采集、writer、向量/FTS5 检索、基础记忆注入、trace、搜索/记住/沉默工具 | **3 个合并工具**（`recall[search,facts,person]`、`note[memory]`、`hold_peace`）/ **5 个独立工具** | 只要记忆，不要人格/好感/黑话/书设/few-shot/心情等高级能力 |
-| `compat_only` | 关 | writer、query、LivingMemory 兼容 facade、可选别名工具、最小 trace | **0 个**原生工具（开启 `livingmemory_alias_tools_enabled` 后暴露 2 个兼容别名） | 给 SelfLearning/ChatPlus 等外部插件当记忆后端，避免重复注入 |
+| `compat_only` | 关 | writer、query、LivingMemory 兼容 facade、最小 trace | **0 个**原生工具 | 给 SelfLearning/ChatPlus 等外部插件当记忆后端，避免重复注入 |
 
 ---
 
@@ -340,11 +340,11 @@ cd webui/frontend && npm run build
 
 ## 🔧 Agent 工具与 AstrBot 适配指南
 
-### 1. 合并工具矩阵（`tool_surface=merged`，默认）
+### 1. 合并工具矩阵（v6 唯一工具形态）
 
 同族工具合成「一个工具 + `mode` 参数」，默认向模型暴露 **6 个**工具（打开调试组 `agent_feedback_tools` 时 **7 个**），每次请求的工具说明从 10,763 字符降到 7,324（**省 32.0%**）。合并工具只是薄路由，所有子工具仍按旧名登记供事后记账、每日日记、反思触发等内部服务调用（`llm_visible=False`）。
 
-| 合并工具名 | `mode` 可选值 | 对应独立工具 (`legacy`) | 功能与关键参数 | 开放条件 |
+| 合并工具名 | `mode` 可选值 | 对应内部子工具 | 功能与关键参数 | 开放条件 |
 |---|---|---|---|---|
 | **`wave_memory_recall`** | `search` | `wave_memory_search` | 语义+FTS5+上下文窗口记忆搜索（`query` 必填） | `full` / `memory_only` |
 | | `facts` | `wave_memory_facts` | 查已确认事实三元组（`query` 必填） | `full` / `memory_only` |
@@ -365,25 +365,24 @@ cd webui/frontend && npm run build
 | **`wave_memory_hold_peace`** | — | `wave_memory_hold_peace` | 决定这次不回复，清空消息链不发出（`reason` 必填） | `full` / `memory_only` |
 | *`wave_memory_debug`*（默认关） | `explain` / `feedback` / `suggest` / `candidate` | 4 个调试反馈工具 | 解释注入、打记忆反馈、提配置建议、提审候选 | 需显式开调试组 |
 
-> 切换形态：在 6185 配置 `Compatibility_Settings.tool_surface` 选 `merged`（默认）或 `legacy`（回滚到 **18** 个独立工具，`wave_memory_record_diary_episode` 在 `legacy` 中也注册为可调用但建议只在日记/管理场景使用）。`wave_memory_propose_belief` 已退役不再注册。
+> `wave_memory_record_diary_episode` 只作为日记/管理场景的内部子工具，不直接对模型暴露；`wave_memory_propose_belief` 已退役不再注册。
 
 ### 2. 如何适配 AstrBot 不同模式、人设提示词与 Bot 工具权限
 
-很多提示词错误源于「人设里写的工具名」与「当前 AstrBot 模式 / `tool_surface` / Bot 权限实际放行的工具」不一致。按下面三条规则对齐即可：
+很多提示词错误源于「人设里写的工具名」与「当前 AstrBot 模式 / Bot 权限实际放行的工具」不一致。按下面三条规则对齐即可：
 
 #### ① 按 `Runtime_Settings.runtime_mode` 裁剪人设提示词
 
 | 运行模式 | 模型实际拿到的工具 | 人设提示词适配要点 |
 |---|---|---|
-| **`full`** | 全部 6 个合并工具（或 `legacy` 18 个） | 人设里写明合并写法，例如 `wave_memory_recall(mode=search)`、`wave_memory_social(mode=impression)`、`wave_memory_note(mode=fact)`、`wave_memory_hold_peace` |
-| **`memory_only`** | **`merged`**：`wave_memory_recall`（仅 `mode=search\|facts\|person`，无 `relation`）、`wave_memory_note`（仅 `mode=memory`）、`wave_memory_hold_peace`<br>**`legacy`**：`wave_memory_search`、`wave_memory_facts`、`wave_memory_person_search`、`wave_memory_remember`、`wave_memory_hold_peace` | **不要**在人设里要求模型记好感、提审事实、查书设/原著/攻略/黑话——这些工具与 mode 在此模式下不会注册，写了会诱导模型空调用 |
-| **`compat_only`** | 原生工具 **0 个**；仅当 `livingmemory_alias_tools_enabled=true` 时暴露 `recall_long_term_memory`、`memorize_long_term_memory` | 不要在人设里写 `wave_memory_*` 工具名；由宿主搭配的 SelfLearning / ChatPlus 提示词或 LivingMemory 别名接管 |
+| **`full`** | 全部 6 个合并工具（开调试组 7 个） | 人设里写明合并写法，例如 `wave_memory_recall(mode=search)`、`wave_memory_social(mode=impression)`、`wave_memory_note(mode=fact)`、`wave_memory_hold_peace` |
+| **`memory_only`** | `wave_memory_recall`（仅 `mode=search\|facts\|person`，无 `relation`）、`wave_memory_note`（仅 `mode=memory`）、`wave_memory_hold_peace` | **不要**在人设里要求模型记好感、提审事实、查书设/原著/攻略/黑话——这些工具与 mode 在此模式下不会注册，写了会诱导模型空调用 |
+| **`compat_only`** | 原生工具 **0 个** | 不要在人设里写 `wave_memory_*` 工具名；由宿主搭配的 SelfLearning / ChatPlus 提示词接管 |
 
-#### ② 人设工具写法与 `tool_surface` 对齐
+#### ② 人设工具写法对齐合并形态
 
-- 当 `tool_surface=merged`（推荐、默认）：**人设里必须写「合并工具名 + `mode=...`」**（如 `wave_memory_lookup(mode=novel)`、`wave_memory_social(mode=bot_check)`），而**不要**保留 `wave_memory_search`、`wave_memory_propose_fact` 等旧工具名——合并模式下这些旧名根本不在模型的 tool list 里。
-- 当 `tool_surface=legacy`（回滚模式）：人设里写独立工具名（如 `wave_memory_search`、`wave_memory_note_bot_tag`）。
-- WaveMemory 自己运行时动态拼入上下文的提示句子（如结算提醒、时间线查看提示、关切跟进、游戏攻略页脚）会通过 `domain/tool_names.py` 的 `tool_ref()` 自动跟着 `tool_surface` 切换写法，无需手动改代码；只有你在 **AstrBot 控制台人设 (`system_prompt`)** 里手写的说明需要自己同步。可参考 `research/persona-drafts/`（如有）的写法模板。
+- **人设里必须写「合并工具名 + `mode=...`」**（如 `wave_memory_lookup(mode=novel)`、`wave_memory_social(mode=bot_check)`），而**不要**保留 `wave_memory_search`、`wave_memory_propose_fact` 等旧工具名——这些旧名不在模型的 tool list 里。
+- WaveMemory 自己运行时动态拼入上下文的提示句子（如结算提醒、时间线查看提示、关切跟进、游戏攻略页脚）会通过 `domain/tool_names.py` 的 `tool_ref()` 自动输出合并写法，无需手动改代码；只有你在 **AstrBot 控制台人设 (`system_prompt`)** 里手写的说明需要自己同步。可参考 `research/persona-drafts/`（如有）的写法模板。
 
 #### ③ 按 Bot 配置细粒度工具权限（9876「Bot 管理 → 通道与工具」）
 
@@ -458,8 +457,6 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| enable_holyman_persona | false | 已废弃，不再生效：神人包改作梗百科（理解参考 + `wave_memory_meme_lookup` + 用梗提示，见 Jargon_Settings） |
-| timeline_days | 0 | 历史时间窗（天，兼容保留） |
 | timeline_decay_half_life_days | 21 | 印象时间线指数权重半衰期（天） |
 | soul_timeline_max_items | 3 | Bot 经历日记时间线注入条数 |
 | orchestrator_active_enabled | true | 启用注入编排 |
@@ -746,14 +743,6 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | webui_port | 9876 | 控制台访问端口 |
 | webui_password | （空） | 访问登录密码 |
 
-### 兼容模式 (Compatibility_Settings)
-
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| livingmemory_alias_tools_enabled | false | 启用 LivingMemory 别名工具映射 |
-| tool_surface | merged | 模型看到的工具形态：`merged`（默认）把同族工具合并成 6 个「一个工具 + mode」（打开调试组时 7 个），每次请求少约三成工具说明；`legacy` 回到独立工具（18 个），用于回滚 |
-| compat_only_auto_inject_enabled | false | 兼容模式下强行启用原生注入 |
-
 ### 模型分工 (Model_Routing_Settings)
 
 每个后台大模型任务可以单独指定模型（填 provider id，可逗号分隔多个），失败再回退到它原来的默认链；留空时行为与改造前完全一致。9876 保存即生效；Bot 管理里还可按 Bot 覆盖以 Bot 口吻产出的任务（内心判断、事后记账、每日日记、关系小传、信念反思、角色经历、游戏经验）。
@@ -783,27 +772,15 @@ AstrBot >= 4.14.0 · Python 3.10+ · WebUI 默认端口 9876
 | spam_window_seconds | 60 | 刷屏检测窗口（秒） |
 | interest_sample_size | 20 | 兴趣关键词数量 |
 
-### MetaThinking 旧 Bot 槽位 (MetaThinking_Bot1 / MetaThinking_Bot2)
+> Bot 管理（身份、绑定、人格、模型覆盖与通道工具权限）已全面迁移至 9876 WebUI「Bot 管理」与数据库 `bot_profiles` 表，6185 旧静态槽位已移除。
 
-> v5.1.0 起 Bot 身份、人格与这些字段都以 9876「Bot 管理」里的 Bot Profile 为准，保存即热生效。6185 里的这两个槽位只在首次迁移时作为数据来源读取一次，迁移完成后不会再覆盖数据库里的 Bot 资料；新部署请直接在 9876 新增 Bot。
-
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| qq_id | （空） | QQ 号；旧槽位迁移来源 |
-| name | （空） | 显示名称 |
-| db_id | （空） | 数据库标识（用于 user_profiles / beliefs / concerns 等表，不是 QQ 号） |
-| aliases | （空） | 别名（逗号分隔） |
-| exclude_sources | （空） | 排除的记忆来源（逗号分隔） |
-| interest_keywords | （空） | 自定义兴趣关键词（逗号分隔） |
-| meta_prompt | （空） | 自定义 MetaThinking prompt（留空用默认模板） |
-| model | （空） | 模型（留空用全局默认） |
 ### 与 SelfLearning / ChatPlus 共存
 
 | 目标 | WaveMemory 推荐配置 | 外部插件建议 |
 |------|---------------------|--------------|
 | WaveMemory 独立注入 | `runtime_mode=full` | 关闭外部插件的重复记忆注入/长期记忆工具 |
 | WaveMemory 只做基础记忆 | `runtime_mode=memory_only` | 关闭外部插件的重复写入或重复注入能力 |
-| WaveMemory 做兼容后端 | `runtime_mode=compat_only` + `livingmemory_alias_tools_enabled=true` | 外部插件调用 `recall_long_term_memory` / `memorize_long_term_memory`；不要同时启用 WaveMemory 原生自动注入 |
+| WaveMemory 做兼容后端 | `runtime_mode=compat_only` | 不要同时启用 WaveMemory 原生自动注入 |
 
 ---
 
@@ -908,9 +885,9 @@ Runtime_Settings.runtime_mode = memory_only
 | FTS5 召回 | `full` / `memory_only` | 通道配置 |
 | 注入编排器 | `enable_auto_inject` 且非默认 `compat_only` | 9876: 通道配置 / 注入观察台（3 秒总截止 + 常驻工作循环） |
 | Trace Store | 自动 | 6185: `Trace_Settings` / 9876: 注入观察台 |
-| 工具合并与权限 | 自动 | 6185: `Compatibility_Settings.tool_surface` / 9876: Bot 管理 `tools_allow/deny` |
+| 工具合并与权限 | 自动 | 9876: Bot 管理 `tools_allow/deny` |
 | Agent 反馈 | `full` / `memory_only`（调试工具默认关） | Agent 工具提交，管理台审核相关对象 |
-| LivingMemory-compatible facade | 自动 | 6185: `Compatibility_Settings` / 9876: 兼容模式 |
+| 重复记忆插件探测 | 自动 | 9876: 兼容模式页 |
 | 共享记忆授权 | `shared_memory_grants_enabled=true` | 6185: `Cross_Group_Settings` |
 | PersonaComposer | `full` 模式 | 自动 |
 | 喜恶预设 | Bot Profile 有 `persona.preferences` | 9876: Bot 管理 / 风格样例页 |

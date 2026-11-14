@@ -144,8 +144,7 @@ def build_compatibility_payload(
     """构造兼容页 payload；实时事实与静态文档严格分区。"""
     plugin_config = plugin_config or {}
     runtime = resolve_runtime_mode(plugin_config)
-    compat_cfg = plugin_config.get("Compatibility_Settings", {})
-    compat_cfg = compat_cfg if isinstance(compat_cfg, Mapping) else {}
+    compat_cfg: Mapping[str, Any] = {}
 
     if probe_result is None:
         if detection_result is None:

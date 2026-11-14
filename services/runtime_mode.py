@@ -169,17 +169,10 @@ def effective_native_injection_enabled(
     *,
     compat_cfg: Mapping[str, Any] | None = None,
 ) -> bool:
-    """返回原生 on_llm_request 自动注入是否启用。
-
-    compat_only 是 LivingMemory 风格兼容后端模式，旧配置中的
-    Query_Settings.enable_auto_inject=true 很可能只是历史默认值，不能让
-    compat_only 默认重新主动注入。该模式仅在专用兼容开关
-    Compatibility_Settings.compat_only_auto_inject_enabled=true 时启用原生注入。
-    """
+    """返回原生 on_llm_request 自动注入是否启用（compat_only 不主动注入）。"""
     query_cfg = query_cfg or {}
-    compat_cfg = compat_cfg or {}
     if mode.mode == "compat_only":
-        return _as_bool(compat_cfg.get("compat_only_auto_inject_enabled", False))
+        return False
     if "enable_auto_inject" in query_cfg:
         return _as_bool(query_cfg.get("enable_auto_inject"))
     return mode.native_injection_default

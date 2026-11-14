@@ -75,7 +75,7 @@ class RuntimeModeTest(unittest.TestCase):
         self.assertIn("native_injection", payload["disabled_capabilities"])
         self.assertFalse(should_self_heal_advanced_query(mode))
 
-    def test_compat_only_ignores_legacy_auto_inject_true_unless_explicitly_enabled(self):
+    def test_compat_only_ignores_legacy_auto_inject_true(self):
         from services.runtime_mode import effective_native_injection_enabled, resolve_runtime_mode
 
         mode = resolve_runtime_mode({"Runtime_Settings": {"runtime_mode": "compat_only"}})
@@ -85,7 +85,7 @@ class RuntimeModeTest(unittest.TestCase):
             mode,
             compat_cfg={},
         ))
-        self.assertTrue(effective_native_injection_enabled(
+        self.assertFalse(effective_native_injection_enabled(
             {"enable_auto_inject": True},
             mode,
             compat_cfg={"compat_only_auto_inject_enabled": True},

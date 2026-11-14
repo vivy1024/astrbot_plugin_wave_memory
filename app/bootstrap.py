@@ -124,7 +124,6 @@ class BootstrapMixin:
         lifecycle_cfg = self.config.get("Lifecycle_Settings", {})
         cross_group_cfg = self.config.get("Cross_Group_Settings", {})
         affinity_cfg = self.config.get("Affinity_Settings", {})
-        compat_cfg = self.config.get("Compatibility_Settings", {})
         trace_cfg = self.config.get("Trace_Settings", {}) or {}
 
         # 运行模式：旧配置缺失 Runtime_Settings 时默认 full，保持历史完整行为。
@@ -150,17 +149,10 @@ class BootstrapMixin:
         self.enable_auto_inject = effective_native_injection_enabled(
             query_cfg,
             self.runtime_mode,
-            compat_cfg=compat_cfg,
         )
         self.inject_top_k = int(query_cfg.get("inject_top_k", 5))
         self.min_similarity = float(query_cfg.get("min_similarity", "0.35"))
         self.injection_format = query_cfg.get("injection_format", "[记忆] {sender}({time}): {content}")
-        # 神人风格人格包通道已下线：旧配置里开着也照常启动，只提示一次不再生效。
-        if inject_cfg.get("enable_holyman_persona") is True:
-            logger.warning(
-                "[WaveMemory] Inject_Settings.enable_holyman_persona 已废弃、不再生效："
-                "神人风格人格包通道已下线，神人包改作梗百科（黑话理解参考 + wave_memory_meme_lookup 工具）"
-            )
         # v2.0: inject 控制参数
         self.skip_recent_minutes = int(inject_cfg.get("skip_recent_minutes", 30))
         self.facts_max = int(inject_cfg.get("facts_max", 5))
@@ -243,11 +235,8 @@ class BootstrapMixin:
         self.index_generation_retention = _bounded_index_int("generation_retention", 1, 1)
         self.injection_orchestrator_active_enabled = inject_cfg.get("orchestrator_active_enabled", True)
         self.injection_shadow_enabled = inject_cfg.get("orchestrator_shadow_enabled", not self.injection_orchestrator_active_enabled)
-        self.livingmemory_alias_tools_enabled = bool(compat_cfg.get("livingmemory_alias_tools_enabled", False))
-        # 模型看到的工具形态：merged=7 个「工具+mode」（默认，省提示词）；legacy=原来的 17 个（回滚用）
-        self.tool_surface = str(compat_cfg.get("tool_surface", "merged") or "merged").strip().lower()
-        if self.tool_surface not in ("merged", "legacy"):
-            self.tool_surface = "merged"
+        self.livingmemory_alias_tools_enabled = False
+        self.tool_surface = "merged"
 
         def _trace_int(key: str, default: int, minimum: int) -> int:
             try:

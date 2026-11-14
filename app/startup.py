@@ -149,29 +149,19 @@ class StartupMixin:
         if self.epa:
             self._spawn(self._init_epa())
 
-        # 注册 LLM 工具：memory_only 保留纯记忆工具；compat_only 仅暴露 LivingMemory 风格别名（如已启用）。
-        # 工具定义在 tools/builtin_registry.py（外部扩展放 <plugin_data>/extensions/），这里只按能力开关实例化。
-        livingmemory_alias_tools = build_livingmemory_compat_tools(
-            self.memory_engine,
-            enabled=self.livingmemory_alias_tools_enabled,
-        )
-        self.livingmemory_alias_tools_registered = bool(livingmemory_alias_tools)
+        # 工具定义在 tools/builtin_registry.py（外部扩展放 <plugin_data>/extensions/），v6 统一使用合并形态。
+        self.livingmemory_alias_tools_registered = False
 
-        from ..domain.tool_names import set_tool_surface
         from ..services.tool_registry import ToolRegistry
         from ..tools.builtin_registry import builtin_tool_specs
 
-        # 运行时写进提示词的工具引用要和模型实际看到的工具清单一致
-        set_tool_surface(getattr(self, "tool_surface", "merged"))
-
         self.tool_registry = ToolRegistry()
-        self.tool_registry.register_many(builtin_tool_specs(getattr(self, "tool_surface", "merged")))
+        self.tool_registry.register_many(builtin_tool_specs())
         self.tool_registry.load_extensions(
             os.path.join(self.data_dir, "extensions"),
             extra_registries={"channel_registry": self._channel_registry()},
         )
         llm_tools = [
-            *livingmemory_alias_tools,
             *self.tool_registry.build(
                 self,
                 capability_enabled=lambda capability, default: runtime_capability_enabled(

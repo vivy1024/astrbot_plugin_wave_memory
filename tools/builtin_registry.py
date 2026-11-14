@@ -203,10 +203,7 @@ def _game_knowledge_tools() -> list[ToolSpec]:
     ]
 
 
-TOOL_SURFACES = ("merged", "legacy")
-
-
-def _legacy_specs() -> list[ToolSpec]:
+def _all_child_specs() -> list[ToolSpec]:
     return [
         *_memory_tools(),
         *_agent_feedback_tools(),
@@ -220,7 +217,7 @@ def _legacy_specs() -> list[ToolSpec]:
 def _merged_specs() -> list[ToolSpec]:
     """合并工具的登记。
 
-    子工具照常按各自的能力开关实例化并登记（内部服务按旧名调用它们），只是对模型不可见；
+    子工具照常按各自的能力开关实例化并登记（内部服务按子名调用它们），只是对模型不可见；
     模型看到的是下面几个「一个工具 + mode」。合并工具本身排在子工具之后构造，
     schema 与 mode 列表在构造时从实际存在的子工具取。
     """
@@ -229,8 +226,9 @@ def _merged_specs() -> list[ToolSpec]:
     from . import names as N
     from .merged_families import build_merged_tool
 
-    hidden = [replace(spec, llm_visible=False) for spec in _legacy_specs() if spec.key != N.HOLD_PEACE]
-    keep = [spec for spec in _legacy_specs() if spec.key == N.HOLD_PEACE]
+    children = _all_child_specs()
+    hidden = [replace(spec, llm_visible=False) for spec in children if spec.key != N.HOLD_PEACE]
+    keep = [spec for spec in children if spec.key == N.HOLD_PEACE]
 
     def make(name: str):
         def factory(d: Any) -> Any:
@@ -260,9 +258,9 @@ def _merged_specs() -> list[ToolSpec]:
     return [*keep, *hidden, *merged]
 
 
-def builtin_tool_specs(surface: str = "merged") -> list[ToolSpec]:
-    """内置工具登记。``surface='merged'``（默认）给模型 7 个合并工具；``'legacy'`` 回到原来的 17 个。"""
-    return _legacy_specs() if str(surface or "merged").lower() == "legacy" else _merged_specs()
+def builtin_tool_specs() -> list[ToolSpec]:
+    """内置工具登记（统一使用「一个工具 + mode」合并形态）。"""
+    return _merged_specs()
 
 
-__all__ = ["TOOL_SURFACES", "builtin_tool_specs"]
+__all__ = ["builtin_tool_specs"]

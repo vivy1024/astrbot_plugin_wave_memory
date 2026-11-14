@@ -293,15 +293,8 @@ def test_prompt_exposes_exact_tool_names():
     ):
         assert call in prompt, call
     assert "wave_memory_propose_belief" not in prompt, "信念提审工具已退役"
-    # 旧形态（回滚用）仍写旧名
-    from domain import tool_names as N
-    N.set_tool_surface("legacy")
-    try:
-        legacy = service.build_prompt(scope=group_scope(), message="小明还在考研吗", sender_id="u1")
-    finally:
-        N.set_tool_surface("merged")
-    for tool in ("wave_memory_propose_fact", "wave_memory_mark_cultural_moment", "wave_memory_note_social_anchor"):
-        assert tool in legacy, tool
+    for legacy_call in ("wave_memory_propose_fact", "wave_memory_mark_cultural_moment", "wave_memory_note_social_anchor"):
+        assert legacy_call not in prompt, legacy_call
 
 
 def test_exposed_tool_names_actually_exist():

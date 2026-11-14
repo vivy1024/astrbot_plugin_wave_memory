@@ -183,35 +183,6 @@
       }
     }
   },
-  "Compatibility_Settings": {
-    "description": "插件兼容模式",
-    "hint": "与其他记忆插件共存的方式",
-    "type": "object",
-    "items": {
-      "livingmemory_alias_tools_enabled": {
-        "description": "启用 LivingMemory 别名工具映射",
-        "hint": "开启后会自动注册 recall_long_term_memory 工具别名，供其它已绑定 LivingMemory 工具名的外部 Agent 直接调用。未安装相关插件时请保持关闭以避工具名冲突。",
-        "type": "bool",
-        "default": false,
-        "restart_required": true
-      },
-      "tool_surface": {
-        "description": "模型看到的工具形态",
-        "hint": "merged（默认）：把同族工具合并成 7 个「一个工具 + mode」，每次请求少约 3.5 千字符的工具说明；legacy：回到原来的 17 个独立工具，遇到问题时用来回滚。",
-        "type": "string",
-        "options": ["merged", "legacy"],
-        "default": "merged",
-        "restart_required": true
-      },
-      "compat_only_auto_inject_enabled": {
-        "description": "兼容模式下强行启用原生注入",
-        "hint": "仅在您确实希望在 compat_only 极简后端级别下，也让本插件在消息流中插入记忆时开启。默认关闭，确保不重复插话。",
-        "type": "bool",
-        "default": false,
-        "restart_required": true
-      }
-    }
-  },
   "Trace_Settings": {
     "description": "观测数据留存",
     "hint": "注入观测台保留多少条运行记录",
@@ -387,20 +358,6 @@
     "hint": "注入内容的篇幅与时间窗口",
     "type": "object",
     "items": {
-      "enable_holyman_persona": {
-        "description": "（已废弃，不再生效）holyman-skills 风格人格包",
-        "hint": "神人风格人格包通道已下线，这个开关保留只为兼容旧配置，填 true 也不会注入任何风格指令。神人包现在只作梗百科用：黑话理解参考自动附释义，工具 wave_memory_meme_lookup 可查梗，可选的用梗提示见通道 meme_hint 与 Jargon_Settings。",
-        "type": "bool",
-        "default": false,
-        "restart_required": false
-      },
-      "timeline_days": {
-        "description": "历史时间窗（天，兼容保留）",
-        "hint": "独立群事件 timeline 通道已移除；本字段仅为旧配置兼容保留，当前无通道读取。0 表示全历史。",
-        "type": "int",
-        "default": 0,
-        "restart_required": false
-      },
       "timeline_decay_half_life_days": {
         "description": "印象时间线指数权重半衰期（天）",
         "hint": "默认 21 天。权重按 2^(-经过天数/半衰期) 计算，只影响印象摘要的时间权重，不删除历史记录、不截断条数、不衰减关系分数。填写非正数或非法值时会回退到默认 21 天。",
@@ -702,119 +659,6 @@
         "description": "兴趣关键词数量",
         "type": "int",
         "default": 20
-      }
-    }
-  },
-  "MetaThinking_Bot1": {
-    "description": "对话规则 · Bot 1",
-    "hint": "旧版 Bot 槽位（只读回退）。v6 起 Bot 在 WaveMemory 9876 的「Bot 管理」页新增和编辑，数量不限；这里填的 Bot 只在数据库里还没有同一 db_id 时迁移一次，之后改这里不再生效。",
-    "type": "object",
-    "items": {
-      "qq_id": {
-        "description": "QQ 号",
-        "type": "string",
-        "default": "",
-        "restart_required": true
-      },
-      "name": {
-        "description": "显示名称",
-        "type": "string",
-        "default": "",
-        "restart_required": true
-      },
-      "db_id": {
-        "description": "数据库标识（用于 user_profiles/beliefs/concerns 等表，不是 QQ 号）",
-        "hint": "必须保持为稳定短 ID；羽书默认 yushu。",
-        "type": "string",
-        "default": "",
-        "restart_required": true
-      },
-      "aliases": {
-        "description": "别名（逗号分隔，用于兴趣词匹配和纠正检测）",
-        "type": "string",
-        "default": ""
-      },
-      "exclude_sources": {
-        "description": "排除的记忆来源（逗号分隔）",
-        "hint": "羽书默认不直接注入白真真第一人称经历，避免身份串线。",
-        "type": "string",
-        "default": "",
-        "restart_required": true
-      },
-      "interest_keywords": {
-        "description": "自定义兴趣关键词（逗号分隔，触发主动对话）",
-        "type": "string",
-        "default": ""
-      },
-      "meta_prompt": {
-        "description": "自定义 MetaThinking prompt（留空用默认模板）",
-        "type": "text",
-        "default": "",
-        "restart_required": true
-      },
-      "model": {
-        "description": "模型（留空用全局默认）",
-        "hint": "迁移进 Bot 管理后成为该 Bot 的默认模型，只作用于内心判断、事后记账、每日日记、关系小传。",
-        "type": "string",
-        "default": "",
-        "_special": "select_provider",
-        "restart_required": true
-      }
-    }
-  },
-  "MetaThinking_Bot2": {
-    "description": "对话规则 · Bot 2",
-    "hint": "旧版 Bot 槽位（只读回退）。v6 起 Bot 在 WaveMemory 9876 的「Bot 管理」页新增和编辑，数量不限；这里填的 Bot 只在数据库里还没有同一 db_id 时迁移一次，之后改这里不再生效。",
-    "type": "object",
-    "items": {
-      "qq_id": {
-        "description": "QQ 号（留空则不启用该 bot）",
-        "type": "string",
-        "default": "",
-        "restart_required": true
-      },
-      "name": {
-        "description": "显示名称",
-        "type": "string",
-        "default": "",
-        "restart_required": true
-      },
-      "db_id": {
-        "description": "数据库标识（用于 user_profiles/beliefs/concerns 等表，不是 QQ 号）",
-        "hint": "白真真默认 baizz，需与历史数据一致。",
-        "type": "string",
-        "default": "",
-        "restart_required": true
-      },
-      "aliases": {
-        "description": "别名（逗号分隔）",
-        "type": "string",
-        "default": ""
-      },
-      "exclude_sources": {
-        "description": "排除的记忆来源（逗号分隔，留空表示不排除任何来源）",
-        "type": "string",
-        "default": "",
-        "restart_required": true
-      },
-      "interest_keywords": {
-        "description": "自定义兴趣关键词（逗号分隔）",
-        "type": "string",
-        "default": ""
-      },
-      "meta_prompt": {
-        "description": "自定义 MetaThinking prompt（留空用默认模板）",
-        "type": "text",
-        "default": "",
-        "restart_required": true
-      },
-      "model": {
-        "description": "模型（留空用全局默认）",
-        "hint": "迁移进 Bot 管理后成为该 Bot 的默认模型，只作用于内心判断、事后记账、每日日记、关系小传。",
-        "type": "string",
-        "default": "",
-        "_special": "select_provider",
-        "restart_required": true
       }
     }
   },

@@ -33,11 +33,9 @@ def test_channel_is_retired_everywhere():
     assert not is_channel_allowed_in_mode("holyman_persona", "full")
 
 
-def test_schema_keeps_deprecated_switch():
+def test_schema_removed_deprecated_switch():
     schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
-    item = schema["Inject_Settings"]["items"]["enable_holyman_persona"]
-    assert item["type"] == "bool" and item["default"] is False
-    assert "已废弃" in item["description"]
+    assert "enable_holyman_persona" not in schema["Inject_Settings"]["items"]
 
 
 def test_legacy_enable_switch_true_still_loads():

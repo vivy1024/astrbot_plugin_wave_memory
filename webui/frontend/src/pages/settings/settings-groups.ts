@@ -68,18 +68,6 @@ export const SECTION_GROUPS: Record<string, SettingsGroupMeta> = {
     defaultOpen: false,
     bucket: 'always',
   },
-  MetaThinking_Bot1: {
-    title: '对话规则 · Bot 1',
-    description: '仅对 Bot 1 生效的覆盖配置',
-    defaultOpen: false,
-    bucket: 'always',
-  },
-  MetaThinking_Bot2: {
-    title: '对话规则 · Bot 2',
-    description: '仅对 Bot 2 生效的覆盖配置',
-    defaultOpen: false,
-    bucket: 'always',
-  },
   Cross_Group_Settings: {
     title: '跨群共享',
     description: '记忆与画像是否跨群生效、以及授权范围',
@@ -145,12 +133,6 @@ export const SECTION_GROUPS: Record<string, SettingsGroupMeta> = {
     description: '整机层面的能力边界',
     defaultOpen: false,
     bucket: 'always',
-  },
-  Compatibility_Settings: {
-    title: '插件兼容',
-    description: '与其他记忆插件的共存方式',
-    defaultOpen: false,
-    bucket: 'restart',
   },
   Social_Settings: {
     title: '社交与人际防骚扰',

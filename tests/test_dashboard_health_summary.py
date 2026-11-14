@@ -69,12 +69,9 @@ def test_bot_profile_schema_is_explicit_and_runtime_has_no_fixed_identity_fallba
     schema = json.loads(Path("_conf_schema.json").read_text(encoding="utf-8"))
     source = plugin_source_text()
 
-    assert "MetaThinking_Bot1" in schema
-    assert "MetaThinking_Bot2" in schema
-    # v6：旧槽位只作迁移回退，默认值不再写死任何具体 Bot 的身份。
-    for slot in ("MetaThinking_Bot1", "MetaThinking_Bot2"):
-        for key in ("qq_id", "name", "db_id"):
-            assert schema[slot]["items"][key]["default"] == ""
+    # v6 起 Bot 槽位已全面迁移到数据库 bot_profiles，不再保留静态 MetaThinking_Bot1/2 槽位。
+    assert "MetaThinking_Bot1" not in schema
+    assert "MetaThinking_Bot2" not in schema
     assert "_BUILTIN_BOT_PROFILE_CONFIGS" not in source
     assert "_bot_registry_compat_fallback" not in source
     domain_source = Path("domain/bot_profile.py").read_text(encoding="utf-8")
