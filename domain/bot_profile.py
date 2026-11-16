@@ -331,6 +331,9 @@ class ProactiveSettings:
     quiet_hours_end: int = 7
     bot_collab_max_turns: int = 2
     shared_group_cooldown_seconds: float = 90.0
+    # 主动插话新鲜度死线：上游排队/重试过久或期间群内已刷过多条新消息时直接放弃，防诈尸回旧话
+    stale_abort_seconds: float = 90.0
+    stale_max_new_messages: int = 8
 
     @classmethod
     def from_dict(cls, data: Any) -> "ProactiveSettings":
@@ -366,6 +369,16 @@ class ProactiveSettings:
                 0.0,
                 3600.0,
             ),
+            stale_abort_seconds=_float(
+                data.get("stale_abort_seconds"),
+                defaults.stale_abort_seconds,
+                15.0,
+                600.0,
+            ),
+            stale_max_new_messages=max(
+                0,
+                min(50, _int(data.get("stale_max_new_messages"), defaults.stale_max_new_messages, minimum=0)),
+            ),
         )
 
 
@@ -395,6 +408,8 @@ class PersonaSettings:
     # 喜恶预设：跨群稳定的喜欢/不喜欢/典型反应。None=还没有配置过（迁移可补默认值）；
     # 空对象=用户明确清空，迁移不再回填。
     preferences: PreferenceSettings | None = None
+    # 表达学习专属人设禁用词：叠加在全局 Learning_Settings.expression_persona_blocklist 之上，防该 Bot 学走违背自身气质的口癖。
+    expression_blocklist: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: Any) -> "PersonaSettings":
@@ -411,6 +426,7 @@ class PersonaSettings:
             reflection_prefixes=_text_list(data.get("reflection_prefixes")),
             lore_corpus=_text(data.get("lore_corpus")),
             preferences=None if raw_preferences is None else PreferenceSettings.from_dict(raw_preferences),
+            expression_blocklist=_text_list(data.get("expression_blocklist")),
         )
 
 

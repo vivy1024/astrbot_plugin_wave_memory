@@ -19,7 +19,7 @@ export type ConfigTarget = 'settings' | 'channels' | 'bots'
 /** SettingsPage 的标签值：static=保存即生效，hot=实时热参数，restart=需重启参数，advanced=全部高级设置 */
 export type SettingsTab = 'static' | 'hot' | 'restart' | 'advanced'
 /** BotsPage 编辑器的标签值 */
-export type BotEditorTab = 'identity' | 'persona' | 'behavior' | 'advanced'
+export type BotEditorTab = 'identity' | 'persona' | 'behavior' | 'proactive' | 'body' | 'mood' | 'character' | 'advanced'
 
 export interface ConfigLocation {
   target: ConfigTarget
@@ -50,6 +50,10 @@ const BOT_TAB_LABELS: Record<BotEditorTab, string> = {
   identity: '身份与绑定',
   persona: '人设',
   behavior: '行为',
+  proactive: '主动对话',
+  body: '身体与睡眠',
+  mood: '心情',
+  character: '角色经历',
   advanced: '通道与工具',
 }
 
@@ -117,9 +121,14 @@ export function locateConfig(rawKey: string, context: LocateContext = {}): Confi
     const dot = rest.indexOf('.')
     const dbId = dot > 0 ? rest.slice(0, dot) : rest
     const tail = dot > 0 ? rest.slice(dot + 1) : ''
-    const tab: BotEditorTab | undefined = tail.startsWith('channels.')
-      ? 'advanced'
-      : tail === 'model' || tail.startsWith('models.') ? 'behavior' : undefined
+    let tab: BotEditorTab | undefined
+    if (tail.startsWith('channels.') || tail.startsWith('tools_')) tab = 'advanced'
+    else if (tail === 'model' || tail.startsWith('models.')) tab = 'behavior'
+    else if (tail.startsWith('proactive.')) tab = 'proactive'
+    else if (tail.startsWith('body.')) tab = 'body'
+    else if (tail.startsWith('mood.')) tab = 'mood'
+    else if (tail.startsWith('character_experience.')) tab = 'character'
+    else if (tail.startsWith('persona.')) tab = 'persona'
     return botLocation(dbId || undefined, tab)
   }
 

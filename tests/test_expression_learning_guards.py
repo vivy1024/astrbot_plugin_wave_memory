@@ -104,3 +104,81 @@ def test_fewshot_rotation_state_survives_restart(conn, tmp_path):
 
     (tmp_path / "fewshot_rotation.json").write_text("{broken", encoding="utf-8")
     assert FewShotService(conn, enabled=True, rotation_state_path=path)._last_injected_by_scope == {}
+
+
+def test_reusable_phrase_filter_blocks_bot_queries_and_long_fragments(conn):
+    from services.expression_policy import expression_is_reusable
+
+    assert expression_is_reusable("有一说一") is True
+    assert expression_is_reusable("慢慢来，一步一步走") is True
+    # 线上真实脏样本：问 Bot 的话、超 12 字叙事残片、含 Bot 名字
+    assert expression_is_reusable("为啥你去回复快一个小时前的对话") is False
+    assert expression_is_reusable("把LCK整条山脉一座一座推平") is False
+    assert expression_is_reusable("你为什么一直回复我") is False
+    assert expression_is_reusable("有没有人玩原神啊") is False
+    assert expression_is_reusable("羽书今天怎么不说话", bot_terms=("羽书", "白真真")) is False
+    assert expression_is_reusable("（这句没写完") is False
+
+    feedback, policy, _ = _policy(conn, bot_terms_for=lambda _: ("羽书", "白真真"))
+    _observe(feedback, 60, "为啥你去回复快一个小时前的对话", content="为啥你去回复快一个小时前的对话", situation="clarify", conn=conn)
+    _observe(feedback, 61, "你为什么老回我", content="你为什么老回我", situation="clarify", conn=conn)
+    assert policy.list_candidates(scope())[1] == 0
+
+
+def test_per_bot_blocklist_and_same_group_cross_bot_frequency_sharing(conn):
+    from tests.test_reply_feedback_learning import scope as make_scope
+
+    yushu_scope = make_scope(bot="yushu", room="room-shared")
+    baizz_scope = make_scope(bot="baizz", room="room-shared")
+    blocklists = {"yushu": [], "baizz": ["锤子", "爷"]}
+    feedback = ReplyFeedbackService(conn, enabled=True, now=lambda: 100.0)
+    policy = ExpressionPolicy(
+        conn,
+        enabled=True,
+        feedback_service=feedback,
+        now=lambda: 100.0,
+        persona_blocklist=["全局违禁"],
+        bot_blocklist_for=lambda bid: blocklists.get(bid, []),
+    )
+    feedback.expression_policy = policy
+
+    # 同一群 room-shared：访客甲在 yushu 视角说了一句，访客乙在 baizz 视角说了同一句（各自单行 occurrence=1）
+    for idx, owner, spk in ((70, yushu_scope, "visitor-a"), (71, baizz_scope, "visitor-b")):
+        add_message(conn, idx, "真有你的呀", speaker=spk, owner=owner)
+        feedback.record_bookkeeping(owner, {"expressions": [{
+            "source_memory_id": idx, "speaker_id": spk, "content": "真有你的呀", "situation": "humor",
+        }]}, source_message_ids=(idx,))
+
+    # 粗俗词『懂个锤子』同样两人说过：yushu 允许转正，baizz 被专属 blocklist 拦在待审
+    for idx, owner, spk in ((72, yushu_scope, "visitor-a"), (73, baizz_scope, "visitor-b")):
+        add_message(conn, idx, "懂个锤子哦", speaker=spk, owner=owner)
+        feedback.record_bookkeeping(owner, {"expressions": [{
+            "source_memory_id": idx, "speaker_id": spk, "content": "懂个锤子哦", "situation": "humor",
+        }]}, source_message_ids=(idx,))
+
+    stats = policy.auto_review_qualified_all()
+    assert stats["approved"] == 3  # yushu 2 条 + baizz 『真有你的呀』 1 条
+    assert stats["persona_rejected"] == 1  # baizz 『懂个锤子哦』被专属禁用词拦截
+    baizz_rows = dict(conn.execute(
+        "SELECT content, status FROM reply_expression_candidates WHERE bot_id='baizz'"
+    ).fetchall())
+    assert baizz_rows == {"真有你的呀": "approved", "懂个锤子哦": "pending"}
+
+
+def test_cleanup_and_auto_review_purges_legacy_noisy_pending(conn):
+    feedback, policy, _ = _policy(conn)
+    # 模拟旧库遗留一条 15 字长问句待审行
+    add_message(conn, 80, "为啥你去回复快一个小时前的对话", speaker="visitor-a")
+    conn.execute(
+        """INSERT INTO reply_expression_candidates
+           (bot_id, session_id, visibility, speaker_id, source_memory_id, content, situation, source_hash, artifact_json, created_at)
+           VALUES ('bot-aurora', 'test:group:room-a', 'group', 'visitor-a', 80, '为啥你去回复快一个小时前的对话', 'clarify', 'h', '{}', 90.0)"""
+    )
+    conn.commit()
+    res = policy.cleanup_and_auto_review(scope())
+    assert res["cleaned"] == 1
+    status, reviewer = conn.execute(
+        "SELECT status, reviewer FROM reply_expression_candidates WHERE source_memory_id=80"
+    ).fetchone()
+    assert status == "rejected" and reviewer == "auto_hygiene"
+

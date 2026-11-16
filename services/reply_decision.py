@@ -41,6 +41,11 @@ _FAREWELL = re.compile(
 )
 _COMMAND_PREFIX = re.compile(r"^\s*[/!！#\\]")
 _CHINESE_NAME_CALL = re.compile(r"^@?([\u4e00-\u9fffA-Za-z0-9_]{1,10})[,，:：\s]")
+_SYSTEM_OR_ERROR_NOTICE = re.compile(
+    r"(?:所有图片均下载失败|图片下载失败|消息已撤回|撤回了一条消息|请求失败|加载失败|"
+    r"接口报错|服务不可用|API\s*Error|429\s*Too\s*Many|502\s*Bad\s*Gateway)",
+    re.I,
+)
 
 
 def _number(value: Any, default: float, low: float, high: float) -> float:
@@ -82,6 +87,7 @@ def detect_message_air_flags(
     text = str(message or "").strip()
     is_command = bool(_COMMAND_PREFIX.match(text))
     is_farewell = bool(_FAREWELL.fullmatch(text))
+    is_system_notice = bool(_SYSTEM_OR_ERROR_NOTICE.search(text))
 
     own_ids = {str(x).strip() for x in bot_qq_ids if str(x or "").strip()}
     terms_lower = {str(t).strip().casefold() for t in bot_terms if str(t or "").strip()}
@@ -118,6 +124,7 @@ def detect_message_air_flags(
     return {
         "is_command": is_command,
         "is_farewell": is_farewell,
+        "is_system_notice": is_system_notice,
         "addressed_other": addressed_other,
     }
 
@@ -251,6 +258,7 @@ class ReplySignals:
     bot_collab_exceeded: bool = False
     addressed_other: bool = False
     is_command_or_farewell: bool = False
+    is_system_notice: bool = False
     in_duo_pingpong: bool = False
     followup_eligible: bool = False
     topic_match: float | None = None
@@ -275,8 +283,9 @@ class _History:
     replies: deque = field(default_factory=lambda: deque(maxlen=256))
     proactive_replies: deque = field(default_factory=lambda: deque(maxlen=64))
     consecutive_proactive: int = 0
-    # 主动开口后无人接话的退避：同一次主动只记一次冷落，真人任何发言即清零。
+    # 主动开口后无人接话的退避：同一次主动只记一次冷落；仅在有人搭理该 Bot 时清零。
     pending_proactive_at: float = 0.0
+    unanswered_chatter: int = 0
     unanswered_proactive: int = 0
     streak: int = 0
     suppressed_until: float = 0.0
@@ -374,18 +383,70 @@ class ReplyDecisionService:
                 state.proactive_replies.append(stamp)
                 state.consecutive_proactive += 1
                 state.pending_proactive_at = stamp
+                state.unanswered_chatter = 0
                 self.arbiter.record_group_proactive_spoken(bot_id=bot_id, session_id=session_id, now=stamp)
             else:
                 state.consecutive_proactive = 0
 
-    def _settle_unanswered(self, state: "_History", stamp: float) -> None:
-        """上一次主动开口若超过无人接话窗口仍没人说话，记一次冷落（每次主动只记一次）。"""
+    def _settle_unanswered(self, state: "_History", stamp: float) -> bool:
+        """上一次主动开口若超过无人接话窗口仍没人理，记一次冷落（每次主动只记一次）。"""
         if state.pending_proactive_at and stamp - state.pending_proactive_at >= UNANSWERED_WINDOW_SECONDS:
             state.unanswered_proactive = min(UNANSWERED_MAX_STREAK, state.unanswered_proactive + 1)
             state.pending_proactive_at = 0.0
+            state.unanswered_chatter = 0
+            return True
+        return False
+
+    def note_bot_engaged(
+        self,
+        bot_id: str,
+        session_id: str,
+        visibility: str = "group",
+        *,
+        now: float | None = None,
+    ) -> None:
+        """群友明确点名/@/引用该 Bot，或在接话窗口内顺着该 Bot 继续对话：清零该 Bot 的冷场与连续主动计数。"""
+        if not bot_id or not session_id or visibility not in {"group", "private"}:
+            return
+        stamp = float(self.clock() if now is None else now)
+        state = self._state((bot_id, visibility, session_id))
+        if state.pending_proactive_at and stamp - state.pending_proactive_at >= UNANSWERED_WINDOW_SECONDS:
+            self._settle_unanswered(state, stamp)
+        state.pending_proactive_at = 0.0
+        state.unanswered_chatter = 0
+        state.unanswered_proactive = 0
+        state.consecutive_proactive = 0
+
+    def observe_unanswered_chatter(
+        self,
+        bot_id: str,
+        session_id: str,
+        visibility: str = "group",
+        *,
+        min_messages: int = 4,
+        min_elapsed_seconds: float = 120.0,
+        now: float | None = None,
+    ) -> bool:
+        """记录一条未搭理该 Bot 的普通群聊；若主动开口后已刷过多条无关消息且超时，结算一次冷落。"""
+        if not bot_id or not session_id or visibility != "group":
+            return False
+        stamp = float(self.clock() if now is None else now)
+        state = self._state((bot_id, visibility, session_id))
+        if not state.pending_proactive_at:
+            return False
+        state.unanswered_chatter += 1
+        if (
+            stamp - state.pending_proactive_at >= max(10.0, float(min_elapsed_seconds))
+            and state.unanswered_chatter >= max(1, int(min_messages))
+        ):
+            state.unanswered_proactive = min(UNANSWERED_MAX_STREAK, state.unanswered_proactive + 1)
+            state.pending_proactive_at = 0.0
+            state.unanswered_chatter = 0
+            return True
+        return self._settle_unanswered(state, stamp)
 
     def note_human_activity(self, session_id: str, *, now: float | None = None) -> None:
-        """真人在该会话说话：所有 Bot 在此会话的主动冷落计数与连续主动计数清零。"""
+        """显式会话级活跃重置（保留兼容单测与手动重置入口）。"""
         if not session_id:
             return
         stamp = float(self.clock() if now is None else now)
@@ -396,6 +457,7 @@ class ReplyDecisionService:
                 state.pending_proactive_at = 0.0
             else:
                 self._settle_unanswered(state, stamp)
+            state.unanswered_chatter = 0
             state.unanswered_proactive = 0
             state.consecutive_proactive = 0
 
@@ -494,6 +556,9 @@ class ReplyDecisionService:
             return finish(False, hard=True)
         if mode == "off":
             reasons.append("mode_off")
+            if signals.quiet_hours_active and not signals.direct:
+                reasons.append("proactive_quiet_hours")
+                return finish(False, hard=True)
             return finish(bool(signals.direct or signals.candidate))
 
         # Bot 协同防死循环：即使被 Bot @ 了，超过协同上限也硬拦；未被 @ 时绝不主动回 Bot
@@ -548,6 +613,9 @@ class ReplyDecisionService:
         if signals.is_command_or_farewell:
             factors["command_or_farewell"] = -80.0
             reasons.append("command_or_farewell")
+        if signals.is_system_notice:
+            factors["system_notice"] = -80.0
+            reasons.append("system_or_error_notice")
         if signals.addressed_other:
             factors["addressed_other"] = -60.0
             reasons.append("addressed_other")
@@ -597,6 +665,25 @@ class ReplyDecisionService:
             reasons.append("ignored_backoff")
 
         score = sum(factors.values())
+        # 无实质锚点封顶门禁：非接话窗口、无话题匹配、无相关度、无关切跟进时，
+        # 不允许单靠「心智精力 + 身体推力 + 沉默蓄能 + 泛问号」破门强插无关闲聊。
+        has_topic_anchor = bool(
+            signals.followup_eligible
+            or (signals.topic_match is not None and signals.topic_match > 0)
+            or relevance > 0
+            or signals.concern
+        )
+        if proactive_wake_candidate and not has_topic_anchor:
+            unanchored_cap = max(0.0, cfg["score_threshold"] - 5.0)
+            if score > unanchored_cap:
+                factors["unanchored_cap"] = round(unanchored_cap - score, 2)
+                score = unanchored_cap
+            reasons.append("no_topic_anchor")
+
+        # 明确点名/引用他人或第三方机器报错回执：非直接召唤时一律硬拦截，绝不被正分冲穿
+        if signals.addressed_other or signals.is_system_notice:
+            return finish(False, hard=True)
+
         effective_cooldown = 0.0 if engaged_followup else _number(signals.cooldown_remaining, 0, 0, 86400)
         retry_after = max(
             effective_cooldown,
@@ -606,9 +693,9 @@ class ReplyDecisionService:
             reasons.append("shared_bot_cooldown")
         if signals.candidate_gate in {"concern_cooldown", "concern_quiet_hours", "concern_group_gap", "concern_hourly_limit"}:
             reasons.append(signals.candidate_gate)
-        if signals.quiet_hours_active and proactive_wake_candidate:
+        if signals.quiet_hours_active and (proactive_wake_candidate or signals.candidate):
             reasons.append("proactive_quiet_hours")
-            return finish(False)
+            return finish(False, hard=True)
         if signals.proactive_hourly_limit_hit and proactive_wake_candidate and not engaged_followup:
             reasons.append("proactive_hourly_limit")
             return finish(False)

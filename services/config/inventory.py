@@ -161,10 +161,92 @@ def _bot_model_rows(profile: Any) -> list[dict[str, Any]]:
     return rows
 
 
+def _window_text(start: Any, end: Any) -> str:
+    if start is None or end is None or start == "" or end == "":
+        return ""
+    try:
+        s, e = int(start), int(end)
+    except (TypeError, ValueError):
+        return ""
+    return "" if s == e else f"{s}-{e}"
+
+
+def _bot_behavior_rows(profile: Any) -> list[dict[str, Any]]:
+    """导出 Bot Profile 中主动对话、激素身体、心情、角色经历与人设表达禁用词配置。"""
+    db_id = str(getattr(profile, "db_id", "") or "")
+    if not db_id:
+        return []
+    name = getattr(profile, "name", "") or db_id
+    scope = f"bot:{db_id}"
+    src = f"bot_profiles.{db_id}"
+    rows: list[dict[str, Any]] = []
+
+    def add(tail: str, title: str, default: Any, effective: Any) -> None:
+        rows.append(_row(
+            key=f"bot:{db_id}.{tail}",
+            layer="bot" if effective != default else "builtin",
+            title=f"{name} · {title}",
+            scope=scope,
+            default=default,
+            effective=effective,
+            source=src,
+            apply_mode="hot",
+        ))
+
+    proactive = getattr(profile, "proactive", None)
+    if proactive is not None:
+        add("proactive.enabled", "允许读空气主动插话", False, bool(getattr(proactive, "enabled", False)))
+        add("proactive.mode", "读空气生效模式", "off", str(getattr(proactive, "mode", "off") or "off"))
+        add("proactive.score_threshold", "主动接话分数门槛", 55.0, float(getattr(proactive, "score_threshold", 55.0)))
+        add("proactive.min_gap_seconds", "两次主动接话最小间隔（秒）", 300.0, float(getattr(proactive, "min_gap_seconds", 300.0)))
+        add("proactive.max_per_hour", "每群每小时最多主动次数", 3, int(getattr(proactive, "max_per_hour", 3)))
+        add("proactive.stale_abort_seconds", "主动插话新鲜度死线（秒）", 90.0, float(getattr(proactive, "stale_abort_seconds", 90.0)))
+        add("proactive.stale_max_new_messages", "主动排队期间群新消息上限（条）", 8, int(getattr(proactive, "stale_max_new_messages", 8)))
+        add(
+            "proactive.quiet_hours",
+            "深夜免主动时段",
+            "1-7",
+            _window_text(getattr(proactive, "quiet_hours_start", 1), getattr(proactive, "quiet_hours_end", 7)),
+        )
+
+    body = getattr(profile, "body", None)
+    if body is not None:
+        add("body.enabled", "启用激素身体与褪黑素睡眠", False, bool(getattr(body, "enabled", False)))
+        add("body.hormone_gain", "激素事件敏度系数", 1.0, float(getattr(body, "hormone_gain", 1.0)))
+        add(
+            "body.sleep_window",
+            "作息睡眠时段",
+            "",
+            _window_text(getattr(body, "sleep_start", None), getattr(body, "sleep_end", None)),
+        )
+        add(
+            "body.service_quiet_window",
+            "模型服务静默窗口",
+            "",
+            _window_text(getattr(body, "service_quiet_start", None), getattr(body, "service_quiet_end", None)),
+        )
+
+    mood = getattr(profile, "mood", None)
+    if mood is not None:
+        add("mood.enabled", "启用立体心情与心智状态", True, bool(getattr(mood, "enabled", True)))
+
+    ce = getattr(profile, "character_experience", None)
+    if ce is not None:
+        add("character_experience.enabled", "启用角色经历召回", False, bool(getattr(ce, "enabled", False)))
+
+    persona = getattr(profile, "persona", None)
+    if persona is not None:
+        blocklist = list(getattr(persona, "expression_blocklist", ()) or ())
+        add("persona.expression_blocklist", "表达学习专属禁用词", "", ", ".join(blocklist))
+
+    return rows
+
+
 def bot_rows(profiles: Iterable[Any], default_config: Any) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for profile in profiles:
         rows.extend(_bot_model_rows(profile))
+        rows.extend(_bot_behavior_rows(profile))
         for name, patch in sorted((getattr(profile, "channels", None) or {}).items()):
             base = default_config.channels.get(name)
             for field, value in sorted((patch or {}).items()):

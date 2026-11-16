@@ -839,6 +839,23 @@ class StartupMixin:
             persona_blocklist = [str(word).strip() for word in blocklist_raw]
         else:
             persona_blocklist = []
+        def _bot_expression_blocklist(bot_id: str) -> list[str]:
+            profile = self.bot_registry.get(bot_id) if getattr(self, "bot_registry", None) else None
+            persona = getattr(profile, "persona", None)
+            return list(getattr(persona, "expression_blocklist", ()) or ())
+
+        def _all_bot_terms(_bot_id: str = "") -> list[str]:
+            registry = getattr(self, "bot_registry", None)
+            if registry is None:
+                return []
+            out: list[str] = []
+            for p in registry.all():
+                for t in getattr(p, "identity_terms", ()) or ():
+                    if t and t not in out:
+                        out.append(str(t))
+            return out
+
+        expr_auto_approve = _flag("expression_auto_approve_enabled", True)
         self.expression_policy = ExpressionPolicy(
             self.db.conn, enabled=_flag("expression_learning_enabled", False),
             # 留空 / 旧配置缺字段：_num 回到默认值；构造器再夹到合法区间。
@@ -846,6 +863,9 @@ class StartupMixin:
             pending_ttl_days=_num("expression_pending_ttl_days", 30),
             max_per_speaker=int(_num("expression_max_per_speaker", 1)),
             persona_blocklist=[word for word in persona_blocklist if word],
+            bot_blocklist_for=_bot_expression_blocklist,
+            bot_terms_for=_all_bot_terms,
+            auto_approve_enabled=expr_auto_approve,
         )
         self.reply_feedback_service = ReplyFeedbackService(
             self.db.conn, enabled=_flag("reply_feedback_enabled", False), expression_policy=self.expression_policy,
@@ -982,6 +1002,7 @@ class StartupMixin:
             return {
                 "reflection_trigger": _of(getattr(self, "reflection_trigger", None)),
                 "auto_review": _of(self.auto_reviewer),
+                "expression_auto_review": _of(getattr(self, "expression_policy", None)),
                 "proactive_reply": _of(self.concern_followup),
                 "bookkeeping": _of(self.post_reply_bookkeeper),
                 "daily_diary": _of(self.daily_diary),
@@ -1223,8 +1244,8 @@ class StartupMixin:
             await asyncio.sleep(6 * 3600)
 
     async def _learning_tick_loop(self) -> None:
-        """风格与表达的自动沉淀：FewShot 每日每 Bot 一次，表达审核每轮补一次。"""
-        await asyncio.sleep(900)
+        """风格与表达的自动沉淀：启动后 90s 首轮巡检，之后每小时跑一次表达自动审核/去噪，FewShot 内部自带每日节流。"""
+        await asyncio.sleep(90)
         while True:
             try:
                 await self._run_learning_tick()
@@ -1232,7 +1253,7 @@ class StartupMixin:
                 raise
             except Exception as e:
                 logger.debug(f"[WaveMemory] style maintenance failed: {e}")
-            await asyncio.sleep(6 * 3600)
+            await asyncio.sleep(3600)
 
     async def _run_learning_tick(self) -> None:
         service = getattr(self, "few_shot_service", None)
@@ -1248,11 +1269,15 @@ class StartupMixin:
             and getattr(policy, "enabled", False)
             and getattr(self, "_expression_auto_approve", False)
         ):
-            stats = await asyncio.to_thread(policy.auto_review_qualified_all)
-            if stats.get("approved"):
+            stats = await asyncio.to_thread(policy.auto_review_qualified_all, limit_per_scope=200)
+            if stats.get("approved") or stats.get("cleaned") or stats.get("expired"):
                 logger.info(
-                    f"[WaveMemory] 表达自动审核转正 {stats['approved']} 条，"
-                    f"跳过 {stats['skipped']} 条（{stats['scopes']} 个群）"
+                    "[WaveMemory] 表达自动维护: 转正=%s 去噪淘汰=%s 超期淘汰=%s 跳过=%s（%s 个群）",
+                    stats.get("approved", 0),
+                    stats.get("cleaned", 0),
+                    stats.get("expired", 0),
+                    stats.get("skipped", 0),
+                    stats.get("scopes", 0),
                 )
 
     def _spawn(self, coro, *, name: str | None = None, owner: str = "plugin") -> asyncio.Task:

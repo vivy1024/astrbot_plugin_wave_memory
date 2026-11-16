@@ -206,9 +206,11 @@ def apply_event(
         # 血清素高时压力的正向增量打 7 折：心情稳的时候不容易被激怒
         if name == "cortisol" and delta > 0 and values["serotonin"] >= 70.0:
             delta *= 0.7
-        # 正向增量在高位越难涨
-        if delta > 0 and name not in {"cortisol", "boredom"}:
+        # 正向增量在高位越难涨；超过 65 后进入高水位饱和阻尼，防高频日常对话把催产素/多巴胺常驻顶死在 99.9
+        if delta > 0 and name not in {"cortisol", "boredom", "melatonin"}:
             delta *= 1.0 - values[name] / 100.0 * 0.5
+            if values[name] > 65.0:
+                delta *= min(1.0, max(0.05, (96.0 - values[name]) / 35.0))
         before = values[name]
         values[name] = clamp(before + delta)
         applied[name] = round(values[name] - before, 3)
@@ -255,11 +257,21 @@ def read(
     in_window = _in_sleep_window(hour, sleep_start, sleep_end)
     asleep = bool(in_window or sleepiness >= 0.8)
     length = 0.7 + 0.45 * (0.5 + arousal_bias * 2.5) + 0.35 * (0.5 + mood_bias * 2.5) - 0.5 * max(0.0, sleepiness - 0.45)
+    # 常态昼夜基线下围绕 0.15 中性点窄幅呼吸（对应读空气 body_drive 偏置 ≈ 0 分）；
+    # 真正闲置无聊或刚受夸奖/亲近时正推，高压/被冷落/低落/犯困时负向压低。
+    boredom_push = (
+        0.38 * ((values["boredom"] - 45.0) / 55.0)
+        if values["boredom"] > 45.0
+        else -0.03 * max(0.0, (15.0 - values["boredom"]) / 15.0)
+    )
     proactive = (
-        0.5 * (values["boredom"] / 100.0)
-        + 0.3 * max(0.0, dev["oxytocin"])
-        - 0.4 * max(0.0, dev["cortisol"])
-        - 0.5 * max(0.0, sleepiness - 0.4)
+        0.15
+        + boredom_push
+        + 0.16 * max(0.0, dev["dopamine"] - 0.25)
+        + 0.14 * max(0.0, dev["oxytocin"] - 0.25)
+        - 0.35 * max(0.0, dev["cortisol"] - 0.10)
+        - 0.20 * max(0.0, -dev["serotonin"] - 0.20)
+        - 0.55 * max(0.0, sleepiness - 0.35)
     )
     length_factor = round(max(0.4, min(1.4, length)), 3)
     stressed = dev["cortisol"] >= EDGE_THRESHOLD

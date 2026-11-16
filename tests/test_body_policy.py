@@ -189,3 +189,24 @@ def test_no_nan_or_inf_anywhere():
     state = bp.default_state(3)
     out = bp.advance(state, elapsed_seconds=30 * HOUR, hour_at=_clock, start_ts=3 * HOUR)
     assert all(math.isfinite(v) and 0.0 <= v <= 100.0 for v in out.values())
+
+
+def test_proactive_drive_centers_at_neutral_and_high_water_damping_prevents_pinning():
+    # 白天基线下 proactive_drive 围绕 0.15 中性点（对应读空气偏置 0 分），不再恒定送 +12 分
+    normal_day = bp.read(bp.default_state(14), hour=14)
+    assert normal_day.proactive_drive == pytest.approx(0.15, abs=0.02)
+
+    # 长时间闲置高无聊正推，高压或深夜犯困负压
+    bored = bp.read({**bp.default_state(14), "boredom": 90.0}, hour=14)
+    stressed = bp.read({**bp.default_state(14), "cortisol": 85.0}, hour=14)
+    sleepy = bp.read({**bp.default_state(2), "melatonin": 80.0}, hour=2)
+    assert bored.proactive_drive > 0.35
+    assert stressed.proactive_drive < 0.08
+    assert sleepy.proactive_drive < 0.05
+
+    # 连续 25 次日常 addressed 不会把催产素顶死在 99.9
+    state = bp.default_state(14)
+    for _ in range(25):
+        state, _ = bp.apply_event(state, "addressed", closeness=80)
+    assert state["oxytocin"] < 96.5
+

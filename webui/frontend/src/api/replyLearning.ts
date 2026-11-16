@@ -59,9 +59,32 @@ export interface ReplyFeedbackEvent extends ReplyLearningScope {
   artifacts: unknown[]
 }
 
+export interface ExpressionPolicySummary {
+  enabled: boolean
+  auto_approve_enabled: boolean
+  auto_min_occurrence: number
+  pending_ttl_days: number
+  max_per_speaker: number
+  max_chars: number
+  global_blocklist: string[]
+  bot_blocklist: string[]
+  effective_blocklist: string[]
+}
+
+export interface ExpressionAutoReviewStats {
+  scopes: number
+  qualified: number
+  approved: number
+  skipped: number
+  persona_rejected: number
+  expired: number
+  cleaned: number
+}
+
 export interface ExpressionCandidatesResponse extends PageResponse<ExpressionCandidate> {
   scope: RuntimeGroupScope
   enabled: boolean
+  policy?: ExpressionPolicySummary | null
 }
 
 export interface ReplyFeedbackResponse extends PageResponse<ReplyFeedbackEvent> {
@@ -130,6 +153,20 @@ export function reviewExpression(
       idempotency_key: options.idempotencyKey,
       style_only: options.styleOnly,
       note: '',
+    }),
+  })
+}
+
+export function triggerExpressionAutoReview(
+  scope: ReplyLearningScope,
+  options: { allScopes?: boolean } = {},
+): Promise<{ ok: boolean; stats: ExpressionAutoReviewStats }> {
+  const payload = runtimeScope(scope)
+  return fetchJson('/api/reply-learning/expressions/auto-review', {
+    method: 'POST',
+    body: JSON.stringify({
+      scope: { kind: 'RuntimeScope', payload },
+      all_scopes: options.allScopes === true,
     }),
   })
 }

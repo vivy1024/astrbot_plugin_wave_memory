@@ -37,15 +37,16 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
     id: 'reply',
     title: '回复与人格',
     description: 'Bot 回复时带多少上下文、按什么规则说话、用什么风格和口癖、多久主动插话一次。',
-    symptoms: ['回复太长', '回复太短', '说话不像', '主动插话太多', '刷屏', '黑话', '风格'],
+    symptoms: ['回复太长', '回复太短', '说话不像', '主动插话太多', '乱插嘴', '回旧消息', '诈尸', '刷屏', '黑话', '风格'],
     links: [{ label: '通道配置', to: '/channels' }, { label: 'Bot 管理', to: '/bots' }],
     defaultOpen: true,
   },
   {
     id: 'mind',
     title: '心智与社交',
-    description: 'Bot 的心情、好感变化幅度、被骚扰时的冷却。',
-    symptoms: ['情绪', '好感涨太快', '好感掉太快', '被骂', '冷却'],
+    description: 'Bot 的心情、激素身体、作息睡眠与静默窗口、好感变化幅度、被骚扰时的冷却。',
+    symptoms: ['情绪', '激素', '睡眠', '静默', '好感涨太快', '好感掉太快', '被骂', '冷却'],
+    links: [{ label: '灵魂与激素', to: '/soul' }, { label: 'Bot 管理', to: '/bots' }],
     defaultOpen: false,
   },
   {
@@ -59,9 +60,9 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
   {
     id: 'learning',
     title: '标签与学习',
-    description: '哪些消息会被记下来，怎么从聊天里提炼标签，以及自省纠错开关。',
-    symptoms: ['标签太多', '标签太少', '标签不准', '记了没用的话', '某个群不想被记'],
-    links: [{ label: '标签', to: '/tags' }],
+    description: '哪些消息会被记下来，怎么从聊天里提炼标签、学习群友表达与自动审核，以及自省纠错开关。',
+    symptoms: ['标签太多', '标签太少', '标签不准', '记了没用的话', '某个群不想被记', '烂梗', '学坏话', '自动审核', '表达学习'],
+    links: [{ label: '标签', to: '/tags' }, { label: '表达审核', to: '/knowledge/fewshot' }],
     defaultOpen: true,
   },
   {
@@ -198,10 +199,16 @@ export const KEY_SYMPTOMS: Record<string, string[]> = {
   'Model_Routing_Settings.bookkeeping': ['记账没反应', '模型太贵'],
   'Model_Routing_Settings.diary': ['日记没写'],
   'Model_Routing_Settings.tag': ['标签太少', '标签不准', '模型太贵'],
+  'Learning_Settings.expression_learning_enabled': ['表达学习', '烂梗', '说话不像'],
+  'Learning_Settings.expression_auto_approve_enabled': ['自动审核', '表达学习', '待审太多'],
+  'Learning_Settings.expression_persona_blocklist': ['学坏话', '烂梗', '禁用词'],
+  'Learning_Settings.expression_pending_ttl_days': ['待审太多', '清理'],
 }
 
 /** Bot 的模型覆盖键：`bot:<db_id>.model` / `bot:<db_id>.models.<任务>` */
 export const BOT_MODEL_KEY = /^bot:[^.]+\.(model|models\.[^.]+)$/
+export const BOT_MIND_KEY = /^bot:[^.]+\.(body|mood)\./
+export const BOT_LORE_KEY = /^bot:[^.]+\.character_experience\./
 
 const GROUP_BY_ID = new Map(FEATURE_GROUPS.map((group) => [group.id, group]))
 
@@ -217,6 +224,8 @@ export function featureOf(key: string): FeatureId {
     return HOT_PREFIX_FEATURE[prefix] ?? 'other'
   }
   if (BOT_MODEL_KEY.test(key)) return 'models'
+  if (BOT_MIND_KEY.test(key)) return 'mind'
+  if (BOT_LORE_KEY.test(key)) return 'lore'
   if (key.startsWith('channel:') || key.startsWith('bot:')) return 'reply'
   const section = key.split('.')[0]
   if (/^MetaThinking_Bot\d+$/.test(section)) return 'reply'

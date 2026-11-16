@@ -60,6 +60,10 @@ function serve(path: string, init?: RequestInit): unknown {
   const url = new URL(path, 'http://localhost')
   if (init?.method === 'POST') {
     if (reviewFailure) return Promise.reject(reviewFailure)
+    if (url.pathname.endsWith('/expressions/auto-review')) {
+      rows = rows.map((row) => row.qualified && row.status === 'pending' ? { ...row, status: 'approved', revision: row.revision + 1 } : row)
+      return Promise.resolve({ ok: true, stats: { scopes: 1, qualified: 1, approved: 1, skipped: 0, persona_rejected: 0, expired: 0, cleaned: 2 } })
+    }
     const body = JSON.parse(init.body as string)
     const id = Number(url.pathname.split('/').at(-2))
     const item = rows.find((row) => row.id === id)!
@@ -323,5 +327,14 @@ describe('表达频次门槛', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: '只看达标的表达' }))
     expect(await screen.findByText('暂无达标的待审表达')).toBeVisible()
     expect(screen.getByText(/出现两次以上或跨两位群友说过/)).toBeVisible()
+  })
+
+  it('支持一键触发自动审核与噪声清理并刷新列表', async () => {
+    rows = [candidate({ id: 2, content: '有一说一', occurrence_count: 3, speaker_count: 2, qualified: true })]
+    show()
+    expect(await screen.findByText('有一说一')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '立即自动审核与清理' }))
+    expect(await screen.findByText(/自动审核与清理完成：转正 1 条 · 去噪淘汰 2 条/)).toBeVisible()
+    expect(await screen.findByText('当前群暂无待审表达')).toBeVisible()
   })
 })

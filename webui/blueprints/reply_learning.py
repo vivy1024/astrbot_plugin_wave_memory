@@ -95,8 +95,38 @@ async def list_expressions():
             scope, status=request.args.get("status", "pending"), limit=limit, offset=offset, qualified=qualified,
         )
         payload = page_response(items, total=total, limit=limit, offset=offset)
-        payload.update(scope=scope.to_dict(), enabled=policy.enabled)
+        summary_fn = getattr(policy, "policy_summary", None)
+        payload.update(
+            scope=scope.to_dict(),
+            enabled=policy.enabled,
+            policy=summary_fn(scope.bot_id) if callable(summary_fn) else None,
+        )
         return jsonify(payload)
+    except (ExpressionReviewError, ScopeValidationError, sqlite3.Error) as exc:
+        return _failure(exc)
+
+
+@reply_learning_bp.route("/expressions/auto-review", methods=["POST"])
+@require_auth
+async def trigger_expression_auto_review():
+    try:
+        body = await request.get_json(silent=True)
+        if body is None:
+            body = {}
+        if not isinstance(body, dict):
+            raise ExpressionReviewError("invalid_body")
+        all_scopes = body.get("all_scopes") is True
+        scope = None if all_scopes else _body_scope(body)
+        policy = _service("expression_policy")
+        runner = getattr(policy, "cleanup_and_auto_review", None)
+        if not callable(runner):
+            raise ExpressionReviewError("service_unavailable", 503)
+        stats = runner(scope)
+        return jsonify({
+            "ok": True,
+            "stats": stats,
+            "scope": scope.to_dict() if scope is not None else None,
+        })
     except (ExpressionReviewError, ScopeValidationError, sqlite3.Error) as exc:
         return _failure(exc)
 

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { RefreshCwIcon } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { RefreshCwIcon, SparklesIcon } from 'lucide-react'
 
 import { useGlobalScope } from '@/app/global-scope'
 import {
-  isReplyLearningScope, listExpressionCandidates, listReplyFeedback, replyLearningErrorMessage, reviewExpression,
+  isReplyLearningScope, listExpressionCandidates, listReplyFeedback, replyLearningErrorMessage, reviewExpression, triggerExpressionAutoReview,
   type ExpressionCandidate, type ExpressionReviewAction, type ExpressionSituation, type ExpressionStatus, type ReplyLearningScope, type ReplyOutcome,
 } from '@/api/replyLearning'
 import type { ApiError } from '@/api/client'
@@ -127,10 +128,33 @@ function Expressions({ scope }: { scope: ReplyLearningScope }) {
   const [offset, setOffset] = useState(0)
   const [reload, setReload] = useState(0)
   const [notice, setNotice] = useState<Notice | null>(null)
+  const [autoRunning, setAutoRunning] = useState(false)
   const { bot_id, session_id, visibility } = scope
   const load = useCallback((signal: AbortSignal) => listExpressionCandidates({ bot_id, session_id, visibility, status, qualified: qualifiedOnly, limit, offset }, signal), [bot_id, session_id, visibility, status, qualifiedOnly, limit, offset])
   const { data, error, loading, update } = useLearningPage(load, reload)
   const refresh = () => setReload((value) => value + 1)
+  const policy = data?.policy
+  const minOccLabel = policy?.auto_min_occurrence ?? 3
+
+  async function handleAutoReview() {
+    if (autoRunning) return
+    setAutoRunning(true)
+    setNotice(null)
+    try {
+      const res = await triggerExpressionAutoReview(scope)
+      const s = res.stats
+      invalidateReviewSummary(scope.bot_id)
+      setOffset(0)
+      setNotice({
+        text: `自动审核与清理完成：转正 ${s.approved} 条 · 去噪淘汰 ${s.cleaned} 条 · 超期淘汰 ${s.expired} 条${s.persona_rejected ? ` · 人设拦截留待人工 ${s.persona_rejected} 条` : ''}。`,
+      })
+      refresh()
+    } catch (reason) {
+      setNotice({ text: replyLearningErrorMessage(reason, '执行自动审核失败，请稍后重试。'), error: true })
+    } finally {
+      setAutoRunning(false)
+    }
+  }
   const onChanged: ChangedHandler = (next, removedId) => {
     setNotice(next)
     if (removedId === undefined) { setOffset(0); refresh(); return }
@@ -144,15 +168,31 @@ function Expressions({ scope }: { scope: ReplyLearningScope }) {
 
   return <Card aria-label="群友表达审核">
     <CardHeader className="flex flex-wrap items-start justify-between gap-3">
-      <div className="space-y-1"><CardTitle>群友表达审核</CardTitle><CardDescription>本群群友的简短表达，每条不超过 20 字；批准后才可在适用情景中学习使用。</CardDescription></div>
-      <Button size="sm" variant="outline" disabled={loading} onClick={refresh}><RefreshCwIcon aria-hidden="true" />刷新表达</Button>
+      <div className="space-y-1"><CardTitle>群友表达审核</CardTitle><CardDescription>本群群友的简短口癖（新收录限 2–{policy?.max_chars ?? 12} 字，过滤提问句与长碎句）；批准或达标自动转正后可在适用情景中使用。</CardDescription></div>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="secondary" disabled={loading || autoRunning} onClick={() => void handleAutoReview()}>
+          <SparklesIcon aria-hidden="true" />{autoRunning ? '处理中…' : '立即自动审核与清理'}
+        </Button>
+        <Button size="sm" variant="outline" disabled={loading || autoRunning} onClick={refresh}><RefreshCwIcon aria-hidden="true" />刷新表达</Button>
+      </div>
     </CardHeader>
     <CardContent className="flex flex-col gap-4">
+      {policy ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          <span>
+            自动转正：{policy.auto_approve_enabled ? '已开启' : '已关闭'}（出现 ≥{policy.auto_min_occurrence} 次或跨 ≥2 人，同群多 Bot 互认） · 待审过期：{policy.pending_ttl_days > 0 ? `${policy.pending_ttl_days} 天` : '不过期'} · 人设禁用词：{policy.effective_blocklist.length} 个（本 Bot 专属 {policy.bot_blocklist.length} 个）
+          </span>
+          <span className="flex flex-wrap gap-3">
+            <Link className="underline hover:text-foreground" to="/config?q=expression">全局表达配置</Link>
+            <Link className="underline hover:text-foreground" to={`/bots?bot=${encodeURIComponent(scope.bot_id)}&tab=persona`}>本 Bot 禁用词</Link>
+          </span>
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center gap-4">
         <label className="flex items-center gap-2 text-sm">表达状态<select aria-label="表达状态" className="rounded-md border bg-background p-2" value={status} onChange={(event) => { setStatus(event.target.value as ExpressionStatus); setOffset(0); setNotice(null) }}><option value="pending">待审核</option><option value="approved">已批准</option><option value="rejected">已拒绝</option></select></label>
         <label className="flex items-center gap-2 text-sm">
           <input aria-label="只看达标的表达" type="checkbox" checked={qualifiedOnly} onChange={(event) => { setQualifiedOnly(event.target.checked); setOffset(0); setNotice(null) }} />
-          只看出现 ≥2 次或跨 ≥2 人的表达
+          只看出现 ≥{minOccLabel} 次或跨 ≥2 人的表达
         </label>
       </div>
       {data ? <p className="text-sm text-muted-foreground">{data.enabled ? '表达学习已开启。已批准且来源证据有效的表达可按适用情景召回；批准不保证每次使用。' : '表达学习已关闭。已有候选仍可审核，启用后才会学习使用。'}</p> : null}

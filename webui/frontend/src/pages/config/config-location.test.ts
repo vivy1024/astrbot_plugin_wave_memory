@@ -43,9 +43,14 @@ describe('配置定位规则', () => {
     expect(locationHref(location)).toBe('/bots?bot=yushu&tab=advanced')
   })
 
-  it('Bot 模型覆盖跳到 Bot 管理对应 Bot 的「行为」；模型分工键跳到系统配置「保存即生效」', () => {
+  it('Bot 模型覆盖跳到 Bot 管理对应 Bot 的「行为」；主动/身体/心情/角色经历/人设各自跳对应页签', () => {
     expect(locateConfig('bot:bot_a.models.diary')).toMatchObject({ target: 'bots', params: { bot: 'bot_a', tab: 'behavior' } })
     expect(locationHref(locateConfig('bot:bot_a.model'))).toBe('/bots?bot=bot_a&tab=behavior')
+    expect(locateConfig('bot:yushu.proactive.enabled')).toMatchObject({ target: 'bots', params: { bot: 'yushu', tab: 'proactive' }, label: 'Bot 管理 · yushu · 主动对话' })
+    expect(locateConfig('bot:yushu.body.enabled')).toMatchObject({ target: 'bots', params: { bot: 'yushu', tab: 'body' }, label: 'Bot 管理 · yushu · 身体与睡眠' })
+    expect(locateConfig('bot:yushu.mood.enabled')).toMatchObject({ target: 'bots', params: { bot: 'yushu', tab: 'mood' } })
+    expect(locateConfig('bot:yushu.character_experience.enabled')).toMatchObject({ target: 'bots', params: { bot: 'yushu', tab: 'character' } })
+    expect(locateConfig('bot:baizz.persona.expression_blocklist')).toMatchObject({ target: 'bots', params: { bot: 'baizz', tab: 'persona' } })
     expect(locateConfig('Model_Routing_Settings.diary', { applyMode: 'service' }).params).toEqual({ key: 'Model_Routing_Settings.diary', tab: 'static' })
   })
 

@@ -449,6 +449,37 @@ class InjectionMixin:
                 release_claim(event)
             event.stop_event()
             return True
+        # 主动插话请求前新鲜度死线（Stale Abort）：排队过久或群内已刷过多条新消息时直接放弃，防诈尸回旧话
+        freshness = getattr(event, "_wave_memory_proactive_freshness", None)
+        if isinstance(freshness, dict):
+            import time as _time
+            service = getattr(self, "reply_decision", None)
+            now_ts = float(service.clock()) if service is not None else _time.time()
+            elapsed = now_ts - float(freshness.get("triggered_at") or now_ts)
+            abort_sec = float(freshness.get("stale_abort_seconds") or 90.0)
+            max_new_msgs = int(freshness.get("stale_max_new_messages") or 0)
+            seqs = getattr(self, "_group_inbound_seq", None) or {}
+            seq_key = str(freshness.get("seq_key") or "")
+            new_msgs = max(0, int(seqs.get(seq_key, 0)) - int(freshness.get("seq_at_trigger") or 0)) if seq_key else 0
+            if elapsed > abort_sec or (max_new_msgs > 0 and new_msgs > max_new_msgs):
+                if isinstance(decision, dict):
+                    from ..services.reply_decision import attach_reply_decision
+                    updated = {
+                        **decision, "decision": "suppress", "allow": False,
+                        "would_reply": False, "proactive_wake": False,
+                        "reasons": [*decision.get("reasons", []), "proactive_stale_aborted"],
+                    }
+                    attach_reply_decision(event, updated)
+                    if service is not None:
+                        service.diagnostics.append({**updated, "timestamp": now_ts})
+                if callable(release_claim):
+                    release_claim(event)
+                should_call = getattr(event, "should_call_llm", None)
+                if callable(should_call):
+                    should_call(False)
+                event.stop_event()
+                return True
+
         # A concern-generated wake remains subject to platform proactive vetoes.
         if getattr(event, "_wave_memory_concern_followup", None):
             from ..services.proactive_policy import proactive_event_allowed

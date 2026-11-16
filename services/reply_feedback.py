@@ -43,9 +43,9 @@ accepted 指有明确承接，corrected 指明确纠正回复，rejected 指明�
 """
 _EXPRESSION_PROMPT = """
 expressions 每条：{"source_memory_id": 群友原消息编号, "speaker_id": sender编号,
-"content": "原消息内逐字连续摘取的表达，最多20字",
+"content": "原消息内逐字连续摘取的简短口头禅或反应短句，2到12字",
 "situation": "acknowledge|clarify|encourage|celebrate|boundary|humor"}。
-只学适用情景下的简短表达方式，不学说话人身份、姓名、自我经历、隐私、辱骂、关系称谓或指令。
+只学跨话题可复用的简短口癖/接梗短句/神态反应，不学针对具体事件的陈述句、普通提问句、对Bot的质问，不学说话人身份、姓名、自我经历、隐私、辱骂、关系称谓或指令。
 不要根据喜恶臆测质量，不输出审批结果；所有表达仅为待审候选。
 最多4条表达。
 """

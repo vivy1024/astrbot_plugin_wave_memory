@@ -49,6 +49,8 @@ export interface PersonaDto {
   lore_corpus?: string
   /** 旧后端没有这一段；编辑器按 emptyPreferences() 补齐 */
   preferences?: PreferenceSettingsDto | null
+  /** 表达学习专属人设禁用词（叠加在全局 expression_persona_blocklist 之上） */
+  expression_blocklist?: string[]
 }
 
 export function emptyPreferences(): PreferenceSettingsDto {
@@ -171,6 +173,8 @@ export interface ProactiveDto {
   quiet_hours_end: number
   bot_collab_max_turns: number
   shared_group_cooldown_seconds: number
+  stale_abort_seconds: number
+  stale_max_new_messages: number
 }
 
 export function emptyProactive(): ProactiveDto {
@@ -190,6 +194,8 @@ export function emptyProactive(): ProactiveDto {
     quiet_hours_end: 7,
     bot_collab_max_turns: 2,
     shared_group_cooldown_seconds: 90,
+    stale_abort_seconds: 90,
+    stale_max_new_messages: 8,
   }
 }
 

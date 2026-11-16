@@ -524,14 +524,25 @@ class BotMoodService:
                 entry["engaged_until"] = max(float(entry.get("engaged_until") or 0.0), now + 600.0)
                 entry["cooling_until"] = 0.0
                 entry["ignored_streak"] = 0
+                entry["last_bot_proactive_at"] = 0.0
                 entry["silence_messages"] = 0
             else:
                 entry["silence_messages"] = min(50, int(entry.get("silence_messages") or 0) + 1)
-                # 如果 Bot 刚主动发完言在 90 秒内有人继续说普通话（且不是被冷落很久），先清掉主动冷场计数
-                last_proactive = float(entry.get("last_bot_proactive_at") or 0.0)
-                if last_proactive > 0 and 0 < now - last_proactive <= 90.0:
-                    entry["ignored_streak"] = 0
-                    entry["last_bot_proactive_at"] = 0.0
+
+    def note_bot_engaged_in_session(self, bot_id: str, session_id: str, *, now: float | None = None) -> None:
+        """群友在接话窗口内顺着该 Bot 继续搭话：视为有人接茬，清除主动冷场计数。"""
+        if not bot_id or not session_id:
+            return
+        timestamp = self._now(now)
+        key = (bot_id, session_id)
+        with self._lock:
+            entry = self._group_focus.get(key)
+            if entry is None:
+                return
+            entry["ignored_streak"] = 0
+            entry["last_bot_proactive_at"] = 0.0
+            entry["cooling_until"] = 0.0
+            entry["engaged_until"] = max(float(entry.get("engaged_until") or 0.0), timestamp + 300.0)
 
     def note_bot_spoken_in_session(self, bot_id: str, session_id: str, *, proactive: bool = False, now: float | None = None) -> None:
         """记录 Bot 在某群发过言：更新心流姿势、重置沉默计数，并跟踪主动插话是否被接茬。"""

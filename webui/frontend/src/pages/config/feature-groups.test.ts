@@ -84,9 +84,14 @@ describe('按功能分组规则', () => {
     expect(featureOf('llm_fallback_provider_ids')).toBe('models')
     expect(featureOf('MetaThinking_Settings.default_model')).toBe('models')
     expect(featureOf('MetaThinking_Settings.spam_threshold')).toBe('reply')
-    // Bot 的模型覆盖进模型分工，Bot 的通道覆盖仍按回复与人格
+    // Bot 的模型覆盖进模型分工，身体/心情进心智，角色经历进书设，主动/通道/人设进回复与人格
     expect(featureOf('bot:bot_a.model')).toBe('models')
     expect(featureOf('bot:bot_a.models.diary')).toBe('models')
+    expect(featureOf('bot:bot_a.body.enabled')).toBe('mind')
+    expect(featureOf('bot:bot_a.mood.enabled')).toBe('mind')
+    expect(featureOf('bot:bot_a.character_experience.enabled')).toBe('lore')
+    expect(featureOf('bot:bot_a.proactive.enabled')).toBe('reply')
+    expect(featureOf('bot:bot_a.persona.expression_blocklist')).toBe('reply')
     expect(featureOf('bot:bot_a.channels.jargon.enabled')).toBe('reply')
     expect(featureOf('embedding_provider_id')).toBe('index')
     expect(searchConfig([entry('Model_Routing_Settings.bookkeeping', { title: '事后记账' })], '记账没反应')[0]).toMatchObject({ bySymptom: true })

@@ -110,6 +110,8 @@ DEFAULT_AUTO_MIN_OCCURRENCE = 3
 DEFAULT_PENDING_TTL_DAYS = 30
 # 召回时同一个群友最多贡献几句：避免羽书的口吻越来越像群里最活跃的那一两个人。
 DEFAULT_MAX_PER_SPEAKER = 1
+# 新入池与自动转正的简短表达字数上限（历史已入库 <=20 字仍允许人工查看/撤回）。
+DEFAULT_MAX_EXPRESSION_CHARS = 12
 # 召回候选池：情景内按新到旧取这么多条再排序打散。
 _RECALL_POOL = 120
 # 自动转正前的人设一致性检查（不调用模型）：攻击性话术不会自动成为她的说话方式。
@@ -117,6 +119,48 @@ _AGGRESSIVE_STYLE = re.compile(
     r"(怼回去|狠狠怼|骂回去|嘴臭|阴阳怪气|你算老几|关你屁事|爱咋咋地|闭嘴吧?你|滚[开远蛋]?)",
     re.IGNORECASE,
 )
+# 非可复用口癖过滤：针对第二人称（常为质问/差遣 Bot）的句子，或带具体疑问词的长问句。
+_DIRECTED_QUERY_OR_COMMAND = re.compile(
+    r"^(?:你为什么|为什么你|为啥你|你为啥|你怎么|怎么你|怎么一直|干嘛回|你在说|别回我?|少回|你去回复|回复我)|"
+    r"(?:有没有人|有没人|谁知道|哪里有|怎么回事)",
+    re.IGNORECASE,
+)
+_SPECIFIC_QUESTION_WORD = re.compile(r"(?:为什么|为啥|怎么|如何|多少|哪[里个]|是不是)", re.IGNORECASE)
+_BRACKET_PAIRS = (("(", ")"), ("（", "）"), ("[", "]"), ("【", "】"), ("「", "」"), ("『", "』"), ("“", "”"))
+
+
+def _has_unbalanced_brackets(text: str) -> bool:
+    for left, right in _BRACKET_PAIRS:
+        if text.count(left) != text.count(right):
+            return True
+    return False
+
+
+def expression_is_reusable(
+    content: Any,
+    *,
+    max_chars: int = DEFAULT_MAX_EXPRESSION_CHARS,
+    bot_terms: Sequence[str] = (),
+) -> bool:
+    """判断候选是否属于简短、跨话题可复用的群聊口癖（用于新候选入池、自动转正与待审去噪）。"""
+    if not isinstance(content, str):
+        return False
+    if content != content.strip() or not (2 <= len(content) <= max(2, int(max_chars))):
+        return False
+    if _has_unbalanced_brackets(content):
+        return False
+    text = unicodedata.normalize("NFKC", content)
+    if _DIRECTED_QUERY_OR_COMMAND.search(text):
+        return False
+    # 超过 6 字且包含具体疑问词的句子通常是针对某件事的提问，不是通用神态/口头禅
+    if len(text) >= 7 and _SPECIFIC_QUESTION_WORD.search(text):
+        return False
+    lowered = text.casefold()
+    for term in bot_terms or ():
+        needle = unicodedata.normalize("NFKC", str(term or "").strip()).casefold()
+        if len(needle) >= 2 and needle in lowered:
+            return False
+    return True
 
 
 def _qualified_sql(min_occurrence: int) -> str:
@@ -166,7 +210,11 @@ class ExpressionPolicy:
         auto_min_occurrence: int = DEFAULT_AUTO_MIN_OCCURRENCE,
         pending_ttl_days: float = DEFAULT_PENDING_TTL_DAYS,
         max_per_speaker: int = DEFAULT_MAX_PER_SPEAKER,
+        max_chars: int = DEFAULT_MAX_EXPRESSION_CHARS,
         persona_blocklist: Sequence[str] = (),
+        bot_blocklist_for=None,
+        bot_terms_for=None,
+        auto_approve_enabled: bool = True,
     ):
         self.connection = connection
         self.enabled = enabled is True
@@ -175,9 +223,61 @@ class ExpressionPolicy:
         self.auto_min_occurrence = max(2, min(20, _int_or(auto_min_occurrence, DEFAULT_AUTO_MIN_OCCURRENCE)))
         self.pending_ttl_days = max(0.0, _float_or(pending_ttl_days, DEFAULT_PENDING_TTL_DAYS))
         self.max_per_speaker = max(0, _int_or(max_per_speaker, DEFAULT_MAX_PER_SPEAKER))
+        self.max_chars = max(4, min(20, _int_or(max_chars, DEFAULT_MAX_EXPRESSION_CHARS)))
         self.persona_blocklist = tuple(
             word.strip() for word in (persona_blocklist or ()) if isinstance(word, str) and word.strip()
         )
+        self._bot_blocklist_for = bot_blocklist_for
+        self._bot_terms_for = bot_terms_for
+        self.auto_approve_enabled = bool(auto_approve_enabled)
+        self._last_auto_review_stats: dict[str, Any] = {}
+
+    def effective_blocklist_for(self, bot_id: str = "") -> tuple[str, ...]:
+        """合并全局人设禁用词与指定 Bot 的专属禁用词（去重保序）。"""
+        merged: list[str] = list(self.persona_blocklist)
+        if bot_id and callable(self._bot_blocklist_for):
+            try:
+                extra = self._bot_blocklist_for(bot_id) or ()
+            except Exception:
+                extra = ()
+            for word in extra:
+                text = str(word or "").strip()
+                if text and text not in merged:
+                    merged.append(text)
+        return tuple(merged)
+
+    def bot_terms_for(self, bot_id: str = "") -> tuple[str, ...]:
+        if not callable(self._bot_terms_for):
+            return ()
+        try:
+            terms = self._bot_terms_for(bot_id) or ()
+        except Exception:
+            return ()
+        return tuple(str(t).strip() for t in terms if str(t or "").strip())
+
+    def policy_summary(self, bot_id: str = "") -> dict[str, Any]:
+        blocklist = self.effective_blocklist_for(bot_id)
+        bot_only: list[str] = []
+        if bot_id and callable(self._bot_blocklist_for):
+            try:
+                bot_only = [str(w).strip() for w in (self._bot_blocklist_for(bot_id) or ()) if str(w or "").strip()]
+            except Exception:
+                bot_only = []
+        return {
+            "enabled": self.enabled,
+            "auto_approve_enabled": self.auto_approve_enabled,
+            "auto_min_occurrence": self.auto_min_occurrence,
+            "pending_ttl_days": self.pending_ttl_days,
+            "max_per_speaker": self.max_per_speaker,
+            "max_chars": self.max_chars,
+            "global_blocklist": list(self.persona_blocklist),
+            "bot_blocklist": bot_only,
+            "effective_blocklist": list(blocklist),
+        }
+
+    @property
+    def stats(self) -> dict[str, Any]:
+        return dict(self._last_auto_review_stats)
 
     def observe(self, scope, payload, *, source_message_ids: Sequence[int], connection=None) -> int:
         if not self.enabled or group_owner(scope) is None or not isinstance(payload, Mapping):
@@ -187,6 +287,7 @@ class ExpressionPolicy:
                 return self.observe(scope, payload, source_message_ids=source_message_ids, connection=tx)
         messages = resolve_messages(connection, scope, source_message_ids)
         owner = group_owner(scope)
+        bot_terms = self.bot_terms_for(owner[0])
         inserted = 0
         for item in payload_items(payload, "expressions", 4):
             source = messages.get(positive_id(item.get("source_memory_id")))
@@ -196,6 +297,7 @@ class ExpressionPolicy:
                 or source["speaker_id"] != item.get("speaker_id")
                 or not isinstance(scene, str) or scene not in SITUATIONS
                 or not expression_is_safe(content, speaker_name=source["speaker_name"])
+                or not expression_is_reusable(content, max_chars=self.max_chars, bot_terms=bot_terms)
                 or content not in source["content"]
             ):
                 continue
@@ -280,36 +382,112 @@ class ExpressionPolicy:
         except (ValueError, TypeError, KeyError):
             return False
 
+    @staticmethod
+    def _conversation_suffix(session_id: str) -> str:
+        parts = str(session_id or "").split(":", 2)
+        if len(parts) == 3 and parts[1] == "group" and parts[2]:
+            return f":group:{parts[2]}"
+        return ""
+
+    def _shared_group_counts(self, session_id: str, content: str, *, connection=None) -> tuple[int, int]:
+        """同群跨己方 Bot 的客观说话人数与出现次数统计（不跨群、不跨私聊、不拷贝证据）。"""
+        conn = connection or self.connection
+        suffix = self._conversation_suffix(session_id)
+        if not suffix or not content:
+            return 0, 0
+        tables = {
+            str(r[0]) for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        speakers: set[str] = set()
+        occurrences: set[tuple[str, str, int]] = set()
+        if "reply_expression_sources" in tables:
+            rows = conn.execute(
+                """SELECT s.speaker_id, s.session_id, s.source_memory_id
+                     FROM reply_expression_sources s
+                     JOIN reply_expression_candidates c ON c.id = s.example_id
+                    WHERE c.visibility='group' AND c.session_id LIKE ? AND c.content=?
+                      AND c.status IN ('pending', 'approved')""",
+                (f"%{suffix}", content),
+            ).fetchall()
+            for spk, sid, mid in rows:
+                if spk:
+                    speakers.add(str(spk))
+                # 同群不同 Bot 可能各自把同一时刻群消息存成不同 memory_id：按 (speaker_id, round_bucket) 或 bot 内去重，
+                # 最稳妥的跨 Bot 客观信号是不同 speaker_id 数，出现次数取 max(单 Bot 最高出现次数, 跨 Bot 说话人数)。
+                occurrences.add((str(sid), str(spk), int(mid or 0)))
+        cand_rows = conn.execute(
+            """SELECT speaker_id, COALESCE(occurrence_count, 1), COALESCE(speaker_count, 1)
+                 FROM reply_expression_candidates
+                WHERE visibility='group' AND session_id LIKE ? AND content=?
+                  AND status IN ('pending', 'approved')""",
+            (f"%{suffix}", content),
+        ).fetchall()
+        max_occ = 0
+        max_spk = 0
+        for spk, occ, spk_cnt in cand_rows:
+            if spk:
+                speakers.add(str(spk))
+            max_occ = max(max_occ, int(occ or 1))
+            max_spk = max(max_spk, int(spk_cnt or 1))
+        eff_spk = max(max_spk, len(speakers))
+        eff_occ = max(max_occ, eff_spk)
+        return eff_occ, eff_spk
+
+    def _is_row_qualified(self, scope, row: Mapping[str, Any], *, connection=None) -> bool:
+        occ = int(row.get("occurrence_count") or 1)
+        spk = int(row.get("speaker_count") or 1)
+        if occ >= self.auto_min_occurrence or spk >= 2:
+            return True
+        if scope is not None and getattr(scope, "session", None) is not None:
+            shared_occ, shared_spk = self._shared_group_counts(
+                scope.session.id, str(row.get("content") or ""), connection=connection
+            )
+            return shared_occ >= self.auto_min_occurrence or shared_spk >= 2
+        return False
+
     def _public(self, scope, row) -> dict:
         result = {key: value for key, value in row.items() if not key.endswith("_json")}
         result["evidence_available"] = self._source_available(scope, row)
-        result["qualified"] = bool(
-            int(row.get("occurrence_count") or 1) >= self.auto_min_occurrence or int(row.get("speaker_count") or 1) >= 2
-        )
+        result["qualified"] = self._is_row_qualified(scope, row)
         result["scope"] = scope.to_dict()
         result["artifact"] = json.loads(row["artifact_json"])
         result["evidence_refs"] = json.loads(row["evidence_refs_json"])
         result["evidence_bindings"] = json.loads(row["evidence_bindings_json"])
         return result
 
+    def _qualified_clause_for_session(self, session_id: str) -> tuple[str, tuple[Any, ...]]:
+        suffix = self._conversation_suffix(session_id)
+        if not suffix:
+            return f"({_qualified_sql(self.auto_min_occurrence)})", ()
+        clause = (
+            "(occurrence_count >= ? OR speaker_count >= 2 OR EXISTS ("
+            "SELECT 1 FROM reply_expression_candidates peer "
+            "WHERE peer.visibility='group' AND peer.status IN ('pending', 'approved') "
+            "AND peer.session_id LIKE ? AND peer.content = reply_expression_candidates.content "
+            "AND (peer.speaker_id != reply_expression_candidates.speaker_id "
+            "OR COALESCE(peer.occurrence_count, 1) >= ? OR COALESCE(peer.speaker_count, 1) >= 2)"
+            "))"
+        )
+        return clause, (int(self.auto_min_occurrence), f"%{suffix}", int(self.auto_min_occurrence))
+
     def list_candidates(self, scope, *, status="pending", limit=25, offset=0, qualified=False) -> tuple[list[dict], int]:
         """Administrative read stays available while learning/injection is disabled.
 
-        ``qualified=True`` 只列出达到频次门槛的候选（出现 ≥2 次或跨 ≥2 人）。
-        线上 1190 条待审里只有个位数达标，不过滤的话人根本审不完；门槛只是
-        「先看哪些」，其余候选仍在库里，切回全部随时可看。
+        ``qualified=True`` 只列出达到频次门槛的候选（本群出现 ≥N 次或跨 ≥2 人，含同群己方 Bot 互认）。
         """
         if group_owner(scope) is None:
             return [], 0
         if status not in {"pending", "approved", "rejected", "all"}:
             raise ExpressionReviewError("invalid_status")
         where = "bot_id=? AND session_id=? AND visibility=?"
-        params = list(group_owner(scope))
+        params: list[Any] = list(group_owner(scope))
         if status != "all":
             where += " AND status=?"
             params.append(status)
         if qualified:
-            where += f" AND ({_qualified_sql(self.auto_min_occurrence)})"
+            q_clause, q_params = self._qualified_clause_for_session(scope.session.id)
+            where += f" AND {q_clause}"
+            params.extend(q_params)
         total = self.connection.execute(f"SELECT COUNT(*) FROM reply_expression_candidates WHERE {where}", params).fetchone()[0]
         rows = self._rows(self.connection.execute(
             f"""SELECT * FROM reply_expression_candidates WHERE {where}
@@ -393,14 +571,14 @@ class ExpressionPolicy:
         return {"occurrence_count", "speaker_count"} <= columns
 
     def qualified_scopes(self, *, limit: int = 200):
-        """返回有达标待审候选的群，供自动审核逐群推进。"""
+        """返回有达标待审候选的群，供自动审核逐群推进（含同群跨己方 Bot 说话人互认）。"""
         if not self._qualified_columns_ready():
             return []
         rows = self.connection.execute(
-            f"""SELECT DISTINCT bot_id, session_id, visibility
-                  FROM reply_expression_candidates
-                 WHERE status='pending' AND ({_qualified_sql(self.auto_min_occurrence)})
-                 LIMIT ?""",
+            """SELECT DISTINCT bot_id, session_id, visibility
+                 FROM reply_expression_candidates
+                WHERE status='pending' AND visibility='group'
+                LIMIT ?""",
             (max(1, min(int(limit), 1000)),),
         ).fetchall()
         scopes = []
@@ -410,6 +588,16 @@ class ExpressionPolicy:
                 continue
             platform_id, kind, conversation_id = parts
             if kind != "group":
+                continue
+            q_clause, q_params = self._qualified_clause_for_session(str(session_id))
+            has_qualified = self.connection.execute(
+                f"""SELECT 1 FROM reply_expression_candidates
+                     WHERE bot_id=? AND session_id=? AND visibility='group'
+                       AND status='pending' AND {q_clause}
+                     LIMIT 1""",
+                (str(bot_id), str(session_id), *q_params),
+            ).fetchone()
+            if not has_qualified:
                 continue
             try:
                 scopes.append(RuntimeScope(
@@ -423,23 +611,65 @@ class ExpressionPolicy:
                 continue
         return scopes
 
-    def auto_review_qualified(self, scope, *, limit: int = 50, reviewer: str = "auto_review") -> dict[str, int]:
-        """把「本群多人多次说过、来源仍可核」的待审表达直接转正。
+    def cleanup_noisy_pending(self, scope=None, *, limit: int = 1000) -> int:
+        """淘汰待审队列中不符合简短口癖准入规则的历史噪声（超长碎句、对 Bot 质问句、安全越界），留清晰审计备注。"""
+        if not self._qualified_columns_ready():
+            return 0
+        where = "status='pending'"
+        params: list[Any] = []
+        if scope is not None:
+            owner = group_owner(scope)
+            if owner is None:
+                return 0
+            where += " AND bot_id=? AND session_id=? AND visibility=?"
+            params.extend(owner)
+        rows = self._rows(self.connection.execute(
+            f"SELECT id, bot_id, content FROM reply_expression_candidates WHERE {where} ORDER BY id ASC LIMIT ?",
+            (*params, max(1, min(int(limit), 5000))),
+        ))
+        noisy_ids: list[int] = []
+        for row in rows:
+            content = str(row.get("content") or "")
+            bot_id = str(row.get("bot_id") or "")
+            if not expression_is_safe(content) or not expression_is_reusable(
+                content, max_chars=self.max_chars, bot_terms=self.bot_terms_for(bot_id)
+            ):
+                noisy_ids.append(int(row["id"]))
+        if not noisy_ids:
+            return 0
+        now = float(self.now())
+        placeholders = ",".join("?" for _ in noisy_ids)
+        with _write_transaction(self.connection) as tx:
+            cur = tx.execute(
+                f"""UPDATE reply_expression_candidates
+                       SET status='rejected', revision=revision+1, reviewer='auto_hygiene',
+                           review_note='auto: 非简短可复用口癖或针对Bot提问', reviewed_at=?
+                     WHERE status='pending' AND id IN ({placeholders})""",
+                (now, *noisy_ids),
+            )
+            return int(getattr(cur, "rowcount", 0) or 0)
 
-        门槛沿用频次列：同句在本群出现 ≥3 次，或至少 2 个不同人说过。来源已删、
-        被隔离、内容越界或修订冲突的候选会跳过并保留待审，不静默放行。
+    def auto_review_qualified(self, scope, *, limit: int = 50, reviewer: str = "auto_review") -> dict[str, int]:
+        """把「本群多人多次说过、来源仍可核、符合该 Bot 人设」的待审表达直接转正。
+
+        门槛沿用频次列：同句在本群出现 ≥N 次，或至少 2 个不同人说过（含同群己方 Bot 互认）。
+        来源已删、被隔离、内容越界或修订冲突的候选会跳过并保留待审，不静默放行。
         """
         stats = {"qualified": 0, "approved": 0, "skipped": 0, "persona_rejected": 0}
         if group_owner(scope) is None or not self._qualified_columns_ready():
             return stats
+        owner = group_owner(scope)
+        q_clause, q_params = self._qualified_clause_for_session(scope.session.id)
         rows = self._rows(self.connection.execute(
             f"""SELECT id, revision, content FROM reply_expression_candidates
                  WHERE bot_id=? AND session_id=? AND visibility=?
-                   AND status='pending' AND ({_qualified_sql(self.auto_min_occurrence)})
+                   AND status='pending' AND {q_clause}
                  ORDER BY occurrence_count DESC, speaker_count DESC, id DESC
                  LIMIT ?""",
-            (*group_owner(scope), max(1, min(int(limit), 200))),
+            (*owner, *q_params, max(1, min(int(limit), 500))),
         ))
+        effective_blocklist = self.effective_blocklist_for(owner[0])
+        bot_terms = self.bot_terms_for(owner[0])
         seen_content: set[str] = set()
         for row in rows:
             content = str(row.get("content") or "")
@@ -447,7 +677,10 @@ class ExpressionPolicy:
                 continue
             seen_content.add(content)
             stats["qualified"] += 1
-            if not persona_consistent(content, self.persona_blocklist):
+            if not expression_is_reusable(content, max_chars=self.max_chars, bot_terms=bot_terms):
+                stats["skipped"] += 1
+                continue
+            if not persona_consistent(content, effective_blocklist):
                 # 不自动转正也不自动驳回：留在待审，由管理员决定（或到期作废）。
                 stats["persona_rejected"] += 1
                 continue
@@ -464,17 +697,74 @@ class ExpressionPolicy:
                 logger.debug(f"[Expression] 自动审核跳过 {row['id']}: {type(exc).__name__}")
         return stats
 
-    def auto_review_qualified_all(self, *, limit_per_scope: int = 50) -> dict[str, int]:
-        stats = {"scopes": 0, "qualified": 0, "approved": 0, "skipped": 0, "persona_rejected": 0, "expired": 0}
+    def auto_review_qualified_all(self, *, limit_per_scope: int = 200) -> dict[str, int]:
+        stats = {
+            "scopes": 0, "qualified": 0, "approved": 0,
+            "skipped": 0, "persona_rejected": 0, "expired": 0, "cleaned": 0,
+        }
         if not self.enabled:
             return stats
+        stats["cleaned"] = self.cleanup_noisy_pending()
         for scope in self.qualified_scopes():
             result = self.auto_review_qualified(scope, limit=limit_per_scope)
             stats["scopes"] += 1
             for key in ("qualified", "approved", "skipped", "persona_rejected"):
                 stats[key] += int(result.get(key, 0))
         stats["expired"] = self.expire_stale_pending()
+        self._last_auto_review_stats = {**stats, "last_run_at": float(self.now())}
         return stats
+
+    def cleanup_and_auto_review(self, scope=None, *, limit: int = 200) -> dict[str, int]:
+        """管理台手动触发：即使当前表达学习采集关闭，也允许管理员对指定群（或全群）执行一次去噪清理、达标转正与超期淘汰。"""
+        if scope is not None:
+            if group_owner(scope) is None:
+                raise ExpressionReviewError("group_scope_required")
+            cleaned = self.cleanup_noisy_pending(scope)
+            result = self.auto_review_qualified(scope, limit=limit) if self.auto_approve_enabled else {
+                "qualified": 0, "approved": 0, "skipped": 0, "persona_rejected": 0,
+            }
+            expired = self._expire_stale_pending_for_scope(scope)
+            out = {"scopes": 1, **result, "cleaned": cleaned, "expired": expired}
+            self._last_auto_review_stats = {**out, "last_run_at": float(self.now())}
+            return out
+        cleaned = self.cleanup_noisy_pending()
+        stats = {
+            "scopes": 0, "qualified": 0, "approved": 0,
+            "skipped": 0, "persona_rejected": 0, "expired": 0, "cleaned": cleaned,
+        }
+        if self.auto_approve_enabled:
+            for item_scope in self.qualified_scopes():
+                res = self.auto_review_qualified(item_scope, limit=limit)
+                stats["scopes"] += 1
+                for key in ("qualified", "approved", "skipped", "persona_rejected"):
+                    stats[key] += int(res.get(key, 0))
+        stats["expired"] = self.expire_stale_pending()
+        self._last_auto_review_stats = {**stats, "last_run_at": float(self.now())}
+        return stats
+
+    def _expire_stale_pending_for_scope(self, scope, *, limit: int = 500) -> int:
+        if self.pending_ttl_days <= 0 or not self._qualified_columns_ready():
+            return 0
+        owner = group_owner(scope)
+        if owner is None:
+            return 0
+        now = float(self.now())
+        cutoff = now - self.pending_ttl_days * 86400.0
+        q_clause, q_params = self._qualified_clause_for_session(scope.session.id)
+        with _write_transaction(self.connection) as tx:
+            cur = tx.execute(
+                f"""UPDATE reply_expression_candidates
+                       SET status='rejected', revision=revision+1, reviewer='auto_expire',
+                           review_note='auto: 待审超期仍未达到频次门槛', reviewed_at=?
+                     WHERE id IN (
+                           SELECT id FROM reply_expression_candidates
+                            WHERE bot_id=? AND session_id=? AND visibility=?
+                              AND status='pending' AND created_at < ?
+                              AND NOT {q_clause}
+                            ORDER BY created_at ASC LIMIT ?)""",
+                (now, *owner, cutoff, *q_params, max(1, int(limit))),
+            )
+            return int(getattr(cur, "rowcount", 0) or 0)
 
     def expire_stale_pending(self, *, limit: int = 500) -> int:
         """把待审超过 TTL 仍达不到门槛的候选作废（status=rejected，留审计备注，可被管理员恢复）。"""

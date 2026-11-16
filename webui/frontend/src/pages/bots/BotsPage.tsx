@@ -31,6 +31,7 @@ import {
 import { DEFAULT_PRONOUN, PRONOUN_OPTIONS, type CharacterPronoun } from '@/api/characterExperience'
 import { isRequestCancelled } from '@/api/client'
 import { listProviders, type ProviderPayload } from '@/api/config'
+import { getBodySnapshot, type BodySnapshot } from '@/api/soul'
 import { useUnsavedChangesConfirm, useUnsavedChangesGuard } from '@/app/unsaved-changes'
 import { QueryState, useConfirmAction } from '@/components/shared'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -284,10 +285,58 @@ function LinesArea({ id, label, rows, value, onChange, hint }: {
 }
 
 /** 身体与睡眠设置：模型停服静默话术（独立开关，直接回话术不调模型）+ 激素身体与褪黑素睡眠。 */
-function BodyEditor({ value, onChange }: { value: BodyDto; onChange: (next: BodyDto) => void }) {
+function BodyEditor({ value, onChange, dbId, isNew }: { value: BodyDto; onChange: (next: BodyDto) => void; dbId: string; isNew: boolean }) {
   const set = <K extends keyof BodyDto>(key: K, next: BodyDto[K]) => onChange({ ...value, [key]: next })
+  const [liveBody, setLiveBody] = useState<BodySnapshot | null>(null)
+  useEffect(() => {
+    if (isNew || !dbId) {
+      setLiveBody(null)
+      return
+    }
+    const controller = new AbortController()
+    getBodySnapshot(dbId, controller.signal)
+      .then((snap) => { if (!controller.signal.aborted) setLiveBody(snap) })
+      .catch(() => { if (!controller.signal.aborted) setLiveBody(null) })
+    return () => controller.abort()
+  }, [dbId, isNew, value.enabled])
+
+  const bodyDelta = typeof liveBody?.proactive_drive === 'number'
+    ? Math.max(-15, Math.min(15, Math.round((liveBody.proactive_drive - 0.15) * 40 * 10) / 10))
+    : null
+
   return (
     <div className="grid gap-4 md:grid-cols-2">
+      {!isNew && dbId ? (
+        <div className="md:col-span-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/20 p-3 text-xs">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2 font-medium">
+              <span>当前实时身体读数</span>
+              {liveBody?.enabled ? (
+                <Badge variant={liveBody.asleep ? 'secondary' : 'default'}>
+                  {liveBody.asleep ? '睡眠中' : '清醒在线'}
+                </Badge>
+              ) : (
+                <Badge variant="outline">激素身体未启用</Badge>
+              )}
+              {bodyDelta !== null ? (
+                <Badge variant="outline">
+                  读空气偏置：{bodyDelta > 0 ? `+${bodyDelta}` : bodyDelta} 分（proactive_drive={liveBody?.proactive_drive?.toFixed(2)}）
+                </Badge>
+              ) : null}
+            </div>
+            {liveBody?.enabled && liveBody.hormones ? (
+              <p className="text-muted-foreground">
+                多巴胺 {liveBody.hormones.dopamine.toFixed(1)} · 血清素 {liveBody.hormones.serotonin.toFixed(1)} · 催产素 {liveBody.hormones.oxytocin.toFixed(1)} · 皮质醇 {liveBody.hormones.cortisol.toFixed(1)} · 褪黑素 {liveBody.hormones.melatonin.toFixed(1)} · 无聊 {liveBody.hormones.boredom.toFixed(1)}
+              </p>
+            ) : (
+              <p className="text-muted-foreground">开启激素身体并保存后，可在此查看实时激素水平与对主动插话的加减分影响。</p>
+            )}
+          </div>
+          <Link className="underline text-muted-foreground hover:text-foreground" to={`/soul?bot_id=${encodeURIComponent(dbId)}`}>
+            查看完整激素曲线
+          </Link>
+        </div>
+      ) : null}
       <div className="md:col-span-2 rounded-lg border bg-muted/15 p-3">
         <p className="text-xs font-semibold">模型服务静默窗口（例如 antigravity 夜间停服）</p>
         <p className="mt-1 text-xs text-muted-foreground">
@@ -343,7 +392,7 @@ function ProactiveEditor({ value, onChange }: { value: ProactiveDto; onChange: (
       <Field className="gap-1">
         <FieldLabel htmlFor="bot-proactive-enabled">允许读空气主动插话</FieldLabel>
         <Switch id="bot-proactive-enabled" checked={value.enabled} onCheckedChange={(next) => set('enabled', next)} />
-        <FieldDescription>开启后，即使群友没 @ 她，她也会结合心智状态、话题匹配度与群气氛打分决定是否接话（0 额外 Token 门槛）。</FieldDescription>
+        <FieldDescription>开启后，即使群友没 @ 她，她也会结合话题匹配度、接话窗口与心智状态决定是否接话；无话题锚点时不会单靠精力/沉默强插闲聊，明确 @/引用他人时硬拦截。</FieldDescription>
       </Field>
       <Field className="gap-1">
         <FieldLabel htmlFor="bot-proactive-mode">生效模式</FieldLabel>
@@ -417,6 +466,12 @@ function ProactiveEditor({ value, onChange }: { value: ProactiveDto; onChange: (
       <NumberField id="bot-proactive-shared" label="同群多 Bot 共享冷却（秒）" value={value.shared_group_cooldown_seconds} min={0} max={3600}
         onChange={(v) => set('shared_group_cooldown_seconds', Math.round(v))}
         hint="任意己方 Bot 刚在本群主动开口后，其他己方 Bot 在此秒数内暂让不抢话。" />
+      <NumberField id="bot-proactive-stale-sec" label="主动插话新鲜度死线（秒）" value={value.stale_abort_seconds ?? 90} min={15} max={600}
+        onChange={(v) => set('stale_abort_seconds', Math.round(v))}
+        hint="默认 90 秒。若模型排队/重试耗时超过此秒数，直接放弃本次主动插话，防翻出半小时前的旧话诈尸。" />
+      <NumberField id="bot-proactive-stale-msgs" label="主动排队期间群新消息上限（条）" value={value.stale_max_new_messages ?? 8} min={0} max={50}
+        onChange={(v) => set('stale_max_new_messages', Math.round(v))}
+        hint="默认 8 条（0 表示不按条数限制）。准备发主动插话前若本群已又刷过这么多条新消息，说明话题已翻篇，自动放弃。" />
     </div>
   )
 }
@@ -578,6 +633,16 @@ function BotEditor({ draft, onChange, isNew, initialTab = 'identity' }: { draft:
         <div className="md:col-span-2">
           <AreaField id="bot-guard-rules" label="追加身份规则（每行一条）" value={lines(draft.persona.identity_guard_rules)} onChange={(v) => setPersona('identity_guard_rules', fromLines(v))} />
         </div>
+        <div className="md:col-span-2">
+          <TextField
+            id="bot-expr-blocklist"
+            label="表达学习专属禁用词（逗号分隔）"
+            value={csv(draft.persona.expression_blocklist ?? [])}
+            onChange={(v) => setPersona('expression_blocklist', fromCsv(v))}
+            placeholder="如：老娘, 爷, 草（留空仅使用全局禁用词）"
+            hint="叠加在全局 Learning_Settings.expression_persona_blocklist 之上：含这些词的群友口癖不会自动转正给这个 Bot（不阻碍其他 Bot 学习）。保存立即生效。"
+          />
+        </div>
       </TabsContent>
       <TabsContent value="behavior" className="grid gap-4 md:grid-cols-2">
         <TextField id="bot-interest" label="兴趣关键词（逗号分隔）" value={csv(draft.interest_keywords)} onChange={(v) => set('interest_keywords', fromCsv(v))} />
@@ -591,7 +656,7 @@ function BotEditor({ draft, onChange, isNew, initialTab = 'identity' }: { draft:
         <ProactiveEditor value={draft.proactive ?? emptyProactive()} onChange={(next) => set('proactive', next)} />
       </TabsContent>
       <TabsContent value="body">
-        <BodyEditor value={draft.body ?? emptyBody()} onChange={(next) => set('body', next)} />
+        <BodyEditor value={draft.body ?? emptyBody()} onChange={(next) => set('body', next)} dbId={draft.db_id} isNew={isNew} />
       </TabsContent>
       <TabsContent value="mood">
         <MoodEditor mood={draft.mood ?? emptyMood()} onChange={(next) => set('mood', next)} />

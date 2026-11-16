@@ -492,3 +492,229 @@ def test_proactive_topic_match_beats_global_zero_and_followup_continues(followup
     assert e2._wave_memory_reply_decision["allow"] is True
     assert e2._wave_memory_reply_decision["proactive_wake"] is True
     assert "followup_window" in e2._wave_memory_reply_decision["reasons"]
+
+@pytest.mark.parametrize("hour,window,blocked", [
+    (0, (0, 6), True), (5, (0, 6), True), (6, (0, 6), False), (7, (0, 6), False),
+    (23, (23, 6), True), (0, (23, 6), True), (6, (23, 6), False), (12, (23, 6), False),
+])
+@pytest.mark.parametrize("path", ["topic", "followup", "concern", "direct"])
+def test_service_quiet_union_blocks_non_direct_paths(followup, hour, window, blocked, path):
+    from datetime import datetime
+    from domain.bot_profile import BodySettings, BotProfile, ProactiveSettings
+
+    # body.enabled=False 且不挂 body_service 仓时，仍应严格遵守服务静默窗口（[start, end) 左闭右开）。
+    followup.clock.now = datetime(2026, 11, 15, hour).timestamp()
+    followup.enabled = path == "concern"
+    p = plugin(followup, "enforce")
+    profile = BotProfile(
+        db_id="bot-sample", name="样例", qq_id="self-sample",
+        body=BodySettings(enabled=False, service_quiet_start=window[0], service_quiet_end=window[1]),
+        proactive=ProactiveSettings(enabled=True, mode="enforce", quiet_hours_start=0, quiet_hours_end=0,
+                                    preferred_topics=["纸桥", "搭建"], score_threshold=45),
+    )
+    p.bot_registry = SimpleNamespace(get=lambda _: profile)
+    p.meta_thinking = SimpleNamespace(is_interesting=lambda _: True)
+    if path == "followup":
+        p._reply_tracker = {"bot-sample:room-a:visitor": followup.clock() - 10}
+    event = Event("纸桥搭建如何了？", direct=path == "direct")
+    apply(p, event)
+    decision = event._wave_memory_reply_decision
+    if blocked and path != "direct":
+        assert decision["allow"] is False
+        assert decision["proactive_wake"] is False
+        assert "proactive_quiet_hours" in decision["reasons"]
+        assert not event.is_at_or_wake_command
+        assert not followup.is_pending(1, now=followup.clock())
+    else:
+        assert decision["allow"] is True
+
+
+@pytest.mark.parametrize("hour,blocked", [(0, True), (5, True), (6, True), (7, False), (22, False)])
+def test_service_quiet_and_proactive_quiet_form_union(followup, hour, blocked):
+    from datetime import datetime
+    from domain.bot_profile import BodySettings, BotProfile, ProactiveSettings
+
+    # 服务静默 0–6 与主动免打扰 1–7 并集为 0–7：0/5/6 点皆禁，7 点恢复。
+    followup.clock.now = datetime(2026, 11, 15, hour).timestamp()
+    followup.enabled = False
+    p = plugin(followup, "enforce")
+    profile = BotProfile(
+        db_id="bot-sample", name="样例", qq_id="self-sample",
+        body=BodySettings(enabled=False, service_quiet_start=0, service_quiet_end=6),
+        proactive=ProactiveSettings(enabled=True, mode="enforce", quiet_hours_start=1, quiet_hours_end=7,
+                                    preferred_topics=["纸桥", "搭建"], score_threshold=45),
+    )
+    p.bot_registry = SimpleNamespace(get=lambda _: profile)
+    event = Event("纸桥搭建如何了？")
+    apply(p, event)
+    decision = event._wave_memory_reply_decision
+    assert decision["allow"] is (not blocked)
+    if blocked:
+        assert "proactive_quiet_hours" in decision["reasons"]
+
+
+@pytest.mark.parametrize("mode", ["off", "shadow", "enforce"])
+def test_quiet_hours_also_blocks_concern_when_air_reading_disabled(mode):
+    decision = ReplyDecisionService({"mode": mode}).decide(signals(
+        direct=False, candidate=True, concern=True,
+        proactive_enabled=False, quiet_hours_active=True,
+    ))
+    assert decision["allow"] is False
+    assert "proactive_quiet_hours" in decision["reasons"]
+
+
+def test_unanchored_proactive_question_cannot_break_threshold_by_padding():
+    """复现线上 case：『为啥没人逆向LIbTv』无话题/无关切/非接话窗口，光靠问号+心智+身体+沉默不得破门。"""
+    svc = ReplyDecisionService({"bots": {"yushu": {"mode": "enforce", "score_threshold": 55.0}}})
+    d = svc.decide(ReplySignals(
+        bot_id="yushu",
+        session_id="qq:group:138118443",
+        visibility="group",
+        message="为啥没人逆向LIbTv？",
+        direct=False,
+        proactive_enabled=True,
+        relevance=0.0,
+        topic_match=0.0,
+        concern=False,
+        followup_eligible=False,
+        mind_drive=0.95,
+        mind_energy=0.95,
+        body_drive=0.45,
+        silence_messages=15,
+    ))
+    assert d["allow"] is False
+    assert d["proactive_wake"] is False
+    assert d["score"] < 55.0
+    assert "no_topic_anchor" in d["reasons"]
+
+
+def test_addressed_other_and_system_notice_are_hard_blocked_even_with_high_factors():
+    """复现线上 case：『@傅四霁 ...』或『😢 所有图片均下载失败』即使叠满高分因子也硬拦截。"""
+    from services.reply_decision import detect_message_air_flags
+
+    svc = ReplyDecisionService({"bots": {"yushu": {"mode": "enforce", "score_threshold": 55.0}}})
+    d_other = svc.decide(ReplySignals(
+        bot_id="yushu",
+        session_id="qq:group:138118443",
+        visibility="group",
+        message="[At:3193472] 缺氧自动化怎么搭？",
+        direct=False,
+        candidate=True,
+        concern=True,
+        proactive_enabled=True,
+        addressed_other=True,
+        relevance=1.0,
+        topic_match=1.0,
+        mind_drive=0.95,
+        mind_energy=0.95,
+        body_drive=0.45,
+        silence_messages=12,
+        feedback="positive",
+    ))
+    assert d_other["allow"] is False
+    assert "addressed_other" in d_other["reasons"]
+
+    flags = detect_message_air_flags("😢 所有图片均下载失败", bot_terms=("羽书",))
+    assert flags["is_system_notice"] is True
+    d_err = svc.decide(ReplySignals(
+        bot_id="yushu",
+        session_id="qq:group:398291136",
+        visibility="group",
+        message="😢 所有图片均下载失败",
+        direct=False,
+        proactive_enabled=True,
+        is_system_notice=True,
+        relevance=1.0,
+        topic_match=1.0,
+        followup_eligible=True,
+    ))
+    assert d_err["allow"] is False
+    assert "system_or_error_notice" in d_err["reasons"]
+
+
+def test_unrelated_group_chatter_settles_snubbed_while_followup_clears_it(followup):
+    """群友聊别的不清零主动冷场计数，超 120s 且 >=4 条无关消息触发 snubbed；点名或接话窗口才清零。"""
+    from domain.bot_profile import BodySettings, BotProfile, ProactiveSettings
+
+    followup.enabled = False
+    clock = followup.clock
+    p = plugin(followup, "enforce")
+    body_events = []
+    mood_ignored = []
+    p.body_service = SimpleNamespace(
+        active_for=lambda _: True,
+        reading=lambda _: None,
+        in_service_quiet=lambda *a, **kw: False,
+        record_event=lambda bot_id, kind, **kw: body_events.append((bot_id, kind)),
+    )
+    p.mood_service = SimpleNamespace(
+        mind_state=lambda *a, **kw: None,
+        note_silence_or_ignored=lambda bot_id, sid, **kw: mood_ignored.append((bot_id, sid, kw.get("reason"))),
+        note_bot_engaged_in_session=lambda *a, **kw: None,
+    )
+    profile = BotProfile(
+        db_id="bot-sample",
+        name="羽书",
+        qq_id="self-sample",
+        body=BodySettings(enabled=True),
+        proactive=ProactiveSettings(enabled=True, mode="enforce", min_gap_seconds=300.0, preferred_topics=["缺氧"]),
+    )
+    p.bot_registry = SimpleNamespace(get=lambda _: profile)
+    p._reply_tracker = {}
+
+    # Bot 刚主动插了一句嘴
+    p.reply_decision.note_reply("bot-sample", "testnet:group:room-a", "group", proactive=True)
+    clock.now += 150.0
+    # 群里其他人聊了 4 句无关闲聊：不应清零，第 4 句应触发一次冷场结算与身体 snubbed
+    for i in range(4):
+        ev = Event(f"大家中午吃什么 {i}")
+        apply(p, ev)
+    state = p.reply_decision._state(("bot-sample", "group", "testnet:group:room-a"))
+    assert state.unanswered_proactive == 1
+    assert p.reply_decision.proactive_backoff_seconds(
+        bot_id="bot-sample", session_id="testnet:group:room-a", visibility="group", base_gap_seconds=300.0
+    ) > 0
+    assert body_events == [("bot-sample", "snubbed")]
+    assert mood_ignored == [("bot-sample", "testnet:group:room-a", "ignored")]
+
+    # 群友直接 @ Bot：正式清零冷场退避
+    direct_ev = Event("羽书在吗", direct=True)
+    apply(p, direct_ev)
+    assert state.unanswered_proactive == 0
+
+
+def test_proactive_stale_abort_cancels_delayed_wake_before_llm(followup):
+    """复现线上 case：主动唤醒后排队超过 stale_abort_seconds 或群内刷过多条新消息时放弃回复。"""
+    from domain.bot_profile import BotProfile, ProactiveSettings
+
+    followup.enabled = False
+    clock = followup.clock
+    p = plugin(followup, "enforce")
+    profile = BotProfile(
+        db_id="bot-sample",
+        name="羽书",
+        qq_id="self-sample",
+        proactive=ProactiveSettings(
+            enabled=True,
+            mode="enforce",
+            preferred_topics=["缺氧"],
+            score_threshold=45.0,
+            stale_abort_seconds=60.0,
+            stale_max_new_messages=3,
+        ),
+    )
+    p.bot_registry = SimpleNamespace(get=lambda _: profile)
+    p.meta_thinking = SimpleNamespace(is_interesting=lambda _: True)
+
+    woke = Event("缺氧电解制氧怎么摆？")
+    apply(p, woke)
+    assert woke.is_at_or_wake_command is True
+    assert isinstance(woke._wave_memory_proactive_freshness, dict)
+
+    # 模拟上游排队卡了 75 秒才进入 LLM 请求守卫
+    clock.now += 75.0
+    guard = mixin_method("injection.py", "_reply_request_suppressed")
+    assert guard(p, woke) is True
+    assert woke.stopped is True
+    assert "proactive_stale_aborted" in woke._wave_memory_reply_decision["reasons"]
+

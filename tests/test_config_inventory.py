@@ -47,7 +47,14 @@ def test_inventory_marks_layers_and_suspects():
     ]
     defaults = build_default_channel_config()
     effective = build_channel_config_from_plugin_config({"Channel_Settings": {"channels": {"jargon": {"enabled": False}}}})
-    profile = BotProfile.from_dict({"db_id": "yushu", "name": "羽书", "channels": {"fewshot": {"enabled": False}}})
+    profile = BotProfile.from_dict({
+        "db_id": "yushu",
+        "name": "羽书",
+        "channels": {"fewshot": {"enabled": False}},
+        "proactive": {"enabled": True, "mode": "enforce", "stale_abort_seconds": 120},
+        "body": {"enabled": True, "service_quiet_start": 0, "service_quiet_end": 6},
+        "persona": {"expression_blocklist": ["老娘"]},
+    })
     inv = build_inventory(
         settings_payload=settings_payload,
         hot_params=hot,
@@ -63,6 +70,11 @@ def test_inventory_marks_layers_and_suspects():
     assert by_key["hot:ingress.debounce_seconds"]["layer"] == "override"
     assert by_key["hot:spike.max_hops"]["changed"] is False
     assert by_key["bot:yushu.channels.fewshot.enabled"]["scope"] == "bot:yushu"
+    assert by_key["bot:yushu.proactive.enabled"]["effective"] is True
+    assert by_key["bot:yushu.proactive.stale_abort_seconds"]["effective"] == 120.0
+    assert by_key["bot:yushu.body.enabled"]["effective"] is True
+    assert by_key["bot:yushu.body.service_quiet_window"]["effective"] == "0-6"
+    assert by_key["bot:yushu.persona.expression_blocklist"]["effective"] == "老娘"
     assert inv["suspects"][0]["key"] == "Query_Settings.enable_auto_inject"
     assert inv["revision"].startswith("inv-")
     assert inv["precedence"] == ["builtin", "static", "bot", "override"]
