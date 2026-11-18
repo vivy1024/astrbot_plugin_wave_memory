@@ -192,7 +192,22 @@ function BodyCard({ botId }: { botId: string }) {
             <HeartPulseIcon className="size-4 text-primary" />
             <CardTitle className="text-sm">身体（激素）</CardTitle>
           </div>
-          {body?.enabled ? <Badge variant={body.asleep ? 'secondary' : 'outline'} className="text-xs font-normal">{body.asleep ? '睡眠中' : '清醒'}</Badge> : null}
+          {body?.enabled ? (
+            <div className="flex items-center gap-1.5">
+              {typeof body.energy === 'number' ? (
+                <Badge variant="outline" className="text-xs font-normal">精力 {body.energy.toFixed(0)}</Badge>
+              ) : null}
+              <Badge variant={body.asleep ? 'secondary' : 'outline'} className="text-xs font-normal">
+                {body.woken_drowsy
+                  ? '刚被叫醒'
+                  : body.asleep
+                    ? `睡眠中 · ${body.sleep_stage === 'deep' ? '深睡' : body.sleep_stage === 'rem' ? 'REM' : '浅睡'}`
+                    : body.resting
+                      ? '歇口气中'
+                      : '清醒'}
+              </Badge>
+            </div>
+          ) : null}
         </div>
         <CardDescription>一个 Bot 一副身体，所有群、私聊与平台共用；回落到昼夜基线，只由真人事件改变</CardDescription>
       </CardHeader>

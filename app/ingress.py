@@ -667,14 +667,27 @@ class IngressMixin:
                             body_reading = body_service.reading(scope.bot_id)
                             if body_reading is not None:
                                 body_drive = body_reading.proactive_drive
+                                if getattr(body_reading, "asleep", False) or getattr(body_reading, "resting", False):
+                                    quiet_hours_active = True
                         except Exception:
                             body_drive = None
 
-                    # 夜间免打扰与单向滑动配额 + 双 Bot 群级互斥冷却
+                    # 夜间免打扰与单向滑动配额 + 双 Bot 群级互斥冷却（未单独改过免打扰时段时自动跟随身体作息窗口）
                     if proactive_enabled and proactive_cfg is not None:
-                        hour = datetime.fromtimestamp(service.clock()).hour
+                        hour_val = (
+                            float(body_service.hour_of(service.clock()))
+                            if body_service is not None and hasattr(body_service, "hour_of")
+                            else float(datetime.fromtimestamp(service.clock()).hour)
+                        )
+                        q_start = proactive_cfg.quiet_hours_start
+                        q_end = proactive_cfg.quiet_hours_end
+                        if q_start == 1 and q_end == 7 and body_cfg is not None:
+                            b_start = getattr(body_cfg, "sleep_start", None)
+                            b_end = getattr(body_cfg, "sleep_end", None)
+                            if b_start is not None and b_end is not None:
+                                q_start, q_end = int(b_start), int(b_end)
                         quiet_hours_active = quiet_hours_active or night_active(
-                            hour, proactive_cfg.quiet_hours_start, proactive_cfg.quiet_hours_end
+                            int(hour_val) % 24, q_start, q_end
                         )
                         quota = service.proactive_quota_status(
                             bot_id=scope.bot_id,
@@ -1217,6 +1230,18 @@ class IngressMixin:
                     mood_service.note_bot_reply(runtime_scope.bot_id)
             except Exception as exc:
                 logger.debug(f"[WaveMemory] mood reply count failed: {exc!r}")
+
+        # 身体精力消耗与对话余温刷新（连聊过多自然歇口气、跨入睡点不断电、熬夜触发褪黑素抬升）
+        body_service = getattr(self, "body_service", None)
+        if body_service is not None and hasattr(body_service, "note_bot_reply"):
+            try:
+                body_service.note_bot_reply(
+                    runtime_scope.bot_id,
+                    chars=len(bot_text or ""),
+                    scene=runtime_scope.session.id,
+                )
+            except Exception as exc:
+                logger.debug(f"[WaveMemory] body reply note failed: {exc!r}")
 
         # 事后记账：这段对话停下来之后单独回看一遍（见 services/post_reply_bookkeeping.py）
         bookkeeper = getattr(self, "post_reply_bookkeeper", None)

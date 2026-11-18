@@ -457,10 +457,13 @@ class StartupMixin:
             from ..services.bot_body import BotBodyService
 
             if getattr(self.db, "bot_body", None) is not None:
+                raw_tz = str(self.config.get("Learning_Settings", {}).get("fact_timezone", "") or "").strip()
+                body_tz = raw_tz if raw_tz and raw_tz.upper() != "UTC" else "Asia/Shanghai"
                 self.body_service = BotBodyService(
                     self.db,
                     profile_for=lambda db_id: self.bot_registry.get(db_id),
                     closeness_for=self._body_closeness,
+                    timezone=body_tz,
                 )
         except Exception as e:
             logger.warning(f"[WaveMemory] BotBodyService init failed: {e}")

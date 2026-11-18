@@ -120,10 +120,15 @@ export function emptyCharacterExperience(): CharacterExperienceDto {
   return { enabled: false, current_stage: '', pronoun: DEFAULT_PRONOUN, top_k: 3, max_chars: 600, min_score: 0.35, legacy_sources: [], lore_categories: [] }
 }
 
+export type SleepBehavior = 'wakable' | 'drowsy_only' | 'strict'
+
 export interface BodyDto {
   enabled: boolean
   sleep_start: number | null
   sleep_end: number | null
+  sleep_behavior?: SleepBehavior
+  sleep_jitter_minutes?: number
+  active_chat_grace_seconds?: number
   sleep_replies: string[]
   sleep_reply_cooldown_seconds: number
   hormone_gain: number
@@ -137,6 +142,9 @@ export function emptyBody(): BodyDto {
     enabled: false,
     sleep_start: null,
     sleep_end: null,
+    sleep_behavior: 'wakable',
+    sleep_jitter_minutes: 20,
+    active_chat_grace_seconds: 180,
     sleep_replies: ['……zzz', '（睡着了）', '困……明天再说'],
     sleep_reply_cooldown_seconds: 1800,
     hormone_gain: 1,

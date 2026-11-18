@@ -312,12 +312,21 @@ function BodyEditor({ value, onChange, dbId, isNew }: { value: BodyDto; onChange
             <div className="flex flex-wrap items-center gap-2 font-medium">
               <span>当前实时身体读数</span>
               {liveBody?.enabled ? (
-                <Badge variant={liveBody.asleep ? 'secondary' : 'default'}>
-                  {liveBody.asleep ? '睡眠中' : '清醒在线'}
+                <Badge variant={liveBody.asleep ? 'secondary' : liveBody.resting ? 'outline' : 'default'}>
+                  {liveBody.woken_drowsy
+                    ? '刚被吵醒（迷糊在线）'
+                    : liveBody.asleep
+                      ? `睡眠中（${liveBody.sleep_stage === 'deep' ? '深睡' : liveBody.sleep_stage === 'rem' ? '做梦' : '浅睡'}）`
+                      : liveBody.resting
+                        ? '聊累歇口气中'
+                        : '清醒在线'}
                 </Badge>
               ) : (
                 <Badge variant="outline">激素身体未启用</Badge>
               )}
+              {liveBody?.enabled && typeof liveBody.energy === 'number' ? (
+                <Badge variant="outline">精力：{liveBody.energy.toFixed(0)} / 100</Badge>
+              ) : null}
               {bodyDelta !== null ? (
                 <Badge variant="outline">
                   读空气偏置：{bodyDelta > 0 ? `+${bodyDelta}` : bodyDelta} 分（proactive_drive={liveBody?.proactive_drive?.toFixed(2)}）
@@ -338,13 +347,13 @@ function BodyEditor({ value, onChange, dbId, isNew }: { value: BodyDto; onChange
         </div>
       ) : null}
       <div className="md:col-span-2 rounded-lg border bg-muted/15 p-3">
-        <p className="text-xs font-semibold">模型服务静默窗口（例如 antigravity 夜间停服）</p>
+        <p className="text-xs font-semibold">模型服务静默窗口（基础设施层，如夜间 API 停服防报错）</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          配了起止小时就生效，不依赖下方「激素身体」开关。窗口内被叫到不会调用模型（省得模型报错漏进群），也不掷骰唤醒，直接按冷却挑一句静默话术回复；话术里的 {'{end}'} 会替换成结束钟点（如「6 点」）。
+          配了起止小时就生效，与下方「生物作息」互相独立、可随时单独开启。窗口内被叫到不会调用模型（防模型停服报错漏进群），也不掷骰唤醒，直接按冷却挑一句静默话术回复；话术里的 {'{end}'} 会替换成结束钟点（如「6 点」）。
         </p>
       </div>
       <OptionalHourField id="bot-quiet-start" label="静默开始（时 0~23）" value={value.service_quiet_start}
-        onChange={(v) => set('service_quiet_start', v)} hint="如 23（晚上 11 点）；留空则关闭静默窗口。" />
+        onChange={(v) => set('service_quiet_start', v)} hint="如 0（凌晨 0 点）；留空则关闭服务静默。" />
       <OptionalHourField id="bot-quiet-end" label="静默结束（时 0~23）" value={value.service_quiet_end}
         onChange={(v) => set('service_quiet_end', v)} hint="如 6（早上 6 点），支持跨午夜。" />
       <div className="md:col-span-2">
@@ -359,16 +368,34 @@ function BodyEditor({ value, onChange, dbId, isNew }: { value: BodyDto; onChange
       </div>
 
       <Field className="gap-1">
-        <FieldLabel htmlFor="bot-body-enabled">启用激素身体与褪黑素睡眠</FieldLabel>
+        <FieldLabel htmlFor="bot-body-enabled">启用激素身体、精力槽与柔性睡眠</FieldLabel>
         <Switch id="bot-body-enabled" checked={value.enabled} onCheckedChange={(next) => set('enabled', next)} />
-        <FieldDescription>开启后由昼夜节律与真人事件推动多巴胺/血清素/催产素/皮质醇/褪黑素/无聊，过阈值时向模型给一句边沿事实提示，褪黑素过高时入睡（可被叫醒）。</FieldDescription>
+        <FieldDescription>开启后由昼夜节律（Asia/Shanghai）、真人互动与开口耗能共同驱动激素和精力：白天连聊过多会自然歇口气，夜晚褪黑素升高犯困入睡（不设死，可被吵醒并带迷糊困意）。</FieldDescription>
       </Field>
-      <NumberField id="bot-body-cooldown" label="话术同人冷却（秒）" value={value.sleep_reply_cooldown_seconds} min={0} max={86400}
+      <Field className="gap-1">
+        <FieldLabel htmlFor="bot-sleep-behavior">作息/困倦睡眠响应方式</FieldLabel>
+        <select
+          id="bot-sleep-behavior"
+          className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+          value={value.sleep_behavior ?? 'wakable'}
+          onChange={(e) => set('sleep_behavior', e.target.value as NonNullable<BodyDto['sleep_behavior']>)}
+        >
+          <option value="wakable">可被吵醒（推荐：浅睡/熟人易醒、热聊不断电、醒后迷糊）</option>
+          <option value="drowsy_only">仅犯困不断联（被 @ 始终回，只注入困意与简短语气）</option>
+          <option value="strict">沉睡阶梯（第 1 声不醒，连叫第 2~6 声才醒）</option>
+        </select>
+        <FieldDescription>决定进入作息窗口或高褪黑素睡眠时被人 @ / 私聊的表现；无论选哪项，睡眠中都不会主动去群里读空气插嘴。</FieldDescription>
+      </Field>
+      <OptionalHourField id="bot-sleep-start" label="角色作息入睡（时 0~23）" value={value.sleep_start}
+        onChange={(v) => set('sleep_start', v)} hint="留空则按褪黑素自然犯困（凌晨约 1~4 点）；填写后读空气免打扰与深夜疲劳会自动跟随。" />
+      <OptionalHourField id="bot-sleep-end" label="角色作息起床（时 0~23）" value={value.sleep_end}
+        onChange={(v) => set('sleep_end', v)} hint="每天会按下方浮动分钟数自然微调，避免卡死整点闹钟式起床。" />
+      <NumberField id="bot-sleep-jitter" label="每日作息自然浮动（分钟 0~60）" value={value.sleep_jitter_minutes ?? 20} min={0} max={60}
+        onChange={(v) => set('sleep_jitter_minutes', Math.round(v))} hint="默认 ±20 分钟；设为 0 则严守整点。" />
+      <NumberField id="bot-chat-grace" label="热聊余温不断电缓冲（秒）" value={value.active_chat_grace_seconds ?? 180} min={0} max={1800}
+        onChange={(v) => set('active_chat_grace_seconds', Math.round(v))} hint="刚发过回复后的缓冲期内到点不秒睡，会顺着聊完道晚安再睡。" />
+      <NumberField id="bot-body-cooldown" label="未醒短语同人冷却（秒）" value={value.sleep_reply_cooldown_seconds} min={0} max={86400}
         onChange={(v) => set('sleep_reply_cooldown_seconds', Math.round(v))} hint="默认 1800 秒（30 分钟）。" />
-      <OptionalHourField id="bot-sleep-start" label="作息睡眠开始（时 0~23）" value={value.sleep_start}
-        onChange={(v) => set('sleep_start', v)} hint="仅影响身体入睡（留空则只按褪黑素入睡），10 分钟内多次被叫可醒。" />
-      <OptionalHourField id="bot-sleep-end" label="作息睡眠结束（时 0~23）" value={value.sleep_end}
-        onChange={(v) => set('sleep_end', v)} />
       <NumberField id="bot-body-gain" label="事件敏度系数（0~3）" value={value.hormone_gain} min={0} max={3}
         onChange={(v) => set('hormone_gain', v)} hint="1 = 默认；0 = 事件不再推动激素，只剩昼夜节律。" />
       <div className="md:col-span-2">

@@ -14,14 +14,22 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-POLICY_VERSION = "bot-body/v1"
+POLICY_VERSION = "bot-body/v2"
 
 HORMONES = ("dopamine", "serotonin", "oxytocin", "cortisol", "melatonin", "boredom")
+
+# 精力与日间休息（独立于 6 大激素字典之外，避免破坏已有 API/测试契约）
+ENERGY_DEFAULT = 82.0
+RESTING_ENERGY_ENTER = 28.0
+RESTING_ENERGY_EXIT = 42.0
+ENERGY_AWAKE_HALF_LIFE_MINUTES = 35.0
+ENERGY_SLEEP_HALF_LIFE_MINUTES = 45.0
 
 # 半衰期（分钟）。boredom 单独处理：安静一阵之后才开始向 100 靠拢。
 HALF_LIFE_MINUTES: Mapping[str, float] = {
@@ -59,7 +67,9 @@ def baseline(hormone: str, hour: float, *, closeness: float = 45.0) -> float:
     if hormone == "cortisol":
         return 26.0 + 30.0 * w8
     if hormone == "melatonin":
-        return 14.0 + 62.0 * w2
+        # 凌晨 2 点波峰约 83（不设死睡眠时间也能在凌晨 1~3 点跨过 80 自然犯困入睡），午后 13:30 有一小波餐后困倦
+        nap_dip = wave(hour, 13.5) ** 4
+        return 14.0 + 69.0 * w2 + 5.0 * nap_dip
     if hormone == "boredom":
         return 30.0
     raise KeyError(hormone)
@@ -98,6 +108,7 @@ EVENT_TABLE: Mapping[str, BodyEvent] = {
     "tool_error": BodyEvent("tool_error", {"cortisol": 2.0}, habituate=False),
     "tool_error_streak": BodyEvent("tool_error_streak", {"cortisol": 5.0}, habituate=False),
     "late_night_call": BodyEvent("late_night_call", {"melatonin": 6.0, "cortisol": 2.0}),
+    "woken_up": BodyEvent("woken_up", {"cortisol": 4.5, "dopamine": -2.5}),
 }
 
 # 关系事件（relationship_policy.VALID_EVENT_TYPES）到身体事件的映射。
@@ -232,6 +243,105 @@ class BodyReading:
     sleepiness: float
     asleep: bool
     flags: dict[str, bool] = field(default_factory=dict)
+    energy: float = ENERGY_DEFAULT
+    resting: bool = False
+    sleep_stage: str = "awake"
+    woken_drowsy: bool = False
+
+
+def advance_energy(
+    energy: float,
+    *,
+    elapsed_seconds: float,
+    hour_at: Any = None,
+    start_ts: float = 0.0,
+    sleep_start: float | None = None,
+    sleep_end: float | None = None,
+) -> float:
+    """推进身体精力（0..100）：安静休息时回升，睡着时回血更快，深夜硬熬回升上限受抑。"""
+    current = clamp(energy if energy is not None else ENERGY_DEFAULT)
+    remaining = max(0.0, min(float(elapsed_seconds), MAX_ELAPSED_HOURS * 3600.0))
+    if remaining <= 0:
+        return round(current, 3)
+    step = STEP_MINUTES * 60.0
+    cursor = float(start_ts)
+    while remaining > 1e-6:
+        dt = min(step, remaining)
+        minutes = dt / 60.0
+        hour = float(hour_at(cursor + dt / 2.0)) if callable(hour_at) else 14.0
+        in_sleep = _in_sleep_window(hour, sleep_start, sleep_end) or baseline("melatonin", hour) >= 80.0
+        if in_sleep:
+            target = 96.0
+            half = ENERGY_SLEEP_HALF_LIFE_MINUTES
+        elif _in_sleep_window(hour, 23.5, 5.5):
+            target = 52.0
+            half = ENERGY_AWAKE_HALF_LIFE_MINUTES * 1.4
+        else:
+            target = 86.0
+            half = ENERGY_AWAKE_HALF_LIFE_MINUTES
+        current = target + (current - target) * 0.5 ** (minutes / max(1.0, half))
+        current = clamp(current)
+        cursor += dt
+        remaining -= dt
+    return round(current, 3)
+
+
+def consume_reply_energy(
+    energy: float,
+    *,
+    chars: int = 0,
+    late_night: bool = False,
+) -> tuple[float, float]:
+    """Bot 实际开口发出一句回复时消耗精力，返回 (新精力, 实际消耗正数)。"""
+    before = clamp(energy if energy is not None else ENERGY_DEFAULT)
+    length_cost = min(2.2, max(0, int(chars)) / 90.0)
+    cost = (2.6 + length_cost) * (1.65 if late_night else 1.0)
+    after = clamp(before - cost)
+    return round(after, 3), round(before - after, 3)
+
+
+def next_resting_state(energy: float, was_resting: bool = False) -> bool:
+    """滞回判定日间歇口气（防阈值附近反复横跳）：<=28 进入休息，回升到 >=42 解除。"""
+    val = clamp(energy if energy is not None else ENERGY_DEFAULT)
+    if was_resting:
+        return val < RESTING_ENERGY_EXIT
+    return val <= RESTING_ENERGY_ENTER
+
+
+def daily_window_jitter(bot_id: str, day_key: str, max_minutes: int = 20) -> tuple[float, float]:
+    """按 (bot_id, YYYY-MM-DD) 生成确定性的入睡/起床微浮动（单位：小时），重启不漂移。"""
+    cap = max(0, min(60, int(max_minutes or 0)))
+    if cap <= 0:
+        return 0.0, 0.0
+    digest = hashlib.blake2b(f"{bot_id}:{day_key}".encode("utf-8"), digest_size=4).digest()
+    raw_start = (int.from_bytes(digest[:2], "big") / 65535.0) * 2.0 - 1.0
+    raw_end = (int.from_bytes(digest[2:4], "big") / 65535.0) * 2.0 - 1.0
+    return round(raw_start * cap / 60.0, 4), round(raw_end * cap / 60.0, 4)
+
+
+def sleep_stage_at(
+    hour: float,
+    *,
+    sleep_start: float | None = None,
+    sleepiness: float = 0.0,
+    asleep: bool = False,
+) -> str:
+    """根据当前钟点与入睡锚点推算睡眠阶段（awake / drowsy / light / deep / rem），纯函数不落库。"""
+    if not asleep:
+        return "drowsy" if float(sleepiness) >= 0.6 else "awake"
+    anchor = float(sleep_start) if sleep_start is not None else 0.5
+    h = float(hour) % 24.0
+    hours_in = (h - anchor) % 24.0
+    minutes_in = hours_in * 60.0
+    if minutes_in < 20.0:
+        return "light"
+    cycle_pos = (minutes_in % 90.0) / 90.0
+    # 前半夜（入睡 4.5 小时内）深睡占比高；后半夜 REM 与浅睡为主
+    if hours_in < 4.5 and 0.22 <= cycle_pos < 0.72:
+        return "deep"
+    if cycle_pos >= 0.72:
+        return "rem"
+    return "light"
 
 
 def read(
@@ -239,31 +349,52 @@ def read(
     *,
     hour: float,
     closeness: float = 45.0,
-    sleep_start: int | None = None,
-    sleep_end: int | None = None,
+    sleep_start: float | int | None = None,
+    sleep_end: float | int | None = None,
+    energy: float | None = None,
+    was_resting: bool = False,
+    woken_drowsy: bool = False,
+    bedtime_grace: bool = False,
 ) -> BodyReading:
-    """从激素状态派生出对行为的偏置。
+    """从激素与精力状态派生出对行为的偏置。
 
     ``mood_bias`` 夹在 ±0.2：身体只轻推快层心情，不替它做主。
-    ``proactive_drive`` 0..1：无聊与催产素推高，压力与困意压低。
+    ``proactive_drive`` 0..1：无聊与催产素推高，压力、困意与低精力歇口气压低。
     """
     values = {name: clamp(state.get(name, baseline(name, hour))) for name in HORMONES}
+    energy_val = clamp(energy if energy is not None else ENERGY_DEFAULT)
     dev = {name: (values[name] - baseline(name, hour, closeness=closeness)) / 30.0 for name in HORMONES}
     valence = 0.5 * dev["dopamine"] + 0.4 * dev["serotonin"] + 0.3 * dev["oxytocin"] - 0.6 * max(0.0, dev["cortisol"])
     arousal = 0.4 * dev["dopamine"] + 0.5 * max(0.0, dev["cortisol"]) - 0.5 * max(0.0, dev["melatonin"])
     mood_bias = max(-0.2, min(0.2, valence * 0.2))
     arousal_bias = max(-0.2, min(0.2, arousal * 0.2))
-    sleepiness = clamp(values["melatonin"]) / 100.0
+    # 低精力（尤其夜间熬夜耗尽精力时）会叠加一点生理困意，促成自然犯困
+    fatigue_sleep_push = 0.14 * max(0.0, (35.0 - energy_val) / 35.0) if _in_sleep_window(hour, 22.5, 7.0) else 0.0
+    sleepiness = min(1.0, clamp(values["melatonin"]) / 100.0 + fatigue_sleep_push)
     in_window = _in_sleep_window(hour, sleep_start, sleep_end)
-    asleep = bool(in_window or sleepiness >= 0.8)
-    length = 0.7 + 0.45 * (0.5 + arousal_bias * 2.5) + 0.35 * (0.5 + mood_bias * 2.5) - 0.5 * max(0.0, sleepiness - 0.45)
+    drowsy_sleep_line = 0.88 if (sleep_start is not None and sleep_end is not None) else 0.80
+    raw_asleep = bool(in_window or sleepiness >= drowsy_sleep_line)
+    asleep = bool(raw_asleep and not woken_drowsy and not bedtime_grace)
+    resting = bool(not raw_asleep and next_resting_state(energy_val, was_resting))
+    stage = sleep_stage_at(hour, sleep_start=sleep_start, sleepiness=sleepiness, asleep=raw_asleep)
+    if resting and stage == "awake":
+        stage = "resting"
+    length = (
+        0.7
+        + 0.45 * (0.5 + arousal_bias * 2.5)
+        + 0.35 * (0.5 + mood_bias * 2.5)
+        - 0.5 * max(0.0, sleepiness - 0.45)
+        - (0.22 if resting else 0.0)
+        - (0.25 if woken_drowsy else 0.0)
+    )
     # 常态昼夜基线下围绕 0.15 中性点窄幅呼吸（对应读空气 body_drive 偏置 ≈ 0 分）；
-    # 真正闲置无聊或刚受夸奖/亲近时正推，高压/被冷落/低落/犯困时负向压低。
+    # 真正闲置无聊或刚受夸奖/亲近时正推，高压/被冷落/低落/犯困/歇口气时负向压低。
     boredom_push = (
         0.38 * ((values["boredom"] - 45.0) / 55.0)
         if values["boredom"] > 45.0
         else -0.03 * max(0.0, (15.0 - values["boredom"]) / 15.0)
     )
+    energy_drag = 0.28 * max(0.0, (45.0 - energy_val) / 45.0)
     proactive = (
         0.15
         + boredom_push
@@ -272,22 +403,28 @@ def read(
         - 0.35 * max(0.0, dev["cortisol"] - 0.10)
         - 0.20 * max(0.0, -dev["serotonin"] - 0.20)
         - 0.55 * max(0.0, sleepiness - 0.35)
+        - energy_drag
     )
+    if raw_asleep or resting:
+        proactive = min(proactive, 0.02)
     length_factor = round(max(0.4, min(1.4, length)), 3)
     stressed = dev["cortisol"] >= EDGE_THRESHOLD
-    wired = dev["dopamine"] >= EDGE_THRESHOLD
+    wired = dev["dopamine"] >= EDGE_THRESHOLD and not resting
     low = dev["serotonin"] <= -EDGE_THRESHOLD
-    drowsy = sleepiness >= 0.6
+    drowsy = sleepiness >= 0.6 and not woken_drowsy and not bedtime_grace
     flags = {
+        "woken_drowsy": bool(woken_drowsy),
+        "bedtime_grace": bool(bedtime_grace),
+        "resting": resting,
         "stressed": stressed,
         "wired": wired,
         "low": low,
         "affectionate": dev["oxytocin"] >= EDGE_THRESHOLD,
         "lonely": dev["oxytocin"] <= -EDGE_THRESHOLD,
-        "bored": values["boredom"] >= 80.0,
+        "bored": values["boredom"] >= 80.0 and not resting,
         "drowsy": drowsy,
-        # 长度系数拉低/拉高时给出事实提示；若已经说了「没劲/困/绷着/兴奋」，不重复说长短。
-        "terse": length_factor <= 0.85 and not (low or drowsy or stressed),
+        # 长度系数拉低/拉高时给出事实提示；若已经说了「没劲/困/绷着/兴奋/歇口气」，不重复说长短。
+        "terse": length_factor <= 0.85 and not (low or drowsy or stressed or resting or woken_drowsy or bedtime_grace),
         "chatty": length_factor >= 1.25 and not wired,
     }
     return BodyReading(
@@ -299,10 +436,14 @@ def read(
         sleepiness=round(sleepiness, 4),
         asleep=asleep,
         flags=flags,
+        energy=round(energy_val, 2),
+        resting=resting,
+        sleep_stage=stage,
+        woken_drowsy=bool(woken_drowsy),
     )
 
 
-def in_quiet_window(hour: float, start: int | None, end: int | None) -> bool:
+def in_quiet_window(hour: float, start: float | int | None, end: float | int | None) -> bool:
     """是否处在模型服务静默时段（跨午夜自动处理；起止相同或缺一项视为没有静默）。"""
     return _in_sleep_window(hour, start, end)
 
@@ -314,17 +455,24 @@ def quiet_end_label(end: int | None) -> str:
     return f"{int(end) % 24} 点"
 
 
-def _in_sleep_window(hour: float, start: int | None, end: int | None) -> bool:
-    if start is None or end is None or start == end:
+def _in_sleep_window(hour: float, start: float | int | None, end: float | int | None) -> bool:
+    if start is None or end is None:
+        return False
+    s = float(start) % 24.0
+    e = float(end) % 24.0
+    if abs(s - e) < 1e-6:
         return False
     h = float(hour) % 24.0
-    if start < end:
-        return start <= h < end
-    return h >= start or h < end
+    if s < e:
+        return s <= h < e
+    return h >= s or h < e
 
 
 # 边沿事实：只在状态**刚越过**阈值时说一句，状态持续时闭嘴。
 _EDGE_LINES: Mapping[str, str] = {
+    "woken_drowsy": "你刚在睡梦中被叫醒，还迷迷糊糊带着困意，回完没急事还想继续睡。",
+    "bedtime_grace": "你现在困得眼皮直打架，顺着把这句聊完就准备道声晚安去睡了。",
+    "resting": "刚连着说了不少话有点累，这会儿想少打点字歇口气。",
     "stressed": "你这会儿有点绷着，不太想应付麻烦事。",
     "wired": "你这会儿精神头很足，话容易多。",
     "low": "你这会儿提不起劲，懒得说长话。",
@@ -350,7 +498,7 @@ def edge_notes(
     规则：某个标志刚变为真才说一次；持续为真时 40 分钟内不重复；变回假则清掉记录，
     下次再越过时可以重新说。总长度不超过 80 字。
     """
-    updated = {key: ts for key, ts in last_announced.items() if flags.get(key)}
+    updated = {key: ts for key, ts in last_announced.items() if not str(key).startswith("_") and flags.get(key)}
     lines: list[str] = []
     for key, text in _EDGE_LINES.items():
         if not flags.get(key):
@@ -378,38 +526,75 @@ def edge_notes(
 WAKE_WINDOW_SECONDS = 600.0
 WAKE_CERTAIN_AT = 6
 DEEP_SLEEP_FACTOR = 0.45
+STAGE_WAKE_FACTORS: Mapping[str, float] = {
+    "light": 1.15,
+    "rem": 1.05,
+    "deep": 0.52,
+}
 
 
-def wake_probability(calls_in_window: int, *, sleepiness: float) -> float:
-    """10 分钟窗口内第 n 次被叫：第 1 次不醒，第 2 次起逐次变高，第 6 次必醒；越困越难醒。"""
+def wake_probability(
+    calls_in_window: int,
+    *,
+    sleepiness: float,
+    first_call_can_wake: bool = False,
+    closeness: float = 45.0,
+    stage: str = "light",
+) -> float:
+    """10 分钟窗口内第 n 次被叫的唤醒概率。
+
+    - ``first_call_can_wake=False``（strict 阶梯模式）：第 1 次不醒，第 2 次起逐次变高，第 6 次必醒；
+    - ``first_call_can_wake=True``（wakable 可被吵醒模式）：不设死第 1 次，浅睡/熟人第一声就有机会醒，
+      深睡期较沉，连叫几次必醒。
+    """
     n = int(calls_in_window)
-    if n <= 1:
+    if n <= 0:
         return 0.0
     if n >= WAKE_CERTAIN_AT:
         return 1.0
-    base = (n - 1) / float(WAKE_CERTAIN_AT - 1)
-    deep = DEEP_SLEEP_FACTOR if float(sleepiness) >= 0.7 else 1.0
-    return max(0.0, min(0.99, base * deep))
+    if not first_call_can_wake:
+        if n <= 1:
+            return 0.0
+        base = (n - 1) / float(WAKE_CERTAIN_AT - 1)
+        deep = DEEP_SLEEP_FACTOR if float(sleepiness) >= 0.7 else 1.0
+        return max(0.0, min(0.99, base * deep))
+
+    stage_factor = float(STAGE_WAKE_FACTORS.get(str(stage or "light"), 1.0))
+    if float(sleepiness) >= 0.85 and stage == "deep":
+        stage_factor *= 0.85
+    familiar_bonus = 0.14 * max(0.0, (clamp(closeness) - 50.0) / 50.0)
+    if familiar_bonus >= 0.08 and n >= 4:
+        return 1.0
+    base_curve = {1: 0.34, 2: 0.58, 3: 0.76, 4: 0.88, 5: 0.95}.get(n, 1.0)
+    return max(0.05, min(0.99, base_curve * stage_factor + familiar_bonus))
 
 
 __all__ = [
     "BOREDOM_GRACE_MINUTES",
     "BodyEvent",
     "BodyReading",
+    "ENERGY_DEFAULT",
     "EVENT_TABLE",
     "HORMONES",
     "POLICY_VERSION",
     "RELATIONSHIP_EVENT_MAP",
+    "RESTING_ENERGY_ENTER",
+    "RESTING_ENERGY_EXIT",
     "advance",
+    "advance_energy",
     "apply_event",
     "baseline",
+    "consume_reply_energy",
+    "daily_window_jitter",
     "default_state",
     "edge_notes",
     "habituation_factor",
     "in_quiet_window",
     "intimacy_scale",
+    "next_resting_state",
     "quiet_end_label",
     "read",
+    "sleep_stage_at",
     "wake_probability",
     "wave",
 ]

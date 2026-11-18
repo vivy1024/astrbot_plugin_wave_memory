@@ -2,7 +2,7 @@
 
 # Wave Memory
 
-[![Version](https://img.shields.io/badge/version-v5.2.0-blue.svg)](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
+[![Version](https://img.shields.io/badge/version-v6.0.0-blue.svg)](https://github.com/vivy1024/astrbot_plugin_wave_memory/releases)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![AstrBot](https://img.shields.io/badge/AstrBot-≥4.14-green.svg)](https://github.com/AstrBotDevs/AstrBot)
@@ -122,6 +122,7 @@ v5 起，事实 / 黑话 / 风格不再靠后台定时盲抽，而是对话现�
 
 | 版本 | 日期 | 重点 |
 |------|------|------|
+| **v6.0.0** | 2026-11-18 | 激素身体 v2：日间开口精力槽与歇口气回血、褪黑素自然入睡曲线、90 分钟睡眠深浅周期、「不设死可被吵醒（`wakable`）/ 仅犯困不断联（`drowsy_only`）」与被叫醒迷糊实感、热聊余温不断电、每日作息微浮动、`Asia/Shanghai` 显式时区及读空气/心情作息统一跟随（保留独立 `service_quiet` 停服静默）；看图识梗视觉词典与引用回复三维归属解耦；双时态单值事实自动更替归档与「过去→现在」变迁回溯；低耗外部近况冲浪接收漏斗（`/api/runtime/v1/feed/ingest`）；主动读空气新鲜度死线与常驻 8 线程工作循环；配置中心新手向导、三大场景一键预设与精简视图；清理 `user_profiles` 写入及 `legacy` 工具兼容层 |
 | **v5.2.0** | 2026-11-14 | 一个生命：对同一个人的好感只有一份（群聊、私聊、关联账号合并，注入/查询/排行/管理台同一口径）；日上限按人跨场合且正负分开计；私聊关系也会随时间变淡；未结算观感一人一池、带方向与原话，攒满后以证据卷宗交给模型整体定性，跃迁点可在管理台展开依据；激素身体（多巴胺/血清素/催产素/皮质醇/褪黑素/无聊，昼夜基线+习惯化，零 LLM，默认关；`proactive_drive` 轻推读空气、`reply_length_factor` 边沿提示）与睡眠态、独立**模型服务静默窗口**（`service_quiet_start/end` + 6 句可自定义话术不调模型不唤醒）；注入提速（常驻工作循环、书设与散弹枪检索移出事件循环）；工具合并（模型看到的 18 个工具合成 6 个「一个工具 + mode」，每次请求少约 32% 工具说明，`tool_surface=legacy` 可回滚，`tools_allow/deny` 支持写到 mode）；Bot 对话中顺手标记（`bot_check`，无硬编码正则）与多 Bot 读空气仲裁；主动发言无人接话时指数退避 |
 | **v5.1.7** | 2026-11-05 | 审核效率：审核后列表就地更新不再整表重拉；侧栏与仪表盘显示全局待审数（新接口 `/api/review/summary`）；软超时排查测量：注入 trace 记录线程池排队与事件循环晚醒 |
 | **v5.1.6** | 2026-11-01 | 加固：注入总截止 3 秒（上游 embedding 偶发慢时不再拖住回复）；说话人场景标签防身份污染；关系小传污染改按句剥离；告警 24 小时过期且拦截生效只记警告；数据库直连拦截不再误伤注释；纯图片消息不再召回无关事实与书设；管理台破坏性操作加确认、未保存离开提示、配置密钥打码 |

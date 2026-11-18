@@ -213,6 +213,10 @@ export interface BodySnapshot {
   enabled: boolean
   reason_code?: string
   hormones?: BodyHormones
+  energy?: number
+  resting?: boolean
+  sleep_stage?: 'awake' | 'drowsy' | 'resting' | 'light' | 'deep' | 'rem' | string
+  woken_drowsy?: boolean
   mood_bias?: number
   arousal_bias?: number
   sleepiness?: number

@@ -252,6 +252,7 @@ DEFAULT_QUIET_REPLIES = (
     "已经睡着啦，{end}再叫醒我哦。",
     "账本合上了，睡觉去，{end}见。",
 )
+SLEEP_BEHAVIORS = frozenset({"wakable", "drowsy_only", "strict"})
 QUIET_REPLY_MAX = 12
 QUIET_REPLY_CHARS = 80
 
@@ -260,13 +261,20 @@ QUIET_REPLY_CHARS = 80
 class BodySettings:
     """Bot 的身体（激素）与睡眠设置（对应 Profile 的 ``body`` 段）。
 
-    身体默认关闭；开启后一个 Bot 一副身体，所有群、私聊、平台共用。睡眠区间内被叫到时，
-    按 10 分钟窗口内第 n 次起掷骰唤醒，没醒只回一句固定短语（不调用模型）。
+    身体默认关闭；开启后一个 Bot 一副身体，所有群、私聊、平台共用。
+    作息与困倦睡眠支持三种模式（``sleep_behavior``）：
+    - ``wakable``（默认）：作息或高褪黑素入睡后不主动插话，但被 @/私聊时**不设死、可被吵醒**
+      （浅睡/熟人第一声就有机会醒，正在热聊中有余温不断电，连叫必醒，醒后带迷糊困意）；
+    - ``drowsy_only``：仅犯困不断联，被叫始终回复，只向模型注入浓重困意并收短回复；
+    - ``strict``：沉睡阶梯（第 1 次被叫不醒，10 分钟内第 2~6 次按概率唤醒）。
     """
 
     enabled: bool = False
-    sleep_start: int | None = None             # 小时 0..23；与 sleep_end 都给出才启用睡眠区间
+    sleep_start: int | None = None             # 小时 0..23；与 sleep_end 都给出才启用作息区间
     sleep_end: int | None = None
+    sleep_behavior: str = "wakable"            # wakable / drowsy_only / strict
+    sleep_jitter_minutes: int = 20             # 每日作息起止自然浮动分钟数（0..60）
+    active_chat_grace_seconds: float = 180.0   # 刚发言后的对话余温缓冲秒数（跨入睡点时不突然断电）
     sleep_replies: list[str] = field(default_factory=lambda: ["……zzz", "（睡着了）", "困……明天再说"])
     sleep_reply_cooldown_seconds: float = 1800.0
     hormone_gain: float = 1.0                  # 事件增量总系数：0 = 事件不再影响身体，只剩昼夜节律
@@ -295,12 +303,20 @@ class BodySettings:
                 return _text_list([ln for ln in v.splitlines() if ln.strip()])
             return _text_list(v)
 
+        behavior = _text(data.get("sleep_behavior")).lower()
+        if behavior not in SLEEP_BEHAVIORS:
+            behavior = defaults.sleep_behavior
         replies = [r for r in _lines(data.get("sleep_replies")) if r][:8]
         quiet = [r[:QUIET_REPLY_CHARS] for r in _lines(data.get("quiet_replies")) if r][:QUIET_REPLY_MAX]
         return cls(
             enabled=_bool(data.get("enabled"), defaults.enabled),
             sleep_start=_hour(data.get("sleep_start")),
             sleep_end=_hour(data.get("sleep_end")),
+            sleep_behavior=behavior,
+            sleep_jitter_minutes=max(0, min(60, _int(data.get("sleep_jitter_minutes"), defaults.sleep_jitter_minutes, minimum=0))),
+            active_chat_grace_seconds=_float(
+                data.get("active_chat_grace_seconds"), defaults.active_chat_grace_seconds, 0.0, 1800.0,
+            ),
             sleep_replies=replies or list(defaults.sleep_replies),
             sleep_reply_cooldown_seconds=_float(
                 data.get("sleep_reply_cooldown_seconds"), defaults.sleep_reply_cooldown_seconds, 0.0, 86400.0,

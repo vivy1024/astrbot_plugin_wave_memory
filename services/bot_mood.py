@@ -176,10 +176,22 @@ class BotMoodService:
             profile = None
         settings = getattr(profile, "mood", None)
         if isinstance(settings, MoodSettings):
-            return settings
-        if isinstance(settings, Mapping):
-            return MoodSettings.from_dict(settings)
-        return MoodSettings()
+            resolved = settings
+        elif isinstance(settings, Mapping):
+            resolved = MoodSettings.from_dict(settings)
+        else:
+            resolved = MoodSettings()
+        if resolved.night_start_hour == 1 and resolved.night_end_hour == 6:
+            body = getattr(profile, "body", None)
+            s = getattr(body, "sleep_start", None)
+            e = getattr(body, "sleep_end", None)
+            if s is not None and e is not None:
+                from dataclasses import replace as _replace
+                try:
+                    resolved = _replace(resolved, night_start_hour=int(s), night_end_hour=int(e))
+                except (TypeError, ValueError):
+                    pass
+        return resolved
 
     def _active(self, bot_id: str) -> MoodSettings | None:
         if not self.enabled or not bot_id:

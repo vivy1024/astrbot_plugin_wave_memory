@@ -13,7 +13,9 @@ import logging
 import threading
 import time
 from collections.abc import Callable, Mapping
+from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 try:
     from ..domain import body_policy as bp
@@ -27,6 +29,19 @@ REUNION_GAP_SECONDS = 2 * 3600.0
 # 一次推进的最短间隔：避免每条消息都重算积分
 MIN_TICK_SECONDS = 20.0
 EVENT_RETENTION_SECONDS = 30 * 24 * 3600.0
+LATE_NIGHT_CALL_COOLDOWN_SECONDS = 20 * 60.0
+
+
+def _resolve_tz(tz_name: str):
+    cleaned = str(tz_name or "Asia/Shanghai").strip() or "Asia/Shanghai"
+    try:
+        return ZoneInfo(cleaned)
+    except (ZoneInfoNotFoundError, Exception):
+        if cleaned in {"Asia/Shanghai", "Asia/Chongqing", "Asia/Hong_Kong", "Asia/Taipei", "PRC"}:
+            return dt_timezone(timedelta(hours=8))
+        if cleaned.upper() == "UTC":
+            return dt_timezone.utc
+        return dt_timezone(timedelta(hours=8))
 
 
 class BotBodyService:
@@ -39,13 +54,16 @@ class BotBodyService:
         enabled: bool = True,
         clock: Callable[[], float] | None = None,
         hour_of: Callable[[float], float] | None = None,
+        timezone: str = "Asia/Shanghai",
     ):
         self.db = db
         self.profile_for = profile_for or (lambda _bot_id: None)
         # (bot_id, principal_id) -> 0..100 的关系温度；未提供则一律按一般熟
         self.closeness_for = closeness_for or (lambda _bot, _principal: 50.0)
         self.clock = clock or time.time
-        self.hour_of = hour_of or self._local_hour
+        self.timezone = str(timezone or "Asia/Shanghai")
+        self._tz = _resolve_tz(self.timezone)
+        self.hour_of = hour_of or self._wall_hour
         self.enabled = bool(enabled) and self.repository is not None
         self._lock = threading.RLock()
         self._stats: dict[str, int] = {}
@@ -54,6 +72,7 @@ class BotBodyService:
         self._awake_until: dict[str, float] = {}
         self._sleep_replied: dict[tuple[str, str], float] = {}
         self._quiet_replied: dict[tuple[str, str], float] = {}
+        self._late_night_noted: dict[str, float] = {}
         self._bots: set[str] = set()
 
     # ─── 基础 ───
@@ -62,10 +81,17 @@ class BotBodyService:
     def repository(self) -> Any:
         return getattr(self.db, "bot_body", None)
 
+    def _wall_hour(self, ts: float) -> float:
+        dt = datetime.fromtimestamp(float(ts), tz=self._tz)
+        return dt.hour + dt.minute / 60.0 + dt.second / 3600.0
+
+    def _day_key(self, ts: float) -> str:
+        return datetime.fromtimestamp(float(ts), tz=self._tz).strftime("%Y-%m-%d")
+
     @staticmethod
     def _local_hour(ts: float) -> float:
-        lt = time.localtime(ts)
-        return lt.tm_hour + lt.tm_min / 60.0 + lt.tm_sec / 3600.0
+        dt = datetime.fromtimestamp(float(ts), tz=_resolve_tz("Asia/Shanghai"))
+        return dt.hour + dt.minute / 60.0 + dt.second / 3600.0
 
     def _count(self, key: str, amount: int = 1) -> None:
         self._stats[key] = self._stats.get(key, 0) + amount
@@ -104,6 +130,38 @@ class BotBodyService:
             return (int(start), int(end)) if start is not None and end is not None else (None, None)
         except (TypeError, ValueError):
             return None, None
+
+    def sleep_window_for(self, bot_id: str) -> tuple[int | None, int | None]:
+        """返回该 Bot 配置的作息窗口 (start, end)，供读空气与心情深夜感知统一对齐。"""
+        return self._sleep_window(bot_id)
+
+    def sleep_behavior(self, bot_id: str) -> str:
+        """睡眠响应模式：正式 Profile 默认 wakable（可被吵醒）；裸测试桩未设字段时保持 strict。"""
+        body = self._settings(bot_id)
+        if body is None:
+            return "wakable"
+        raw = getattr(body, "sleep_behavior", None)
+        if raw in {"wakable", "drowsy_only", "strict"}:
+            return str(raw)
+        return "strict"
+
+    def _effective_sleep_window(self, bot_id: str, stamp: float) -> tuple[float | None, float | None]:
+        start, end = self._sleep_window(bot_id)
+        if start is None or end is None or start == end:
+            return None, None
+        body = self._settings(bot_id)
+        jitter_min = int(getattr(body, "sleep_jitter_minutes", 0) or 0)
+        if jitter_min <= 0:
+            return float(start), float(end)
+        j_start, j_end = bp.daily_window_jitter(bot_id, self._day_key(stamp), jitter_min)
+        return (float(start) + j_start) % 24.0, (float(end) + j_end) % 24.0
+
+    def _active_grace_seconds(self, bot_id: str) -> float:
+        body = self._settings(bot_id)
+        try:
+            return max(0.0, float(getattr(body, "active_chat_grace_seconds", 0.0) or 0.0))
+        except (TypeError, ValueError):
+            return 0.0
 
     # ─── 模型服务静默（如 antigravity 夜间停服） ───
 
@@ -177,10 +235,17 @@ class BotBodyService:
                 "last_active_at": now,
                 "last_human_at": 0.0,
                 "offline_since": 0.0,
-                "edge_memo": {},
+                "edge_memo": {"_energy": bp.ENERGY_DEFAULT, "_resting": 0.0},
                 "fresh": True,
             }
         state = dict(stored)
+        memo = dict(state.get("edge_memo") or {})
+        energy = float(memo.get("_energy", bp.ENERGY_DEFAULT))
+        was_resting = bool(float(memo.get("_resting", 0.0)) >= 0.5)
+        woken_until = float(memo.get("_woken_until", 0.0) or 0.0)
+        if woken_until > self._awake_until.get(bot_id, 0.0):
+            self._awake_until[bot_id] = woken_until
+
         last_tick = float(stored.get("last_tick_at") or now)
         offline_since = float(stored.get("offline_since") or 0.0)
         elapsed = max(0.0, now - last_tick)
@@ -195,6 +260,19 @@ class BotBodyService:
                 stored["hormones"], elapsed_seconds=elapsed, hour_at=self.hour_of, start_ts=last_tick,
                 quiet_seconds=max(0.0, quiet - elapsed),
             )
+            eff_start, eff_end = self._effective_sleep_window(bot_id, now)
+            energy = bp.advance_energy(
+                energy,
+                elapsed_seconds=elapsed,
+                hour_at=self.hour_of,
+                start_ts=last_tick,
+                sleep_start=eff_start,
+                sleep_end=eff_end,
+            )
+            was_resting = bp.next_resting_state(energy, was_resting)
+        memo["_energy"] = round(energy, 3)
+        memo["_resting"] = 1.0 if was_resting else 0.0
+        state["edge_memo"] = memo
         state["last_tick_at"] = now
         return state
 
@@ -346,6 +424,53 @@ class BotBodyService:
         """主动开口后无人接话（每次主动只记一次，由读空气的无人接话计数触发）。"""
         return self.note_event(bot_id, "snubbed", principal_id=principal_id, scene=scene, source_ref=source_ref, now=now)
 
+    def note_bot_reply(
+        self,
+        bot_id: str,
+        *,
+        chars: int = 0,
+        scene: str = "",
+        now: float | None = None,
+    ) -> dict[str, float] | None:
+        """Bot 实际开口发出一句回复：消耗一点身体精力、刷新对话余温时钟，深夜熬夜说话还会推高困倦。"""
+        if not self.active_for(bot_id):
+            return None
+        stamp = self._now(now)
+        hour = self.hour_of(stamp)
+        late_night = bp.in_quiet_window(hour, 23.0, 5.5)
+        with self._lock:
+            self._bots.add(bot_id)
+            state = self._state(bot_id, stamp)
+            memo = dict(state.get("edge_memo") or {})
+            before = float(memo.get("_energy", bp.ENERGY_DEFAULT))
+            was_resting = bool(float(memo.get("_resting", 0.0)) >= 0.5)
+            after, spent = bp.consume_reply_energy(before, chars=chars, late_night=late_night)
+            resting = bp.next_resting_state(after, was_resting)
+            memo["_energy"] = after
+            memo["_resting"] = 1.0 if resting else 0.0
+            memo["_last_reply_at"] = stamp
+            state["edge_memo"] = memo
+            self._persist(bot_id, state, stamp, last_active_at=stamp, edge_memo=memo)
+            self._count("bot_reply")
+            last_ln = self._late_night_noted.get(bot_id, 0.0)
+            trigger_ln = late_night and (stamp - last_ln >= LATE_NIGHT_CALL_COOLDOWN_SECONDS)
+            if trigger_ln:
+                self._late_night_noted[bot_id] = stamp
+        if trigger_ln:
+            self.note_event(bot_id, "late_night_call", scene=scene, now=stamp)
+        return {"energy": after, "spent": spent}
+
+    def _vitals_context(self, bot_id: str, state: Mapping[str, Any], stamp: float) -> tuple[float, bool, bool, bool]:
+        memo = state.get("edge_memo") or {}
+        energy = float(memo.get("_energy", bp.ENERGY_DEFAULT))
+        was_resting = bool(float(memo.get("_resting", 0.0)) >= 0.5)
+        awake_until = max(self._awake_until.get(bot_id, 0.0), float(memo.get("_woken_until", 0.0) or 0.0))
+        woken_drowsy = stamp < awake_until
+        last_reply = float(memo.get("_last_reply_at", 0.0) or 0.0)
+        grace_sec = self._active_grace_seconds(bot_id)
+        bedtime_grace = bool(grace_sec > 0 and last_reply > 0 and 0.0 <= stamp - last_reply <= grace_sec and not woken_drowsy)
+        return energy, was_resting, woken_drowsy, bedtime_grace
+
     # ─── 输出 ───
 
     def reading(self, bot_id: str, *, principal_id: str = "", now: float | None = None) -> bp.BodyReading | None:
@@ -356,9 +481,18 @@ class BotBodyService:
             self._bots.add(bot_id)
             state = self._state(bot_id, stamp)
             closeness = self._closeness(bot_id, principal_id) if principal_id else 45.0
-            start, end = self._sleep_window(bot_id)
+            start, end = self._effective_sleep_window(bot_id, stamp)
+            energy, was_resting, woken_drowsy, bedtime_grace = self._vitals_context(bot_id, state, stamp)
             result = bp.read(
-                state["hormones"], hour=self.hour_of(stamp), closeness=closeness, sleep_start=start, sleep_end=end,
+                state["hormones"],
+                hour=self.hour_of(stamp),
+                closeness=closeness,
+                sleep_start=start,
+                sleep_end=end,
+                energy=energy,
+                was_resting=was_resting,
+                woken_drowsy=woken_drowsy,
+                bedtime_grace=bedtime_grace,
             )
             if state.get("fresh") or stamp - float(state.get("last_tick_at") or 0.0) >= MIN_TICK_SECONDS:
                 self._persist(bot_id, state, stamp)
@@ -374,9 +508,13 @@ class BotBodyService:
             if reading is None:
                 return []
             state = self._state(bot_id, stamp)
-            lines, memo = bp.edge_notes(reading.flags, state.get("edge_memo") or {}, now=stamp)
-            if lines or memo != (state.get("edge_memo") or {}):
-                self._persist(bot_id, state, stamp, edge_memo=memo)
+            raw_memo = dict(state.get("edge_memo") or {})
+            vitals = {k: v for k, v in raw_memo.items() if str(k).startswith("_")}
+            announced = {k: v for k, v in raw_memo.items() if not str(k).startswith("_")}
+            lines, next_announced = bp.edge_notes(reading.flags, announced, now=stamp)
+            merged_memo = {**vitals, **next_announced}
+            if lines or next_announced != announced:
+                self._persist(bot_id, state, stamp, edge_memo=merged_memo)
             if lines:
                 self._count("rendered")
             return lines
@@ -397,6 +535,11 @@ class BotBodyService:
         reading = self.reading(bot_id, now=stamp)
         return bool(reading and reading.asleep)
 
+    def is_resting(self, bot_id: str, *, now: float | None = None) -> bool:
+        """是否处于日间高强度聊天后的歇口气回血态（不拒绝被 @，但暂停主动抢话）。"""
+        reading = self.reading(bot_id, now=self._now(now))
+        return bool(reading and reading.resting)
+
     def should_wake(
         self,
         bot_id: str,
@@ -405,26 +548,59 @@ class BotBodyService:
         roll: float,
         now: float | None = None,
     ) -> bool:
-        """睡着时被叫一次：10 分钟窗口内第 n 次起掷骰（``roll`` 0..1 由调用方给，便于测试）。
+        """睡着时被叫一次：决定这次是否醒来应答。
 
-        醒了之后 10 分钟内保持清醒，不会因为同一波对话又睡回去。
+        - ``drowsy_only`` 模式：作息期间不拦截呼叫，始终放行并靠困意边沿提示调整语气；
+        - ``wakable`` 模式（默认）：不设死第 1 次，浅睡/高亲密熟人第一声就有概率醒来，连叫必醒；
+        - ``strict`` 模式：10 分钟窗口内第 2 次起按阶梯唤醒，第 6 次必醒。
+        醒来后 10 分钟内保持清醒，并带上刚被吵醒的迷糊实感与轻微起床气。
         """
         stamp = self._now(now)
+        behavior = self.sleep_behavior(bot_id)
+        if behavior == "drowsy_only":
+            return True
         key = (bot_id, principal_id)
         with self._lock:
             calls = [t for t in self._wake_calls.get(key, []) if stamp - t < bp.WAKE_WINDOW_SECONDS]
             calls.append(stamp)
             self._wake_calls[key] = calls[-12:]
-        reading = self.reading(bot_id, now=stamp)
-        sleepiness = reading.sleepiness if reading else 0.0
-        woke = float(roll) < bp.wake_probability(len(calls), sleepiness=sleepiness)
+            state = self._state(bot_id, stamp)
+            closeness = self._closeness(bot_id, principal_id) if principal_id else 45.0
+            start, end = self._effective_sleep_window(bot_id, stamp)
+            energy, was_resting, _wd, bedtime_grace = self._vitals_context(bot_id, state, stamp)
+            if bedtime_grace:
+                return True
+            raw_reading = bp.read(
+                state["hormones"],
+                hour=self.hour_of(stamp),
+                closeness=closeness,
+                sleep_start=start,
+                sleep_end=end,
+                energy=energy,
+                was_resting=was_resting,
+            )
+            prob = bp.wake_probability(
+                len(calls),
+                sleepiness=raw_reading.sleepiness,
+                first_call_can_wake=(behavior == "wakable"),
+                closeness=closeness,
+                stage=raw_reading.sleep_stage,
+            )
+            woke = float(roll) < prob
+            if woke:
+                awake_until = stamp + bp.WAKE_WINDOW_SECONDS
+                self._awake_until[bot_id] = awake_until
+                memo = dict(state.get("edge_memo") or {})
+                memo["_woken_until"] = awake_until
+                state["edge_memo"] = memo
+                self._persist(bot_id, state, stamp, edge_memo=memo)
+                self._count("woken")
         if woke:
-            self._awake_until[bot_id] = stamp + bp.WAKE_WINDOW_SECONDS
-            self._count("woken")
+            self.note_event(bot_id, "woken_up", principal_id=principal_id, now=stamp)
         return woke
 
     def snapshot(self, bot_id: str, *, now: float | None = None) -> dict[str, Any]:
-        """管理台用：当前激素、读数与最近 24 小时的事件采样（不含任何人的私聊原文）。"""
+        """管理台用：当前激素、精力、睡眠阶段读数与最近 24 小时的事件采样（不含任何人的私聊原文）。"""
         stamp = self._now(now)
         reading = self.reading(bot_id, now=stamp)
         if reading is None:
@@ -435,6 +611,10 @@ class BotBodyService:
             "enabled": True,
             "policy_version": bp.POLICY_VERSION,
             "hormones": reading.hormones,
+            "energy": reading.energy,
+            "resting": reading.resting,
+            "sleep_stage": reading.sleep_stage,
+            "woken_drowsy": reading.woken_drowsy,
             "mood_bias": reading.mood_bias,
             "arousal_bias": reading.arousal_bias,
             "sleepiness": reading.sleepiness,

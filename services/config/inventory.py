@@ -213,6 +213,7 @@ def _bot_behavior_rows(profile: Any) -> list[dict[str, Any]]:
     if body is not None:
         add("body.enabled", "启用激素身体与褪黑素睡眠", False, bool(getattr(body, "enabled", False)))
         add("body.hormone_gain", "激素事件敏度系数", 1.0, float(getattr(body, "hormone_gain", 1.0)))
+        add("body.sleep_behavior", "作息睡眠响应模式", "wakable", str(getattr(body, "sleep_behavior", "wakable") or "wakable"))
         add(
             "body.sleep_window",
             "作息睡眠时段",
