@@ -416,7 +416,8 @@ class IngressMixin:
             if tasks_to_run:
                 spawner = getattr(self, "_spawn", None)
                 if callable(spawner):
-                    spawner(image_digest_ref.resolve_pending(tasks_to_run), name="wave-memory:image-digest", owner="learning")
+                    seq = int(getattr(self, "_task_sequence", 0) or 0) + 1
+                    spawner(image_digest_ref.resolve_pending(tasks_to_run), name=f"wave-memory:image-digest:{seq}", owner="learning")
 
     def _apply_reply_decision(self, event, scope, sender_id, sender_name, message) -> None:
         import time as _time
