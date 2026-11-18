@@ -325,8 +325,24 @@ class IngressMixin:
             else:
                 merged_content = buffer["messages"][0]["text"]
 
+            pending_image_tasks = []
+            image_digest = getattr(self, "image_digest", None)
+            image_tags: list[str] = []
+            if all_images and image_digest is not None and hasattr(image_digest, "observe_and_format_images"):
+                try:
+                    direct_now = runtime_scope.visibility == "private" or bool(getattr(event, "is_at_or_wake_command", False))
+                    image_tags, pending_image_tasks = image_digest.observe_and_format_images(
+                        all_images, directed_or_woke=direct_now
+                    )
+                except Exception:
+                    image_tags, pending_image_tasks = [], []
+
             if not merged_content and all_images:
-                merged_content = "[图片]"
+                merged_content = " ".join(image_tags) if image_tags else "[图片]"
+            elif merged_content and image_tags:
+                rich_tags = [t for t in image_tags if ": " in t]
+                if rich_tags and not merged_content.lstrip().startswith(("/", "记住", "记下", "忘记", "忘掉", "别记")):
+                    merged_content = f"{merged_content} {' '.join(rich_tags)}"
 
             # 只更新纯文本视图供 WaveMemory 后续逻辑使用。
             # 不重写 event.message_obj.message：底层组件链由 AstrBot/适配器维护，
@@ -336,11 +352,44 @@ class IngressMixin:
             # 放行给后面的逻辑使用
             message = merged_content
 
+        pipeline_message = message
+        if runtime_scope.visibility == "group" and message and not message.lstrip().startswith(("/", "记住", "记下", "忘记", "忘掉", "别记")):
+            extract_reply_thread_prefix = None
+            try:
+                from services.image_digest import extract_reply_thread_prefix
+            except Exception:
+                try:
+                    from ..services.image_digest import extract_reply_thread_prefix
+                except Exception:
+                    extract_reply_thread_prefix = None
+            if callable(extract_reply_thread_prefix):
+                def _lookup_quoted(reply_event_id: str):
+                    db_obj = getattr(self, "db", None)
+                    conn = getattr(db_obj, "conn", None)
+                    if conn is None or not reply_event_id:
+                        return None
+                    row = conn.execute(
+                        """SELECT sender_id, sender_name, content FROM memories
+                            WHERE bot_id=? AND session_id=? AND visibility='group' AND event_id=?
+                            ORDER BY id DESC LIMIT 1""",
+                        (runtime_scope.bot_id, runtime_scope.session.id, str(reply_event_id)),
+                    ).fetchone()
+                    if not row:
+                        return None
+                    return {"sender_id": row[0], "sender_name": row[1], "content": row[2]}
+
+                try:
+                    reply_ctx = extract_reply_thread_prefix(event, memory_lookup=_lookup_quoted)
+                    if reply_ctx.get("inline_prefix") and not pipeline_message.startswith("[回复"):
+                        pipeline_message = f"{reply_ctx['inline_prefix']}{pipeline_message}"
+                except Exception:
+                    pass
+
         # 委托给 InboundMessagePipeline 管道执行抢词咽回、串行处理、命令拦截与生命周期派发
         await self.inbound_pipeline.process_message(
             event=event,
             runtime_scope=runtime_scope,
-            message=message,
+            message=pipeline_message,
             message_ts=message_ts,
             group_id=group_id,
             sender_id=sender_id,
@@ -352,6 +401,22 @@ class IngressMixin:
         apply_decision = getattr(self, "_apply_reply_decision", None)
         if callable(apply_decision):
             apply_decision(event, runtime_scope, sender_id, sender_name, message)
+
+        # 若存在待异步视觉摘要的图片（高频梗图或已被唤醒需要看懂），放入后台任务不阻塞当前消息
+        image_digest_ref = getattr(self, "image_digest", None)
+        if image_digest_ref is not None and locals().get("all_images"):
+            tasks_to_run = list(locals().get("pending_image_tasks") or [])
+            if not tasks_to_run and bool(getattr(event, "is_at_or_wake_command", False)):
+                try:
+                    _, tasks_to_run = image_digest_ref.observe_and_format_images(
+                        locals()["all_images"], directed_or_woke=True
+                    )
+                except Exception:
+                    tasks_to_run = []
+            if tasks_to_run:
+                spawner = getattr(self, "_spawn", None)
+                if callable(spawner):
+                    spawner(image_digest_ref.resolve_pending(tasks_to_run), name="wave-memory:image-digest", owner="learning")
 
     def _apply_reply_decision(self, event, scope, sender_id, sender_name, message) -> None:
         import time as _time

@@ -190,6 +190,18 @@ class InjectionMixin:
         if heart_prompt:
             self._append_text_part(req, heart_prompt)
 
+        surf_service = getattr(self, "social_surf", None)
+        if surf_service is not None and hasattr(surf_service, "recent_surf_prompt"):
+            surf_scope = getattr(event, "_wave_memory_runtime_scope", None)
+            surf_bot = surf_scope.bot_id if isinstance(surf_scope, RuntimeScope) else ""
+            if surf_bot:
+                try:
+                    surf_prompt = surf_service.recent_surf_prompt(surf_bot, message=message)
+                except Exception:
+                    surf_prompt = ""
+                if surf_prompt:
+                    self._append_text_part(req, surf_prompt)
+
         air_proactive = getattr(event, "_wave_memory_air_proactive", None)
         if isinstance(air_proactive, dict) and not getattr(event, "_wave_memory_concern_followup", None):
             self._append_text_part(

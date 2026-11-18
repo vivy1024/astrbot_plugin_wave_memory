@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import math
 import re
 import time
 from collections.abc import Iterable, Mapping
@@ -41,13 +43,75 @@ def _as_int(value: Any, default: int) -> int:
         return default
 
 
+def _as_float(value: Any, default: float) -> float:
+    try:
+        if value is None or value == "" or isinstance(value, bool):
+            return default
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _provenance_dict(value: Any) -> Mapping[str, Any]:
+    if isinstance(value, Mapping):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, Mapping) else {}
+        except (TypeError, ValueError):
+            return {}
+    return {}
+
+
 def _channel_cfg(ctx: Any) -> Mapping[str, Any]:
     config = _mapping(getattr(ctx, "config", {}))
-    return _mapping(_mapping(config.get("channels", {})).get("facts", {}))
+    base = _mapping(_mapping(config.get("channels", {})).get("facts", {}))
+    per_call = _mapping(_mapping(getattr(ctx, "channel_options", {})).get("facts", {}))
+    return {**base, **per_call} if per_call else base
 
 
 def _fact_line(fact: Mapping[str, Any]) -> str:
     return f"{fact.get('subject', '')} {fact.get('predicate', '')} {fact.get('object', '')}".strip()
+
+
+def _format_temporal_transition(
+    fact: Mapping[str, Any], *, now: float, window_days: float = 14.0
+) -> str:
+    if window_days <= 0:
+        return ""
+    prev = _mapping(_provenance_dict(fact.get("provenance")).get("previous_fact"))
+    if not prev:
+        return ""
+    prev_obj = str(prev.get("object") or "").replace("\n", " ").strip()
+    curr_obj = str(fact.get("object") or "").strip()
+    if not prev_obj or prev_obj == curr_obj:
+        return ""
+    replaced_raw = prev.get("replaced_at")
+    if replaced_raw is None or isinstance(replaced_raw, bool):
+        return ""
+    try:
+        replaced_at = float(replaced_raw)
+    except (TypeError, ValueError):
+        return ""
+    if not math.isfinite(replaced_at):
+        return ""
+    elapsed = now - replaced_at
+    if elapsed < 0 or elapsed > window_days * 86400.0:
+        return ""
+    if is_identity_contamination(prev_obj):
+        return ""
+    return f"（近期由「{prev_obj}」变为此状态）"
+
+
+def _rendered_fact_line(
+    fact: Mapping[str, Any], *, now: float | None = None, window_days: float = 0.0
+) -> str:
+    base = _fact_line(fact)
+    if not base or now is None or window_days <= 0:
+        return base
+    return base + _format_temporal_transition(fact, now=now, window_days=window_days)
 
 
 def _keywords(message: str, limit: int = 8) -> list[str]:
@@ -88,7 +152,7 @@ def _row_to_fact(row: Mapping[str, Any], *, now: float, decay_rate: float) -> di
     except (TypeError, ValueError):
         age_days = 0.0
     decay = max(0.1, 1.0 - age_days * decay_rate) if decay_rate > 0 else 1.0
-    importance = _importance(row.get("provenance"))
+    importance = _importance(_provenance_dict(row.get("provenance")))
     return {
         "rowid": row.get("id"),
         "subject": str(row.get("subject") or ""),
@@ -100,7 +164,7 @@ def _row_to_fact(row: Mapping[str, Any], *, now: float, decay_rate: float) -> di
         "review_status": row.get("review_status", "approved"),
         "valid_from": row.get("valid_from"),
         "valid_until": row.get("valid_until"),
-        "provenance": row.get("provenance") if isinstance(row.get("provenance"), Mapping) else {},
+        "provenance": dict(_provenance_dict(row.get("provenance"))),
         "last_reinforced": row.get("updated_at"),
         "created_at": row.get("created_at"),
         # 重要性（1-5，默认 3）只调整先后：3 不变，5 为 ×1.4，1 为 ×0.6；不过滤任何事实
@@ -109,7 +173,11 @@ def _row_to_fact(row: Mapping[str, Any], *, now: float, decay_rate: float) -> di
     }
 
 
-def _audit_fact(fact: Mapping[str, Any]) -> dict[str, Any]:
+def _audit_fact(
+    fact: Mapping[str, Any], *, rendered_text: str | None = None
+) -> dict[str, Any]:
+    rendered = rendered_text if rendered_text is not None else _fact_line(fact)
+    provenance = _provenance_dict(fact.get("provenance"))
     return {
         "rowid": fact.get("rowid"),
         "subject": fact.get("subject", ""),
@@ -119,12 +187,12 @@ def _audit_fact(fact: Mapping[str, Any]) -> dict[str, Any]:
         "effective_confidence": fact.get("effective_confidence"),
         "relation": fact.get("relation"),
         "review_status": fact.get("review_status"),
-        "source_tags": (fact.get("provenance") or {}).get("source_tags", []),
-        "evidence": (fact.get("provenance") or {}).get("evidence", {}),
-        "query_trace_id": (fact.get("provenance") or {}).get("query_trace_id", ""),
-        "rendered_text": _fact_line(fact),
+        "source_tags": provenance.get("source_tags", []),
+        "evidence": provenance.get("evidence", {}),
+        "query_trace_id": provenance.get("query_trace_id", ""),
+        "rendered_text": rendered,
         "dedupe_key": "fact|" + "|".join(str(fact.get(key) or "") for key in ("subject", "predicate", "object", "valid_from", "valid_until", "relation")),
-        "preview": _fact_line(fact),
+        "preview": rendered,
     }
 
 
@@ -189,6 +257,7 @@ class FactsChannel:
             return InjectionResult.disabled(self.name, reason="facts channel disabled by config")
         max_items = _as_int(cfg.get("max_items"), 5)
         token_budget = _as_int(cfg.get("token_budget"), 260)
+        transition_window_days = _as_float(cfg.get("transition_window_days"), 14.0)
         if max_items <= 0:
             return InjectionResult.empty(self.name, reason="facts max_items is zero")
         # 纯图片/表情消息没有可检索对象：关键词只剩「图片」二字时会把全库图片相关事实
@@ -237,25 +306,45 @@ class FactsChannel:
             # include it, reject mismatches before either retrieval path.
             rows = [row for row in rows if self._scope_matches(row, scope)]
             facts, filtered = self._query_primary(rows, keywords=keywords, now=now)
-            facts, budget_filtered = self._select_with_budget(facts, max_items=max_items, token_budget=token_budget)
+            facts, budget_filtered = self._select_with_budget(
+                facts,
+                max_items=max_items,
+                token_budget=token_budget,
+                now=now,
+                window_days=transition_window_days,
+            )
             filtered.extend(budget_filtered)
             if facts:
                 extra = self._query_one_hop(rows, facts, now=now, max_items=max_items - len(facts))
+                used_tokens = sum(
+                    estimate_injection_tokens(
+                        _rendered_fact_line(f, now=now, window_days=transition_window_days)
+                    )
+                    for f in facts
+                )
                 extra, extra_budget_filtered = self._select_with_budget(
                     extra,
                     max_items=max_items - len(facts),
-                    token_budget=max(0, token_budget - sum(estimate_injection_tokens(_fact_line(f)) for f in facts)),
+                    token_budget=max(0, token_budget - used_tokens),
+                    now=now,
+                    window_days=transition_window_days,
                 )
                 facts.extend(extra)
                 filtered.extend(extra_budget_filtered)
             if not facts:
                 return InjectionResult.empty(self.name, latency_ms=self._latency_ms(started), reason="no safe facts")
-            lines = [_fact_line(fact) for fact in facts]
+            lines = [
+                _rendered_fact_line(fact, now=now, window_days=transition_window_days)
+                for fact in facts
+            ]
             text = "<known_facts>\n" + "\n".join(lines) + "\n</known_facts>"
             return InjectionResult.hit(
                 self.name,
                 text,
-                items=[_audit_fact(fact) for fact in facts],
+                items=[
+                    _audit_fact(fact, rendered_text=line)
+                    for fact, line in zip(facts, lines)
+                ],
                 filtered=[self._audit_filtered(fact) for fact in filtered],
                 latency_ms=self._latency_ms(started),
             )
@@ -369,6 +458,8 @@ class FactsChannel:
         *,
         max_items: int,
         token_budget: int,
+        now: float | None = None,
+        window_days: float = 0.0,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         selected: list[dict[str, Any]] = []
         filtered: list[dict[str, Any]] = []
@@ -408,7 +499,9 @@ class FactsChannel:
                     item["filter_channel"] = "facts"
                     filtered.append(item)
                     continue
-                line_tokens = estimate_injection_tokens(_fact_line(fact))
+                line_tokens = estimate_injection_tokens(
+                    _rendered_fact_line(fact, now=now, window_days=window_days)
+                )
                 if selected and token_budget >= 0 and used_tokens + line_tokens > token_budget:
                     item = dict(fact)
                     item["filter_reason"] = "token_budget"

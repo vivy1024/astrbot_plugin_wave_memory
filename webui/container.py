@@ -95,6 +95,9 @@ class ServiceContainer:
         self.game_knowledge: Any = None
         # 游戏经验（services.game_knowledge.lessons.GameLessonService）；game_lesson_enabled 关闭时为 None。
         self.game_lessons: Any = None
+        # 群聊表情/图片语义摘要缓存与全网冲浪服务
+        self.image_digest: Any = None
+        self.social_surf: Any = None
 
         # ─── 认证 ───
         self.password: str = ""

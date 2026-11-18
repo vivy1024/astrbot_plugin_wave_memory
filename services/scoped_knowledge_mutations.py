@@ -96,6 +96,21 @@ def _json_or_empty(value: Any) -> Mapping[str, Any]:
     return {}
 
 
+def _previous_fact_anchor(
+    *,
+    previous_id: int,
+    previous_object: str,
+    previous_predicate: str,
+    replaced_at: float,
+) -> dict[str, Any]:
+    return {
+        "id": int(previous_id),
+        "object": str(previous_object),
+        "predicate": str(previous_predicate),
+        "replaced_at": replaced_at,
+    }
+
+
 def _digest(value: Any) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
@@ -449,6 +464,19 @@ class ScopedKnowledgeMutationGateway:
                 write_columns["provenance"] = updated["provenance"]
             identity_changed = any(updated[name] != current[name] for name in ("subject", "predicate", "object"))
             if identity_changed:
+                if (
+                    str(current.get("status") or "") in {"active", "approved", "reviewed"}
+                    and updated["subject"] == current["subject"]
+                    and str(current.get("object") or "") != str(updated.get("object") or "")
+                ):
+                    provenance = dict(_json_or_empty(updated["provenance"]))
+                    provenance["previous_fact"] = _previous_fact_anchor(
+                        previous_id=locator,
+                        previous_object=str(current["object"]),
+                        previous_predicate=str(current["predicate"]),
+                        replaced_at=now,
+                    )
+                    updated["provenance"] = _canonical_json(provenance)
                 cursor = connection.execute(
                     """UPDATE scoped_facts SET status='superseded', valid_until=?, revision=revision+1,
                               updated_at=?
@@ -606,6 +634,7 @@ class ScopedKnowledgeMutationGateway:
                 raise ValueError("invalid_fact_review_transition")
             policy = self._fact_policy or get_fact_policy()
             candidate = fact_row(connection, scope, locator)
+            previous: dict[str, Any] | None = None
             if action == "approve":
                 if not valid_subject(candidate["subject"]):
                     raise ValueError("invalid_fact_subject")
@@ -660,6 +689,19 @@ class ScopedKnowledgeMutationGateway:
                 to_status = _FACT_REVIEW_REJECT_TARGET
                 events["event_type"] = "scoped_fact.rejected"
             provenance = dict(candidate["provenance"])
+            if (
+                action == "approve"
+                and resolution == "supersede"
+                and to_status == _FACT_REVIEW_APPROVE_TARGET
+                and previous is not None
+                and str(previous.get("object") or "") != str(candidate.get("object") or "")
+            ):
+                provenance["previous_fact"] = _previous_fact_anchor(
+                    previous_id=int(previous["id"]),
+                    previous_object=str(previous["object"]),
+                    previous_predicate=str(previous["predicate"]),
+                    replaced_at=now,
+                )
             reviews = list(provenance.get("review_history") or [])
             reviews.append({"action": action, "resolution": resolution, "actor": actor,
                             "at": now, "reason": review_reason, "conflict_with_fact_id": conflict_with,

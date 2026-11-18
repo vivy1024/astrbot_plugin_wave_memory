@@ -25,6 +25,7 @@ import {
 import { legacyBotIdsFrom, locateConfig, locationHref, type ConfigLocation } from '@/pages/config/config-location'
 import { groupByFeature, searchConfig, type FeatureBucket } from '@/pages/config/feature-groups'
 import { ModelRoutingPanel } from '@/pages/config/ModelRoutingPanel'
+import { BEGINNER_CORE_KEYS, OnboardingPresetsPanel } from '@/pages/config/OnboardingPresetsPanel'
 import { RuntimeTokenPanel } from '@/pages/config/RuntimeTokenPanel'
 import { RISK_KEYS, assessRisks, type RiskAssessment, type RiskStatus } from '@/pages/config/risk'
 import { ConfigInventoryPage } from '@/pages/settings/ConfigInventoryPage'
@@ -154,20 +155,27 @@ function FeatureSection({ bucket, open, onOpenChange, locateOf, onLocate }: {
   )
 }
 
-function FeatureView({ entries, locateOf, onLocate, onOpenChannels }: {
+function FeatureView({ entries, locateOf, onLocate, onOpenChannels, onApplied }: {
   entries: ConfigEntry[]
   locateOf: (entry: ConfigEntry) => ConfigLocation
   onLocate: Locate
   onOpenChannels: () => void
+  onApplied: () => Promise<void> | void
 }) {
+  const [beginnerOnly, setBeginnerOnly] = useState(false)
   const [changedOnly, setChangedOnly] = useState(false)
   const [openState, setOpenState] = useState<Record<string, boolean>>({})
   const listed = useMemo(() => entries.filter((entry) => entry.kind === 'static' || entry.kind === 'hot'), [entries])
+  const visibleListed = useMemo(
+    () => (beginnerOnly ? listed.filter((entry) => BEGINNER_CORE_KEYS.has(entry.key)) : listed),
+    [beginnerOnly, listed],
+  )
+  const hiddenExpertCount = listed.length - visibleListed.length
   const buckets = useMemo(() => {
-    const all = groupByFeature(listed)
+    const all = groupByFeature(visibleListed)
     if (!changedOnly) return all
     return all.map((bucket) => ({ ...bucket, entries: bucket.entries.filter((entry) => entry.changed) }))
-  }, [changedOnly, listed])
+  }, [changedOnly, visibleListed])
   const channelChanged = entries.filter((entry) => entry.kind === 'channel' && entry.changed).length
   const botOverrides = entries.filter((entry) => entry.kind === 'bot').length
 
@@ -175,11 +183,28 @@ function FeatureView({ entries, locateOf, onLocate, onOpenChannels }: {
 
   return (
     <div className="space-y-3">
+      <OnboardingPresetsPanel entries={entries} onLocate={onLocate} onApplied={onApplied} />
+
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs text-muted-foreground">按你想解决的问题分组；每项显示当前生效值与来源，「修改」会跳到它真正的编辑位置。</p>
-        <label className="flex items-center gap-2 text-sm">
-          <Switch aria-label="只看与默认值不同的" checked={changedOnly} onCheckedChange={setChangedOnly} />只看与默认值不同的
-        </label>
+        <p className="text-xs text-muted-foreground">
+          {beginnerOnly
+            ? `当前为新手精简视图：聚焦 ${visibleListed.length} 项核心开关与模型配置，已隐藏 ${hiddenExpertCount} 项底层内核与高阶参数。`
+            : '按你想解决的问题分组；每项显示当前生效值与来源，「修改」会跳到它真正的编辑位置。'}
+        </p>
+        <div className="flex flex-wrap items-center gap-4">
+          <label className="flex items-center gap-2 text-sm">
+            <Switch aria-label="新手精简视图" checked={beginnerOnly} onCheckedChange={setBeginnerOnly} />
+            <span>新手精简视图</span>
+          </label>
+          {beginnerOnly ? (
+            <Button type="button" size="sm" variant="ghost" onClick={() => setBeginnerOnly(false)}>
+              显示全部专家参数
+            </Button>
+          ) : null}
+          <label className="flex items-center gap-2 text-sm">
+            <Switch aria-label="只看与默认值不同的" checked={changedOnly} onCheckedChange={setChangedOnly} />只看与默认值不同的
+          </label>
+        </div>
       </div>
       {channelChanged || botOverrides ? (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
@@ -189,16 +214,23 @@ function FeatureView({ entries, locateOf, onLocate, onOpenChannels }: {
           <Button type="button" size="sm" variant="outline" onClick={onOpenChannels}>去通道配置</Button>
         </div>
       ) : null}
-      {buckets.map((bucket) => (
+      {buckets.length ? buckets.map((bucket) => (
         <FeatureSection
           key={bucket.group.id}
           bucket={bucket}
-          open={openState[bucket.group.id] ?? (changedOnly || bucket.group.defaultOpen)}
+          open={openState[bucket.group.id] ?? (changedOnly || beginnerOnly || bucket.group.defaultOpen)}
           onOpenChange={(next) => setOpenState((current) => ({ ...current, [bucket.group.id]: next }))}
           locateOf={locateOf}
           onLocate={onLocate}
         />
-      ))}
+      )) : (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed p-4 text-xs text-muted-foreground">
+          <span>当前新手精简视图下没有可展示的核心项。</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => setBeginnerOnly(false)}>
+            显示全部专家参数
+          </Button>
+        </div>
+      )}
     </div>
   )
 }
@@ -460,7 +492,7 @@ export function ConfigCenterPage() {
         </TabsList>
 
         <TabsContent value="feature" className="mt-4">
-          {overview ?? <FeatureView entries={entries} locateOf={locateOf} onLocate={onLocate} onOpenChannels={() => setView('channels')} />}
+          {overview ?? <FeatureView entries={entries} locateOf={locateOf} onLocate={onLocate} onOpenChannels={() => setView('channels')} onApplied={load} />}
         </TabsContent>
         <TabsContent value="risk" className="mt-4">
           {overview ?? <RiskView assessments={assessments} locateOf={locateOf} onLocate={onLocate} />}

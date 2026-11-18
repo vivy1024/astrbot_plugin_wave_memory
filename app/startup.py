@@ -981,6 +981,10 @@ class StartupMixin:
 
         self.belief_reflection = self._create_belief_reflection(cfg, _flag, _num)
         self.game_lessons = self._create_game_lessons(_flag, _num)
+        create_img_digest = getattr(self, "_create_image_digest", None)
+        self.image_digest = create_img_digest(_num) if callable(create_img_digest) else None
+        create_surf = getattr(self, "_create_social_surf", None)
+        self.social_surf = create_surf(_num) if callable(create_surf) else None
         # 关系注入据此决定群聊里是否还要提示「该结算了」：记账已启动时交给它回看结算
         from ..services.impression_timeline import configure_impression_prompting
 
@@ -992,6 +996,8 @@ class StartupMixin:
         get_container().relationship_portrait = self.relationship_portrait
         get_container().belief_reflection = self.belief_reflection
         get_container().game_lessons = self.game_lessons
+        get_container().image_digest = self.image_digest
+        get_container().social_surf = self.social_surf
 
         def _learning_stats() -> dict:
             def _of(service) -> dict | None:
@@ -1009,6 +1015,7 @@ class StartupMixin:
                 "relationship_portrait": _of(getattr(self, "relationship_portrait", None)),
                 "belief_reflection": _of(self.belief_reflection),
                 "game_lesson": _of(getattr(self, "game_lessons", None)),
+                "social_surf": _of(getattr(self, "social_surf", None)),
                 "mood": _of(getattr(self, "mood_service", None)),
             }
 
@@ -1199,6 +1206,70 @@ class StartupMixin:
             _record_err("BeliefReflection", e)
             return None
 
+    def _create_image_digest(self, _num):
+        """群聊看图识梗缓存：OneBot summary 0-Token 直出 + 高频/唤醒图片单次视觉摘要缓存。"""
+        if getattr(self, "db", None) is None or getattr(self.db, "conn", None) is None:
+            return None
+        try:
+            from ..services.image_digest import ImageDigestService
+
+            async def _vision_summarize(url: str) -> str:
+                routing = getattr(self, "llm_routing", None)
+                if routing is None or not routing.available("tag"):
+                    return ""
+                client = routing.client("tag")
+                resp = await client.text_chat(
+                    prompt="请用不超过18个汉字简短客观概括这张群聊图片或表情包的核心画面与配字（不要加标点前缀、不要解释）：",
+                    image_urls=[url],
+                )
+                return str(getattr(resp, "completion_text", "") or "").strip()
+
+            return ImageDigestService(
+                self.db.conn,
+                vision_summarizer=_vision_summarize,
+                min_hits_for_auto_vision=int(_num("image_digest_min_hits", 3)),
+                daily_vision_limit=int(_num("image_digest_daily_limit", 60)),
+            )
+        except Exception as e:
+            logger.warning(f"[WaveMemory] ImageDigest init failed: {e}")
+            _record_err("ImageDigest", e)
+            return None
+
+    def _create_social_surf(self, _num):
+        """全网冲浪活人网友服务：0-LLM 兴趣安全过滤 + 无聊态单次批处理随想生成。"""
+        if getattr(self, "db", None) is None:
+            return None
+        try:
+            from ..services.social_surf import SocialSurfService
+
+            def _surf_llm_for_bot(bot_id: str = ""):
+                routing = getattr(self, "llm_routing", None)
+                if routing is None:
+                    return None
+                task = "bookkeeping" if routing.available("bookkeeping") else "tag" if routing.available("tag") else ""
+                if not task:
+                    return None
+                client = routing.client(task)
+                return client.for_bot(bot_id) if bot_id and hasattr(client, "for_bot") else client
+
+            def _body_reading_for(bot_id: str):
+                body = getattr(self, "body_service", None)
+                if body is None or not body.active_for(bot_id):
+                    return None
+                return body.reading(bot_id)
+
+            return SocialSurfService(
+                self.db,
+                profile_for=lambda db_id: self.bot_registry.get(db_id) if getattr(self, "bot_registry", None) else None,
+                body_reading_for=_body_reading_for,
+                llm_for_bot=_surf_llm_for_bot,
+                daily_llm_limit=int(_num("social_surf_daily_llm_limit", 3)),
+            )
+        except Exception as e:
+            logger.warning(f"[WaveMemory] SocialSurf init failed: {e}")
+            _record_err("SocialSurf", e)
+            return None
+
     def _body_closeness(self, bot_id: str, principal_id: str) -> float:
         """身体用的关系温度 0..100：由对这个人的唯一好感分数（-100..100）线性映射，没有记录按一般熟。"""
         repo = getattr(getattr(self, "db", None), "soul_repository", None)
@@ -1227,6 +1298,13 @@ class StartupMixin:
                     await asyncio.to_thread(service.tick, bot_ids)
                 if body is not None:
                     await asyncio.to_thread(body.tick, bot_ids)
+                surf = getattr(self, "social_surf", None)
+                if surf is not None:
+                    for bid in bot_ids:
+                        try:
+                            await surf.maybe_digest_surf_queue(bid)
+                        except Exception as surf_exc:
+                            logger.debug(f"[WaveMemory] surf tick skipped for {bid}: {surf_exc}")
             except asyncio.CancelledError:
                 raise
             except Exception as e:

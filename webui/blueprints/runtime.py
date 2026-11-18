@@ -965,3 +965,187 @@ async def user_profile(raw_uid: str):
     except Exception as exc:
         return jsonify({"ok": False, "error": {"code": "update_error", "message": str(exc)}}), 500
 
+
+# ─── 全网冲浪流（SocialSurf 三级省流漏斗） ───
+
+
+def _get_social_surf_service():
+    """从 container 获取 ``social_surf``；尚未挂载时基于 ``container.db`` 懒初始化兜底。"""
+    container = _get_container()
+    if container is None:
+        return None
+    surf = getattr(container, "social_surf", None)
+    db = getattr(container, "db", None)
+    conn = getattr(db, "conn", db) if db is not None else None
+    if surf is not None:
+        # 若测试或热重载替换了 container.db，确保复用的实例仍指向当前有效连接
+        surf_conn = getattr(getattr(surf, "db", None), "conn", getattr(surf, "db", None))
+        if conn is None or surf_conn is conn:
+            return surf
+    if conn is None:
+        return None
+
+    try:
+        from ...services.social_surf import SocialSurfService
+    except ImportError:
+        from services.social_surf import SocialSurfService
+
+    def _profile_for(bot_id: str):
+        reg = getattr(container, "bot_registry", None)
+        if reg is not None and hasattr(reg, "get"):
+            return reg.get(bot_id)
+        return None
+
+    def _body_reading_for(bot_id: str):
+        body_svc = getattr(container, "body_service", None)
+        if body_svc is not None and hasattr(body_svc, "reading"):
+            return body_svc.reading(bot_id)
+        return None
+
+    def _llm_for_bot(bot_id: str):
+        router = getattr(container, "llm_routing", None)
+        if router is not None and hasattr(router, "available") and hasattr(router, "client"):
+            try:
+                if router.available("meta_thinking"):
+                    client = router.client("meta_thinking")
+                    for_bot = getattr(client, "for_bot", None)
+                    return for_bot(bot_id) if callable(for_bot) else client
+            except Exception:
+                pass
+        return None
+
+    surf = SocialSurfService(
+        db,
+        profile_for=_profile_for,
+        body_reading_for=_body_reading_for,
+        llm_for_bot=_llm_for_bot,
+    )
+    try:
+        container.social_surf = surf
+    except Exception:
+        pass
+    return surf
+
+
+def _resolve_surf_bot_id(payload_or_args: dict[str, Any]) -> str:
+    """解析冲浪请求里的 ``bot_id``：注册表已就绪时校验并归一到 ``db_id``，否则要求显式非空 ``bot_id``。"""
+    raw_bot_id = str(payload_or_args.get("bot_id") or "").strip()
+    deployment = str(payload_or_args.get("deployment") or "").strip()
+    registry = _bot_registry()
+    if registry is not None and hasattr(registry, "resolve"):
+        profile = _resolve_bot_profile({"bot_id": raw_bot_id, "deployment": deployment})
+        return profile.db_id
+    if not raw_bot_id:
+        raise ValueError("bot_required: bot_id is required")
+    return raw_bot_id
+
+
+@runtime_bp.route("/feed/ingest", methods=["POST"])
+async def feed_ingest():
+    """跨平台网帖批量摄入（B站/小红书/抖音/小黑盒等），默认纯本地 0 LLM 过滤；``digest_now=true`` 时立即消化。"""
+    if not _check_auth():
+        return jsonify({"ok": False, "error": {"code": "unauthorized", "message": "Invalid runtime bearer token"}}), 401
+
+    body = await request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": {"code": "invalid_body", "message": "JSON object body is required"}}), 400
+
+    try:
+        bot_id = _resolve_surf_bot_id(body)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": {"code": "invalid_scope", "message": str(exc)}}), 400
+
+    platform = str(body.get("platform") or "").strip()
+    if not platform:
+        return jsonify({"ok": False, "error": {"code": "invalid_platform", "message": "platform is required"}}), 400
+
+    items = body.get("items")
+    if items is None:
+        items = []
+    if not isinstance(items, list):
+        return jsonify({"ok": False, "error": {"code": "invalid_body", "message": "items must be an array"}}), 400
+    if len(items) > 500:
+        return jsonify({"ok": False, "error": {"code": "batch_too_large", "message": "at most 500 items per batch"}}), 400
+
+    surf = _get_social_surf_service()
+    if surf is None:
+        return jsonify({
+            "ok": False,
+            "error": {"code": "service_unavailable", "message": "SocialSurf service or database is not ready"},
+        }), 503
+
+    digest_now = bool(body.get("digest_now", False))
+    force_queue = bool(body.get("force_queue", False))
+    try:
+        ingest_stats = surf.ingest_items(bot_id, platform, items, force_queue=force_queue)
+        digested_count = 0
+        digest_result: dict[str, Any] | None = None
+        if digest_now:
+            digest_result = await surf.maybe_digest_surf_queue(bot_id, force=True)
+            digested_count = int(digest_result.get("digested") or 0)
+        stats = {
+            "received": int(ingest_stats.get("received", 0)),
+            "queued": int(ingest_stats.get("queued", 0)),
+            "filtered": int(ingest_stats.get("filtered", 0)),
+            "duplicates": int(ingest_stats.get("duplicates", 0)),
+            "digested": digested_count,
+        }
+        if "safety_blocked" in ingest_stats:
+            stats["safety_blocked"] = int(ingest_stats["safety_blocked"])
+        resp: dict[str, Any] = {
+            "ok": True,
+            "bot_id": bot_id,
+            "stats": stats,
+        }
+        if digest_result is not None:
+            resp["digest"] = digest_result
+        return jsonify(resp)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": {"code": "invalid_arguments", "message": str(exc)}}), 400
+    except Exception as exc:
+        logger.warning(f"[Runtime API] feed ingest failed: {exc}")
+        return jsonify({"ok": False, "error": {"code": "ingest_failed", "message": str(exc)}}), 500
+
+
+@runtime_bp.route("/feed/recent", methods=["GET"])
+async def feed_recent():
+    """读取指定 Bot 最近的冲浪记录列表（支持 ``status=digested|queued`` 与 ``limit``）。"""
+    if not _check_auth():
+        return jsonify({"ok": False, "error": {"code": "unauthorized", "message": "Invalid runtime bearer token"}}), 401
+
+    try:
+        bot_id = _resolve_surf_bot_id({
+            "bot_id": request.args.get("bot_id"),
+            "deployment": request.args.get("deployment"),
+        })
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": {"code": "invalid_scope", "message": str(exc)}}), 400
+
+    status = str(request.args.get("status") or "").strip() or None
+    try:
+        limit = max(1, min(int(request.args.get("limit") or 10), 100))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": {"code": "invalid_arguments", "message": "limit must be an integer"}}), 400
+
+    surf = _get_social_surf_service()
+    if surf is None:
+        return jsonify({
+            "ok": False,
+            "error": {"code": "service_unavailable", "message": "SocialSurf service or database is not ready"},
+        }), 503
+
+    try:
+        items = surf.list_recent_feeds(bot_id, status=status, limit=limit)
+        return jsonify({
+            "ok": True,
+            "bot_id": bot_id,
+            "items": items,
+            "count": len(items),
+        })
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": {"code": "invalid_arguments", "message": str(exc)}}), 400
+    except Exception as exc:
+        logger.warning(f"[Runtime API] feed recent failed: {exc}")
+        return jsonify({"ok": False, "error": {"code": "query_error", "message": str(exc)}}), 500
+
+
